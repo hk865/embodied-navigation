@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fast_livo2_ros</name>
+  <version>0.0.0</version>
+  <description>FAST-LIVO2 ROS2 wrapper node</description>
+  <maintainer email="user@todo.todo">user</maintainer>
+  <license>GPLv2</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>fast_livo2_core</depend>
+  <depend>vikit_common</depend>
+  <depend>vikit_ros</depend>
+  <depend>image_transport</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

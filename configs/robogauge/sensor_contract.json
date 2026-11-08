@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "renderer": "ogre2",
+  "scope": "Frozen actual scene sampling inputs; effective rates require original-header measurement",
+  "joint_states": {
+    "gz_topic": "/demo/teacher/physical_joint_states",
+    "ros_topic": "/demo/control/measured_joint_states",
+    "publisher": "gz::sim::systems::JointStatePublisher",
+    "enabled": true,
+    "reads": "native physics joint position/velocity",
+    "rate_hz": 200,
+    "actuation": false
+  },
+  "overview": {
+    "gz_topic": "/demo/teacher/overview",
+    "ros_topic": "/demo/teacher/overview",
+    "frame": "teacher_overview_frame",
+    "world_pose": [
+      -8.5,
+      8.5,
+      2.2,
+      0.0,
+      0.25,
+      -0.55
+    ],
+    "rate_hz": 2,
+    "width": 640,
+    "height": 480,
+    "horizontal_fov": 1.3962634015954636,
+    "collision_geometry": false,
+    "gz_camera_info_topic": "/demo/teacher/overview_info",
+    "ros_camera_info_topic": "/demo/teacher/overview_info",
+    "camera_model": "default pinhole; no SDF distortion configured; confirm with actual CameraInfo",
+    "purpose": "observer only; never pair this image with vehicle SLAM camera intrinsics"
+  },
+  "camera": {
+    "type": "camera",
+    "link": "base_link",
+    "sensor_name": "demo_rgb",
+    "body_xyz": [
+      0.28,
+      0.0,
+      0.1
+    ],
+    "body_rpy": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rate_hz": 30,
+    "frame": "demo_camera_optical_frame",
+    "gz_topic": "/demo/camera",
+    "ros_topic": "/demo/camera",
+    "gz_camera_info_topic": "/demo/camera_info",
+    "ros_camera_info_topic": "/demo/camera_info",
+    "camera_model": "default pinhole; no SDF distortion configured; confirm with actual CameraInfo",
+    "horizontal_fov": 1.3962634015954636,
+    "width": 640,
+    "height": 480
+  },
+  "imu": {
+    "type": "imu",
+    "link": "base_link",
+    "sensor_name": "imu_sensor",
+    "body_xyz": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "body_rpy": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rate_hz": 200.0,
+    "frame": "imu_link",
+    "gz_topic": "/imu/data",
+    "ros_topic": "/livox/imu",
+    "orientation_reference": {
+      "localization": "CUSTOM",
+      "custom_parent_frame": "world",
+      "world_rpy": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "world_quaternion": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "body_imu_quaternion": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "description": "actual generated SDF IMU CUSTOM/world reference"
+    }
+  },
+  "lidar": {
+    "type": "gpu_lidar",
+    "link": "base_link",
+    "sensor_name": "velodyne-VLP16",
+    "body_xyz": [
+      0.2,
+      0.0,
+      0.1177
+    ],
+    "body_rpy": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rate_hz": 30,
+    "frame": "velodyne",
+    "gz_topic": "/velodyne_points",
+    "gz_points_topic": "/velodyne_points/points",
+    "ros_topic": "/demo/teacher/raw_lidar",
+    "cloud_registered_full": false,
+    "samples": {
+      "horizontal": 480,
+      "vertical": 64
+    }
+  }
+}

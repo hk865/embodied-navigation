@@ -1,0 +1,175 @@
+{
+  "schema": "robogauge_source_provenance/v1",
+  "source_date": "2026-11-08",
+  "source_paths_are_archive_identifiers_not_runtime_dependencies": true,
+  "originals_unchanged": true,
+  "sources": [
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "robogauge_runtime.py",
+      "sha256": "12a78d5489ae5dc97a8c436e0200a7c3ed7835798645ae03ae44be134b328c89",
+      "bytes": 2078
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "robogauge_worker.py",
+      "sha256": "5458c058579995460287f5cc5aff5f9c23cd85c6a1ecf6c728addec86cf33ea8",
+      "bytes": 3951
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "native_loop.py",
+      "sha256": "b152ef137a3725a14b7eb624097162bd9dfc96a00a0344f8aca6287fa884ac88",
+      "bytes": 12036
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "motor_src/teacher_actuator.cpp",
+      "sha256": "b6a5eaa24c99190e341244dd92b757ba84c75cfcd540693844c709bbc3d79ff1",
+      "bytes": 21666
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "motor_src/CMakeLists.txt",
+      "sha256": "a655ef920da861dd9a1a8b85400fdb4ae8cba2cb9dcca7f769cfb68f18c57b95",
+      "bytes": 395
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "building_robogauge.py",
+      "sha256": "3dac0fc9b63e88bda121cc039068f6b16f0d4adb8029f9957e025ca0c80cdeec",
+      "bytes": 17622
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "analyze_run.py",
+      "sha256": "81bc192d5b1abc9318945a9c263a1f60f4bc32b81bffe7acf0467445993ca7a2",
+      "bytes": 2514
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "DEPLOYMENT_REPORT_zh.txt",
+      "sha256": "c023f53a58ce783d2bbfe36bceb25ef63aa5cb74d90a2c73c10a53c89bd0813f",
+      "bytes": 5364
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "deployment_summary.json",
+      "sha256": "7f4e9d9ed09a8fa2561f7e99a3718f5b3c8e655a6b4fc400d63b2cdd6aa57137",
+      "bytes": 2151
+    },
+    {
+      "archive": "robogauge_navigation_deploy_20261108",
+      "relative_path": "execution_environment.json",
+      "sha256": "43c55092778edc9c9e30e80fb99889e9148609b86eb0bb142b8e930da0fad1c6",
+      "bytes": 271
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "runner/robogauge_isaac_adapter.py",
+      "sha256": "eb08ffc57513b7082734c5f2460c76881cfa8767b94da7dc26321c492b37dc61",
+      "bytes": 4032
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "cpu_fixture.py",
+      "sha256": "1d8c1d18e34ea456ef936a5e82ef6bac05cd7a0fdbf3c4f98a221ea15995a3d2",
+      "bytes": 5054
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "result_summary.json",
+      "sha256": "9056439c3c6d856e7691d2bff0cacf4641db520aafb41aff758bd560ff78c82a",
+      "bytes": 2870
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "RESULT_zh.txt",
+      "sha256": "556f17d3762933984b5fa683b3fc496860b4f89a0a570eb0e7a30616ed477260",
+      "bytes": 1564
+    },
+    {
+      "archive": "teacher15cm_trajectory_pid_20261108",
+      "relative_path": "experiment_status.json",
+      "sha256": "773cdc561d1418cf406cdf3ee8339d635bc67300d6681616891045af7a49e8ef",
+      "bytes": 1757
+    },
+    {
+      "archive": "teacher15cm_trajectory_pid_20261108",
+      "relative_path": "protocol.json",
+      "sha256": "27d1031c593a47b06c13466fef72e6a324d6d4bf1c41fe1da2489197e68e27d9",
+      "bytes": 903
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "runner/basement_route_tracker.py",
+      "sha256": "45cd7b381ae49bf1357fceecbd03ac8d75ca71ab2625153a801169fe1e3fe20f",
+      "bytes": 3994
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "runner/test_basement_route_tracker.py",
+      "sha256": "ecb981a3a64eb3d4f3b0874984a48f9248ccb4706f3a40d4741154c6f466ca26",
+      "bytes": 3869
+    },
+    {
+      "archive": "robogauge_isaac15cm_nopid_20261108",
+      "relative_path": "config.json",
+      "sha256": "0c67475fa2968afe488554e356a4be51626a24883735c093d220f010bc4fcce1",
+      "bytes": 5038
+    }
+  ],
+  "model_repository": "https://huggingface.co/wty-yy/go2_rl_gym_data",
+  "model_revision": "d1f19f0a486e171c327d8c3da2d31dba294e6586",
+  "recorded_author_source_commit": "6c95d9feef4814c25eb6536e61bb38e1d1d718d4",
+  "recorded_navigation_commit": "5688f2868e241ca4a7cc80ba9f166f8afa84c727",
+  "training_commit_verified": false,
+  "license_scope": "Retained upstream license included; no blanket redistribution rights asserted",
+  "port_changes": [
+    "Own package namespaces and external data root",
+    "Explicit input/hash validation replacing optimizable asserts",
+    "Named joint mapping reused across adapters",
+    "RoboGauge 45D loop, command slice 6:9, actor metadata corrected",
+    "Different CMake target avoids replacing Student actuator",
+    "Archived Go2HV C++ source bytes preserved"
+  ],
+  "ported_files": {
+    "robogauge_runtime.py + runner/robogauge_isaac_adapter.py": [
+      "robot/unitree/robogauge/contract.py",
+      "robot/unitree/robogauge/runtime.py"
+    ],
+    "native_loop.py": [
+      "simulation/gazebo/robogauge/native_loop.py"
+    ],
+    "robogauge_worker.py": [
+      "simulation/gazebo/robogauge/worker.py",
+      "navigation/robogauge/commands.py"
+    ],
+    "building_robogauge.py": [
+      "simulation/gazebo/robogauge/world.py",
+      "navigation/robogauge/benchmark.py"
+    ],
+    "analyze_run.py": [
+      "navigation/robogauge/analyze.py"
+    ],
+    "motor_src/teacher_actuator.cpp": [
+      "simulation/gazebo/robogauge/motor_src/go2hv_actuator.cpp"
+    ],
+    "runner/basement_route_tracker.py": [
+      "navigation/robogauge/route_tracker.py"
+    ]
+  },
+  "config_source_hashes": {
+    "routes/combined_floor1_inside.json": "7c40507742023771c26e1d6a3734f8c348a964f7c6fbf883c93a905d3aff0b16",
+    "routes/multi_floor2.json": "0da3d5c1115d9a617d13915ef6e2df9882cd112b9abec8fa796692098b11c72a",
+    "routes/second_stair_short.json": "2034f0ed664b54fa24a7ad6f4b8b330000b7e0baa88a9406e5d22f7c34737c67",
+    "routes/single_floor_loop.json": "31a79e85ab422a26e0358837d64ae676570325d2c60852e9bf94c025dda5f2a0",
+    "routes/single_floor_turn.json": "376e3fb46a87b0997204bed24e71a0c04e12b9b3a5972a4ee3e87af7a190a142",
+    "routes/stairs_short.json": "768d4364cf71fe80017695730cd94aecffced587c143d48d17f284b8db7bd70e",
+    "routes/third_stair_short.json": "d5104e776c39d4b15f967efa7620bbcef52fda93739c98fc686100f27e3d3565",
+    "world.sdf.in": "f268c4680b8ad38820f8784e15c895ec8a9871bd2a94bf08dad21f9e70088b32",
+    "sensor_bridge.yaml": "ab7f441b8c3ab0e69717b8c5bb102221a9ce4eee114373220f737b398f688804",
+    "sensor_contract.json": "5d3aaf08047cb257f0da5da04b165c9eec881882c10e54f50ceda0ae4ff750b1",
+    "terrain_targets.json": "ca189a6971f8c954d752ab9914faedd036e203d5bc4ebcba21055a5fcd6bfa56"
+  }
+}

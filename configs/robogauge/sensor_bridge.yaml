@@ -1,0 +1,106 @@
+[
+  {
+    "gz_topic_name": "/demo/camera",
+    "ros_topic_name": "/demo/camera",
+    "gz_type_name": "gz.msgs.Image",
+    "ros_type_name": "sensor_msgs/msg/Image",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/demo/teacher/overview",
+    "ros_topic_name": "/demo/teacher/overview",
+    "gz_type_name": "gz.msgs.Image",
+    "ros_type_name": "sensor_msgs/msg/Image",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/demo/camera_info",
+    "ros_topic_name": "/demo/camera_info",
+    "gz_type_name": "gz.msgs.CameraInfo",
+    "ros_type_name": "sensor_msgs/msg/CameraInfo",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/demo/teacher/overview_info",
+    "ros_topic_name": "/demo/teacher/overview_info",
+    "gz_type_name": "gz.msgs.CameraInfo",
+    "ros_type_name": "sensor_msgs/msg/CameraInfo",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/clock",
+    "ros_topic_name": "/clock",
+    "gz_type_name": "gz.msgs.Clock",
+    "ros_type_name": "rosgraph_msgs/msg/Clock",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/imu/data",
+    "ros_topic_name": "/livox/imu",
+    "gz_type_name": "gz.msgs.IMU",
+    "ros_type_name": "sensor_msgs/msg/Imu",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/demo/teacher/physical_joint_states",
+    "ros_topic_name": "/demo/control/measured_joint_states",
+    "gz_type_name": "gz.msgs.Model",
+    "ros_type_name": "sensor_msgs/msg/JointState",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/velodyne_points/points",
+    "ros_topic_name": "/demo/teacher/raw_lidar",
+    "gz_type_name": "gz.msgs.PointCloudPacked",
+    "ros_type_name": "sensor_msgs/msg/PointCloud2",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA",
+    "publisher_queue": 5,
+    "subscriber_queue": 5,
+    "lazy": false
+  },
+  {
+    "gz_topic_name": "/truth/follow",
+    "ros_topic_name": "/truth/follow",
+    "gz_type_name": "gz.msgs.Image",
+    "ros_type_name": "sensor_msgs/msg/Image",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA"
+  },
+  {
+    "gz_topic_name": "/direct/entrance",
+    "ros_topic_name": "/direct/entrance",
+    "gz_type_name": "gz.msgs.Image",
+    "ros_type_name": "sensor_msgs/msg/Image",
+    "direction": "GZ_TO_ROS",
+    "qos_profile": "SENSOR_DATA"
+  }
+]

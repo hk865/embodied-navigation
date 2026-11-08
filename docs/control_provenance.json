@@ -1,0 +1,7 @@
+{
+  "original_source_relative": "2026-11-04/task-5/go2_multiwaypoint_pid_bridge.py",
+  "original_source_sha256": "742f2f90ca9cd7abf39bb842f2413da827777246313016b4d54411fa149794e0",
+  "extracted_behaviour": "driving phase; map support and depth collision formulas",
+  "retained_safety": "controller state transitions and full ROS lifecycle remain in original working copy until integrated tests",
+  "test": "1000 deterministic original-formula equivalence cases plus known map/metric cases"
+}

@@ -1,0 +1,15 @@
+{
+  "task_state_owner": "navigation/pid_navigation.py (PIDNavigation) and navigation/task.py (relative waypoint task)",
+  "parking_execution": "control/parking/ordinary_parking.py, parking_pose10hz.py, parking_contract.py",
+  "slam_state_provider": "localization_mapping/feedback_state.py after verified corrected message acceptance",
+  "source_time_gate": "control/safety/feedback_source.py",
+  "robot_execution": "robot/unitree/policy and Gazebo actuator",
+  "source_relocation": {
+    "old": "control/controller.py",
+    "new": "navigation/pid_navigation.py",
+    "before_move_sha256": "d05df3aae036715e1c3ce3a438cfd4fc78911602397ed645bd1e6dfe63be3309"
+  },
+  "numeric_formula_and_threshold_changes": false,
+  "truth_may_feed_navigation": false,
+  "remaining_split": "ROS/task node still contains adapter/bookkeeping code; parking internal execution state remains control-owned"
+}

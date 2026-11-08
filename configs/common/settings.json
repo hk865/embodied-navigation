@@ -1,0 +1,39 @@
+{
+  "control_clock_contract": {
+    "backward_clock_policy": "latch_failure",
+    "continuous_stale_fail_wall_s": 8.0,
+    "freshness_sim_and_wall_s": 0.3,
+    "long_hold_integral_and_dwell": "protect_reset",
+    "resume_policy": "actual_clock_advance_and_fresh_original_sources_and_native_geometry",
+    "same_clock_policy": "exact_zero_before_math_and_native_geometry",
+    "schema": "teacher_control_clock_exact_zero_hold/v1",
+    "short_hold_integral_and_dwell": "frozen",
+    "source_receipt_refresh_permitted": false
+  },
+  "dds_transport": {
+    "environment": {
+      "ROS_LOCALHOST_ONLY": "0",
+      "ROS_AUTOMATIC_DISCOVERY_RANGE": "SYSTEM_DEFAULT",
+      "ROS_STATIC_PEERS": "",
+      "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+      "RMW_FASTRTPS_USE_QOS_FROM_XML": "0",
+      "RMW_FASTRTPS_PUBLICATION_MODE": "SYNCHRONOUS",
+      "SKIP_DEFAULT_XML": "1"
+    },
+    "runtime_environment_path_key": "FASTRTPS_DEFAULT_PROFILES_FILE",
+    "remove_environment_keys": [
+      "FASTDDS_DEFAULT_PROFILES_FILE",
+      "FASTRTPS_DEFAULT_PROFILES_FILE",
+      "FASTDDS_BUILTIN_TRANSPORTS",
+      "FASTDDS_ENVIRONMENT_FILE",
+      "ROS_DISCOVERY_SERVER",
+      "ROS_SUPER_CLIENT",
+      "ROS_STATIC_PEERS",
+      "RMW_FASTRTPS_USE_QOS_FROM_XML",
+      "RMW_FASTRTPS_PUBLICATION_MODE",
+      "SKIP_DEFAULT_XML",
+      "CYCLONEDDS_URI"
+    ],
+    "segment_capacity_bytes": 67108864
+  }
+}

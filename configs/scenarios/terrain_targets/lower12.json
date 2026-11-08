@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "lower12",
+  "include_models": [
+    "floor_1",
+    "ramp_12",
+    "floor_2"
+  ],
+  "scope": "Explicit fixed privileged deployment terrain targets for diagnostic A/B; no automatic truth-based layer switching",
+  "training_target": "/World/ground/terrain/mesh; grid/yaw/ray start +20 and clip unchanged",
+  "strict_training_geometry_equivalence": false,
+  "navigation_truth_used": false,
+  "physics_and_safety": "Preserve all original collisions; safety independently uses all static geometry at body ray height"
+}

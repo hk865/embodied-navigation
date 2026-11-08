@@ -1,0 +1,124 @@
+# Generated from simulation/scenario.json; true RGB projection, no ground truth.
+/**:
+  ros__parameters:
+    common:
+      img_topic: /camera/image_color
+      lid_topic: /camera_demo/slam/lidar
+      imu_topic: /livox/imu
+      img_en: 1
+      lidar_en: 1
+      ros_driver_bug_fix: false
+      use_gps: false
+      require_complete_imu: false
+    debug:
+      sensor_sync_diagnostics: true
+    extrin_calib:
+      extrinsic_T:
+      - 0.2
+      - 0.0
+      - 0.1177
+      extrinsic_R:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      Rcl:
+      - 0.0
+      - -1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - -1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      Pcl:
+      - -0.0
+      - -0.0177
+      - -0.08
+    time_offset:
+      imu_time_offset: 0.0
+      img_time_offset: 0.0
+      exposure_time_init: 0.0
+    preprocess:
+      point_filter_num: 1
+      filter_size_surf: 0.15
+      lidar_type: 0
+      scan_line: 32
+      blind: 0.3
+    vio:
+      max_iterations: 5
+      outlier_threshold: 1000
+      img_point_cov: 100000000
+      patch_size: 8
+      patch_pyrimid_level: 4
+      normal_en: true
+      raycast_en: false
+      inverse_composition_en: false
+      exposure_estimate_en: false
+      inv_expo_cov: 0.1
+    imu:
+      imu_en: true
+      gravity_est_en: false
+      ba_bg_est_en: false
+      # This upstream option counts IMU samples, not LiDAR frames. At 100 Hz,
+      # 300 samples average three stationary seconds after the launch gate.
+      imu_int_frame: 300
+      # Only a consecutive stationary interval may initialize gravity. Startup
+      # motion, vibration, or missing samples discard the accumulated mean.
+      stationary_initialization_en: true
+      init_max_gyro_norm: 0.03
+      init_max_acc_norm_error: 1.2
+      init_max_acc_axis_std: 0.40
+      init_max_sample_gap: 0.03
+      init_min_span: 2.9
+      acc_cov: 0.2
+      gyr_cov: 4.0e-8
+      b_acc_cov: 0.001
+      b_gyr_cov: 0.001
+    lio:
+      max_iterations: 5
+      dept_err: 0.02
+      beam_err: 0.05
+      min_eigen_value: 0.005
+      voxel_size: 0.5
+      max_layer: 2
+      max_points_num: 50
+      layer_init_num:
+      - 5
+      - 5
+      - 5
+      - 5
+      - 5
+    local_map:
+      map_sliding_en: false
+      half_map_size: 100
+      sliding_thresh: 8.0
+    uav:
+      imu_rate_odom: false
+      gravity_align_en: true
+    publish:
+      dense_map_en: true
+      pub_effect_point_en: false
+      pub_plane_en: false
+      pub_scan_num: 1
+      blind_rgb_points: 0.0
+      publish_base_tf: false
+      base_frame: base
+    evo:
+      seq_name: Camera_Multifloor_LIVO
+      pose_output_en: false
+    pcd_save:
+      pcd_save_en: false
+      type: 0
+      colmap_output_en: false
+      filter_size_pcd: 0.15
+      interval: 200
+    image_save:
+      img_save_en: false
+      interval: 1

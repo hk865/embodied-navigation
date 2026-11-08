@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "checkpoint": "artifact:unitree_teacher_model_1000.pt",
+  "checkpoint_sha256": "bfe7fbbffe85fdb60cac590f1a6080a10609011ab6a538a078381261e98fbd34",
+  "archive_hashes": {
+    "env.yaml": "b48ccebc1ef9ac7aa4d31451c720d38af040997fbc0c84c096cdd12b281e5d79",
+    "agent.yaml": "a5dbae28edf797729166044b2d3fda0afcc8812726295e28dfb580a39e862ec3"
+  },
+  "isaaclab_commit": "51b4fb54184fa7c0a406643129953a8b26136230",
+  "actor": {
+    "checkpoint_key": "actor_state_dict",
+    "layer_keys": [
+      "mlp.0",
+      "mlp.2",
+      "mlp.4",
+      "mlp.6"
+    ],
+    "dimensions": [
+      247,
+      512,
+      256,
+      128,
+      12
+    ],
+    "activation": "ELU",
+    "obs_normalization": false,
+    "deterministic_output": "Gaussian mean; distribution.std_param excluded",
+    "training_group": "teacher_noisy",
+    "evaluation_group": "teacher_noisy with corruption disabled, same semantic values as teacher_full"
+  },
+  "timing": {
+    "physics_dt": 0.005,
+    "decimation": 4,
+    "policy_hz": 50.0
+  },
+  "joint_names": [
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint"
+  ],
+  "gazebo_joint_names": [
+    "rf_hip_joint",
+    "rf_upper_leg_joint",
+    "rf_lower_leg_joint",
+    "lf_hip_joint",
+    "lf_upper_leg_joint",
+    "lf_lower_leg_joint",
+    "rh_hip_joint",
+    "rh_upper_leg_joint",
+    "rh_lower_leg_joint",
+    "lh_hip_joint",
+    "lh_upper_leg_joint",
+    "lh_lower_leg_joint"
+  ],
+  "default_joint_positions": [
+    -0.1,
+    0.8,
+    -1.5,
+    0.1,
+    0.8,
+    -1.5,
+    -0.1,
+    1.0,
+    -1.5,
+    0.1,
+    1.0,
+    -1.5
+  ],
+  "default_joint_velocities": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "actions": {
+    "scale": 0.25,
+    "formula": "q_target = q_default + 0.25 * raw_action",
+    "clip": null,
+    "raw_previous_action": true
+  },
+  "actuator": {
+    "class": "DCMotor",
+    "stiffness": 25.0,
+    "damping": 0.5,
+    "effort_limit": 23.5,
+    "saturation_effort": 23.5,
+    "velocity_limit": 30.0,
+    "torque_formula": "tau_computed = kp*(q_target-q) - kd*qd; qd_limited=clip(qd,-60,60); tau_min=max(-23.5,23.5*(-1-qd_limited/30)); tau_max=min(23.5,23.5*(1-qd_limited/30)); tau_applied=clip(tau_computed,tau_min,tau_max)",
+    "source": "archived env.yaml:222-239; IsaacLab actuator_pd.py:186-200,295-307",
+    "warning": "generic configs/contracts/go2.yaml effort limits 23.7/45.43 and target clips do not apply to this run"
+  },
+  "observations": {
+    "dimensions": 247,
+    "concatenation_order": [
+      {
+        "name": "base_lin_vel",
+        "slice": [
+          0,
+          3
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": [
+          -0.1,
+          0.1
+        ]
+      },
+      {
+        "name": "base_ang_vel",
+        "slice": [
+          3,
+          6
+        ],
+        "scale_after_clip": 0.2,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": [
+          -0.2,
+          0.2
+        ]
+      },
+      {
+        "name": "projected_gravity",
+        "slice": [
+          6,
+          9
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": [
+          -0.05,
+          0.05
+        ]
+      },
+      {
+        "name": "velocity_commands",
+        "slice": [
+          9,
+          12
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": null
+      },
+      {
+        "name": "joint_pos_rel",
+        "slice": [
+          12,
+          24
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": [
+          -0.01,
+          0.01
+        ]
+      },
+      {
+        "name": "joint_vel_rel",
+        "slice": [
+          24,
+          36
+        ],
+        "scale_after_clip": 0.05,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": [
+          -1.5,
+          1.5
+        ]
+      },
+      {
+        "name": "joint_effort",
+        "slice": [
+          36,
+          48
+        ],
+        "scale_after_clip": 0.01,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": null
+      },
+      {
+        "name": "last_action",
+        "slice": [
+          48,
+          60
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -100.0,
+          100.0
+        ],
+        "training_uniform_noise_before_clip": null
+      },
+      {
+        "name": "height_scan",
+        "slice": [
+          60,
+          247
+        ],
+        "scale_after_clip": 1.0,
+        "clip": [
+          -1.0,
+          1.0
+        ],
+        "training_uniform_noise_before_clip": null
+      }
+    ],
+    "processing_order": [
+      "semantic value",
+      "optional training noise",
+      "clip",
+      "scale",
+      "concatenate"
+    ],
+    "frame": "body +X forward,+Y left,+Z up; angular right hand; projected gravity R_world_body.T @ [0,0,-1]",
+    "linear_velocity_reference": "base/root rigid-body COM point velocity expressed in base orientation; not link-origin velocity",
+    "training_nominal_base_com_offset": [
+      0.020153064,
+      0.0,
+      -0.0051089553
+    ],
+    "training_nominal_base_mass": 7.279,
+    "joint_effort_semantics": "last applied actuator torque, after speed-dependent clipping; not measured contact wrench or unclipped PD",
+    "default_evaluation_noise": false
+  },
+  "height_scan": {
+    "dimensions": 187,
+    "resolution": 0.1,
+    "size": [
+      1.6,
+      1.0
+    ],
+    "x_range": [
+      -0.8,
+      0.8
+    ],
+    "y_range": [
+      -0.5,
+      0.5
+    ],
+    "grid_shape": [
+      11,
+      17
+    ],
+    "flattening": "torch.meshgrid(x,y,indexing=xy); C flatten; y outer then x inner",
+    "ray_alignment": "yaw only; world-vertical direction [0,0,-1]",
+    "ray_start_offset": [
+      0.0,
+      0.0,
+      20.0
+    ],
+    "sensor_position_reference": "Geometry/base pose; config.offset is baked into ray starts and does NOT shift sensor.data.pos_w",
+    "formula": "clip(sensor/base world z - vertical ray hit world z - 0.5, -1, 1)",
+    "training_mesh_paths": [
+      "/World/ground"
+    ],
+    "gazebo_source": "privileged analytical vertical intersections with selected static SDF collision geometry, self and moving objects excluded",
+    "missing_hits": "raw hits +inf => raw height -inf, clipping -1; preserve invalid count and raw values; no zero imputation",
+    "multi_floor_limit": "A ray starting 20 m above base sees upper decks if present. This matches vertical ray semantics but differs from a single terrain training mesh; report overhead hits."
+  },
+  "training_randomization": {
+    "material_static_friction": [
+      0.45,
+      1.25
+    ],
+    "material_dynamic_friction": [
+      0.35,
+      1.1
+    ],
+    "restitution": [
+      0.0,
+      0.05
+    ],
+    "make_consistent": true,
+    "base_mass_scale_log_uniform": [
+      0.8695652173913044,
+      1.15
+    ],
+    "base_com_xyz_range": [
+      [
+        -0.025,
+        0.025
+      ],
+      [
+        -0.025,
+        0.025
+      ],
+      [
+        -0.01,
+        0.01
+      ]
+    ],
+    "pd_gain_scale_uniform": [
+      0.9,
+      1.1
+    ],
+    "reset_xy_uniform": [
+      -0.8,
+      0.8
+    ],
+    "reset_yaw_uniform": [
+      -3.14,
+      3.14
+    ],
+    "reset_xyz_rpy_velocity_uniform": [
+      -0.5,
+      0.5
+    ],
+    "reset_joint_position_scale": [
+      0.5,
+      1.5
+    ],
+    "reset_joint_velocity": [
+      0.0,
+      0.0
+    ],
+    "push_xy_velocity": [
+      -0.5,
+      0.5
+    ],
+    "push_interval_seconds": [
+      5.0,
+      10.0
+    ]
+  },
+  "commands": {
+    "dimensions": 3,
+    "order": [
+      "vx",
+      "vy",
+      "yaw_rate"
+    ],
+    "ranges": [
+      [
+        -1.0,
+        1.0
+      ],
+      [
+        -0.4,
+        0.4
+      ],
+      [
+        -1.0,
+        1.0
+      ]
+    ],
+    "resampling_seconds": [
+      2.0,
+      4.0
+    ],
+    "heading_command": false,
+    "standing_fraction": 0.05
+  },
+  "request64": {
+    "0": "sim_time",
+    "1:4": "world position base link origin",
+    "4:8": "quaternion wxyz",
+    "8:11": "body COM linear velocity; if link-origin supply actual Gazebo base_com_offset to builder",
+    "11:14": "body angular velocity",
+    "14:26": "joint q training order",
+    "26:38": "joint qd training order",
+    "38:50": "last applied DC clipped torque training order",
+    "50:55": "contact body FR FL RR RL; -1 unknown",
+    "55": "iteration",
+    "56": "fault code",
+    "57:64": "reserved"
+  },
+  "source_refs": {
+    "observation_terms": "source/rl_unitree/rl_unitree/tasks/locomotion/config/go2/full_observation_cfg.py:35-70,77-91",
+    "height_formula": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab/isaaclab/envs/mdp/observations.py:297-305",
+    "height_pattern": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab/isaaclab/sensors/ray_caster/patterns/patterns.py:43-53",
+    "height_offset": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab/isaaclab/sensors/ray_caster/base_ray_caster.py:202-213",
+    "height_sensor_pose": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab_physx/isaaclab_physx/sensors/ray_caster/ray_caster.py:73-87 and isaaclab/sensors/ray_caster/kernels.py:91-118",
+    "processing": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab/isaaclab/managers/observation_manager.py:392-407",
+    "linear_velocity": "IsaacLab@51b4fb54184fa7c0a406643129953a8b26136230/source/isaaclab/isaaclab/assets/articulation/base_articulation_data.py:1184-1194"
+  }
+}

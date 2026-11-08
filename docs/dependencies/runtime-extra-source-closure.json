@@ -1,0 +1,41 @@
+{
+  "context_commit": "5688f2868e241ca4a7cc80ba9f166f8afa84c727",
+  "note": "Runtime imports discovered by isolated startup; source files are included physically, not borrowed from experiments or a sibling project. Alternate historical terrain modes still require their explicit run manifests.",
+  "files": [
+    {
+      "source_relative": "experiments/candidates/publication_ledger.py",
+      "source_tracked_at_commit": true,
+      "original_sha256": "9e564e433a1297e8fa32106b9995aa4bb6bfb8c79114f922bf019ec3e26f9465",
+      "destination": "src/embodied_navigation/control/publication_ledger.py",
+      "destination_sha256": "9e564e433a1297e8fa32106b9995aa4bb6bfb8c79114f922bf019ec3e26f9465"
+    },
+    {
+      "source_relative": "experiments/candidates/student_yaw_measurement_feedback.py",
+      "source_tracked_at_commit": true,
+      "original_sha256": "2c9bddfe447e04df5e760013eaaa70a91f825cde77004bb150179a5020de5c87",
+      "destination": "src/embodied_navigation/robot/unitree/policy/yaw_measurement_feedback.py",
+      "destination_sha256": "56f182eb8152ffe29e6f26cec854ef4e5ec235fe1e6356a7aeb3c8c9dd8f8512"
+    },
+    {
+      "source_relative": "experiments/candidates/pre_zero_integral_unload.py",
+      "source_tracked_at_commit": true,
+      "original_sha256": "c2fe0f74bb1e3c4c1b8419efd8711fa04180cc86176f27503eddb75419a57b8d",
+      "destination": "src/embodied_navigation/control/parking/integral_unload.py",
+      "destination_sha256": "c2fe0f74bb1e3c4c1b8419efd8711fa04180cc86176f27503eddb75419a57b8d"
+    },
+    {
+      "source_relative": "experiments/candidates/mission46_terrain.py",
+      "source_tracked_at_commit": true,
+      "original_sha256": "2bb6a63885c0f47b2b3362257052b199d8f864a0181c36b01c3809214422435b",
+      "destination": "src/embodied_navigation/simulation/terrain/mission46.py",
+      "destination_sha256": "5795105d431499738853932dc0294d4c5b0b171afe3467ffb7ceeab61f666bc5"
+    },
+    {
+      "source_relative": "experiments/candidates/terrain_provider.py",
+      "source_tracked_at_commit": true,
+      "original_sha256": "29713ba9b991fbbe7ef074dbf0b7bfaeefb5fec2fc66cc4cc88405ff7e89271b",
+      "destination": "src/embodied_navigation/simulation/terrain/provider.py",
+      "destination_sha256": "74952318f206a2e6c2ee4c8c28e7c0ebe40d94b9cf7cc43fce2c3944285000ab"
+    }
+  ]
+}

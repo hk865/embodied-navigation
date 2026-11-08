@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/Robot-Nav/legbot_3D_Nav",
+  "ref": "f60606a4903bad58fca813f76072f9940a284d1d",
+  "mesh_path": "src/unitree_guide/unitree_ros/unitree_gazebo/models/Building.dae",
+  "pcd_path": "src/PCT_planner/src/pcd/building2_9.pcd",
+  "tomogram_path": "src/PCT_planner/src/tomogram/building2_9.pickle",
+  "mesh_license": "BSD-3-Clause (unitree_ros/LICENSE)",
+  "pcd_tomogram_license": "GPL-2.0 and PCT_planner/NOTICE",
+  "local_derivatives": [
+    "safe numeric NPZ tomogram",
+    "world triangles NPZ",
+    "physical-support PCT routes"
+  ],
+  "runtime_identity_check": false
+}

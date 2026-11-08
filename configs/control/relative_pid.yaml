@@ -1,0 +1,7 @@
+lookahead_m: 0.7
+velocity_damping: 0.10
+max_forward_mps: 0.5
+max_lateral_mps: 0.05
+max_yaw_rate_rps: 0.15
+heading_gain: 1.2
+distance_gain: 1.2

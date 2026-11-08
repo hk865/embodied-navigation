@@ -1,0 +1,14 @@
+{
+  "date": "2026-11-08",
+  "cpu_baseline_image": "embodied-navigation-cpu:20261108",
+  "public_base": "ros:jazzy-ros-base@sha256:8eed0a4669bbf43ee331878a4c39bd8ebddea8e3312a58b4fae8edb14526b617",
+  "image_config_sha256": "8ebe01d6cfc4df36d0844ebd5903e4f73993565e7ea79e937b5ac3f542a1e7ba",
+  "unit_tests": 48,
+  "unit_failures": 0,
+  "unit_skips": 0,
+  "run_network": "none",
+  "starts_simulation": false,
+  "uses_private_assets": false,
+  "image_id": "sha256:81e9fa4824939f69a2477725b756a3460b60b5f64020bc4b38b5ba2c5489edb9",
+  "build_context_contains_config_fixtures": true
+}

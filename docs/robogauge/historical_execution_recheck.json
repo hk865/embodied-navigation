@@ -1,0 +1,37 @@
+{
+  "turn": {
+    "run": "robogauge_slam_turn_20261108_01",
+    "telemetry_frames": 3412,
+    "physics_frames": 13645,
+    "eligible_nonterminal_policy_frames": 3411,
+    "matched_policy_and_physics_frames": 3411,
+    "missing_same_stamp_frames": 0,
+    "malformed_log_lines": 0,
+    "duplicate_timestamps": 0,
+    "maximum_same_stamp_qtarget_delta": 0.0,
+    "maximum_Go2HV_torque_delta": 0.0,
+    "execution_evidence_passed": true,
+    "navigation_and_execution_passed": true,
+    "faults": [],
+    "sim_duration_s": 68.22,
+    "height_gain_m": 0.02335733530660411
+  },
+  "stairs": {
+    "run": "robogauge_slam_stairs_20261108_01",
+    "telemetry_frames": 4174,
+    "physics_frames": 16693,
+    "eligible_nonterminal_policy_frames": 4173,
+    "matched_policy_and_physics_frames": 4173,
+    "missing_same_stamp_frames": 0,
+    "malformed_log_lines": 0,
+    "duplicate_timestamps": 0,
+    "maximum_same_stamp_qtarget_delta": 0.0,
+    "maximum_Go2HV_torque_delta": 4.440892098500626e-16,
+    "execution_evidence_passed": true,
+    "navigation_and_execution_passed": true,
+    "faults": [],
+    "sim_duration_s": 83.46,
+    "height_gain_m": 1.492801455111098
+  },
+  "scope": "Fresh CPU audit of original November 8 logs, NOT a new portable simulator run"
+}

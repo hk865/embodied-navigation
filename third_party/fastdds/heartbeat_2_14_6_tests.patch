@@ -1,0 +1,228 @@
+--- a/test/unittest/transport/mock/SharedMemGlobalMock.hpp
++++ b/test/unittest/transport/mock/SharedMemGlobalMock.hpp
+@@ -24,6 +24,44 @@
+ class MockPortSharedMemGlobal
+ {
+ public:
++
++    // Test only: reproduce the watchdog counter-equality precondition.
++    static bool prepare_idle_health_check(SharedMemGlobal::Port& port, uint32_t index)
++    {
++        std::lock_guard<SharedMemSegment::mutex> lock(port.node_->empty_cv_mutex);
++        auto& status = port.node_->listeners_status[index];
++        if (!status.is_in_use || !status.is_waiting)
++        {
++            return false;
++        }
++        status.last_verified_counter = status.counter;
++        return true;
++    }
++
++    // Negative control: exact pre-backport predicate/heartbeat behavior.
++    // This is a test-side listener, not an installed mixed-version DSO test.
++    static void wait_pop_legacy(SharedMemGlobal::Port& port,
++            SharedMemGlobal::Listener& listener, const std::atomic<bool>& closed, uint32_t index)
++    {
++        std::unique_lock<SharedMemSegment::mutex> lock(port.node_->empty_cv_mutex);
++        auto& status = port.node_->listeners_status[index];
++        status.is_waiting = 1;
++        status.counter = status.last_verified_counter + 1;
++        ++port.node_->waiting_count;
++        while (true)
++        {
++            auto timeout = boost::get_system_time() +
++                    boost::posix_time::milliseconds(port.node_->port_wait_timeout_ms);
++            if (port.node_->empty_cv.timed_wait(lock, timeout, [&]
++                    { return closed.load() || listener.head() != nullptr; }))
++            {
++                break;
++            }
++            status.counter = status.last_verified_counter + 1;
++        }
++        status.is_waiting = 0;
++        --port.node_->waiting_count;
++    }
+ 
+     static void remove_port_mutex(
+             const std::string& domain_name,
+--- a/test/unittest/transport/SharedMemTests.cpp
++++ b/test/unittest/transport/SharedMemTests.cpp
+@@ -29,6 +29,10 @@
+ #include <memory>
+ #include <gtest/gtest.h>
+ #include <thread>
++#include <atomic>
++#include <chrono>
++#include <vector>
++#include <stdexcept>
+ 
+ using namespace eprosima::fastrtps;
+ using namespace eprosima::fastrtps::rtps;
+@@ -2235,3 +2239,167 @@
+     testing::InitGoogleTest(&argc, argv);
+     return RUN_ALL_TESTS();
+ }
++
++// Reviewed local backport regression coverage, not a merged-upstream claim.
++namespace {
++using HeartbeatClock = std::chrono::steady_clock;
++
++struct HeartbeatListener
++{
++    enum Mode { PATCHED, LEGACY, STOPPED };
++    SharedMemGlobal* global;
++    std::shared_ptr<SharedMemGlobal::Port> port;
++    std::unique_ptr<SharedMemGlobal::Listener> listener;
++    uint32_t index = 0;
++    std::atomic<bool> closed{false}, finished{false}, failed{false};
++    std::thread thread;
++
++    HeartbeatListener(SharedMemGlobal* g, Mode mode) : global(g)
++    {
++        global->remove_port(0);
++        port = global->open_port(0, 4, 1000, SharedMemGlobal::Port::OpenMode::ReadExclusive);
++        listener = port->create_listener(&index);
++        if (!listener) { throw std::runtime_error("listener allocation failed"); }
++        thread = std::thread([this, mode]
++                {
++                    try
++                    {
++                        MockPortSharedMemGlobal mock;
++                        if (mode == LEGACY) { mock.wait_pop_legacy(*port, *listener, closed, index); }
++                        else if (mode == STOPPED) { mock.wait_pop_deadlock(*port, *listener, closed, index); }
++                        else { port->wait_pop(*listener, closed, index); }
++                    }
++                    catch (...) { failed.store(true); }
++                    finished.store(true);
++                });
++    }
++
++    bool prepare()
++    {
++        auto deadline = HeartbeatClock::now() + std::chrono::seconds(1);
++        do
++        {
++            if (MockPortSharedMemGlobal::prepare_idle_health_check(*port, index)) { return true; }
++            if (finished.load()) { return false; }
++            std::this_thread::sleep_for(std::chrono::milliseconds(1));
++        } while (HeartbeatClock::now() < deadline);
++        return false;
++    }
++
++    ~HeartbeatListener()
++    {
++        port->close_listener(&closed);
++        if (thread.joinable()) { thread.join(); }
++        try { port->unregister_listener(&listener, index); } catch (...) {}
++        port.reset();
++        global->remove_port(0);
++    }
++};
++
++void healthy_cold_open_checkers(const std::string& domain_name, unsigned count)
++{
++    auto manager = SharedMemManager::create(domain_name);
++    auto global = manager->global_segment();
++    HeartbeatListener session(global, HeartbeatListener::PATCHED);
++    for (unsigned round = 0; round < 16; ++round)
++    {
++        ASSERT_TRUE(session.prepare());
++        std::atomic<bool> go{false};
++        std::vector<int> ok(count, 0);
++        std::vector<double> elapsed(count, 0);
++        std::vector<std::thread> checkers;
++        for (unsigned i = 0; i < count; ++i)
++        {
++            checkers.emplace_back([&, i]
++                    {
++                        while (!go.load()) { std::this_thread::yield(); }
++                        auto begin = HeartbeatClock::now();
++                        try
++                        {
++                            // Fresh write handle, bypassing transport opened_ports_ cache.
++                            auto opened = global->open_port(0, 4, 1000, SharedMemGlobal::Port::OpenMode::Write);
++                            ok[i] = bool(opened);
++                        }
++                        catch (...) { ok[i] = 0; }
++                        elapsed[i] = std::chrono::duration<double, std::milli>(HeartbeatClock::now()-begin).count();
++                    });
++        }
++        go.store(true);
++        for (auto& checker : checkers) { checker.join(); }
++        for (unsigned i = 0; i < count; ++i)
++        {
++            EXPECT_EQ(ok[i], 1);
++            EXPECT_LT(elapsed[i], 250.0) << "checker=" << i << " round=" << round;
++        }
++        EXPECT_FALSE(session.failed.load());
++        EXPECT_FALSE(session.finished.load()); // heartbeat notification is not data.
++        std::this_thread::sleep_for(std::chrono::milliseconds(23));
++    }
++}
++} // anonymous namespace
++
++TEST_F(SHMTransportTests, reviewed_heartbeat_cold_open_one_checker)
++{
++    healthy_cold_open_checkers(domain_name, 1);
++}
++
++TEST_F(SHMTransportTests, reviewed_heartbeat_cold_open_eight_checkers)
++{
++    healthy_cold_open_checkers(domain_name, 8);
++}
++
++TEST_F(SHMTransportTests, reviewed_heartbeat_legacy_listener_negative_control)
++{
++    auto manager = SharedMemManager::create(domain_name);
++    HeartbeatListener session(manager->global_segment(), HeartbeatListener::LEGACY);
++    ASSERT_TRUE(session.prepare());
++    auto begin = HeartbeatClock::now();
++    EXPECT_NO_THROW(session.port->healthy_check());
++    double elapsed = std::chrono::duration<double, std::milli>(HeartbeatClock::now()-begin).count();
++    // Old predicate consumes notifications until its ordinary 333ms timeout.
++    // Timing test, not proof of every possible scheduler interleaving.
++    EXPECT_GE(elapsed, 100.0);
++    EXPECT_LT(elapsed, 1500.0);
++}
++
++TEST_F(SHMTransportTests, reviewed_heartbeat_stopped_listener_keeps_total_timeout)
++{
++    auto manager = SharedMemManager::create(domain_name);
++    HeartbeatListener session(manager->global_segment(), HeartbeatListener::STOPPED);
++    ASSERT_TRUE(session.prepare());
++    auto begin = HeartbeatClock::now();
++    EXPECT_THROW(session.port->healthy_check(), std::exception);
++    double elapsed = std::chrono::duration<double, std::milli>(HeartbeatClock::now()-begin).count();
++    EXPECT_GE(elapsed, 900.0); // original healthy_check_timeout_ms remains 1000.
++    EXPECT_LT(elapsed, 2500.0);
++    EXPECT_FALSE(session.port->is_port_ok());
++}
++
++TEST_F(SHMTransportTests, reviewed_heartbeat_normal_data_and_close)
++{
++    auto manager = SharedMemManager::create(domain_name);
++    HeartbeatListener session(manager->global_segment(), HeartbeatListener::PATCHED);
++    ASSERT_TRUE(session.prepare());
++    EXPECT_NO_THROW(session.port->healthy_check());
++    EXPECT_FALSE(session.finished.load());
++    SharedMemSegment::Id id;
++    id.generate();
++    SharedMemGlobal::BufferDescriptor expected = {id, 0, 0};
++    bool active = false;
++    ASSERT_TRUE(session.port->try_push(expected, &active));
++    ASSERT_TRUE(active);
++    auto deadline = HeartbeatClock::now() + std::chrono::seconds(1);
++    while (!session.finished.load() && HeartbeatClock::now() < deadline)
++    {
++        std::this_thread::sleep_for(std::chrono::milliseconds(1));
++    }
++    EXPECT_TRUE(session.finished.load());
++    EXPECT_FALSE(session.failed.load());
++    if (session.finished.load())
++    {
++        ASSERT_NE(session.listener->head(), nullptr);
++        EXPECT_EQ(session.listener->head()->data().source_segment_id, id);
++        EXPECT_TRUE(session.listener->pop());
++    }
++    // Destructor closes/notifies/joins/unregisters even when an assertion fails.
++}

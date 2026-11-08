@@ -1,0 +1,30 @@
+{
+  "scan_planner_node": {
+    "ros__parameters": {
+      "use_sim_time": true,
+      "fsm.navi_mode": 3,
+      "fsm.external_reference_protocol": false,
+      "fsm.planning_horizon": 0.65,
+      "fsm.thresh_replan": 0.35,
+      "fsm.max_replan_fail_count": 200,
+      "fsm.measured_max_speed": 0.6,
+      "grid_map.frame_id": "camera_init",
+      "grid_map.sliding_map_frame_id": "truth_scan_sliding_map",
+      "grid_map.sensor_type": "lidar",
+      "grid_map.cloud_is_world": true,
+      "grid_map.need_extrinsic": false,
+      "grid_map.resolution": 0.08,
+      "grid_map.body_height": 0.4,
+      "grid_map.obstacles_inflation_z_down": 0.08,
+      "grid_map.obstacles_inflation_z_up": 0.08,
+      "grid_map.double_cylinder_radius": 0.25,
+      "grid_map.double_cylinder_offset": 0.18,
+      "grid_map.max_ray_length": 35.0,
+      "manager.max_vel": 0.4,
+      "manager.max_acc": 0.5,
+      "manager.planning_horizon": 0.65,
+      "optimization.max_vel": 0.4,
+      "optimization.max_acc": 0.5
+    }
+  }
+}

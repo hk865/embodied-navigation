@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "Building_mesh",
+  "include_models": [
+    "Building",
+    "ground_plane"
+  ],
+  "scope": "Exact mesh rays for privileged Actor and independent safety; no navigation pose",
+  "navigation_truth_used": false
+}

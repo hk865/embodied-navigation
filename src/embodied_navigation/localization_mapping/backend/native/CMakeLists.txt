@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(livo_graph LANGUAGES CXX)
+find_package(Eigen3 REQUIRED)
+add_library(livo_graph SHARED graph_solver.cpp)
+target_link_libraries(livo_graph PRIVATE Eigen3::Eigen)
+target_compile_features(livo_graph PRIVATE cxx_std_17)
+target_compile_options(livo_graph PRIVATE -O2 -Wall -Wextra)
+install(TARGETS livo_graph LIBRARY DESTINATION lib)

@@ -1,0 +1,37 @@
+{
+  "schema": "private_fastdds_sources/v1",
+  "fastdds": {
+    "repository": "https://github.com/eProsima/Fast-DDS",
+    "version": "2.14.6",
+    "commit": "f052f239538ebc0df56835fdb57f7628628010bc",
+    "archive_url": "https://codeload.github.com/eProsima/Fast-DDS/tar.gz/f052f239538ebc0df56835fdb57f7628628010bc",
+    "archive_sha256": "923606d546965c6658dacc4424a568ad131875cce3f52a082fe42d3b9fc17f96",
+    "archive_root": "Fast-DDS-f052f239538ebc0df56835fdb57f7628628010bc",
+    "license": "Apache-2.0"
+  },
+  "asio": {
+    "repository": "https://github.com/chriskohlhoff/asio",
+    "commit": "ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963",
+    "archive_url": "https://codeload.github.com/chriskohlhoff/asio/tar.gz/ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963",
+    "archive_sha256": "9d4619e1ea963d3c72c8dc07d5d8c9c4fab67141990b4f8cb10e5d8ad2c83f42",
+    "archive_root": "asio-ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963",
+    "license": "BSL-1.0",
+    "basis": "Fast-DDS pinned thirdparty/asio gitlink"
+  },
+  "backport": {
+    "issue": "https://github.com/eProsima/Fast-DDS/issues/6535",
+    "pull_request": "https://github.com/eProsima/Fast-DDS/pull/6559",
+    "reviewed_PR_head": "2184ef9da37ffc0491269d1428ba356c520b06ed",
+    "status_as_of_2026_10_25": "open; not merged. This local 2.14.6 backport is not an upstream release.",
+    "production_patch": "heartbeat_2_14_6.patch",
+    "test_patches": [
+      "heartbeat_2_14_6_tests.patch",
+      "heartbeat_fixture_r2.patch"
+    ],
+    "patch_sha256": {
+      "heartbeat_2_14_6.patch": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+      "heartbeat_2_14_6_tests.patch": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+      "heartbeat_fixture_r2.patch": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+scene_relative: embodied-navigation/dynanav/documents_codex_20261108/codex/2026-11-05/task-2/full_asset_render/bundle/office.usd
+robot_asset_relative: embodied-navigation/runtime_assets/robot/go2_description/go2_description.usda
+physics_dt_s: 0.005
+policy_dt_s: 0.02
+verified_local_isaac_build: 6.0.1-rc.7+release.42383.32955d8d.gl

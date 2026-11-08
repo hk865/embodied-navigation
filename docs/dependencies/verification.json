@@ -1,0 +1,35 @@
+{
+  "manifest_files_verified": 304,
+  "ros_packages": {
+    "livox_ros_driver2": "third_party/livox_ros_driver2",
+    "scan_planner_msgs": "third_party/scan/scan_planner_msgs",
+    "traj_utils": "third_party/scan/traj_utils",
+    "plan_env": "third_party/scan/plan_env",
+    "path_searching": "third_party/scan/path_searching",
+    "bspline_opt": "third_party/scan/bspline_opt",
+    "scan_planner": "third_party/scan/plan_manage",
+    "fast_livo2_core": "third_party/fast_livo2/fast_livo2_core",
+    "fast_livo2_ros": "third_party/fast_livo2/fast_livo2_ros",
+    "vikit_ros": "third_party/vikit/vikit_ros",
+    "vikit_common": "third_party/vikit/vikit_common"
+  },
+  "cmake_files_parsed": 12,
+  "python_files_parsed": 28,
+  "symlinks": [],
+  "vio_patch_reverse_dry_run": "passed",
+  "pct_compile": "passed",
+  "ros_compile": "not run",
+  "docker_build": "not run",
+  "simulation": "not run",
+  "pct_free_grid_smoke": {
+    "found": true,
+    "points": 5
+  },
+  "audit_date_utc": "2026-11-08",
+  "source_repository_commit": "5688f2868e241ca4a7cc80ba9f166f8afa84c727",
+  "colcon_discovery": "passed: exactly 11 expected packages",
+  "shell_syntax": "passed: docker/native_entrypoint.sh",
+  "build_plan": "passed: read-only plan generated without network",
+  "network_downloads": "not run",
+  "scope": "CPU static verification plus clean PCT compile and synthetic free-grid smoke only; no end-to-end claim"
+}

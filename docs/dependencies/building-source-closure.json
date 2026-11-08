@@ -1,0 +1,15 @@
+{
+  "origin_repository": "https://github.com/hk865/Fast-Livo2-SCAN-Gazebo-dog-sim-control",
+  "origin_HEAD": "5688f2868e241ca4a7cc80ba9f166f8afa84c727",
+  "last_component_commit": "67e8df79f5dfb1e93b29ff4e075651fcee9b09cd",
+  "source": "tools/validation/runtime_resources.py",
+  "source_bytes": 1165,
+  "source_sha256": "604bc055f47b46f6d6be3740d8689127cd54c39366b5f98fdba85298d8629813",
+  "destination": "src/embodied_navigation/evaluation/process_resources.py",
+  "destination_sha256": "1be405d40b3c5bd8866561d942c00f846d7a6b388aa46947d17277344f2ab38d",
+  "relocation_changes": "Move the unchanged accounting loop into main(); global stopped becomes the equivalent nonlocal closure. Importing no longer reads environment, installs signal handlers or opens a CSV. Formatting only otherwise.",
+  "building_runtime_tested": false,
+  "prepare_only_case": "stairs_short",
+  "prepare_only_run": "building_prepare_20261108T140110Z",
+  "unit_tests": 48
+}

@@ -1,0 +1,136 @@
+{
+  "scope": "Final delivered image default45s CPU software rendering smoke including Building source closure, no repository edits",
+  "image": "sha256:b4cbdc62510b142e90a82760c80168d5f6fdb4f739f80e60d83adf790ad805ef",
+  "source_and_native_artifacts_from_image_only": true,
+  "bind_mounts": [
+    "assets:readonly",
+    "models:readonly",
+    "new_runs:readwrite"
+  ],
+  "source_sha_verification": "passed",
+  "verified_file_count": 15,
+  "key_source_sha256": {
+    "src/embodied_navigation/common/shutdown.py": "c51194d87783dc52fcfa22c8a9f7c29b52e9e11b2b22669eb91c1f0d27536042",
+    "src/embodied_navigation/perception/sensors/sensor_gate.py": "0b4e66dea01733ec51b7159dd329cac18e49630332ec95978a2a8fa806735301",
+    "src/embodied_navigation/navigation/pid_navigation.py": "9d6d706f2975b71f92e414a369488cf5f4ff5b976fcbfe58329660925028286b",
+    "src/embodied_navigation/robot/unitree/policy/native/worker.py": "83fa5f4d2251319a2d71e8c254b64558106227c97bd1bdbf6c4ff6e90e54f779",
+    "src/embodied_navigation/control/safety/simulation_gate.py": "22cc93c3c8ca6dac5a509d7a0fb0f4a863ca7e05315782a1aa216ae812438d68",
+    "src/embodied_navigation/launch/main.py": "7d8cb2bd8d239e3738bd357948ac249c7c19d19156112d57b02f66ae4a6ab9e8",
+    "src/embodied_navigation/launch/exit_status.py": "1e5adfee593bff96b6b6d0594173c2d8d3f377546b9d3ae66a7c1e4b7558a176",
+    "tests/unit/test_ros_shutdown_lifecycle.py": "58d5f02dbc5bfee6036ea8d944d933d187f3755d685a0bc7c384b2adaec9ff55",
+    "src/embodied_navigation/launch/building.py": "b9b5655d0a505fa52f8dbed87ae19019bd91c905c18b5e1fbb5a74977de75574",
+    "src/embodied_navigation/simulation/truth_worker.py": "ea02bc1bf02c271e059abbaa3fdd579b2cb055d91da0c046142bf0d259a7afc1",
+    "src/embodied_navigation/evaluation/process_resources.py": "1be405d40b3c5bd8866561d942c00f846d7a6b388aa46947d17277344f2ab38d",
+    "tests/unit/test_building_entry_closure.py": "1b44e535af0f3d6e3f80630fe2b0331abb61f2d0b59e1556c5caecf46efb65b3",
+    "docs/dependencies/BUILDING-ENTRYPOINT.md": "dadd1a78b5e58bc29ba9e3ba7f6536b78dde37b0b6bed28fc7ff93961228d377",
+    "docs/dependencies/building-source-closure.json": "f4b49a43cfdeefec52e48c1a65f8133d30f9a67794ced038cf459ca632b588c7",
+    "third_party/scan/plan_manage/config/planner.yaml": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a"
+  },
+  "key_source_changed_after_test": [],
+  "container_result": {
+    "exit_code": 0,
+    "outer_timeout": false,
+    "elapsed_seconds": 46.85012577287853
+  },
+  "all_15_managed_components_exit0": true,
+  "traceback_present": false,
+  "unretrieved_exception_present": false,
+  "namespace_failure_present": false,
+  "sim_seconds": 26.58,
+  "actor_inferences": 1330,
+  "actor_fault": null,
+  "sensor_warmup_complete": true,
+  "child_ack_ready": true,
+  "scan_bspline_messages": 2,
+  "accepted_trajectory_id": 2,
+  "motion_bundle_count": 2,
+  "controller_commands": 699,
+  "controller_state": "running",
+  "healthy_nonzero_command_samples": 22,
+  "native_nonzero_ack_samples": 25,
+  "safety_samples": 103,
+  "all_safety_provenance_valid": true,
+  "safety_stop_samples": 0,
+  "safety_fault_samples": 0,
+  "last_simulation_safety": {
+    "source": {
+      "origin": "simulation_truth",
+      "source": "gazebo.native64.preupdate",
+      "clock_domain": "gazebo_simulation",
+      "run_id": "20261108T140702Z_portable_startup_smoke_8638",
+      "sample_stamp_ns": 26585000000,
+      "frame_stamp_ns": 26590000000
+    },
+    "purpose": "simulation_safety",
+    "stop": false,
+    "reason": null,
+    "fault_damping": false,
+    "state_contract_valid": true,
+    "state_contract_error": null
+  },
+  "last_worker_command_read": {
+    "sim_time": 26.58,
+    "command": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rejected": true,
+    "reason": "ValueError: Original source wall age expired"
+  },
+  "map_points": 57580,
+  "sensor_counts": {
+    "imu": 5271,
+    "camera": 798,
+    "lidar": 797,
+    "odom": 604,
+    "full_cloud": 604,
+    "colored_cloud": 603
+  },
+  "route_completed": false,
+  "no_leftover_containers": true,
+  "no_rviz": true,
+  "network": "none",
+  "runtime": "runc",
+  "cpu_limit": 4.0,
+  "memory_bytes": 8589934592,
+  "private_shm_bytes": 2147483648,
+  "device_shm_preflight": {
+    "uid": 1000,
+    "gid": 1000,
+    "gpu_devices": [],
+    "shm_mode": "0o1777",
+    "shm_capacity_bytes": 2147483648,
+    "shm_writable": true,
+    "shm_write_probe": "passed"
+  },
+  "limits": [
+    "One bounded default-flow smoke; not full-route or real-robot certification",
+    "Building variant source hashes verified but Building runtime not executed",
+    "No forced runtime safety faults; sampled receipts are not complete raw recording",
+    "The final actor read rejected stale source wall age and applied zero; freshness gate remained active"
+  ],
+  "nonfatal_log_notes": [
+    "One startup image frame discarded by FAST-LIVO2",
+    "SDF extension element and deprecated ROS_LOCALHOST_ONLY warnings",
+    "SCAN startup no sensor_pose warning; later ready with actual child ACK and2 Bspline publications"
+  ],
+  "component_exit_codes": {
+    "camera_parameters": 0,
+    "sensor_bridge": 0,
+    "slam": 0,
+    "command_bridge": 0,
+    "mission": 0,
+    "odom_adapter": 0,
+    "sensor_relay": 0,
+    "self_filter": 0,
+    "sensor_gate": 0,
+    "gazebo": 0,
+    "controller": 0,
+    "global_matching": 0,
+    "actor": 0,
+    "map_archive": 0,
+    "scan_supervisor": 0
+  },
+  "observed_yaw_delta_rad": 0.08470042433158236
+}

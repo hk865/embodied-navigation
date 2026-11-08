@@ -1,0 +1,53 @@
+{
+  "continuous_route_contract": {
+    "enabled": false,
+    "hard_stops": [
+      "exploration:11",
+      "exploration:17",
+      "return_origin:5",
+      "return_origin:13",
+      "navigation_f1_f3:7",
+      "navigation_f1_f3:13"
+    ],
+    "local_horizon_reason": "native Euclidean horizon must not span initial1m loop",
+    "local_planning_horizon_m": 0.65,
+    "ordered_original_regions": 46,
+    "ordinary_semantics": "pass_original_control_region",
+    "original_dwell_acceptance_claimed": false,
+    "region_progress_deadline_s": 90.0,
+    "version": "continuous_route/v34"
+  },
+  "controller_reference_revision": {
+    "actual_runtime_verified": false,
+    "change": "Spatial SCAN reference with finite chord constraints; original goal/TTL/protection/parking retained",
+    "revision": 20
+  },
+  "global_route_reference_contract": {
+    "direction_audit_arc_m": 0.8,
+    "enabled": true,
+    "guide_spacing_m": 1.0,
+    "guide_start_ahead_m": 0.35,
+    "max_guide_points": 64
+  },
+  "r85_auto_reference_contract": {
+    "body_ground_offset_m": 0.32,
+    "enabled": true,
+    "max_reference_points": 4096,
+    "reference_file": "r85_global_reference.json",
+    "require_child_odometry_consumption_ack": true,
+    "require_reference_protocol_ack": true,
+    "resume_from_actual_route_projection": true,
+    "scan_transport_offset_m": 0.4,
+    "schema": "r85_persistent_auto_reference/v1",
+    "terminal_heading_from_pct_approach": true
+  },
+  "registered_route_fence": {
+    "height_error_m": 0.3,
+    "horizontal_radius_m": 0.45,
+    "scope": "tube around frozen actual-SLAM registered scene-prior polyline; no Gazebo feedback"
+  },
+  "route_height_delta_m": 2.4,
+  "route_prior_source": "Given original scene43box geometry; axes of actual matched canonical map/world→navigation frame, measured initial SLAM origin; no IMU world orientation",
+  "route_world_points": null,
+  "scan_workspace_selector": "protected_baseline"
+}

@@ -1,0 +1,80 @@
+{
+  "combined_compute_contract": {
+    "actual_runtime_acceptance_inherited": false,
+    "lio_jacobian_threads": 4,
+    "vio_patch_min_points": 64,
+    "vio_patch_threads": 1
+  },
+  "known_scene_localization_contract": {
+    "IMU_world_orientation_used": false,
+    "bounded_foreground_surface_policy": {
+      "maximum_fraction": 0.05,
+      "minimum_static_surface_distance_m": 0.1,
+      "negative_static_first_hit_threshold_m": 0.12,
+      "original_all_point_coverage_and_ray_gates_retained": true,
+      "original_full_capped_RMS_ranking_retained": true,
+      "version": "known_scene_unmapped_foreground_v34r14"
+    },
+    "correction_release": {
+      "fresh_measured_zero_stop_required": true,
+      "frozen_same_source_body_residual_m": 0.005,
+      "original_origin_residual_m": 0.005,
+      "original_rotation_residual_rad": 0.003,
+      "version": "known_scene_frozen_body_convergence_v34r17"
+    },
+    "correction_trigger": {
+      "exact_worker_captured_body_required": true,
+      "origin_translation_is_diagnostic_only": true,
+      "rotation_rad": 0.025,
+      "translation_m": 0.04,
+      "translation_reference": "same_source_corrected_body_position",
+      "version": "known_scene_body_effect_v34r15"
+    },
+    "enabled": true,
+    "frontend_velocity_or_bias_repaired": false,
+    "independent_sensor_map": false,
+    "matcher_interval_s": 1.0,
+    "maximum_match_age_s": 3.0,
+    "maximum_source_age_s": 0.3,
+    "navigation_world_transform_source": "original_scenario.slam_origin_in_world",
+    "quality_diagnostic_capture": {
+      "final_receipt_requires_worker_drained": true,
+      "formal_R6_capture_complete": false,
+      "maximum_groups": 2,
+      "maximum_logical_and_allocated_bytes": 8388608,
+      "maximum_whole_raw_adapted_CDR_bytes": 1048576,
+      "maximum_whole_registered_CDR_bytes": 1572864,
+      "quality_gates_changed": false,
+      "trigger": "top_candidate_only_ray_p95_rejected",
+      "version": "known_scene_complete_CDR_diagnostic_v34r16"
+    },
+    "reference_kind": "provided_simulation_scene43box_geometry",
+    "robot_truth_pose_used": false,
+    "rotation_rate_radps": 0.02,
+    "route_axis_registration": {
+      "IMU_world_orientation_used": false,
+      "frozen_initial_commit_and_two_actual_source_matches_required": true,
+      "raw_IMU_use": "rates/acceleration for stationary initialization only",
+      "source": "actual_known_scene_canonical_frame",
+      "version": "known_scene_canonical_axes_v34r17",
+      "yaw_navigation_from_world_rad": 0.0
+    },
+    "schema": "known_scene_map_assisted_navigation/v1",
+    "startup_correction_commit_requires_navigation_idle": true,
+    "translation_rate_mps": 0.04
+  },
+  "pipeline": {
+    "image_copy_opt": 0,
+    "max_items": 512,
+    "mode": "serial",
+    "reserved_bytes": 67108864,
+    "schema": "pipeline_v19_contract/v1"
+  },
+  "slam_imu_online_estimation": {
+    "ba_bg_est_en": true,
+    "gravity_est_en": true
+  },
+  "slam_visual_measurement_covariance": 1000,
+  "known_scene_ray_quality_population": "nonforeground",
+  "known_scene_quality_model": "static_support_nonforeground/v1"
+}

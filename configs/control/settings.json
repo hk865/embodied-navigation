@@ -1,0 +1,567 @@
+{
+  "actor_kind": "student",
+  "arrival_control_radius_m": 0.25,
+  "arrival_height_half_span_m": 0.1,
+  "arrival_radius_m": 0.35,
+  "arrival_stop_policy": "after_measured_dwell",
+  "boundary_timing": true,
+  "cascade": {
+    "actual_navigation_verified": false,
+    "base_com_offset": [
+      0.05523092034548942,
+      -0.001869001919385796,
+      0.006095299184261034
+    ],
+    "command_limits": [
+      0.6,
+      0.2,
+      0.6
+    ],
+    "command_slew_per_s": [
+      0.6,
+      0.6,
+      0.8
+    ],
+    "controller_source_file": "cascade_command_source.json",
+    "desired_speed": 0.5,
+    "external_heading_gate": true,
+    "feedback_expected_hz": 30,
+    "feedback_ttl_sim_and_wall_s": 0.3,
+    "gains": {
+      "cross_kd": 0.2,
+      "cross_kp": 0.8,
+      "rate_ki": 0.2,
+      "rate_kp": 0.3,
+      "velocity_ki_x": 0.5,
+      "velocity_ki_y": 0.3,
+      "velocity_kp_x": 0.6,
+      "velocity_kp_y": 0.4,
+      "yaw_kd": 0.15,
+      "yaw_kp": 1.3
+    },
+    "goal_z_tolerance_m": 0.1,
+    "maximum_gyro_pair_gap_s": 0.02,
+    "navigation_ground_truth_used": false,
+    "r85_student_lower_loop_ack": {
+      "enabled": true,
+      "schema": "r85_student_lower_loop_ack/v1",
+      "r109_speed_tier": {
+        "schema": "r109_simulation_speed_tier/v1",
+        "simulation_only": true,
+        "cruise_mps": 0.5,
+        "student_longitudinal_limit_mps": 0.6,
+        "planning_horizon_m": 0.65
+      }
+    },
+    "spatial_reference": {
+      "arc_length_m": 0.2,
+      "curvature_feedforward_enabled": true,
+      "curvature_speed_limit_enabled": true,
+      "derivative_step_m": 0.05,
+      "enabled": true,
+      "maximum_chord_deviation_m": 0.03,
+      "minimum_chord_ratio": 0.5,
+      "yaw_acceleration_reserve_radps2": 0.2,
+      "yaw_command_slew_radps2": 0.8,
+      "yaw_rate_reserve_radps": 0.12
+    },
+    "parking_pose10hz": {
+      "schema": "parking_pose10hz_fixed_anchor/v1",
+      "period_ns": 100000000,
+      "duration_ns": 5000000000,
+      "xy_drift_m": 0.05,
+      "yaw_drift_rad": 0.1,
+      "source_age_ns": 300000000,
+      "sampling": "latest_distinct_header_at_or_before_grid",
+      "interpolation": false,
+      "high_frequency_motion_gate": false,
+      "adjacent_increment_gate": false
+    }
+  },
+  "cascade_runtime_revision": "same_gains_20hz_wall_tick_actual_header_dt_sensor_sampling_v9_clock_hold",
+  "checkpoint_sha256": "7b59b8c7eafc9ffbc2dc32aaa2df3dadec3269d039338e4f93217bc73af66fd9",
+  "clear_guard_gap_max_sim_s": 0.3,
+  "controller_kind": "student",
+  "controller_selector": "engineering_v34_continuous_known_map",
+  "corridor": {
+    "mode": "off",
+    "retain_valid_plan": false,
+    "snapshot_request_period_s": 0.5
+  },
+  "diagnostic_observe_only": {
+    "compact_pid_path_receipt": true,
+    "enabled": false,
+    "existing_basis": "R31E diagnostic_check_invalid + R83 actual-SLAM owned finite runtime",
+    "formal_acceptance_pass_allowed": false,
+    "full_evidence_after_endpoint": true,
+    "maximum_physics_rounds": 1,
+    "navigation_truth_injection": false,
+    "original_failed_checks_retained": true,
+    "recording_requested": true,
+    "schema": "r85_existing_diagnostic_business_observation/v1",
+    "simulation_only": true
+  },
+  "diagnostic_scope": {
+    "arrival_gate_source": "original46 three_platform_body_arrival_v2, not inherited32 uniform discs",
+    "baseline_version": "closed_loop_multifloor_v7",
+    "detail_window_sim_s": [
+      1600,
+      1601
+    ],
+    "finite_horizon_s": 1500.0,
+    "navigation_outcome_is_not_full_route_pass": true,
+    "purpose": "New automatic global single goal experiment; static diagnostics not navigation PASS",
+    "route_controller_gates_unchanged": false,
+    "solver_diagnostics_outside_detail": "NOT_COLLECTED, not zero"
+  },
+  "dwell_sim_s": 0.4,
+  "engineering_contract": {
+    "SLAM_CPP_changed": false,
+    "SLAM_build_reused_from": "map_surface_v32/slam_ws",
+    "actual_navigation_verified": false,
+    "backend_control_adoption": true,
+    "backend_control_scope": "navigation frame only; frontend state never reset",
+    "connector_and_terminal_dwell_gates_unchanged": true,
+    "cutoff_is_success": false,
+    "historical_pass_inherited": false,
+    "independent_sensor_submaps_implemented": false,
+    "ordinary_arrival_semantics": "ordered_route_pass/v34",
+    "original_46_region_definitions_and_arrival_gates_unchanged": false,
+    "original_46_region_definitions_unchanged": true,
+    "original_mission_global_cap_s": 1500.0,
+    "profile_name": "engineering_nav46.json",
+    "reference_kind": "provided_simulation_scene43box_geometry",
+    "runtime_cutoff_sim_elapsed_s": 1500.0,
+    "schema": "go2_engineering_v34_launch/v1",
+    "shadow_localization_is_navigation_PASS": false,
+    "simulation_only": true,
+    "surface_validity_flag": 0
+  },
+  "engineering_recording": {
+    "compact_histories": {
+      "codec": "v33_dictionary_jsonl/v1",
+      "enabled": true,
+      "live_inputs_unchanged": true,
+      "original_JSON_values_preserved": true,
+      "streams": [
+        "navigation_command_history.jsonl",
+        "navigation_status.jsonl",
+        "mission46_status_history.jsonl"
+      ]
+    },
+    "current_run_RGB_map_save_required": true,
+    "dense_solver_payload_acceptance": "UNVERIFIED",
+    "dense_solver_payload_collected": false,
+    "dense_window_outside_original1500s_cap": true,
+    "live_SLAM_inputs_unchanged": true,
+    "omitted_cloud_replay_acceptance": "UNVERIFIED",
+    "optional_IPC_payload_max_bytes": 71303168,
+    "overview_archive_stride": 1,
+    "raw_source_capture": false,
+    "registered_cloud_archive": "disabled",
+    "state_stage_timing_kept": true,
+    "whole_session_budget_bytes": 160000000000
+  },
+  "excluded": [
+    "real_robot",
+    "true_stairs",
+    "fully_sensor_replaced_actor"
+  ],
+  "expected_region_count": 46,
+  "expected_stage_region_counts": {
+    "exploration": 18,
+    "navigation_f1_f3": 14,
+    "return_origin": 14
+  },
+  "experiment": "R73_minimal_simulation_diagnostic_baseline",
+  "export_sha256": "d8b51361ada74a80beb5e64f892447ea406d136be4c76a6ab15bae2d9b6c6185",
+  "goal_timeout_sim_s": 90.0,
+  "interface_version": "navigation_v4_latest_clock_measured_transition",
+  "lio_jacobian_parallelism": {
+    "floating_reduction_changed": false,
+    "parallel_min_rows": 256,
+    "row_operation_order": "original_V12",
+    "threads": 4
+  },
+  "map_surface_contract": {
+    "SLAM_workspace": "map_surface_v32/slam_ws",
+    "actual_loaded_binary_witness_required": true,
+    "actual_navigation_verified": false,
+    "algorithm_change": "Original lambda_min threshold AND normalized surface support validity when runtime flag1; diagnostics/storage bounded in botharms",
+    "backend_connected": false,
+    "cutoff_is_success": false,
+    "full46_verified": false,
+    "historical_pass_inherited": false,
+    "independent_build_required": true,
+    "original_46_region_definitions_and_arrival_gates_unchanged": true,
+    "original_mission_global_cap_s": 1500.0,
+    "prefix_only": false,
+    "profile_name": "repair_original46.json",
+    "runtime_cutoff_sim_elapsed_s": 1500.0,
+    "schema": "map_surface_v32_launch/v1",
+    "simulation_only": true,
+    "support_diagnostic": {
+      "bounds": "14:18,-1:3,0:1.5",
+      "max_bytes": 67108864,
+      "raw_truth_navigation_used": false,
+      "source_kinds": [
+        104,
+        105
+      ],
+      "windows": "0:15,209:215"
+    },
+    "surface_parameters": {
+      "maximum_normalized_rss_per_dof": 4.0,
+      "minimum_mid_max_ratio": 0.05,
+      "minimum_support_points": 6,
+      "normal_variance_floor_m2": 1e-08,
+      "original_min_eigenvalue_threshold_m2": 0.005
+    },
+    "surface_validity_input": "run.py --surface-validity {0,1}; frozen runtime_plan field, never profile variant"
+  },
+  "max_lateral_speed_mps": 0.2,
+  "max_simulation_duration_s": 800.0,
+  "max_speed_mps": 0.5,
+  "max_yaw_rate_radps": 0.6,
+  "minimum_available_storage_bytes": 107374182400,
+  "mission46_final_hold_sim_s": 5.0,
+  "mission46_required": false,
+  "mission46_runtime_interfaces": [
+    "multi_request_controller",
+    "whole_mission_worker",
+    "current_rgb_map_save",
+    "original_dynamic_obstacle",
+    "bidirectional_terrain_provider"
+  ],
+  "mission46_source_timeout_s": 0.3,
+  "navigation_ground_truth_used": false,
+  "navigation_is_verified": false,
+  "navigation_settle_statistics_contract": {
+    "dynamic_recovery_path_admission_localization_hold_use_legacy": true,
+    "eligible_phase": "settle",
+    "eligible_purposes": [
+      "request_start",
+      "region_transition",
+      "path_rebind",
+      "heading_change"
+    ],
+    "enabled": true,
+    "euler_net_change_rad": 0.0015,
+    "euler_peak_to_peak_rad": 0.003,
+    "gyro_mean_norm_radps": 0.005,
+    "gyro_peak_norm_radps": 0.1,
+    "gyro_rms_norm_radps": 0.05,
+    "legacy_stop_predicate_retained": true,
+    "original_per_sample_zero_speed_yaw_pair_gap_freshness_retained": true,
+    "schema": "navigation_settle_statistics/v1",
+    "source": "Actual accepted SLAM pose and causal body gyro; no native/truth pose gate",
+    "window_s": 1.0,
+    "xy_diameter_m": 0.003,
+    "xy_net_change_m": 0.002
+  },
+  "ordinary_terminal_parking_contract": {
+    "schema": "ordinary_pose10hz_zero_ack_fixed5/v1",
+    "enabled": true,
+    "T0": "first_10hz_geometric_capture_and_actual_zero_ACK_qualification_clock",
+    "duration_ns": 5000000000,
+    "reset_window": false,
+    "keep_legacy_arrival_window": true,
+    "capture_timeout": "original_active_goal_timeout_s_from_separate_capture_begin",
+    "capture_xy_m": 0.025,
+    "capture_yaw_rad": 0.035,
+    "capture_dwell_ns": 600000000,
+    "pose10hz": {
+      "schema": "parking_pose10hz_fixed_anchor/v1",
+      "period_ns": 100000000,
+      "duration_ns": 5000000000,
+      "xy_drift_m": 0.05,
+      "yaw_drift_rad": 0.1,
+      "source_age_ns": 300000000,
+      "sampling": "latest_distinct_header_at_or_before_grid",
+      "interpolation": false,
+      "high_frequency_motion_gate": false,
+      "adjacent_increment_gate": false
+    },
+    "source_age_ns": 300000000
+  },
+  "original_mission_definition_sha256": "655fc83b20140a1aed575926e92e42447af91ca63c299aab3e26e99d03a73e30",
+  "pid": {
+    "derivative_filter_tau_s": 0.2,
+    "header_gap_max_s": 0.3,
+    "position_derivative_source": "actual SLAM body-origin twist transformed by the actual SLAM rotation",
+    "position_integral_limit": 0.4,
+    "position_kd": 0.12,
+    "position_ki": 0.08,
+    "position_kp": 0.6,
+    "slew_acceleration": [
+      0.3,
+      0.3,
+      0.25
+    ],
+    "yaw_derivative_source": "actual body-transformed IMU gyro; no IMU yaw localization",
+    "yaw_integral_limit": 0.3,
+    "yaw_kd": 0.15,
+    "yaw_ki": 0.04,
+    "yaw_kp": 1.1
+  },
+  "policy_observations": "Exact Student45 native sensor proxy; privileged native velocity inner PID; actual corrected SLAM/IMU/cloud/SCAN only for navigation",
+  "pose_cloud_timeout_s": 0.3,
+  "protocol_case_id": "ramp12_up_full",
+  "r73_minimal_diagnostic_baseline": {
+    "enabled": false
+  },
+  "r74_cooperative_executor": {
+    "enabled": true,
+    "schema": "r74_spin_once_zero_yield/v1"
+  },
+  "r74_corrected_metadata_latest_only": {
+    "enabled": true,
+    "schema": "r74_corrected_metadata_keep_last1_delivery/v1"
+  },
+  "r74_dynamic_causal_intake": {
+    "enabled": true,
+    "schema": "r74_bounded_dynamic_mission_clock_intake/v1"
+  },
+  "r74_independent_ros_clock": {
+    "enabled": true,
+    "schema": "r74_independent_clock_callback_group/v1"
+  },
+  "r85_active_turn_braking": {
+    "enabled": false
+  },
+  "r85_completed_history_async_qualification": {
+    "enabled": false
+  },
+  "r85_imu_source_buffer": {
+    "enabled": true
+  },
+  "r85_neutral_rate_brake_capture": {
+    "enabled": false
+  },
+  "r85_pid_archive_snapshot": {
+    "enabled": false
+  },
+  "r85_pre_zero_integral_unload": {
+    "enabled": false
+  },
+  "r85_quiet_handoff_target": {
+    "enabled": false
+  },
+  "r85_session": {
+    "enabled": true,
+    "maximum_retained_bytes": 170000000000,
+    "maximum_round_bytes": 10000000000,
+    "schema": "r85_pct_scan_student_session/v1",
+    "simulation_only": true
+  },
+  "r85_stance_support_handoff": {
+    "enabled": false
+  },
+  "r85_student_yaw_measurement_p_retention": {
+    "enabled": false
+  },
+  "r85_student_yaw_pd_fade": {
+    "enabled": false
+  },
+  "r85_task": {
+    "kind": "f1_to_f3",
+    "maximum_task_sim_s": 770,
+    "minimum_progress_m": 0.5,
+    "progress_window_sim_s": 90,
+    "typed_route_source_file": "${PROJECT_ROOT}/assets/geometry/route.json"
+  },
+  "r85_teacher_pre_zero_heading_p_taper": {
+    "enabled": false
+  },
+  "r86_prepared_feedback": {
+    "enabled": true,
+    "schema": "r86_prepared_corrected_feedback/v1"
+  },
+  "raw_budget_bytes": 130000000000,
+  "raw_storage_budget": {
+    "max_run_bytes": 170000000000,
+    "minimum_runtime_available_bytes": 107374182400,
+    "minimum_start_available_bytes": 107374182400
+  },
+  "recovery_fresh_pose_samples": 2,
+  "recovery_min_pose_span_sim_s": 0.1,
+  "request_startup_timeout_sim_s": 90.0,
+  "request_startup_timeout_wall_s": 600.0,
+  "requires_bidirectional_layer_switches": true,
+  "return_to_origin": false,
+  "scene_initial_support_z": 0.0,
+  "scene_xy_anchor_uncertainty_m": 0.15,
+  "schema_version": 1,
+  "selector": "f1_to_f3",
+  "sensor_sampling": {
+    "baseline_run": "20261005_175143_closed_loop_cascade_height_diag_baseline_r1_6fdf",
+    "camera_hz": 30,
+    "control_wall_tick_s": 0.05,
+    "horizontal_samples": 480,
+    "lidar_hz": 30,
+    "scope": "sensor-only prospective change; geometric map algorithm and gains unchanged",
+    "vertical_lines": 64
+  },
+  "sensor_warmup_sim_s": 2.0,
+  "software_multicore": {
+    "VIO_explicit_parallel_loop_enabled": false,
+    "VIO_global_reduction_enabled": false,
+    "VIO_patch_team": 1,
+    "estimator_arithmetic_or_plane_association_changed": false,
+    "lio_compile_definitions": [
+      "MP_EN",
+      "MP_PROC_NUM=4"
+    ],
+    "lio_translation_unit": "voxel_map.cpp",
+    "schema": "fastlivo_independent_LIO4_VIO_patch1/v1",
+    "teacher_cpu_threads": 1,
+    "vio_translation_unit": "vio.cpp"
+  },
+  "teacher_transition": {
+    "drive_heading_max_rad": 0.2,
+    "gyro_pose_pair_max_s": 0.15,
+    "stop_body_gyro_radps": 0.05,
+    "stop_min_pose_samples": 3,
+    "stop_planar_speed_mps": 0.03,
+    "stop_pose_gap_max_s": 0.2,
+    "stop_slam_yaw_rate_radps": 0.05,
+    "stop_window_sim_s": 0.3,
+    "turn_complete_rad": 0.1
+  },
+  "vio_patch_parallel": {
+    "offline_preflight_required": true,
+    "reduction": "original_index_order_float_error_and_int_count",
+    "runtime_acceptance_inherited": false,
+    "serial_below_patch_count": 64,
+    "threads": 1
+  },
+  "warmup_history": {
+    "body_odom": {
+      "min_samples": 10,
+      "min_span_sim_s": 2.0
+    },
+    "camera_info": {
+      "min_samples": 10,
+      "min_span_sim_s": 2.0
+    },
+    "cloud": {
+      "min_samples": 10,
+      "min_span_sim_s": 2.0
+    },
+    "image": {
+      "min_samples": 10,
+      "min_span_sim_s": 2.0
+    },
+    "imu": {
+      "min_samples": 600,
+      "min_span_sim_s": 2.9
+    },
+    "raw_lidar": {
+      "min_samples": 10,
+      "min_span_sim_s": 2.0
+    }
+  },
+  "r109_speed_tier": {
+    "schema": "r109_simulation_speed_tier/v1",
+    "simulation_only": true,
+    "cruise_mps": 0.5,
+    "student_longitudinal_limit_mps": 0.6,
+    "planning_horizon_m": 0.65
+  },
+  "r128_observed_approach_trigger": {
+    "schema": "r128_observed_approach_trigger/v1",
+    "enabled": true,
+    "lead_window_m": [
+      2.4,
+      2.7
+    ]
+  },
+  "ordinary_turn_control_handoff": {
+    "enabled": true,
+    "schema": "ordinary_turn_continuous_control/v1"
+  },
+  "sensor_relay_publish_mode": "async",
+  "runtime_limits": {
+    "maximum_runtime_wall_s": 2400,
+    "maximum_cleanup_wall_s": 300,
+    "maximum_retained_bytes": 170000000000,
+    "maximum_round_bytes": 10000000000,
+    "additional_reserved_bytes": 10000000000
+  },
+  "student_runtime": {
+    "schema": "student_runtime_exact45_fixed_pid/v2",
+    "actor_kind": "student",
+    "training_identity": "016 formal online action-distillation student model_4999, 5000 updates; 017 export only",
+    "observation_dimension": 45,
+    "observation_clip": null,
+    "noise": false,
+    "observation_source": "native gyro/quaternion/q/qd sim2sim proxies; actual policy command and previous raw action; no height/linvel/pose/effort/contact",
+    "teacher247_role": "original clipped builder retained as diagnostics and original safety/provider data; not Student actor input",
+    "recurrent_shape": [
+      1,
+      1,
+      256
+    ],
+    "recurrent_reset": "run/robot startup only; no reset on command, zero, PID, path or waypoint changes",
+    "action_clip": null,
+    "action_scale": 0.25,
+    "policy_step_s": 0.02,
+    "physics_step_s": 0.005,
+    "native_response_deadline_ms": 200,
+    "source_freshness_ms": 300,
+    "command_bounds": [
+      0.3,
+      0.2,
+      0.3
+    ],
+    "command_slew_acceleration": [
+      0.6,
+      0.6,
+      0.8
+    ],
+    "pid": {
+      "kp": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "ki": [
+        0.2,
+        0.2,
+        0.15
+      ],
+      "kd": [
+        0.02,
+        0.02,
+        0.015
+      ],
+      "integral_bounds": [
+        0.15,
+        0.4,
+        0.2
+      ],
+      "derivative_filter_tau_s": 0.08,
+      "correction_bounds": [
+        0.08,
+        0.1,
+        0.08
+      ]
+    },
+    "feedback_source": "privileged native COM body vx/vy/body omega_z sim2sim correction; only affects actor through command3",
+    "reset_schema": "student_velocity_pid_motion_epoch_zero_reset/v2",
+    "motion_epoch": "accepted controller_source.request_id + waypoint_index; run_start separately; no reset merely for numerical request changes or trajectory ID",
+    "zero_reset": "accepted original exact-zero request including protection/ordinary hold; no PID correction; ordinary frame-local takeover remains original authority",
+    "direction_flip_reset": false,
+    "reset_counters": "record new resets and old constant-segment implementation would-reset count each policy frame",
+    "worker_slew_owner": "original legacy prepare_velocity_input only; PID correction-only has no command/slew cache",
+    "command_order": "original accepted guarded request -> bounded PID correction -> one original worker slew -> original ordinary zero_before_observation -> original diagnostic247 -> exact45 -> Student actual inference -> known-command ACK on next native request",
+    "mode_switch": "fixed actor_kind for entire frozen run; no hot switch",
+    "navigation_pose_source": "/demo/slam/body_odom in camera_init; native position never navigation/arrival authority",
+    "simulation_only": true,
+    "navigation_verified": false,
+    "baseline_modified": false
+  },
+  "resource_count_roots": [
+    "runs"
+  ]
+}

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "embodied-navigation"
+version = "0.1.0"
+description = "Functional navigation source, simulation and offline regression"
+requires-python = ">=3.12,<3.13"
+dependencies = ["numpy==1.26.4", "scipy==1.11.4", "PyYAML==6.0.1"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+embodied-navigation = "embodied_navigation.launch.main:main"
+relative-slam-navigation = "embodied_navigation.navigation.relative_slam_node:main"

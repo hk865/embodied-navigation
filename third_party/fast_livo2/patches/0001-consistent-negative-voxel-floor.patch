@@ -1,0 +1,42 @@
+--- a/fast_livo2_core/src/vio.cpp
++++ b/fast_livo2_core/src/vio.cpp
+@@ -255,8 +255,8 @@
+   float loc_xyz[3];
+   for (int j = 0; j < 3; j++)
+   {
+-    loc_xyz[j] = pt_w[j] / voxel_size;
+-    if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
++    loc_xyz[j] = floor(pt_w[j] / voxel_size);
++    // floor() already handles negative coordinates; shared insertion/retrieval key.
+   }
+   VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+   auto iter = feat_map.find(position);
+@@ -435,7 +435,7 @@
+     for (int j = 0; j < 3; j++)
+     {
+       loc_xyz[j] = floor(pt_w[j] / voxel_size);
+-      if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
++      // floor() already handles negative coordinates; shared insertion/retrieval key.
+     }
+     VOXEL_LOCATION position(loc_xyz[0], loc_xyz[1], loc_xyz[2]);
+ 
+@@ -563,7 +563,7 @@
+         for (int j = 0; j < 3; j++)
+         {
+           loc_xyz[j] = floor(sample_point_w[j] / voxel_size);
+-          if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
++          // floor() already handles negative coordinates; shared insertion/retrieval key.
+         }
+ 
+         VOXEL_LOCATION sample_pos(loc_xyz[0], loc_xyz[1], loc_xyz[2]);
+@@ -1154,8 +1154,8 @@
+     float loc_xyz[3];
+     for (int j = 0; j < 3; j++)
+     {
+-      loc_xyz[j] = p_w[j] / 0.5;
+-      if (loc_xyz[j] < 0) { loc_xyz[j] -= 1.0; }
++      loc_xyz[j] = floor(p_w[j] / 0.5);
++      // floor() already handles negative coordinates; shared insertion/retrieval key.
+     }
+     VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
+     auto iter = plane_map.find(position);

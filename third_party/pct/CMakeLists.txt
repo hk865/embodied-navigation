@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(pct_cli LANGUAGES CXX)
+find_package(Eigen3 REQUIRED)
+add_executable(pct_astar pct_cli.cpp native/a_star/a_star_search.cc)
+target_include_directories(pct_astar PRIVATE native)
+target_link_libraries(pct_astar PRIVATE Eigen3::Eigen)
+target_compile_features(pct_astar PRIVATE cxx_std_17)
+install(TARGETS pct_astar RUNTIME DESTINATION .)

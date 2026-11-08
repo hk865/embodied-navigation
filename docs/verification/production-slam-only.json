@@ -1,0 +1,8 @@
+{
+  "old_file": "navigation/truth_navigation.py",
+  "new_file": "navigation/building_navigation.py",
+  "original_sha256": "781d57f066a1dd0eb752ba43756dd7914ff0962feb45d05704d7bb11e756cdd4",
+  "transformation": "Production SLAM branch specialized mechanically; all numeric expressions retained. Truth-mode configuration rejected before ROS initialization. Raw-truth publisher/callback removed.",
+  "wire_compatibility": "Existing /truth/* topic and truth_navigation_*.json names remain legacy protocol names, not pose provenance; every runtime output declares navigation_ground_truth_used=false.",
+  "source_archive_preserved": true
+}

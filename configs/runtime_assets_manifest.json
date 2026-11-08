@@ -1,0 +1,232 @@
+[
+  {
+    "relative": "assets/README.md",
+    "bytes": 2457,
+    "sha256": "75eaa4d3e6b82771ea14dfc93cb7219861081792a27138b70a19aeda3a1b24f9"
+  },
+  {
+    "relative": "assets/building/building_tomogram_safe.npz",
+    "bytes": 527724,
+    "sha256": "2d2b24943ebfc579768b545980ca03adeccb83acbddbcac7f9f6b8e291bb23b1"
+  },
+  {
+    "relative": "assets/building/sensor_bridge.yaml",
+    "bytes": 3039,
+    "sha256": "ab7f441b8c3ab0e69717b8c5bb102221a9ce4eee114373220f737b398f688804"
+  },
+  {
+    "relative": "assets/building/SOURCE.json",
+    "bytes": 603,
+    "sha256": "8f2d9aaa77f7e0b8e9b5b720c4e8a233c1213dcf24d9eab0c0fb07d1666a6c0f"
+  },
+  {
+    "relative": "assets/building/building2_9.pcd",
+    "bytes": 48000221,
+    "sha256": "8721efeb74415336d47c97d861d6e30ad213669b120d5b37c62461100c1f2eae"
+  },
+  {
+    "relative": "assets/building/building_triangles.npz",
+    "bytes": 248267,
+    "sha256": "8e74cd7dbb823bd6d8a5b2dad4df76d2f6e336b26493aa422e9f53d2e606eb4b"
+  },
+  {
+    "relative": "assets/building/README.md",
+    "bytes": 1267,
+    "sha256": "f5846a88e07694ee034265a4121a6fa1af0baeb43246d473978e8167a88406c1"
+  },
+  {
+    "relative": "assets/building/UPSTREAM_PCT_NOTICE",
+    "bytes": 1440,
+    "sha256": "f54d537d2af9c11952abd6dbcb60fdfa536c7d996844ef3afa5f77b1a8b10ca7"
+  },
+  {
+    "relative": "assets/building/UPSTREAM_LICENSE",
+    "bytes": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "relative": "assets/building/UPSTREAM_UNITREE_BSD",
+    "bytes": 1558,
+    "sha256": "84aac59fd3246e3ddc49d1387644e8fcf43b0def4f0b9fe687f372e90446df2d"
+  },
+  {
+    "relative": "assets/building/Building.dae",
+    "bytes": 20034491,
+    "sha256": "40656559c56f37320789c779e59f7db4d4d3d7fcb4387cbaff3010d2cbe9fdc0"
+  },
+  {
+    "relative": "assets/building/UPSTREAM_PCT_GPL_2.0",
+    "bytes": 18092,
+    "sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643"
+  },
+  {
+    "relative": "assets/building/sensor_contract.json",
+    "bytes": 3002,
+    "sha256": "5d3aaf08047cb257f0da5da04b165c9eec881882c10e54f50ceda0ae4ff750b1"
+  },
+  {
+    "relative": "assets/building/terrain_targets.json",
+    "bytes": 240,
+    "sha256": "ca189a6971f8c954d752ab9914faedd036e203d5bc4ebcba21055a5fcd6bfa56"
+  },
+  {
+    "relative": "assets/building/world.sdf.in",
+    "bytes": 58715,
+    "sha256": "f268c4680b8ad38820f8784e15c895ec8a9871bd2a94bf08dad21f9e70088b32"
+  },
+  {
+    "relative": "assets/world/go2_converted.sdf",
+    "bytes": 48537,
+    "sha256": "37d4a2e32c87ef0e2f48f9d5b556fbe6440dba3f7af62674aef9f21b56f52c6c"
+  },
+  {
+    "relative": "assets/world/go2_measured.urdf",
+    "bytes": 25832,
+    "sha256": "5143d2409f04379bcf1acb9a411a84d103456a3e1ece26cd59cc434d8ede409a"
+  },
+  {
+    "relative": "assets/world/three_floors.sdf",
+    "bytes": 25343,
+    "sha256": "1f781af572ba8ce70ff926e9789cc1a9db326e61822660fcb66a623eb3765161"
+  },
+  {
+    "relative": "assets/meshes/trunk.dae",
+    "bytes": 10727399,
+    "sha256": "e52bebbb5c7ff1f6aedee620c9b5b349f6e965360ecc63a9bb743eeff2d0be64"
+  },
+  {
+    "relative": "assets/meshes/hip.dae",
+    "bytes": 4666421,
+    "sha256": "8735e10617afe252cef0844c1d139d15bc6d4c653660d742fea9fe05c2704d8f"
+  },
+  {
+    "relative": "assets/meshes/VLP16_scan.dae",
+    "bytes": 23053,
+    "sha256": "1d153783195adc3af084195fe987fa0efa79d815fd29b08935749159d8a6488f"
+  },
+  {
+    "relative": "assets/meshes/thigh_mirror.dae",
+    "bytes": 3896575,
+    "sha256": "c7bae0b0565c2aa4b7cc15a538d795e9153e0f10c821cc18429e92693172bdc6"
+  },
+  {
+    "relative": "assets/meshes/d455.stl",
+    "bytes": 2558184,
+    "sha256": "47e8321db7cb42291810c69329ab10b601108d651dfcac28bfc12469fa142fa6"
+  },
+  {
+    "relative": "assets/meshes/L1_4D_Lidar.dae",
+    "bytes": 1925390,
+    "sha256": "24b17ce83b64fbda44750de28d8b920c96c9137b44253dc4e1460a97e6412aeb"
+  },
+  {
+    "relative": "assets/meshes/VLP16_base_2.dae",
+    "bytes": 184777,
+    "sha256": "fdbb99489bb948cd605916ca99b15f6654f5fd4e883c81aefadd6589653921c2"
+  },
+  {
+    "relative": "assets/meshes/VLP16_base_1.dae",
+    "bytes": 265306,
+    "sha256": "cb3a270b85e089940c14ce9b0ac54ba3a112cd7793df6b7494b116cf1b2b156e"
+  },
+  {
+    "relative": "assets/meshes/calf.dae",
+    "bytes": 1125517,
+    "sha256": "29872fa1a435b92bc2b395fdfa7f0aee26101db3c494681896bd4ef24ee7883c"
+  },
+  {
+    "relative": "assets/meshes/thigh.dae",
+    "bytes": 3884136,
+    "sha256": "a622381ae308897ff143b8bbf02f075457c342b22984205040424a5a983246fa"
+  },
+  {
+    "relative": "assets/geometry/reference.json",
+    "bytes": 35996,
+    "sha256": "f37a0693f6ad463a5ba2edbb8415b035d0dfef115470319dae92885257de4914"
+  },
+  {
+    "relative": "assets/geometry/world.sdf",
+    "bytes": 97142,
+    "sha256": "ffbab1bcc252d6f54472c52300f1cd959feea0b50b652723d96050a52f93989a"
+  },
+  {
+    "relative": "assets/geometry/canonical_frame.json",
+    "bytes": 246479,
+    "sha256": "189b0c68c65fc8997e6b565955ca22b25184f8d94d5471f55f99e5019a8353bd"
+  },
+  {
+    "relative": "assets/geometry/limits.json",
+    "bytes": 764,
+    "sha256": "b07c1ca356fd5dbe8071a9c2db7a02d885da3e479ce2d0ba3f995cca04ff54fe"
+  },
+  {
+    "relative": "assets/geometry/metadata.json",
+    "bytes": 215588,
+    "sha256": "9f0ce465c37ac0c93c3bc31a00bf21dba37cd34d953031e810f65cccc5dc875e"
+  },
+  {
+    "relative": "assets/geometry/route.json",
+    "bytes": 98854,
+    "sha256": "86887b72b5db2fab1b5395610ed8e7a66e058fca76132124f800cb47e08543e0"
+  },
+  {
+    "relative": "assets/geometry/route_physical.json",
+    "bytes": 6560,
+    "sha256": "48be975514cd82ff2784c2392ced3a0f17d8c156a9dd5b8bcdeb1c7fec53aa79"
+  },
+  {
+    "relative": "assets/building/routes/third_stair_short.json",
+    "bytes": 9685,
+    "sha256": "d5104e776c39d4b15f967efa7620bbcef52fda93739c98fc686100f27e3d3565"
+  },
+  {
+    "relative": "assets/building/routes/second_stair_short.json",
+    "bytes": 9624,
+    "sha256": "2034f0ed664b54fa24a7ad6f4b8b330000b7e0baa88a9406e5d22f7c34737c67"
+  },
+  {
+    "relative": "assets/building/routes/multi_floor2.json",
+    "bytes": 148683,
+    "sha256": "0da3d5c1115d9a617d13915ef6e2df9882cd112b9abec8fa796692098b11c72a"
+  },
+  {
+    "relative": "assets/building/routes/combined_floor1_inside.json",
+    "bytes": 81063,
+    "sha256": "7c40507742023771c26e1d6a3734f8c348a964f7c6fbf883c93a905d3aff0b16"
+  },
+  {
+    "relative": "assets/building/routes/stairs_short.json",
+    "bytes": 24251,
+    "sha256": "768d4364cf71fe80017695730cd94aecffced587c143d48d17f284b8db7bd70e"
+  },
+  {
+    "relative": "assets/building/routes/single_floor_turn.json",
+    "bytes": 16053,
+    "sha256": "376e3fb46a87b0997204bed24e71a0c04e12b9b3a5972a4ee3e87af7a190a142"
+  },
+  {
+    "relative": "assets/building/routes/single_floor_loop.json",
+    "bytes": 9125,
+    "sha256": "31a79e85ab422a26e0358837d64ae676570325d2c60852e9bf94c025dda5f2a0"
+  },
+  {
+    "relative": "models/student_model_4999_deterministic_jit.pt",
+    "bytes": 1342573,
+    "sha256": "c8326d1ce92d800ba66fd8d9f283f057e789583eac0d97909a6d9e252fbe512b"
+  },
+  {
+    "relative": "models/README.md",
+    "bytes": 1455,
+    "sha256": "f4477d47919108fced0850497195a0bdf6077f415bc94cc463b5a29f6b6517e5"
+  },
+  {
+    "relative": "models/MODEL_NOTICE.md",
+    "bytes": 3378,
+    "sha256": "5a52babe92be69533d44a79c8cd842445120eaf597c101b38eda02a24256d3da"
+  },
+  {
+    "relative": "models/robogauge_policy.pt",
+    "bytes": 6399130,
+    "sha256": "bde5210a8114aa08bb0c611e49def1482faa1b2441673e5681374c30b935e32e"
+  }
+]

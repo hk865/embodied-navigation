@@ -1,0 +1,42 @@
+{
+  "date": "2026-11-08",
+  "first_fresh_public_base_build": true,
+  "public_base": "ros:jazzy-ros-base@sha256:8eed0a4669bbf43ee331878a4c39bd8ebddea8e3312a58b4fae8edb14526b617",
+  "apt_ubuntu_mirror_used": "https://mirrors.ustc.edu.cn/ubuntu",
+  "native_ros_packages_built": 11,
+  "owned_native_modules_built": 4,
+  "pinned_public_sources_sha256_verified": true,
+  "custom_prebuilt_source_or_install_used": false,
+  "final_python_source_refreshed_after_native_build": true,
+  "tested_image": "sha256:b4cbdc62510b142e90a82760c80168d5f6fdb4f739f80e60d83adf790ad805ef",
+  "unit_tests": {
+    "run": 48,
+    "passed": 48,
+    "skipped": 0
+  },
+  "regression_tests": {
+    "run": 62,
+    "passed": 60,
+    "skipped": 2,
+    "skip_reason": "Private measured terrain integration data not included in build input"
+  },
+  "selfcontained_45s_software_smoke_passed": true,
+  "full_route_completed": false,
+  "building_variant_executed": false,
+  "isaac_executed": false,
+  "physical_robot_executed": false,
+  "public_release_license_clearance_complete": false,
+  "network_notes": [
+    "Default Ubuntu archive HTTPS timed out; an explicit signed Ubuntu mirror was used",
+    "A transient Ubuntu index refresh in the Gazebo install layer reused indexes downloaded earlier in that same RUN; all package installation and signature checks succeeded"
+  ],
+  "limitations": [
+    "Base and apt package repository are versioned distributions, not immutable snapshot pins",
+    "Assets and models are separate inputs; private weights/maps have no fabricated public download URL",
+    "Isaac experimental runtime and live bridge closure are not fully ported"
+  ],
+  "final_application_image": "sha256:b4cbdc62510b142e90a82760c80168d5f6fdb4f739f80e60d83adf790ad805ef",
+  "final_application_refreshed_from_same_fresh_source_built_native_baseline": true,
+  "building_entry_prepare_only_passed": true,
+  "final_software_smoke_current_source_files_verified": 15
+}

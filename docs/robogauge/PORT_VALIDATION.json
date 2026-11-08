@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-08",
+  "portable_source_files": 39,
+  "source_archive_hashes_rechecked": 19,
+  "original_motor_source_byte_identical": true,
+  "original_route_tracker_byte_identical": true,
+  "source_symlinks": 0,
+  "personal_absolute_runtime_paths": 0,
+  "system_cpu_regression": {
+    "tests": 26,
+    "passed": 25,
+    "skipped": 1,
+    "skip_reason": "Optional Torch not installed in system Python"
+  },
+  "public_dependency_container_regression": {
+    "image": "navigation-portable:environment",
+    "tests": 26,
+    "passed": 26,
+    "network": "none",
+    "cpu_limit": 2,
+    "torch": "2.7.1+cpu"
+  },
+  "real_model_cpu_fixture": "cpu_validation.json",
+  "historical_log_audit": "historical_execution_recheck.json",
+  "fresh_gazebo_run": false,
+  "fresh_isaac_run": false,
+  "hardware_test": false,
+  "native_compilation": "Coordinated by parent; see its separate build result",
+  "isaac_live_integration": "Not ported; exact closure boundaries in isaac_closure_audit.json"
+}

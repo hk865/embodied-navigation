@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "model_sha256": "bde5210a8114aa08bb0c611e49def1482faa1b2441673e5681374c30b935e32e",
+  "torch_version": "2.7.1+cpu",
+  "device": "cpu",
+  "threads": 1,
+  "sequence_frames": 30,
+  "sequential_action_max_error": 0.0,
+  "reset_reproducible": true,
+  "reset_after_fixture": true,
+  "latency_ms_p50": 0.25950593408197165,
+  "latency_ms_p95": 0.5025872262194752,
+  "neutral_first_native_action": [
+    0.20304805040359497,
+    -0.8185999393463135,
+    0.7929503917694092,
+    -0.2036014199256897,
+    -0.7086223363876343,
+    0.6096792221069336,
+    0.09876967966556549,
+    -0.5918087959289551,
+    0.5036861300468445,
+    -0.08398227393627167,
+    -0.5884202122688293,
+    0.47743141651153564
+  ],
+  "no_simulator_or_hardware_started": true,
+  "scope": "CPU actor and history replay only; not a navigation or physics pass"
+}

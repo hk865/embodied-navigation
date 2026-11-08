@@ -1,0 +1,45 @@
+{
+  "actor_kind": "student",
+  "controller_kind": "student",
+  "max_speed_mps": 0.5,
+  "max_lateral_speed_mps": 0.2,
+  "max_yaw_rate_radps": 0.6,
+  "r109_speed_tier": {
+    "schema": "r109_simulation_speed_tier/v1",
+    "simulation_only": true,
+    "cruise_mps": 0.5,
+    "student_longitudinal_limit_mps": 0.6,
+    "planning_horizon_m": 0.65
+  },
+  "continuous_route_contract": {
+    "local_planning_horizon_m": 0.65
+  },
+  "cascade": {
+    "desired_speed": 0.5,
+    "command_limits": [
+      0.6,
+      0.2,
+      0.6
+    ],
+    "command_slew_per_s": [
+      0.6,
+      0.6,
+      0.8
+    ],
+    "r85_student_lower_loop_ack": {
+      "enabled": true,
+      "schema": "r85_student_lower_loop_ack/v1",
+      "r109_speed_tier": {
+        "schema": "r109_simulation_speed_tier/v1",
+        "simulation_only": true,
+        "cruise_mps": 0.5,
+        "student_longitudinal_limit_mps": 0.6,
+        "planning_horizon_m": 0.65
+      }
+    }
+  },
+  "navigation_ground_truth_used": true,
+  "r73_minimal_diagnostic_baseline": {
+    "enabled": false
+  }
+}

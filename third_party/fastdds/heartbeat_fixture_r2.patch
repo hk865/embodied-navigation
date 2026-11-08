@@ -1,0 +1,115 @@
+--- a/test/unittest/transport/mock/SharedMemGlobalMock.hpp
++++ b/test/unittest/transport/mock/SharedMemGlobalMock.hpp
+@@ -30,12 +30,31 @@
+     {
+         std::lock_guard<SharedMemSegment::mutex> lock(port.node_->empty_cv_mutex);
+         auto& status = port.node_->listeners_status[index];
+-        if (!status.is_in_use || !status.is_waiting)
++        if (!port.node_->is_port_ok || !status.is_in_use || !status.is_waiting)
+         {
+             return false;
+         }
+         status.last_verified_counter = status.counter;
++        // A real WatchTask verification updates this timestamp in the same
++        // empty_cv_mutex critical section. Counter equality without this reset
++        // could make the background watchdog falsely declare a live listener dead.
++        port.node_->last_listeners_status_check_time_ms.exchange(
++            std::chrono::duration_cast<std::chrono::milliseconds>(
++                std::chrono::high_resolution_clock::now().time_since_epoch()).count());
+         return true;
++    }
++
++    // Test only: reopening may regenerate a failed port and still return a
++    // non-null handle. Verify UUID identity and the original live listener.
++    static bool same_live_node(SharedMemGlobal::Port& opened, SharedMemGlobal::Port& expected)
++    {
++        if (opened.node_->uuid.to_string() != expected.node_->uuid.to_string())
++        {
++            return false;
++        }
++        std::lock_guard<SharedMemSegment::mutex> lock(expected.node_->empty_cv_mutex);
++        return expected.node_->is_port_ok && expected.node_->is_opened_for_reading &&
++               expected.node_->num_listeners == 1;
+     }
+ 
+     // Negative control: exact pre-backport predicate/heartbeat behavior.
+--- a/test/unittest/transport/SharedMemTests.cpp
++++ b/test/unittest/transport/SharedMemTests.cpp
+@@ -2252,6 +2252,7 @@
+     std::unique_ptr<SharedMemGlobal::Listener> listener;
+     uint32_t index = 0;
+     std::atomic<bool> closed{false}, finished{false}, failed{false};
++    std::string first_error;
+     std::thread thread;
+ 
+     HeartbeatListener(SharedMemGlobal* g, Mode mode) : global(g)
+@@ -2269,7 +2270,16 @@
+                         else if (mode == STOPPED) { mock.wait_pop_deadlock(*port, *listener, closed, index); }
+                         else { port->wait_pop(*listener, closed, index); }
+                     }
+-                    catch (...) { failed.store(true); }
++                    catch (const std::exception& error)
++                    {
++                        first_error = error.what();
++                        failed.store(true);
++                    }
++                    catch (...)
++                    {
++                        first_error = "non-standard listener exception";
++                        failed.store(true);
++                    }
+                     finished.store(true);
+                 });
+     }
+@@ -2279,8 +2289,8 @@
+         auto deadline = HeartbeatClock::now() + std::chrono::seconds(1);
+         do
+         {
++            if (finished.load() || failed.load()) { return false; }
+             if (MockPortSharedMemGlobal::prepare_idle_health_check(*port, index)) { return true; }
+-            if (finished.load()) { return false; }
+             std::this_thread::sleep_for(std::chrono::milliseconds(1));
+         } while (HeartbeatClock::now() < deadline);
+         return false;
+@@ -2307,6 +2317,7 @@
+         std::atomic<bool> go{false};
+         std::vector<int> ok(count, 0);
+         std::vector<double> elapsed(count, 0);
++        std::vector<std::string> errors(count);
+         std::vector<std::thread> checkers;
+         for (unsigned i = 0; i < count; ++i)
+         {
+@@ -2318,21 +2329,28 @@
+                         {
+                             // Fresh write handle, bypassing transport opened_ports_ cache.
+                             auto opened = global->open_port(0, 4, 1000, SharedMemGlobal::Port::OpenMode::Write);
+-                            ok[i] = bool(opened);
++                            ok[i] = opened && MockPortSharedMemGlobal::same_live_node(*opened, *session.port);
++                            if (!ok[i]) { errors[i] = "opener regenerated/replaced original node or lost its listener"; }
+                         }
+-                        catch (...) { ok[i] = 0; }
++                        catch (const std::exception& error) { ok[i] = 0; errors[i] = error.what(); }
++                        catch (...) { ok[i] = 0; errors[i] = "non-standard opener exception"; }
+                         elapsed[i] = std::chrono::duration<double, std::milli>(HeartbeatClock::now()-begin).count();
+                     });
+         }
+         go.store(true);
+         for (auto& checker : checkers) { checker.join(); }
++        bool original_node_alive = true;
+         for (unsigned i = 0; i < count; ++i)
+         {
+-            EXPECT_EQ(ok[i], 1);
++            EXPECT_EQ(ok[i], 1) << "checker=" << i << " round=" << round << " error=" << errors[i];
++            original_node_alive = original_node_alive && ok[i] == 1;
+             EXPECT_LT(elapsed[i], 250.0) << "checker=" << i << " round=" << round;
+         }
+-        EXPECT_FALSE(session.failed.load());
+-        EXPECT_FALSE(session.finished.load()); // heartbeat notification is not data.
++        // Fatal lifecycle errors stop this case, rather than repeatedly preparing
++        // the stale old node after open_port_internal has regenerated port zero.
++        ASSERT_FALSE(session.failed.load()) << "round=" << round << " listener=" << session.first_error;
++        ASSERT_FALSE(session.finished.load()) << "round=" << round;
++        ASSERT_TRUE(original_node_alive) << "round=" << round << " original listener/node lost";
+         std::this_thread::sleep_for(std::chrono::milliseconds(23));
+     }
+ }

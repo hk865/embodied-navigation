@@ -1,0 +1,12 @@
+# syntax=docker/dockerfile:1
+# CPU baseline uses only the public ROS Jazzy image and its packaged NumPy.
+FROM ros:jazzy-ros-base AS cpu_regression
+WORKDIR /workspace/navigation
+COPY src ./src
+COPY tests/unit ./tests/unit
+COPY configs ./configs
+COPY third_party/scan/plan_manage/config/planner.yaml ./third_party/scan/plan_manage/config/planner.yaml
+COPY pyproject.toml ./
+ENV PYTHONPATH=/workspace/navigation/src PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+RUN python3 -B -m unittest discover -s tests/unit -v
+CMD ["python3", "-B", "-m", "unittest", "discover", "-s", "tests/unit", "-v"]

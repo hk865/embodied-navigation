@@ -1,0 +1,47 @@
+[
+  {
+    "relative": "robot/go2_description/go2_description.usda",
+    "sha256": "b044ed4d43c0e08049ffb8ac166a90993068aa0503bde4a98f6d9dd9e8edff8b",
+    "bytes": 1270
+  },
+  {
+    "relative": "robot/go2_description/payloads/materials.usda",
+    "sha256": "f6a590ea14ea4568957160d36755469d813212b94f4cdaf174c06a4230838ac8",
+    "bytes": 10670
+  },
+  {
+    "relative": "robot/go2_description/payloads/base.usda",
+    "sha256": "30e6079176db096984a59986bbe348dcaadde1c409418dcfcce2b40d410d7abe",
+    "bytes": 37459
+  },
+  {
+    "relative": "robot/go2_description/payloads/robot.usda",
+    "sha256": "4ae48f4275b5a85b22299321a05c087e9ed4fafeb4a140d8a8fde215e27a3abe",
+    "bytes": 4137
+  },
+  {
+    "relative": "robot/go2_description/payloads/instances.usda",
+    "sha256": "8722e6805c54b63ef985109951c59cc42fb8f8eb8cf24504d1f31f11ff34c3b4",
+    "bytes": 13224
+  },
+  {
+    "relative": "robot/go2_description/payloads/geometries.usd",
+    "sha256": "4f1caea230a234dbd25fa52f08fcdd11f605bbffe46577dd42f844d726954126",
+    "bytes": 5718673
+  },
+  {
+    "relative": "robot/go2_description/payloads/Physics/physx.usda",
+    "sha256": "9013c07c74f141a8e4b6892e2c9455d8e3403e51d85e4cd164d9fec188809d5a",
+    "bytes": 2867
+  },
+  {
+    "relative": "robot/go2_description/payloads/Physics/mujoco.usda",
+    "sha256": "7efa1b69478088a381db3e3bb101c72fd01fdce7428265b13bd12a88e1ffdf43",
+    "bytes": 11018
+  },
+  {
+    "relative": "robot/go2_description/payloads/Physics/physics.usda",
+    "sha256": "aa135efcb4294d27a7b8abe4a7e01b45d6dc89e9a310f4a9ff903b15d3c7a42e",
+    "bytes": 25356
+  }
+]

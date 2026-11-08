@@ -1,0 +1,16 @@
+**
+!src/
+!src/**
+!tests/
+!tests/unit/
+!tests/unit/**
+!configs/
+!configs/**
+!third_party/
+!third_party/scan/
+!third_party/scan/plan_manage/
+!third_party/scan/plan_manage/config/
+!third_party/scan/plan_manage/config/planner.yaml
+!pyproject.toml
+**/__pycache__
+**/*.pyc

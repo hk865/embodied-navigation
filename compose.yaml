@@ -1,0 +1,19 @@
+services:
+  navigation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_JOBS: 2
+    image: embodied-navigation:local
+    user: "${PUID:-1000}:${PGID:-1000}"
+    shm_size: "2gb"
+    environment:
+      PROJECT_DATA_ROOT: /project_data
+      HOME: /tmp/navigation-home
+    volumes:
+      - ${PROJECT_DATA_ROOT:?Set PROJECT_DATA_ROOT to 6.project_data}/embodied-navigation:/project_data/embodied-navigation:ro
+      - ${PROJECT_DATA_ROOT:?Set PROJECT_DATA_ROOT to 6.project_data}/embodied-navigation/runtime_assets/assets:/workspace/navigation/assets:ro
+      - ${PROJECT_DATA_ROOT:?Set PROJECT_DATA_ROOT to 6.project_data}/embodied-navigation/runtime_assets/models:/workspace/navigation/models:ro
+      - ${PROJECT_DATA_ROOT:?Set PROJECT_DATA_ROOT to 6.project_data}/embodied-navigation/runtime_assets/runs:/workspace/navigation/runs
+    command: ["python3", "/workspace/navigation/start.py", "--check"]

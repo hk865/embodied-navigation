@@ -1,0 +1,10 @@
+{
+  "modules": [
+    "configs/control/settings.json",
+    "configs/planning/settings.json",
+    "configs/localization_mapping/settings.json",
+    "configs/simulation/settings.json",
+    "configs/common/settings.json",
+    "configs/launch/settings.json"
+  ]
+}

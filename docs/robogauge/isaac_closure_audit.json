@@ -1,0 +1,275 @@
+{
+  "schema": "isaac_source_closure_audit/v1",
+  "executed": false,
+  "ported_pure_components": [
+    "45D named observation/action mapping and CPU runtime",
+    "Go2HV numerical actuator contract",
+    "complete native-pose RouteTracker and its 14 CPU tests"
+  ],
+  "not_ported_live_components": [
+    "Isaac SimulationApp bootstrap and stage/session collision setup",
+    "native64 live state, effort application and same-tick readback",
+    "GT diagnostic ROS bridge and FAST-LIVO2 observer launch",
+    "live cameras, ROS bag recorder and video handling"
+  ],
+  "external_historical_edges": [
+    "export_complete_collision_bounds.py loaded through a dated task path",
+    "control.policy.native.contract.json loaded from the old navigation checkout",
+    "slam_visualization_bridge.py from a separate historical visualization directory",
+    "configured session_collision_script and helper dependencies",
+    "local Isaac python.sh and original office/Go2 USD assets"
+  ],
+  "reason": "Copying launch_slam_long.py alone would leave custom historical runtime dependencies; no stub or false runnable support is shipped.",
+  "original_runner_files": [
+    {
+      "file": "basement_route_tracker.py",
+      "bytes": 3994,
+      "sha256": "45cd7b381ae49bf1357fceecbd03ac8d75ca71ab2625153a801169fe1e3fe20f",
+      "imports": [
+        "math"
+      ]
+    },
+    {
+      "file": "basement_scan_preflight.py",
+      "bytes": 6138,
+      "sha256": "9cfc7db87337b625f13875cda17632eb9bc49a61061c66e878133705b3980783",
+      "imports": [
+        "functools",
+        "math",
+        "numpy",
+        "teacher_static_floor37_spec"
+      ]
+    },
+    {
+      "file": "check_basement_scan_cpu.py",
+      "bytes": 4827,
+      "sha256": "d2526933c8f3c373ce7a252d3902b5283f798c954b0664f6de489ffadc959b9f",
+      "imports": [
+        "argparse",
+        "basement_scan_preflight",
+        "copy",
+        "hashlib",
+        "json",
+        "numpy",
+        "pathlib",
+        "pxr",
+        "teacher_static_floor37_spec"
+      ]
+    },
+    {
+      "file": "first_two_steps_diagnostic.py",
+      "bytes": 3466,
+      "sha256": "59a0a3215dfc473e0353945cde7ba8ae6847b4053146572f19c2b8557120dcb5",
+      "imports": [
+        "pxr",
+        "session_collision"
+      ]
+    },
+    {
+      "file": "gt_diagnostic_bridge.py",
+      "bytes": 5358,
+      "sha256": "ae76552121481749415dcdb612234c6825eaf3f86357903408b046d54b6da97e",
+      "imports": [
+        "basement_route_tracker",
+        "geometry_msgs.msg",
+        "json",
+        "math",
+        "numpy",
+        "pathlib",
+        "rclpy",
+        "rclpy.qos",
+        "signal",
+        "std_msgs.msg",
+        "sys",
+        "telemetry",
+        "time"
+      ]
+    },
+    {
+      "file": "guard_runtime_observation.py",
+      "bytes": 1019,
+      "sha256": "86fdbf2faddcb085105f8a3701f827a390564f24b0bfd78298d7c02388a40ff7",
+      "imports": [
+        "numpy",
+        "same_tick_readback"
+      ]
+    },
+    {
+      "file": "heading_feedback.py",
+      "bytes": 397,
+      "sha256": "d0d630cb28dfd3c057ec04dc1ddcaab8c70da326eb6bc3083b3893665ef40a12",
+      "imports": [
+        "math"
+      ]
+    },
+    {
+      "file": "heavy_process_guard.py",
+      "bytes": 1861,
+      "sha256": "6017ad9ed927ef03aa8034096ae866876ae91a99aaa44840a03099d4d8b6f213",
+      "imports": [
+        "os",
+        "pathlib"
+      ]
+    },
+    {
+      "file": "hold_timers.py",
+      "bytes": 1426,
+      "sha256": "e364c7432f3e6964196eeb2146a19d6f76ac2e8c9d01f55d38333f33e0038353",
+      "imports": []
+    },
+    {
+      "file": "launch_slam_long.py",
+      "bytes": 10473,
+      "sha256": "ebd55aaeb60a4fc3ba6cbb7c4f967d3bea71bcacce4d7ea73b086e586af5511a",
+      "imports": [
+        "argparse",
+        "fcntl",
+        "hashlib",
+        "heavy_process_guard",
+        "json",
+        "numpy",
+        "os",
+        "pathlib",
+        "shutil",
+        "signal",
+        "subprocess",
+        "time",
+        "yaml"
+      ]
+    },
+    {
+      "file": "probe_slam_long.py",
+      "bytes": 43282,
+      "sha256": "d703fe916e5d793d08347fbec39de05502f8d96d9fc2bd864fc60816b0f9630e",
+      "imports": [
+        "PIL",
+        "carb",
+        "collections",
+        "export_complete_collision_bounds",
+        "faulthandler",
+        "geometry_msgs.msg",
+        "guard_runtime_observation",
+        "hashlib",
+        "importlib.util",
+        "isaacsim",
+        "isaacsim.core.experimental.prims",
+        "isaacsim.core.experimental.utils.app",
+        "isaacsim.core.rendering_manager",
+        "isaacsim.core.simulation_manager",
+        "isaacsim.sensors.experimental.physics",
+        "json",
+        "nav_msgs.msg",
+        "numpy",
+        "omni.kit.viewport.window",
+        "omni.kit.widget.viewport.display_delegate",
+        "omni.physx",
+        "omni.replicator.core",
+        "omni.usd",
+        "os",
+        "pathlib",
+        "pxr",
+        "rclpy",
+        "rclpy.qos",
+        "rclpy.signals",
+        "robogauge_isaac_adapter",
+        "rosgraph_msgs.msg",
+        "sensor_msgs.msg",
+        "std_msgs.msg",
+        "subprocess",
+        "sys",
+        "telemetry",
+        "time",
+        "torch",
+        "traceback"
+      ]
+    },
+    {
+      "file": "robogauge_isaac_adapter.py",
+      "bytes": 4032,
+      "sha256": "eb08ffc57513b7082734c5f2460c76881cfa8767b94da7dc26321c492b37dc61",
+      "imports": [
+        "basement_scan_preflight",
+        "hashlib",
+        "numpy",
+        "pathlib",
+        "torch"
+      ]
+    },
+    {
+      "file": "same_tick_readback.py",
+      "bytes": 2508,
+      "sha256": "79d48b360fd555f802e495254b36547ce4ed27f4dc93eb7c919b9cbf7d614107",
+      "imports": [
+        "carb",
+        "omni.physx",
+        "pxr"
+      ]
+    },
+    {
+      "file": "session_collision.py",
+      "bytes": 4446,
+      "sha256": "21ad351b7147ef99edbe31e9d131596281991e7bd398d0cad68b151aa50f8931",
+      "imports": [
+        "json",
+        "pathlib",
+        "pxr"
+      ]
+    },
+    {
+      "file": "static_runtime_helper.py",
+      "bytes": 7568,
+      "sha256": "f5f35ebf9b362797d3900b206a90d6fc5b6063a783e38f0a8487f33c7cb51c60",
+      "imports": [
+        "math",
+        "numpy",
+        "teacher_adapter",
+        "threading",
+        "torch"
+      ]
+    },
+    {
+      "file": "teacher_adapter.py",
+      "bytes": 5234,
+      "sha256": "011b459ed046e0ebfdc567e4596ce7c1f5c44cb0971b1c191b3ab84903ec356b",
+      "imports": [
+        "math",
+        "torch"
+      ]
+    },
+    {
+      "file": "teacher_static_floor37_spec.py",
+      "bytes": 8938,
+      "sha256": "c558f1a43ca303efb2a2ad03a20f99ebb5ca1d4581e9fa60ab090631b53bff80",
+      "imports": [
+        "basement_scan_preflight",
+        "json",
+        "math",
+        "numpy",
+        "pathlib",
+        "pxr"
+      ]
+    },
+    {
+      "file": "telemetry.py",
+      "bytes": 1149,
+      "sha256": "fa455a5cd9106e4c3190d626aefb837027017fa7279a7561f6d8a6bde8ef9177",
+      "imports": [
+        "collections",
+        "json",
+        "time"
+      ]
+    },
+    {
+      "file": "test_basement_route_tracker.py",
+      "bytes": 3869,
+      "sha256": "ecb981a3a64eb3d4f3b0874984a48f9248ccb4706f3a40d4741154c6f466ca26",
+      "imports": [
+        "basement_route_tracker",
+        "json",
+        "math",
+        "pathlib",
+        "unittest"
+      ]
+    }
+  ]
+}

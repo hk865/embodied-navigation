@@ -1,0 +1,48 @@
+{
+  "source_roots": [
+    "${PROJECT_ROOT}/third_party/fast_livo2",
+    "${PROJECT_ROOT}/third_party/scan",
+    "${PROJECT_ROOT}/third_party/vikit",
+    "${PROJECT_ROOT}/third_party/livox_ros_driver2"
+  ],
+  "packages": [
+    "livox_ros_driver2",
+    "vikit_common",
+    "vikit_ros",
+    "fast_livo2_core",
+    "fast_livo2_ros",
+    "plan_env",
+    "path_searching",
+    "bspline_opt",
+    "traj_utils",
+    "scan_planner_msgs",
+    "scan_planner"
+  ],
+  "source_pins": {
+    "fastdds": {
+      "url": "https://codeload.github.com/eProsima/Fast-DDS/tar.gz/f052f239538ebc0df56835fdb57f7628628010bc",
+      "sha256": "923606d546965c6658dacc4424a568ad131875cce3f52a082fe42d3b9fc17f96",
+      "commit": "f052f239538ebc0df56835fdb57f7628628010bc",
+      "archive_root": "Fast-DDS-f052f239538ebc0df56835fdb57f7628628010bc"
+    },
+    "asio": {
+      "url": "https://codeload.github.com/chriskohlhoff/asio/tar.gz/ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963",
+      "sha256": "9d4619e1ea963d3c72c8dc07d5d8c9c4fab67141990b4f8cb10e5d8ad2c83f42",
+      "commit": "ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963",
+      "archive_root": "asio-ed6aa8a13d51dfc6c00ae453fc9fb7df5d6ea963"
+    },
+    "livox_sdk2": {
+      "url": "https://codeload.github.com/Livox-SDK/Livox-SDK2/tar.gz/f5d9375f84efe2b15bc0a052d3e18482ed13adf4",
+      "sha256": "f469dc57b38cd64c71381eb54d9525bfc3574feb0152c2b65239283107c4fa29",
+      "commit": "f5d9375f84efe2b15bc0a052d3e18482ed13adf4",
+      "archive_root": "Livox-SDK2-f5d9375f84efe2b15bc0a052d3e18482ed13adf4"
+    }
+  },
+  "build_root": "${PROJECT_ROOT}/build/native",
+  "install_root": "${PROJECT_ROOT}/install",
+  "jobs": 2,
+  "vio_floor_patch": "Already applied in vendored fast_livo2_core/src/vio.cpp",
+  "starts_nodes": false,
+  "starts_simulation": false,
+  "requires_gpu": false
+}

@@ -1,0 +1,23 @@
+{
+  "schema": "pct_static_support_validation_limits/v1",
+  "authorization": "Parent supplied C64 controller.py runtime values; no automatic relaxation",
+  "sample_spacing_m": 0.025,
+  "body_radius_m": 0.25,
+  "body_offset_m": 0.18,
+  "body_below_m": 0.12,
+  "body_above_m": 0.12,
+  "position_uncertainty_m": 0.08,
+  "yaw_half_range_rad": 3.141592653589793,
+  "body_ground_height_m": 0.32,
+  "nominal_route_body_ground_offset_m": 0.3,
+  "support_height_tolerance_m": 0.1,
+  "max_support_slope_rad": 0.35,
+  "actor_grid_half_x_m": 0.8,
+  "actor_grid_half_y_m": 0.5,
+  "actor_grid_spacing_m": 0.1,
+  "actor_ray_start_above_body_m": 20.0,
+  "switch_height_equality_m": 1e-9,
+  "initial_provider": "lower12",
+  "numeric_epsilon_m": 1e-10,
+  "max_report_examples": 40
+}

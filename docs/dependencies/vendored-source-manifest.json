@@ -1,0 +1,2455 @@
+{
+  "schema": "embodied_navigation_vendored_sources/v1",
+  "audit_date_utc": "2026-11-08",
+  "upstream_repository": "https://github.com/hk865/Fast-Livo2-SCAN-Gazebo-dog-sim-control",
+  "upstream_commit": "5688f2868e241ca4a7cc80ba9f166f8afa84c727",
+  "upstream_branch": "feature/fastlivo2-backend-building-20261030",
+  "upstream_worktree_status": "Tracked files clean; only untracked history/ was present and excluded.",
+  "submodules": "No .gitmodules or gitlinks in source repository; nested libraries are physical files.",
+  "hash_purpose": "Copy integrity and source provenance only, not runtime acceptance gates.",
+  "files": [
+    {
+      "source": "src/localization/frontend/fast_livo2_core/CMakeLists.txt",
+      "destination": "third_party/fast_livo2/fast_livo2_core/CMakeLists.txt",
+      "bytes": 4960,
+      "source_sha256": "ee285d2f2b7de5d1e5360aead304f619070bedb2bc95c37043834dfd601e3beb",
+      "vendored_sha256": "ee285d2f2b7de5d1e5360aead304f619070bedb2bc95c37043834dfd601e3beb",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/README.md",
+      "destination": "third_party/fast_livo2/fast_livo2_core/README.md",
+      "bytes": 2869,
+      "source_sha256": "2640dd02de8c10f21cef44e3fd4667d204a698cd8c4e57185fb234d7c8526d10",
+      "vendored_sha256": "2640dd02de8c10f21cef44e3fd4667d204a698cd8c4e57185fb234d7c8526d10",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/backend/snapshot_bridge.hpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/backend/snapshot_bridge.hpp",
+      "bytes": 6157,
+      "source_sha256": "64f6977fc9c976dded192da55d72d98e730a8a7e50b6204208ccd178445fde32",
+      "vendored_sha256": "64f6977fc9c976dded192da55d72d98e730a8a7e50b6204208ccd178445fde32",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h",
+      "bytes": 3169,
+      "source_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
+      "vendored_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
+      "bytes": 11377,
+      "source_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
+      "vendored_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/boundary_timing.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/boundary_timing.h",
+      "bytes": 7374,
+      "source_sha256": "07818ae0c13899312ca1558818983dbff0d991e7bc9ff3350dba95479160bb84",
+      "vendored_sha256": "07818ae0c13899312ca1558818983dbff0d991e7bc9ff3350dba95479160bb84",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/common_lib.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/common_lib.h",
+      "bytes": 7526,
+      "source_sha256": "085a0b4edd9caff191c1666313c7b9f5ac4bbfdcd03ff2ab2a42d1944311d0be",
+      "vendored_sha256": "085a0b4edd9caff191c1666313c7b9f5ac4bbfdcd03ff2ab2a42d1944311d0be",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/diagnostics.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/diagnostics.h",
+      "bytes": 6685,
+      "source_sha256": "a5e56d67dff5eede8a68b891e63ffd71a0fcd0f699715a67a3ec51fa9a65adb9",
+      "vendored_sha256": "a5e56d67dff5eede8a68b891e63ffd71a0fcd0f699715a67a3ec51fa9a65adb9",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/feature.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/feature.h",
+      "bytes": 2050,
+      "source_sha256": "27eaea6a52e4d0edc9aa04a770a5f436eb129b4c4fbfc7bf9812c5fd3f644799",
+      "vendored_sha256": "27eaea6a52e4d0edc9aa04a770a5f436eb129b4c4fbfc7bf9812c5fd3f644799",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/frame.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/frame.h",
+      "bytes": 3160,
+      "source_sha256": "91a7ff427c0fb1e12220d4e60ac0ea9ed0785c1ae73c8da98c14ebe2f9782fa6",
+      "vendored_sha256": "91a7ff427c0fb1e12220d4e60ac0ea9ed0785c1ae73c8da98c14ebe2f9782fa6",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/identity_ros.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/identity_ros.h",
+      "bytes": 4823,
+      "source_sha256": "f89cd71b6068d83c57086f0a06e869fcf266f299d1a351ffaa8dba4d908dc23b",
+      "vendored_sha256": "f89cd71b6068d83c57086f0a06e869fcf266f299d1a351ffaa8dba4d908dc23b",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/ordered_ingress.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/ordered_ingress.h",
+      "bytes": 4915,
+      "source_sha256": "4b40fa46a440b5423b799710139663819a540f6383aa8cba53c35538a8ccc735",
+      "vendored_sha256": "4b40fa46a440b5423b799710139663819a540f6383aa8cba53c35538a8ccc735",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/point_identity.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/point_identity.h",
+      "bytes": 1785,
+      "source_sha256": "7838220a67b89e2698f4650f0a172aafa633a94bbee8f61db57bc88a9365b0e9",
+      "vendored_sha256": "7838220a67b89e2698f4650f0a172aafa633a94bbee8f61db57bc88a9365b0e9",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
+      "bytes": 5897,
+      "source_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
+      "vendored_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/run_log_directory.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/run_log_directory.h",
+      "bytes": 1037,
+      "source_sha256": "5a18d8a934403b22ccf7db3c98d83af7b061710c8aec53fea6897081fde94703",
+      "vendored_sha256": "5a18d8a934403b22ccf7db3c98d83af7b061710c8aec53fea6897081fde94703",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/stationary_imu_initialization.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/stationary_imu_initialization.h",
+      "bytes": 3408,
+      "source_sha256": "39a7cda11924068cc463b0eba1ae89da9c923c7ef8668393dfee5adf0730fbb9",
+      "vendored_sha256": "39a7cda11924068cc463b0eba1ae89da9c923c7ef8668393dfee5adf0730fbb9",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/surface_support_diagnostics.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/surface_support_diagnostics.h",
+      "bytes": 6234,
+      "source_sha256": "cc749f1155d0b0555eca6bf4ca15eeb5ab584a6e9575737f8414f0f5bc457a8c",
+      "vendored_sha256": "cc749f1155d0b0555eca6bf4ca15eeb5ab584a6e9575737f8414f0f5bc457a8c",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/surface_validity.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/surface_validity.h",
+      "bytes": 2873,
+      "source_sha256": "9f9a1d4105b82390e9cad926e84304155274e1d82022f41a5304716799e2d404",
+      "vendored_sha256": "9f9a1d4105b82390e9cad926e84304155274e1d82022f41a5304716799e2d404",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/vio.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/vio.h",
+      "bytes": 6770,
+      "source_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
+      "vendored_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/visual_point.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/visual_point.h",
+      "bytes": 1739,
+      "source_sha256": "c528be4967454ff79f6aac0c5322d62b19ec34c7e8c248b49981d1b3a7f1888d",
+      "vendored_sha256": "c528be4967454ff79f6aac0c5322d62b19ec34c7e8c248b49981d1b3a7f1888d",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/voxel_map.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/voxel_map.h",
+      "bytes": 8565,
+      "source_sha256": "4cb580cf4ef14073a916adf7beffc42268b0301030890fcac808c4165d1a63f6",
+      "vendored_sha256": "4cb580cf4ef14073a916adf7beffc42268b0301030890fcac808c4165d1a63f6",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomMsg.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomMsg.h",
+      "bytes": 8375,
+      "source_sha256": "47ae77c64f4d05f7f471d0c2032f52f985926b2eb1c8c2a71f8e78b08c33157d",
+      "vendored_sha256": "47ae77c64f4d05f7f471d0c2032f52f985926b2eb1c8c2a71f8e78b08c33157d",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomPoint.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomPoint.h",
+      "bytes": 6575,
+      "source_sha256": "36b6f7f0a2545dd425779124429a17703b7f73a237f3f59777fcda68175aae78",
+      "vendored_sha256": "36b6f7f0a2545dd425779124429a17703b7f73a237f3f59777fcda68175aae78",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/runner.hpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/runner.hpp",
+      "bytes": 512,
+      "source_sha256": "6c9056c3565a397594f8c8354786b3e0147e8f2251279a129de1c707ee2a8027",
+      "vendored_sha256": "6c9056c3565a397594f8c8354786b3e0147e8f2251279a129de1c707ee2a8027",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/color.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/color.h",
+      "bytes": 1125,
+      "source_sha256": "a8dca85646b18e26432f453993cf2da8de8e6b6e3184228b9fb92651c4a8f2ef",
+      "vendored_sha256": "a8dca85646b18e26432f453993cf2da8de8e6b6e3184228b9fb92651c4a8f2ef",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/so3_math.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/so3_math.h",
+      "bytes": 2526,
+      "source_sha256": "fa815b3bc8dc157a2ab8d692b0dd604b369680a7e711fef666f4e12d4ab33c37",
+      "vendored_sha256": "fa815b3bc8dc157a2ab8d692b0dd604b369680a7e711fef666f4e12d4ab33c37",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/types.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/types.h",
+      "bytes": 1488,
+      "source_sha256": "ade63d344d8d4cdec2dd8ec0fd6ea7930cb007c9c41ba83500bc7ea79d874d45",
+      "vendored_sha256": "ade63d344d8d4cdec2dd8ec0fd6ea7930cb007c9c41ba83500bc7ea79d874d45",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/utils.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/utils.h",
+      "bytes": 2507,
+      "source_sha256": "4f7b2cf832ee0c75c0e009695d97053b74a959f3caca2b26358160f03b75ca61",
+      "vendored_sha256": "4f7b2cf832ee0c75c0e009695d97053b74a959f3caca2b26358160f03b75ca61",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/package.xml",
+      "destination": "third_party/fast_livo2/fast_livo2_core/package.xml",
+      "bytes": 1179,
+      "source_sha256": "60a13ea1c298fc451807b7e452022d21c021a6e44e058304ac772f3772272f63",
+      "vendored_sha256": "60a13ea1c298fc451807b7e452022d21c021a6e44e058304ac772f3772272f63",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/IMU_Processing.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/IMU_Processing.cpp",
+      "bytes": 27082,
+      "source_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
+      "vendored_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/LIVMapper.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp",
+      "bytes": 108192,
+      "source_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
+      "vendored_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/backend/snapshot_bridge.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/backend/snapshot_bridge.cpp",
+      "bytes": 8932,
+      "source_sha256": "56818024ab33069e35ad206f1881d04a5001533267a9527f5ff0cdebb72169fc",
+      "vendored_sha256": "56818024ab33069e35ad206f1881d04a5001533267a9527f5ff0cdebb72169fc",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/frame.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/frame.cpp",
+      "bytes": 1644,
+      "source_sha256": "d45bb8ab1edf065089515940d0c7d6ff2c08fe460143778f62f09547e63f489a",
+      "vendored_sha256": "d45bb8ab1edf065089515940d0c7d6ff2c08fe460143778f62f09547e63f489a",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/identity_cpu_check.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/identity_cpu_check.cpp",
+      "bytes": 4045,
+      "source_sha256": "5ca708376e665b11154daf8c370e9b6a4f2fea3866a28983b03d3a4c4551c6c4",
+      "vendored_sha256": "5ca708376e665b11154daf8c370e9b6a4f2fea3866a28983b03d3a4c4551c6c4",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/preprocess.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/preprocess.cpp",
+      "bytes": 34651,
+      "source_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
+      "vendored_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/runner.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/runner.cpp",
+      "bytes": 844,
+      "source_sha256": "a021276b5d18a09c7da6d245c80934970c3559bf56815b7e2b9a0b5017e6a6f9",
+      "vendored_sha256": "a021276b5d18a09c7da6d245c80934970c3559bf56815b7e2b9a0b5017e6a6f9",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/utils.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/utils.cpp",
+      "bytes": 658,
+      "source_sha256": "3e0aeaccaf94d7a5e44af952027ddda88f8e3787580b942af5b2db66ff0705d3",
+      "vendored_sha256": "3e0aeaccaf94d7a5e44af952027ddda88f8e3787580b942af5b2db66ff0705d3",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/vio.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/vio.cpp",
+      "bytes": 82986,
+      "source_sha256": "1ecf2cd169bf8a5809dba7a866c7b2cea7e064601b4bde80775436eb587c53cd",
+      "vendored_sha256": "0cb11f148394ecfaa4a97d1366cd9b735deeebbe772489bf190642ad40b524e3",
+      "modified": true,
+      "change": "Apply recorded isolated VIO floor repair; exact bytes match recovered patched source.",
+      "patch": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
+      "patched_source": "recovered isaac_rgbd_slam_interface/isolated_vio_floor_fix/vio.cpp"
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/visual_point.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/visual_point.cpp",
+      "bytes": 2858,
+      "source_sha256": "d067e2b05445835cbbb4c8a159519bf4a01a271b96d06cc3a32419092b3fcc6e",
+      "vendored_sha256": "d067e2b05445835cbbb4c8a159519bf4a01a271b96d06cc3a32419092b3fcc6e",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/src/voxel_map.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/voxel_map.cpp",
+      "bytes": 54705,
+      "source_sha256": "efcc7271d2d33354d67b8063d457c2563cc532b7a7a7e6b98ec9b720b290e99e",
+      "vendored_sha256": "efcc7271d2d33354d67b8063d457c2563cc532b7a7a7e6b98ec9b720b290e99e",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/tests/README_backend.zh-CN.md",
+      "destination": "third_party/fast_livo2/fast_livo2_core/tests/README_backend.zh-CN.md",
+      "bytes": 2281,
+      "source_sha256": "3deff8d07a81ce7efb81301b26b1fb69698a598dfbe5e6810bd35358c780a289",
+      "vendored_sha256": "3deff8d07a81ce7efb81301b26b1fb69698a598dfbe5e6810bd35358c780a289",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_core/tests/backend_snapshot_flow.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/tests/backend_snapshot_flow.cpp",
+      "bytes": 8964,
+      "source_sha256": "6ab87f0d214ba24403c431ebda8e0615fed14de33355fc96460f19120ac0c69d",
+      "vendored_sha256": "6ab87f0d214ba24403c431ebda8e0615fed14de33355fc96460f19120ac0c69d",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/CMakeLists.txt",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/CMakeLists.txt",
+      "bytes": 1358,
+      "source_sha256": "a5d9fbd9e6f2acfb8087a17235c9f1b11d43ecea641197f348676543db630488",
+      "vendored_sha256": "a5d9fbd9e6f2acfb8087a17235c9f1b11d43ecea641197f348676543db630488",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/README.md",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/README.md",
+      "bytes": 1650,
+      "source_sha256": "b4f98ca49323f17c3b920cd13ae84e12748ef314304324525622ff1d8c86b0f7",
+      "vendored_sha256": "b4f98ca49323f17c3b920cd13ae84e12748ef314304324525622ff1d8c86b0f7",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/__init__.py",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/config/avia.yaml",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/config/avia.yaml",
+      "bytes": 2310,
+      "source_sha256": "77938f14ade2100bcb14cd56e9988bf778c833ecbc41861410172680c3ad3855",
+      "vendored_sha256": "77938f14ade2100bcb14cd56e9988bf778c833ecbc41861410172680c3ad3855",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/config/camera_pinhole.yaml",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/config/camera_pinhole.yaml",
+      "bytes": 277,
+      "source_sha256": "cd58242cf93b5f8408428387291bb91425420be8f7bf2c75ceb1efe1770b442c",
+      "vendored_sha256": "cd58242cf93b5f8408428387291bb91425420be8f7bf2c75ceb1efe1770b442c",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/launch/__init__.py",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/launch/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/launch/mapping_aviz.launch.py",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/launch/mapping_aviz.launch.py",
+      "bytes": 3845,
+      "source_sha256": "1978aa994cc1dd99b2eae45228749cbeca7b13401a3e9e4f7906759cbf089b6a",
+      "vendored_sha256": "1978aa994cc1dd99b2eae45228749cbeca7b13401a3e9e4f7906759cbf089b6a",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/package.xml",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/package.xml",
+      "bytes": 646,
+      "source_sha256": "2211d1466f2c76b784b367fb6bf6e3256325b72656b6325f8bb721ece274dd96",
+      "vendored_sha256": "2211d1466f2c76b784b367fb6bf6e3256325b72656b6325f8bb721ece274dd96",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/rviz/fast_livo2.rviz",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/rviz/fast_livo2.rviz",
+      "bytes": 26894,
+      "source_sha256": "c18b0dcff13bc377c876cfa2cefe2131e5fbd4b596526651ad623f96871f7bd6",
+      "vendored_sha256": "c18b0dcff13bc377c876cfa2cefe2131e5fbd4b596526651ad623f96871f7bd6",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/rviz/octomap_only.rviz",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/rviz/octomap_only.rviz",
+      "bytes": 6248,
+      "source_sha256": "3a72395cc613943788f7e0c0f7827c29cd3fcb09dd3033e9cf7c269311c11fd8",
+      "vendored_sha256": "3a72395cc613943788f7e0c0f7827c29cd3fcb09dd3033e9cf7c269311c11fd8",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/scripts/__init__.py",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/scripts/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/scripts/decompress_images.py",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/scripts/decompress_images.py",
+      "bytes": 1234,
+      "source_sha256": "375d6b107a33de4049535c89761d1a9fc2d836a411a7444f943cd14c5d039a93",
+      "vendored_sha256": "375d6b107a33de4049535c89761d1a9fc2d836a411a7444f943cd14c5d039a93",
+      "modified": false
+    },
+    {
+      "source": "src/localization/frontend/fast_livo2_ros/src/main.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/src/main.cpp",
+      "bytes": 1327,
+      "source_sha256": "d6d26316357fcf3f0d438af7f63b884d91919ab5a3eee099408f8081b45e898d",
+      "vendored_sha256": "d6d26316357fcf3f0d438af7f63b884d91919ab5a3eee099408f8081b45e898d",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/CMakeLists.txt",
+      "destination": "third_party/scan/plan_manage/CMakeLists.txt",
+      "bytes": 2376,
+      "source_sha256": "52afb74761fb3deca9ac4300a1f60bbf2e5b274140510e36be5f5cba44af8e4b",
+      "vendored_sha256": "52afb74761fb3deca9ac4300a1f60bbf2e5b274140510e36be5f5cba44af8e4b",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/README.md",
+      "destination": "third_party/scan/plan_manage/README.md",
+      "bytes": 1682,
+      "source_sha256": "a48146db3d55ad4b9812c4fb859e76092093068f98b61d32673ed5f44631b072",
+      "vendored_sha256": "a48146db3d55ad4b9812c4fb859e76092093068f98b61d32673ed5f44631b072",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/__init__.py",
+      "destination": "third_party/scan/plan_manage/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/config/controllers.yaml",
+      "destination": "third_party/scan/plan_manage/config/controllers.yaml",
+      "bytes": 1013,
+      "source_sha256": "7139eefb804179589583ccd6dcc900aad50d47a45c5134ef7997e1aeaac4b0e8",
+      "vendored_sha256": "7139eefb804179589583ccd6dcc900aad50d47a45c5134ef7997e1aeaac4b0e8",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/config/keypoints.example.yaml",
+      "destination": "third_party/scan/plan_manage/config/keypoints.example.yaml",
+      "bytes": 109,
+      "source_sha256": "e681f321f2f336081f2d443d6a576f6300ccf63f86b3692fb82f55a7df02b6ca",
+      "vendored_sha256": "e681f321f2f336081f2d443d6a576f6300ccf63f86b3692fb82f55a7df02b6ca",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/config/planner.yaml",
+      "destination": "third_party/scan/plan_manage/config/planner.yaml",
+      "bytes": 2009,
+      "source_sha256": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a",
+      "vendored_sha256": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/config/simulator.yaml",
+      "destination": "third_party/scan/plan_manage/config/simulator.yaml",
+      "bytes": 1575,
+      "source_sha256": "fa49f55acae0c678ec77fc72ccf5a0e2023970f0361c2fc20b534292e1d94a61",
+      "vendored_sha256": "fa49f55acae0c678ec77fc72ccf5a0e2023970f0361c2fc20b534292e1d94a61",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/fresh_child_odometry_ack.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/fresh_child_odometry_ack.h",
+      "bytes": 2234,
+      "source_sha256": "f70f82b1a3299e5e3f9824083b82efb7adda0b830f9ac530b3a8f616623c6240",
+      "vendored_sha256": "f70f82b1a3299e5e3f9824083b82efb7adda0b830f9ac530b3a8f616623c6240",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/fresh_reference_protocol.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/fresh_reference_protocol.h",
+      "bytes": 10318,
+      "source_sha256": "a0985b70db3b4ca0cf93aea8e9ede61fa682ed234630de34451daed60962e8dd",
+      "vendored_sha256": "a0985b70db3b4ca0cf93aea8e9ede61fa682ed234630de34451daed60962e8dd",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/measured_start_state.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/measured_start_state.h",
+      "bytes": 1178,
+      "source_sha256": "a7e33a7ec8b783c0b2fc7295313a3a054018c506b746ff5fc0343dd7799df20b",
+      "vendored_sha256": "a7e33a7ec8b783c0b2fc7295313a3a054018c506b746ff5fc0343dd7799df20b",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/plan_container.hpp",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/plan_container.hpp",
+      "bytes": 7252,
+      "source_sha256": "c5c37fdd776a09b846ec04034329c2781b07f3ad4feeab095084115b179bf2d4",
+      "vendored_sha256": "c5c37fdd776a09b846ec04034329c2781b07f3ad4feeab095084115b179bf2d4",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/planner_manager.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/planner_manager.h",
+      "bytes": 2590,
+      "source_sha256": "b1f04257653c84757b0a2ce8cc05c6fb5f42ba09ee523a7cc16c400e4a1a7a31",
+      "vendored_sha256": "b1f04257653c84757b0a2ce8cc05c6fb5f42ba09ee523a7cc16c400e4a1a7a31",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/r107_transport_probe.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/r107_transport_probe.h",
+      "bytes": 9582,
+      "source_sha256": "04bc679a5ac5e442dc98e38eccf085ae5316e7cc5ac7c697a29d4733b56b968f",
+      "vendored_sha256": "04bc679a5ac5e442dc98e38eccf085ae5316e7cc5ac7c697a29d4733b56b968f",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/r74_protocol_observation.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/r74_protocol_observation.h",
+      "bytes": 4839,
+      "source_sha256": "5e0b41510d485599f339d20ac4b5579483cfe65c238be87e13e5151f64550b4a",
+      "vendored_sha256": "5e0b41510d485599f339d20ac4b5579483cfe65c238be87e13e5151f64550b4a",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/reference_progress.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/reference_progress.h",
+      "bytes": 3045,
+      "source_sha256": "01f627ef1ab0ddad61504f5f915dde2e105f4d871b78b807e35a6090014c5bd0",
+      "vendored_sha256": "01f627ef1ab0ddad61504f5f915dde2e105f4d871b78b807e35a6090014c5bd0",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/include/plan_manage/scan_replan_fsm.h",
+      "destination": "third_party/scan/plan_manage/include/plan_manage/scan_replan_fsm.h",
+      "bytes": 8531,
+      "source_sha256": "be814475a6d31023baff3193dfd4f0d32cdbb6b242c5571acc5af0d911bc1352",
+      "vendored_sha256": "be814475a6d31023baff3193dfd4f0d32cdbb6b242c5571acc5af0d911bc1352",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/launch/__init__.py",
+      "destination": "third_party/scan/plan_manage/launch/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/launch/default.rviz",
+      "destination": "third_party/scan/plan_manage/launch/default.rviz",
+      "bytes": 16307,
+      "source_sha256": "e9426ba3ef990c01c201020d4aedf767bae8febf3d2fee34b81c66121f627c1c",
+      "vendored_sha256": "e9426ba3ef990c01c201020d4aedf767bae8febf3d2fee34b81c66121f627c1c",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/launch/run.launch.py",
+      "destination": "third_party/scan/plan_manage/launch/run.launch.py",
+      "bytes": 8695,
+      "source_sha256": "b22b7dd3f1500897fcb56f81c5cde77de6c623bd52a7565bb94409c17d65bf72",
+      "vendored_sha256": "b22b7dd3f1500897fcb56f81c5cde77de6c623bd52a7565bb94409c17d65bf72",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/launch/rviz.launch.py",
+      "destination": "third_party/scan/plan_manage/launch/rviz.launch.py",
+      "bytes": 871,
+      "source_sha256": "3461655a5833d8cce8df045fcc5ca1dc12b52548b4398c3fb2cd59f89dec61d8",
+      "vendored_sha256": "3461655a5833d8cce8df045fcc5ca1dc12b52548b4398c3fb2cd59f89dec61d8",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/launch/simulator.launch.py",
+      "destination": "third_party/scan/plan_manage/launch/simulator.launch.py",
+      "bytes": 5460,
+      "source_sha256": "2d770c35b29f798dbb49b4f99ba54dcf2dd55c4892b43703648de98821ec555f",
+      "vendored_sha256": "2d770c35b29f798dbb49b4f99ba54dcf2dd55c4892b43703648de98821ec555f",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/package.xml",
+      "destination": "third_party/scan/plan_manage/package.xml",
+      "bytes": 1509,
+      "source_sha256": "d83d775ad8096c9cb8aa608deec7ed680e5c150239304b47b1b75b8d7dac7f08",
+      "vendored_sha256": "d83d775ad8096c9cb8aa608deec7ed680e5c150239304b47b1b75b8d7dac7f08",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/scripts/__init__.py",
+      "destination": "third_party/scan/plan_manage/scripts/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/scripts/keypoint_recorder.py",
+      "destination": "third_party/scan/plan_manage/scripts/keypoint_recorder.py",
+      "bytes": 5131,
+      "source_sha256": "e2ba7f3cd0d5eb77bfb5062bd8d7d926304f4b3565c30cd4f1592dfc46bd6114",
+      "vendored_sha256": "e2ba7f3cd0d5eb77bfb5062bd8d7d926304f4b3565c30cd4f1592dfc46bd6114",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/closed_loop_controller.cpp",
+      "destination": "third_party/scan/plan_manage/src/closed_loop_controller.cpp",
+      "bytes": 7211,
+      "source_sha256": "1bc1124a643b912ca8a56a66c3e7fe63088cd21fb9ec7f7ef82eb393fe0d0dd0",
+      "vendored_sha256": "1bc1124a643b912ca8a56a66c3e7fe63088cd21fb9ec7f7ef82eb393fe0d0dd0",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/go2_gait_publisher.cpp",
+      "destination": "third_party/scan/plan_manage/src/go2_gait_publisher.cpp",
+      "bytes": 5648,
+      "source_sha256": "9f90cb9bf0a5d9aa156a0e6cfe6af3ccc8ff550ea694703a157dbd3b39408b12",
+      "vendored_sha256": "9f90cb9bf0a5d9aa156a0e6cfe6af3ccc8ff550ea694703a157dbd3b39408b12",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/go2_kinematic_sim.cpp",
+      "destination": "third_party/scan/plan_manage/src/go2_kinematic_sim.cpp",
+      "bytes": 4865,
+      "source_sha256": "c01c8eee657124f2c5ba5547a781b43c3ea10915e1a0dd4d3a47b9f8ed6cffc8",
+      "vendored_sha256": "c01c8eee657124f2c5ba5547a781b43c3ea10915e1a0dd4d3a47b9f8ed6cffc8",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/open_loop_controller.cpp",
+      "destination": "third_party/scan/plan_manage/src/open_loop_controller.cpp",
+      "bytes": 5655,
+      "source_sha256": "686695e53036eec110a750b076172c3c99b8437390b8a0a43a2751c1fef215ba",
+      "vendored_sha256": "686695e53036eec110a750b076172c3c99b8437390b8a0a43a2751c1fef215ba",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/planner_manager.cpp",
+      "destination": "third_party/scan/plan_manage/src/planner_manager.cpp",
+      "bytes": 21746,
+      "source_sha256": "539363cd2d07b64f96973224d3b2bd402f3bd53e163941c63d4a26bad741526f",
+      "vendored_sha256": "539363cd2d07b64f96973224d3b2bd402f3bd53e163941c63d4a26bad741526f",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/scan_planner_node.cpp",
+      "destination": "third_party/scan/plan_manage/src/scan_planner_node.cpp",
+      "bytes": 646,
+      "source_sha256": "2040950cf8e72e6037543185b89a92fa9f416b05976131730d7ae05236bc2f08",
+      "vendored_sha256": "2040950cf8e72e6037543185b89a92fa9f416b05976131730d7ae05236bc2f08",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/src/scan_replan_fsm.cpp",
+      "destination": "third_party/scan/plan_manage/src/scan_replan_fsm.cpp",
+      "bytes": 74343,
+      "source_sha256": "e46eba67d3f052666d4f03216abe4e9e5c1e6b0e9200837652019c4ebccebb8b",
+      "vendored_sha256": "e46eba67d3f052666d4f03216abe4e9e5c1e6b0e9200837652019c4ebccebb8b",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/test/__init__.py",
+      "destination": "third_party/scan/plan_manage/test/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/test/test_planner_startup.py",
+      "destination": "third_party/scan/plan_manage/test/test_planner_startup.py",
+      "bytes": 859,
+      "source_sha256": "b9853c05debeabb808313e99696ed70683b29c676e52edddcd2721018da3f260",
+      "vendored_sha256": "b9853c05debeabb808313e99696ed70683b29c676e52edddcd2721018da3f260",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_manage/test/test_waypoint_parameters.py",
+      "destination": "third_party/scan/plan_manage/test/test_waypoint_parameters.py",
+      "bytes": 923,
+      "source_sha256": "9c4d01bd06ecbc5982b7cb63b915eb0253a67304c1e7b354ae2f40ebe9da96f5",
+      "vendored_sha256": "9c4d01bd06ecbc5982b7cb63b915eb0253a67304c1e7b354ae2f40ebe9da96f5",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/CMakeLists.txt",
+      "destination": "third_party/scan/plan_env/CMakeLists.txt",
+      "bytes": 2251,
+      "source_sha256": "af7558662b8436dd224ecfbdf321fecbc948884852734d90f6874e8281e4f785",
+      "vendored_sha256": "af7558662b8436dd224ecfbdf321fecbc948884852734d90f6874e8281e4f785",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/README.md",
+      "destination": "third_party/scan/plan_env/README.md",
+      "bytes": 1585,
+      "source_sha256": "2834bc680a1590df85dcac6738407f6f5e10f97aef91484539b8638c126524bf",
+      "vendored_sha256": "2834bc680a1590df85dcac6738407f6f5e10f97aef91484539b8638c126524bf",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/include/plan_env/grid_map.h",
+      "destination": "third_party/scan/plan_env/include/plan_env/grid_map.h",
+      "bytes": 16052,
+      "source_sha256": "0d7d6f27917d9fe5985d73df63185a28eb52e886df661f4d5f23af13d322b577",
+      "vendored_sha256": "0d7d6f27917d9fe5985d73df63185a28eb52e886df661f4d5f23af13d322b577",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/include/plan_env/raycast.h",
+      "destination": "third_party/scan/plan_env/include/plan_env/raycast.h",
+      "bytes": 1424,
+      "source_sha256": "b5f0399c457cb10ab24e249468e2a7ccfd4d97f8b55cd9aa20b1002e50762b14",
+      "vendored_sha256": "b5f0399c457cb10ab24e249468e2a7ccfd4d97f8b55cd9aa20b1002e50762b14",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/package.xml",
+      "destination": "third_party/scan/plan_env/package.xml",
+      "bytes": 738,
+      "source_sha256": "7931c7aa77413b8ae4be4ae67a1ce8a06b9210f89b738c8e96c2cab71c734ea5",
+      "vendored_sha256": "7931c7aa77413b8ae4be4ae67a1ce8a06b9210f89b738c8e96c2cab71c734ea5",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/src/grid_map.cpp",
+      "destination": "third_party/scan/plan_env/src/grid_map.cpp",
+      "bytes": 40516,
+      "source_sha256": "83264ae48e53fd849756b66b2b24df9966632cf8cf9fa5b47505bfd0fad036fa",
+      "vendored_sha256": "83264ae48e53fd849756b66b2b24df9966632cf8cf9fa5b47505bfd0fad036fa",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/src/raycast.cpp",
+      "destination": "third_party/scan/plan_env/src/raycast.cpp",
+      "bytes": 10988,
+      "source_sha256": "715c670a9fdcf086f8e85096e201e34e56ed5c7f6f906dc88b1523e04defe03c",
+      "vendored_sha256": "715c670a9fdcf086f8e85096e201e34e56ed5c7f6f906dc88b1523e04defe03c",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/test/original_grid_map.cpp",
+      "destination": "third_party/scan/plan_env/test/original_grid_map.cpp",
+      "bytes": 38530,
+      "source_sha256": "144abf7c40f6e6a29a38eff61643f3232f145cdcaca7876cde2ba2c7354e58c1",
+      "vendored_sha256": "144abf7c40f6e6a29a38eff61643f3232f145cdcaca7876cde2ba2c7354e58c1",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/test/original_raycast.cpp",
+      "destination": "third_party/scan/plan_env/test/original_raycast.cpp",
+      "bytes": 10491,
+      "source_sha256": "d7cd0a81c3264fe8aa0920b796cf5dd86241b35aa74c15890af5a5c10f270a40",
+      "vendored_sha256": "d7cd0a81c3264fe8aa0920b796cf5dd86241b35aa74c15890af5a5c10f270a40",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/plan_env/test/raycast_regression.cpp",
+      "destination": "third_party/scan/plan_env/test/raycast_regression.cpp",
+      "bytes": 7535,
+      "source_sha256": "1c32f60035c2ae2465ada1a3e1b27e192bbbac14e20a70efc866b1d0f5592dff",
+      "vendored_sha256": "1c32f60035c2ae2465ada1a3e1b27e192bbbac14e20a70efc866b1d0f5592dff",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/path_searching/CMakeLists.txt",
+      "destination": "third_party/scan/path_searching/CMakeLists.txt",
+      "bytes": 908,
+      "source_sha256": "0abd39e42a0879750487260bd6da795496d8971fbc7cf1ad83c207a979e70f27",
+      "vendored_sha256": "0abd39e42a0879750487260bd6da795496d8971fbc7cf1ad83c207a979e70f27",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/path_searching/README.md",
+      "destination": "third_party/scan/path_searching/README.md",
+      "bytes": 973,
+      "source_sha256": "d3d99d2cbcbdd021da2ef9e2299051000382555164ffc77ef839de810610cc1b",
+      "vendored_sha256": "d3d99d2cbcbdd021da2ef9e2299051000382555164ffc77ef839de810610cc1b",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/path_searching/include/path_searching/dyn_a_star.h",
+      "destination": "third_party/scan/path_searching/include/path_searching/dyn_a_star.h",
+      "bytes": 3175,
+      "source_sha256": "4e4df749a5bad3dd2dfe464a5f0917360c5da9d70ca9da83231deee112ab86c2",
+      "vendored_sha256": "4e4df749a5bad3dd2dfe464a5f0917360c5da9d70ca9da83231deee112ab86c2",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/path_searching/package.xml",
+      "destination": "third_party/scan/path_searching/package.xml",
+      "bytes": 484,
+      "source_sha256": "9dfc54b1045a51703b9ac7a191b4d8f1c52a6193ea8a6ddcad8d8a8e7310f985",
+      "vendored_sha256": "9dfc54b1045a51703b9ac7a191b4d8f1c52a6193ea8a6ddcad8d8a8e7310f985",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/path_searching/src/dyn_a_star.cpp",
+      "destination": "third_party/scan/path_searching/src/dyn_a_star.cpp",
+      "bytes": 10810,
+      "source_sha256": "ba2bc44485c7506de56857f3e7a93cf94d5616f43573d4f53eb1fbd001aa758f",
+      "vendored_sha256": "ba2bc44485c7506de56857f3e7a93cf94d5616f43573d4f53eb1fbd001aa758f",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/CMakeLists.txt",
+      "destination": "third_party/scan/bspline_opt/CMakeLists.txt",
+      "bytes": 1283,
+      "source_sha256": "625227e0ae7516236c423085abc16cfa9b9496b96f2f3e49e2d50cc243d92a33",
+      "vendored_sha256": "625227e0ae7516236c423085abc16cfa9b9496b96f2f3e49e2d50cc243d92a33",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/README.md",
+      "destination": "third_party/scan/bspline_opt/README.md",
+      "bytes": 1583,
+      "source_sha256": "6c9c394fe965da6d4fb82c6ff81017f50292af0afab7938c479738d90bd4b00e",
+      "vendored_sha256": "6c9c394fe965da6d4fb82c6ff81017f50292af0afab7938c479738d90bd4b00e",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/include/bspline_opt/bspline_optimizer.h",
+      "destination": "third_party/scan/bspline_opt/include/bspline_opt/bspline_optimizer.h",
+      "bytes": 6369,
+      "source_sha256": "ddd2c2e812b2dd59bb32f383c093246ebe12a9a667ae93d448ef5d1e4b9ef926",
+      "vendored_sha256": "ddd2c2e812b2dd59bb32f383c093246ebe12a9a667ae93d448ef5d1e4b9ef926",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/include/bspline_opt/gradient_descent_optimizer.h",
+      "destination": "third_party/scan/bspline_opt/include/bspline_opt/gradient_descent_optimizer.h",
+      "bytes": 1289,
+      "source_sha256": "1b02e713ac1112ea0a365f84e23af262822a1d76fe9cef3e8740b073d906abca",
+      "vendored_sha256": "1b02e713ac1112ea0a365f84e23af262822a1d76fe9cef3e8740b073d906abca",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/include/bspline_opt/lbfgs.hpp",
+      "destination": "third_party/scan/bspline_opt/include/bspline_opt/lbfgs.hpp",
+      "bytes": 54747,
+      "source_sha256": "39174dfe750b142f448fe8ac637976edc8a1bcf6a6ab8a56930e6543cfdf6b07",
+      "vendored_sha256": "39174dfe750b142f448fe8ac637976edc8a1bcf6a6ab8a56930e6543cfdf6b07",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/include/bspline_opt/uniform_bspline.h",
+      "destination": "third_party/scan/bspline_opt/include/bspline_opt/uniform_bspline.h",
+      "bytes": 2952,
+      "source_sha256": "5ab1b400f4b0b36c62d3661091e753bd4a238ddf90dbdd8f3b25b5d21c387a28",
+      "vendored_sha256": "5ab1b400f4b0b36c62d3661091e753bd4a238ddf90dbdd8f3b25b5d21c387a28",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/package.xml",
+      "destination": "third_party/scan/bspline_opt/package.xml",
+      "bytes": 568,
+      "source_sha256": "2157a112274394488a791b422007690eadc4343f861067f47cd0308a22bc8009",
+      "vendored_sha256": "2157a112274394488a791b422007690eadc4343f861067f47cd0308a22bc8009",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/src/bspline_optimizer.cpp",
+      "destination": "third_party/scan/bspline_opt/src/bspline_optimizer.cpp",
+      "bytes": 43788,
+      "source_sha256": "9744424bd58841213230e95b252706360b1d4db10eaf30e7f6bf34a857a87568",
+      "vendored_sha256": "9744424bd58841213230e95b252706360b1d4db10eaf30e7f6bf34a857a87568",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/src/gradient_descent_optimizer.cpp",
+      "destination": "third_party/scan/bspline_opt/src/gradient_descent_optimizer.cpp",
+      "bytes": 3166,
+      "source_sha256": "4dca3811be57cf3f819a0d3601d6a6024c304f5b9852e4079bf3334706f133c7",
+      "vendored_sha256": "4dca3811be57cf3f819a0d3601d6a6024c304f5b9852e4079bf3334706f133c7",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/src/uniform_bspline.cpp",
+      "destination": "third_party/scan/bspline_opt/src/uniform_bspline.cpp",
+      "bytes": 10184,
+      "source_sha256": "e91c5a429155738389602dc4c50301ea65f8f134809406545779c1bf0c1d7a8b",
+      "vendored_sha256": "e91c5a429155738389602dc4c50301ea65f8f134809406545779c1bf0c1d7a8b",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/bspline_opt/test/test_uniform_bspline.cpp",
+      "destination": "third_party/scan/bspline_opt/test/test_uniform_bspline.cpp",
+      "bytes": 980,
+      "source_sha256": "acf9fa94285c426ca04c2b5c21b77e926d0a635915f75373a1d99371690e730e",
+      "vendored_sha256": "acf9fa94285c426ca04c2b5c21b77e926d0a635915f75373a1d99371690e730e",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/CMakeLists.txt",
+      "destination": "third_party/scan/traj_utils/CMakeLists.txt",
+      "bytes": 1051,
+      "source_sha256": "5e2f21bb681b22ebc1e9b03c78df1b39a53d585ca436219abbab510434b77bb6",
+      "vendored_sha256": "5e2f21bb681b22ebc1e9b03c78df1b39a53d585ca436219abbab510434b77bb6",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/README.md",
+      "destination": "third_party/scan/traj_utils/README.md",
+      "bytes": 778,
+      "source_sha256": "ff7b53b379abe807c7659059ae001f7e565b326fa57df9d943ac2525a650e413",
+      "vendored_sha256": "ff7b53b379abe807c7659059ae001f7e565b326fa57df9d943ac2525a650e413",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/include/traj_utils/planning_visualization.h",
+      "destination": "third_party/scan/traj_utils/include/traj_utils/planning_visualization.h",
+      "bytes": 2765,
+      "source_sha256": "c7d0bb617163f7931fce28346963a5cc5ab0f383aa00ebb360c2f8319bc5a4c1",
+      "vendored_sha256": "c7d0bb617163f7931fce28346963a5cc5ab0f383aa00ebb360c2f8319bc5a4c1",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/include/traj_utils/polynomial_traj.h",
+      "destination": "third_party/scan/traj_utils/include/traj_utils/polynomial_traj.h",
+      "bytes": 8581,
+      "source_sha256": "7ce335eea4abc5afb9f02fb3d1f5e926f57dc90e2a0b9005ad11ab13836f1060",
+      "vendored_sha256": "7ce335eea4abc5afb9f02fb3d1f5e926f57dc90e2a0b9005ad11ab13836f1060",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/package.xml",
+      "destination": "third_party/scan/traj_utils/package.xml",
+      "bytes": 562,
+      "source_sha256": "41eccf955db4758e3d21faee9f3ba273aaa3b3950a26815a085e82511a1b3143",
+      "vendored_sha256": "41eccf955db4758e3d21faee9f3ba273aaa3b3950a26815a085e82511a1b3143",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/src/planning_visualization.cpp",
+      "destination": "third_party/scan/traj_utils/src/planning_visualization.cpp",
+      "bytes": 11290,
+      "source_sha256": "938924191bfe46dbfadd83df45d118f0fc7fc54c080ecf9bf310fc7b1ba71541",
+      "vendored_sha256": "938924191bfe46dbfadd83df45d118f0fc7fc54c080ecf9bf310fc7b1ba71541",
+      "modified": false
+    },
+    {
+      "source": "src/planning/scan/traj_utils/src/polynomial_traj.cpp",
+      "destination": "third_party/scan/traj_utils/src/polynomial_traj.cpp",
+      "bytes": 7728,
+      "source_sha256": "608005c392dbfa46315cfa3f6e5f3b9db5bc3a10cb3f9ac539c3321505acdb18",
+      "vendored_sha256": "608005c392dbfa46315cfa3f6e5f3b9db5bc3a10cb3f9ac539c3321505acdb18",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/CMakeLists.txt",
+      "destination": "third_party/scan/scan_planner_msgs/CMakeLists.txt",
+      "bytes": 467,
+      "source_sha256": "82d85d8bce8d0379563edd16f31ac332782158fc86cb6cb2db1c7effa80e4f4a",
+      "vendored_sha256": "82d85d8bce8d0379563edd16f31ac332782158fc86cb6cb2db1c7effa80e4f4a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/Bspline.idl",
+      "destination": "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
+      "bytes": 550,
+      "source_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
+      "vendored_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/Bspline.json",
+      "destination": "third_party/scan/scan_planner_msgs/msg/Bspline.json",
+      "bytes": 3831,
+      "source_sha256": "3a5d4adfc2c4ad786cd5780f806a231baf984ec6b17038c52906f4d864975fa7",
+      "vendored_sha256": "3a5d4adfc2c4ad786cd5780f806a231baf984ec6b17038c52906f4d864975fa7",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/Bspline.msg",
+      "destination": "third_party/scan/scan_planner_msgs/msg/Bspline.msg",
+      "bytes": 142,
+      "source_sha256": "60040920d4c09184baa540fad8babbec6b3e4e81c7d80522d4bedd048e162fbc",
+      "vendored_sha256": "60040920d4c09184baa540fad8babbec6b3e4e81c7d80522d4bedd048e162fbc",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/DataDisp.idl",
+      "destination": "third_party/scan/scan_planner_msgs/msg/DataDisp.idl",
+      "bytes": 398,
+      "source_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
+      "vendored_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/DataDisp.json",
+      "destination": "third_party/scan/scan_planner_msgs/msg/DataDisp.json",
+      "bytes": 3315,
+      "source_sha256": "b444f409cc0d509dc1459934482d3e6689940a862bc9020a7c66dfecaed08e9e",
+      "vendored_sha256": "b444f409cc0d509dc1459934482d3e6689940a862bc9020a7c66dfecaed08e9e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/msg/DataDisp.msg",
+      "destination": "third_party/scan/scan_planner_msgs/msg/DataDisp.msg",
+      "bytes": 74,
+      "source_sha256": "e5af486e44777df259d35ee0a4d6f99a1a9bcb6d99de0c64687d1e5c02abc7f2",
+      "vendored_sha256": "e5af486e44777df259d35ee0a4d6f99a1a9bcb6d99de0c64687d1e5c02abc7f2",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/scan_planner_msgs/package.xml",
+      "destination": "third_party/scan/scan_planner_msgs/package.xml",
+      "bytes": 691,
+      "source_sha256": "ac8cffb52a76590efbdd8f43b7d3cbabfe73932968135ca2aec53c4eb42c2fb1",
+      "vendored_sha256": "ac8cffb52a76590efbdd8f43b7d3cbabfe73932968135ca2aec53c4eb42c2fb1",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/CMakeLists.txt",
+      "destination": "third_party/vikit/vikit_common/CMakeLists.txt",
+      "bytes": 2490,
+      "source_sha256": "83e3fb0f17a2e17a535db53cccb32b5bad3bf5e570f110c561fe6cd2f1cb1509",
+      "vendored_sha256": "83e3fb0f17a2e17a535db53cccb32b5bad3bf5e570f110c561fe6cd2f1cb1509",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/CMakeModules/FindEigen.cmake",
+      "destination": "third_party/vikit/vikit_common/CMakeModules/FindEigen.cmake",
+      "bytes": 2881,
+      "source_sha256": "254bdb9194cb0fb016102d09fdf62ac18294da2bdfbac54aa65b06e526571991",
+      "vendored_sha256": "254bdb9194cb0fb016102d09fdf62ac18294da2bdfbac54aa65b06e526571991",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/README.md",
+      "destination": "third_party/vikit/vikit_common/README.md",
+      "bytes": 5564,
+      "source_sha256": "ef1fdc0fb3908135a488a161bb3a1a2edacd0077448a07f86f881ee7f00dfe43",
+      "vendored_sha256": "ef1fdc0fb3908135a488a161bb3a1a2edacd0077448a07f86f881ee7f00dfe43",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/abstract_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/abstract_camera.h",
+      "bytes": 2000,
+      "source_sha256": "ecfe3f35bece1e25884cba598807da4215048feca856325663f27736db3c2f07",
+      "vendored_sha256": "ecfe3f35bece1e25884cba598807da4215048feca856325663f27736db3c2f07",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/aligned_mem.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/aligned_mem.h",
+      "bytes": 2710,
+      "source_sha256": "5d2e6c67f25b14c4d9ea719cb1624b8bcaff55cb2bd8a90673c111e3e5014d12",
+      "vendored_sha256": "5d2e6c67f25b14c4d9ea719cb1624b8bcaff55cb2bd8a90673c111e3e5014d12",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/atan_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/atan_camera.h",
+      "bytes": 2333,
+      "source_sha256": "e8177a2efc11f2440257e232ea2f0b4ee590fba20349367a81ea81a2fd21df7a",
+      "vendored_sha256": "e8177a2efc11f2440257e232ea2f0b4ee590fba20349367a81ea81a2fd21df7a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/blender_utils.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/blender_utils.h",
+      "bytes": 3425,
+      "source_sha256": "5a44888d757e5770b25bc24fe0eba1bb11d82c8069b1376cf4008f3e64e29f90",
+      "vendored_sha256": "5a44888d757e5770b25bc24fe0eba1bb11d82c8069b1376cf4008f3e64e29f90",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/equidistant_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/equidistant_camera.h",
+      "bytes": 3840,
+      "source_sha256": "fc1e265bbaddfb641f81e9faa0551babb373eb9b758744eb36e481082ee635b4",
+      "vendored_sha256": "fc1e265bbaddfb641f81e9faa0551babb373eb9b758744eb36e481082ee635b4",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/file_reader.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/file_reader.h",
+      "bytes": 2406,
+      "source_sha256": "fd2ce7e74ac56ed446a036370ce20eff02b8e49cd856c8ef8a8f956b12a97298",
+      "vendored_sha256": "fd2ce7e74ac56ed446a036370ce20eff02b8e49cd856c8ef8a8f956b12a97298",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/file_reader_types.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/file_reader_types.h",
+      "bytes": 2418,
+      "source_sha256": "bf15b33a08d9b9dc57296b2b4bf702433db96511ea54cd522a7f224064e8d57b",
+      "vendored_sha256": "bf15b33a08d9b9dc57296b2b4bf702433db96511ea54cd522a7f224064e8d57b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/homography.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/homography.h",
+      "bytes": 1980,
+      "source_sha256": "34fc060c9fe28cb07b1937ca98a86e59b67abe081efd81e76f79f28679dff9ec",
+      "vendored_sha256": "34fc060c9fe28cb07b1937ca98a86e59b67abe081efd81e76f79f28679dff9ec",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/img_align.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/img_align.h",
+      "bytes": 4677,
+      "source_sha256": "ef96a140facbba762c7622f5fe5c1621e1b944d27daacb9b2435f0e7255de17b",
+      "vendored_sha256": "ef96a140facbba762c7622f5fe5c1621e1b944d27daacb9b2435f0e7255de17b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/math_utils.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/math_utils.h",
+      "bytes": 3961,
+      "source_sha256": "62ed5df27222e102e3d5154e2f3df304b899d9c2ffa9828da89ee906e2ac6c95",
+      "vendored_sha256": "62ed5df27222e102e3d5154e2f3df304b899d9c2ffa9828da89ee906e2ac6c95",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/nlls_solver.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/nlls_solver.h",
+      "bytes": 5188,
+      "source_sha256": "c96b54177b8b131c28a1733d1c6e1619f4608921307b1500cde2ea88569963da",
+      "vendored_sha256": "c96b54177b8b131c28a1733d1c6e1619f4608921307b1500cde2ea88569963da",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/nlls_solver_impl.hpp",
+      "destination": "third_party/vikit/vikit_common/include/vikit/nlls_solver_impl.hpp",
+      "bytes": 7946,
+      "source_sha256": "04c0d1adf6004058e2ed1bfa0b9473a2e08867ba97bd3f360043ca42ebb20f2e",
+      "vendored_sha256": "04c0d1adf6004058e2ed1bfa0b9473a2e08867ba97bd3f360043ca42ebb20f2e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/omni_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/omni_camera.h",
+      "bytes": 1927,
+      "source_sha256": "cefbfb60ed09ed8aca02868c90bda01c2915a2a14efc6f6882144e99139e0984",
+      "vendored_sha256": "cefbfb60ed09ed8aca02868c90bda01c2915a2a14efc6f6882144e99139e0984",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/patch_score.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/patch_score.h",
+      "bytes": 8454,
+      "source_sha256": "e5a5273b3e72851c06738ee09e92b92e41d4b1d464d7b98b5364d37834e347bf",
+      "vendored_sha256": "e5a5273b3e72851c06738ee09e92b92e41d4b1d464d7b98b5364d37834e347bf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/performance_monitor.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/performance_monitor.h",
+      "bytes": 1241,
+      "source_sha256": "938422e337cc3d60311f29b30094b735f984a302e432f2b8ff855643e0f0bfcf",
+      "vendored_sha256": "938422e337cc3d60311f29b30094b735f984a302e432f2b8ff855643e0f0bfcf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/pinhole_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/pinhole_camera.h",
+      "bytes": 2233,
+      "source_sha256": "9a12133411fee6cb0475a296974c9505d6c5474faffadf302b37d8baa60d22f2",
+      "vendored_sha256": "9a12133411fee6cb0475a296974c9505d6c5474faffadf302b37d8baa60d22f2",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/polynomial_camera.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/polynomial_camera.h",
+      "bytes": 4334,
+      "source_sha256": "eb7e4983f5c2bc2b5ca7a11f77095139e8a115b1283d395a13fc0f1e73cb6077",
+      "vendored_sha256": "eb7e4983f5c2bc2b5ca7a11f77095139e8a115b1283d395a13fc0f1e73cb6077",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/ringbuffer.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/ringbuffer.h",
+      "bytes": 2645,
+      "source_sha256": "44768985302cb02681a235cfc2e17a82004fea4161b6132518b716eb3009165c",
+      "vendored_sha256": "44768985302cb02681a235cfc2e17a82004fea4161b6132518b716eb3009165c",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/robust_cost.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/robust_cost.h",
+      "bytes": 4256,
+      "source_sha256": "a3fba95865bf375b61d5c43c230d3a1a2875d75b7aea6f7ab9a143b562a2bb71",
+      "vendored_sha256": "a3fba95865bf375b61d5c43c230d3a1a2875d75b7aea6f7ab9a143b562a2bb71",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/sample.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/sample.h",
+      "bytes": 1027,
+      "source_sha256": "8811171bf10eb43c45df2a5cdaf073cf58a1b27ca5a1532ffb41ef0eef942441",
+      "vendored_sha256": "8811171bf10eb43c45df2a5cdaf073cf58a1b27ca5a1532ffb41ef0eef942441",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/timer.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/timer.h",
+      "bytes": 1267,
+      "source_sha256": "af3d62462ae241c3c011fca0acd0eb53bed583000dbbb127528807fe7d59cb0e",
+      "vendored_sha256": "af3d62462ae241c3c011fca0acd0eb53bed583000dbbb127528807fe7d59cb0e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/user_input_thread.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/user_input_thread.h",
+      "bytes": 1172,
+      "source_sha256": "35e6af2e5ccaa549406f2eda96442a602662ab6f8456f4dc78dcbd8160d51f93",
+      "vendored_sha256": "35e6af2e5ccaa549406f2eda96442a602662ab6f8456f4dc78dcbd8160d51f93",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/include/vikit/vision.h",
+      "destination": "third_party/vikit/vikit_common/include/vikit/vision.h",
+      "bytes": 2071,
+      "source_sha256": "2cb42f58a9ae4e3f74f57ccbcef925223d0c01c8df37002f11a26b237ab7a165",
+      "vendored_sha256": "2cb42f58a9ae4e3f74f57ccbcef925223d0c01c8df37002f11a26b237ab7a165",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/package.xml",
+      "destination": "third_party/vikit/vikit_common/package.xml",
+      "bytes": 419,
+      "source_sha256": "fcb5022bc10701a75adf2f9573b5cf13318b249045573eda0210f418c3b125e5",
+      "vendored_sha256": "fcb5022bc10701a75adf2f9573b5cf13318b249045573eda0210f418c3b125e5",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/atan_camera.cpp",
+      "destination": "third_party/vikit/vikit_common/src/atan_camera.cpp",
+      "bytes": 1717,
+      "source_sha256": "ec4425bfacd367574ae8a88e22ddb344df5748d248addb857b91d2be0e37c8cb",
+      "vendored_sha256": "ec4425bfacd367574ae8a88e22ddb344df5748d248addb857b91d2be0e37c8cb",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/equidistant_camera.cpp",
+      "destination": "third_party/vikit/vikit_common/src/equidistant_camera.cpp",
+      "bytes": 2460,
+      "source_sha256": "ca1a7a83fabd63a70ba1c4a9e101c66b93db909937c7d012de5d7fbc06a8163a",
+      "vendored_sha256": "ca1a7a83fabd63a70ba1c4a9e101c66b93db909937c7d012de5d7fbc06a8163a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/homography.cpp",
+      "destination": "third_party/vikit/vikit_common/src/homography.cpp",
+      "bytes": 7745,
+      "source_sha256": "c4b35bd83e2dcf004fb060c0fd919fbee0bc0f2307cf39115bd2f1563f112975",
+      "vendored_sha256": "c4b35bd83e2dcf004fb060c0fd919fbee0bc0f2307cf39115bd2f1563f112975",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/img_align.cpp",
+      "destination": "third_party/vikit/vikit_common/src/img_align.cpp",
+      "bytes": 12595,
+      "source_sha256": "55b6ea6bc34d46f1e2b5482ccc952b10cd655ba9cc5809225271b57aed677d58",
+      "vendored_sha256": "55b6ea6bc34d46f1e2b5482ccc952b10cd655ba9cc5809225271b57aed677d58",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/math_utils.cpp",
+      "destination": "third_party/vikit/vikit_common/src/math_utils.cpp",
+      "bytes": 5537,
+      "source_sha256": "348f9c25992e2879bd83b900912065525a9a203447d4c2165e596308aecc78cf",
+      "vendored_sha256": "348f9c25992e2879bd83b900912065525a9a203447d4c2165e596308aecc78cf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/omni_camera.cpp",
+      "destination": "third_party/vikit/vikit_common/src/omni_camera.cpp",
+      "bytes": 5080,
+      "source_sha256": "fda861a0d4bed32f7c7edaeac9325cdc2ebaebd6f42f977b5b2facfab105c835",
+      "vendored_sha256": "fda861a0d4bed32f7c7edaeac9325cdc2ebaebd6f42f977b5b2facfab105c835",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/performance_monitor.cpp",
+      "destination": "third_party/vikit/vikit_common/src/performance_monitor.cpp",
+      "bytes": 3468,
+      "source_sha256": "9c92a84e58b110b3d0c8a22e15f22ca779a35500297abad7e3c0e4d063a6485b",
+      "vendored_sha256": "9c92a84e58b110b3d0c8a22e15f22ca779a35500297abad7e3c0e4d063a6485b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/pinhole_camera.cpp",
+      "destination": "third_party/vikit/vikit_common/src/pinhole_camera.cpp",
+      "bytes": 2880,
+      "source_sha256": "df3fbf1147a6369ec9a8b0071b3407ff08a4b44d1e0aead9d5fe9182c82ef9d9",
+      "vendored_sha256": "df3fbf1147a6369ec9a8b0071b3407ff08a4b44d1e0aead9d5fe9182c82ef9d9",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/polynomial_camera.cpp",
+      "destination": "third_party/vikit/vikit_common/src/polynomial_camera.cpp",
+      "bytes": 3821,
+      "source_sha256": "c2e3b30ac021a9eac6d3a8d06186799b5b0dff161419fc6a8a9ac022a0755aee",
+      "vendored_sha256": "c2e3b30ac021a9eac6d3a8d06186799b5b0dff161419fc6a8a9ac022a0755aee",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/robust_cost.cpp",
+      "destination": "third_party/vikit/vikit_common/src/robust_cost.cpp",
+      "bytes": 3748,
+      "source_sha256": "6d6efd847b11abc00cc69049b409ba825f94119721ac28ebaad3f429216e13bc",
+      "vendored_sha256": "6d6efd847b11abc00cc69049b409ba825f94119721ac28ebaad3f429216e13bc",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/user_input_thread.cpp",
+      "destination": "third_party/vikit/vikit_common/src/user_input_thread.cpp",
+      "bytes": 1579,
+      "source_sha256": "af8f69e58915eaa95362f2e6f01d990426b54c52dec66354f812f2f194c761a5",
+      "vendored_sha256": "af8f69e58915eaa95362f2e6f01d990426b54c52dec66354f812f2f194c761a5",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_common/src/vision.cpp",
+      "destination": "third_party/vikit/vikit_common/src/vision.cpp",
+      "bytes": 8972,
+      "source_sha256": "2e58d660128e1ce63302b99ee35d557d46f17acb36f064553dc6c3dd27c4b05b",
+      "vendored_sha256": "2e58d660128e1ce63302b99ee35d557d46f17acb36f064553dc6c3dd27c4b05b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/CMakeLists.txt",
+      "destination": "third_party/vikit/vikit_ros/CMakeLists.txt",
+      "bytes": 3063,
+      "source_sha256": "1e9ffc933c555aeb4f9ae3b6eced17688895600550e51668275b52d3b5732eeb",
+      "vendored_sha256": "1e9ffc933c555aeb4f9ae3b6eced17688895600550e51668275b52d3b5732eeb",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/include/vikit/camera_loader.h",
+      "destination": "third_party/vikit/vikit_ros/include/vikit/camera_loader.h",
+      "bytes": 840,
+      "source_sha256": "25be2cc54e4bcb6e9e0ed422e0410ccc0c195ebeb1e887deee925c7690fe20e8",
+      "vendored_sha256": "25be2cc54e4bcb6e9e0ed422e0410ccc0c195ebeb1e887deee925c7690fe20e8",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/include/vikit/output_helper.h",
+      "destination": "third_party/vikit/vikit_ros/include/vikit/output_helper.h",
+      "bytes": 3657,
+      "source_sha256": "ea2d922ccf6d93dcf641bf26939aac020f389bc833f77929d63cad09e15afc7c",
+      "vendored_sha256": "ea2d922ccf6d93dcf641bf26939aac020f389bc833f77929d63cad09e15afc7c",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/include/vikit/params_helper.h",
+      "destination": "third_party/vikit/vikit_ros/include/vikit/params_helper.h",
+      "bytes": 4686,
+      "source_sha256": "accf572771937022e2312ce1100461774f945c48bb943f8c93015330fc158db6",
+      "vendored_sha256": "accf572771937022e2312ce1100461774f945c48bb943f8c93015330fc158db6",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/package.xml",
+      "destination": "third_party/vikit/vikit_ros/package.xml",
+      "bytes": 1529,
+      "source_sha256": "eaf90aa6c1f69082a5d06d5fa0fcce8860f5c50da2502671180f3f3e317822dd",
+      "vendored_sha256": "eaf90aa6c1f69082a5d06d5fa0fcce8860f5c50da2502671180f3f3e317822dd",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/src/camera_loader.cpp",
+      "destination": "third_party/vikit/vikit_ros/src/camera_loader.cpp",
+      "bytes": 6060,
+      "source_sha256": "ad4794d9985120e31085c766aeef002f60b534d955d035183390947b4d7166f3",
+      "vendored_sha256": "ad4794d9985120e31085c766aeef002f60b534d955d035183390947b4d7166f3",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/vikit_ros/src/output_helper.cpp",
+      "destination": "third_party/vikit/vikit_ros/src/output_helper.cpp",
+      "bytes": 13256,
+      "source_sha256": "aea5d3b31d6f3540a569a42844ab5cb2a8d67b1220dea54d365ec8c498f032cd",
+      "vendored_sha256": "aea5d3b31d6f3540a569a42844ab5cb2a8d67b1220dea54d365ec8c498f032cd",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/.gitignore",
+      "destination": "third_party/livox_ros_driver2/.gitignore",
+      "bytes": 113,
+      "source_sha256": "2da9e4085d66ed68d16a4d7d4c97ced71bf404f0cb1a4c7c028f44079b86351b",
+      "vendored_sha256": "fc9ed78444fb391f62eab19ed5ec10ec87e41af7a30c9bb73effb68d4788af8d",
+      "modified": true,
+      "modification_reason": "Include the physical ROS2 package.xml in a clean Git export"
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/allocators.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/allocators.h",
+      "bytes": 10437,
+      "source_sha256": "49b554ebfc2369438fd9365b28f0453485d936437847de31a7bb770001abca55",
+      "vendored_sha256": "49b554ebfc2369438fd9365b28f0453485d936437847de31a7bb770001abca55",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/cursorstreamwrapper.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/cursorstreamwrapper.h",
+      "bytes": 2230,
+      "source_sha256": "de1a52b674c998a7581f9cb69c9310757f825595c3fef985d5d153f7ac1b6aaf",
+      "vendored_sha256": "de1a52b674c998a7581f9cb69c9310757f825595c3fef985d5d153f7ac1b6aaf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/document.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/document.h",
+      "bytes": 117966,
+      "source_sha256": "6afae6a8825b03b4c6baa42a513e5a5242ac96b4c95968c07ee8bda8163eb3ff",
+      "vendored_sha256": "6afae6a8825b03b4c6baa42a513e5a5242ac96b4c95968c07ee8bda8163eb3ff",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/encodedstream.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/encodedstream.h",
+      "bytes": 10634,
+      "source_sha256": "4bb5e4853943d5ead467e46b5313d95aa23645018cda93e7907a934a06cfbb26",
+      "vendored_sha256": "4bb5e4853943d5ead467e46b5313d95aa23645018cda93e7907a934a06cfbb26",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/encodings.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/encodings.h",
+      "bytes": 29827,
+      "source_sha256": "0201c664e471c615b5cd27d2e981cf8b21ac9c210bdf108062fb2fd9d493a501",
+      "vendored_sha256": "0201c664e471c615b5cd27d2e981cf8b21ac9c210bdf108062fb2fd9d493a501",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/error/en.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/error/en.h",
+      "bytes": 3739,
+      "source_sha256": "484dcd32c0b35b7a81561740fad970402c0ffcec44311381a2fb265cfe5e273c",
+      "vendored_sha256": "484dcd32c0b35b7a81561740fad970402c0ffcec44311381a2fb265cfe5e273c",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/error/error.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/error/error.h",
+      "bytes": 6472,
+      "source_sha256": "aa9b40b61754b227248b4b092331dbd5721ef6565d962e4c225c6c1e7974817e",
+      "vendored_sha256": "aa9b40b61754b227248b4b092331dbd5721ef6565d962e4c225c6c1e7974817e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/filereadstream.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/filereadstream.h",
+      "bytes": 2961,
+      "source_sha256": "8c7d282eb32897969430f5a94178cab238433e25fa139ee74eda87eb1d42690a",
+      "vendored_sha256": "8c7d282eb32897969430f5a94178cab238433e25fa139ee74eda87eb1d42690a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/filewritestream.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/filewritestream.h",
+      "bytes": 3073,
+      "source_sha256": "1db49a4cd9038f2670667e5900f346d231a0eece06ac1817f33feb63f33545b9",
+      "vendored_sha256": "1db49a4cd9038f2670667e5900f346d231a0eece06ac1817f33feb63f33545b9",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/fwd.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/fwd.h",
+      "bytes": 4120,
+      "source_sha256": "2a0e024b8b6b87d1d3f50d1d0dd4656124c161fea88406265d097d613498854e",
+      "vendored_sha256": "2a0e024b8b6b87d1d3f50d1d0dd4656124c161fea88406265d097d613498854e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/biginteger.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/biginteger.h",
+      "bytes": 8296,
+      "source_sha256": "0be8375c2d39bc1f8f57b755a26569db9ed35c86d066b294911690513786afb3",
+      "vendored_sha256": "0be8375c2d39bc1f8f57b755a26569db9ed35c86d066b294911690513786afb3",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/clzll.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/clzll.h",
+      "bytes": 2035,
+      "source_sha256": "93d71c879a805a8c17cfd8913cf1add4d2f25407bbf668abe1dcca6e40ebc746",
+      "vendored_sha256": "93d71c879a805a8c17cfd8913cf1add4d2f25407bbf668abe1dcca6e40ebc746",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/diyfp.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/diyfp.h",
+      "bytes": 11387,
+      "source_sha256": "f2c45af9e73a451e5472e5dd10a7672085e9a3504d1f3ab864a5b9cc7445c1eb",
+      "vendored_sha256": "f2c45af9e73a451e5472e5dd10a7672085e9a3504d1f3ab864a5b9cc7445c1eb",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/dtoa.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/dtoa.h",
+      "bytes": 7724,
+      "source_sha256": "965deca8d1382c30db9e0a1d51200a4934bfe032eda3dcde10d4bdb39817c05a",
+      "vendored_sha256": "965deca8d1382c30db9e0a1d51200a4934bfe032eda3dcde10d4bdb39817c05a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/ieee754.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/ieee754.h",
+      "bytes": 2990,
+      "source_sha256": "a1b4a88d5e0f633e99c7d68a34fdebc6289e6be0f0cfba452a7793166d7ea970",
+      "vendored_sha256": "a1b4a88d5e0f633e99c7d68a34fdebc6289e6be0f0cfba452a7793166d7ea970",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/itoa.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/itoa.h",
+      "bytes": 9272,
+      "source_sha256": "45c96bab2327aee5ff999167fac8f768a3a9e1003142fa68e3aee50b54d93e12",
+      "vendored_sha256": "45c96bab2327aee5ff999167fac8f768a3a9e1003142fa68e3aee50b54d93e12",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/meta.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/meta.h",
+      "bytes": 6731,
+      "source_sha256": "a20dad578c7d714ff04029f04719df19be5835c30bf9c7028d226e67d065bf0b",
+      "vendored_sha256": "a20dad578c7d714ff04029f04719df19be5835c30bf9c7028d226e67d065bf0b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/pow10.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/pow10.h",
+      "bytes": 3957,
+      "source_sha256": "7a7693969c936ddb6d036467a0f6b53def076922bb838d250eb40f12b2e2ce0e",
+      "vendored_sha256": "7a7693969c936ddb6d036467a0f6b53def076922bb838d250eb40f12b2e2ce0e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/regex.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/regex.h",
+      "bytes": 23238,
+      "source_sha256": "624cf078b8179a198374eebe94331aa2d8b70b08997f4e270ccfaccc90fd09b2",
+      "vendored_sha256": "624cf078b8179a198374eebe94331aa2d8b70b08997f4e270ccfaccc90fd09b2",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/stack.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/stack.h",
+      "bytes": 6805,
+      "source_sha256": "46c4f98ff2acce64d1280458dd1224aaee9a9035eebd3462cdf31ee25a13702e",
+      "vendored_sha256": "46c4f98ff2acce64d1280458dd1224aaee9a9035eebd3462cdf31ee25a13702e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/strfunc.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/strfunc.h",
+      "bytes": 2184,
+      "source_sha256": "e083b68f7bf3570653fce1e3ea0a573a75745a096dd80194e1a2fde4d7695bb8",
+      "vendored_sha256": "e083b68f7bf3570653fce1e3ea0a573a75745a096dd80194e1a2fde4d7695bb8",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/strtod.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/strtod.h",
+      "bytes": 8656,
+      "source_sha256": "2134c15ad40b9584ecb8e1a7f6163277a6d783574b3fb08574f88ab769b91751",
+      "vendored_sha256": "2134c15ad40b9584ecb8e1a7f6163277a6d783574b3fb08574f88ab769b91751",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/swap.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/swap.h",
+      "bytes": 1421,
+      "source_sha256": "48ecb57c3b2ca955ad3cccdfff03835be495a56c9c5da07ab9c02f488b7d7fe1",
+      "vendored_sha256": "48ecb57c3b2ca955ad3cccdfff03835be495a56c9c5da07ab9c02f488b7d7fe1",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/istreamwrapper.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/istreamwrapper.h",
+      "bytes": 4112,
+      "source_sha256": "b3c03a5826b8d8c9dfcef64eb09d8ec4a955e0c6edd38d9c3a127dbca53ec2dc",
+      "vendored_sha256": "b3c03a5826b8d8c9dfcef64eb09d8ec4a955e0c6edd38d9c3a127dbca53ec2dc",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/license.txt",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/license.txt",
+      "bytes": 5152,
+      "source_sha256": "a140e5d46fe734a1c78f1a3c3ef207871dd75648be71fdda8e309b23ab8b1f32",
+      "vendored_sha256": "a140e5d46fe734a1c78f1a3c3ef207871dd75648be71fdda8e309b23ab8b1f32",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/memorybuffer.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/memorybuffer.h",
+      "bytes": 2573,
+      "source_sha256": "cf661606aa41bee3466cee20174bc7454210e8aabac929b1d8e9e189fef601ab",
+      "vendored_sha256": "cf661606aa41bee3466cee20174bc7454210e8aabac929b1d8e9e189fef601ab",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/memorystream.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/memorystream.h",
+      "bytes": 2673,
+      "source_sha256": "8dd07eb66381de95a69c9cadce537d76c0349f913cfe183ab6243c54863c4dcf",
+      "vendored_sha256": "8dd07eb66381de95a69c9cadce537d76c0349f913cfe183ab6243c54863c4dcf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/msinttypes/inttypes.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/msinttypes/inttypes.h",
+      "bytes": 7824,
+      "source_sha256": "92f53d3ba0cdebaeb20a52893f89d0c29aae5111a3a8bb555eabdd8c96e3244f",
+      "vendored_sha256": "92f53d3ba0cdebaeb20a52893f89d0c29aae5111a3a8bb555eabdd8c96e3244f",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/msinttypes/stdint.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/msinttypes/stdint.h",
+      "bytes": 9151,
+      "source_sha256": "515ff5e244372892293c20bbfe6a5b3dcca7265442941df31dcebdfbe2a828fe",
+      "vendored_sha256": "515ff5e244372892293c20bbfe6a5b3dcca7265442941df31dcebdfbe2a828fe",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/ostreamwrapper.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/ostreamwrapper.h",
+      "bytes": 2342,
+      "source_sha256": "366d953184777b0de0a102ef38cf56f9fc766422246f16be9af2dad8ad787054",
+      "vendored_sha256": "366d953184777b0de0a102ef38cf56f9fc766422246f16be9af2dad8ad787054",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/pointer.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/pointer.h",
+      "bytes": 60230,
+      "source_sha256": "d74ab63c76a99a5a92418d2420cc733c22767b6d9e9a6f989689940de4f7c478",
+      "vendored_sha256": "d74ab63c76a99a5a92418d2420cc733c22767b6d9e9a6f989689940de4f7c478",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/prettywriter.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/prettywriter.h",
+      "bytes": 10253,
+      "source_sha256": "e8495e521c5d726c7e2ff59b1f7eb6f08a1e0298055d1fbbc4f29f08d736360d",
+      "vendored_sha256": "e8495e521c5d726c7e2ff59b1f7eb6f08a1e0298055d1fbbc4f29f08d736360d",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/rapidjson.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/rapidjson.h",
+      "bytes": 24293,
+      "source_sha256": "22ffbcb054cecc5180bdb72478ab32598c9aa40421322f17923809acdcf99629",
+      "vendored_sha256": "22ffbcb054cecc5180bdb72478ab32598c9aa40421322f17923809acdcf99629",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/reader.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/reader.h",
+      "bytes": 89290,
+      "source_sha256": "291f6d315a3617c9bd83d8b2836f9dc1e45a2a9770dcb0745f9eaaa603b715a6",
+      "vendored_sha256": "291f6d315a3617c9bd83d8b2836f9dc1e45a2a9770dcb0745f9eaaa603b715a6",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/schema.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/schema.h",
+      "bytes": 101259,
+      "source_sha256": "473b44fcb9f88d2fa7439e1c9f86899deae44205323a7ba7709e6b4b513f01fa",
+      "vendored_sha256": "473b44fcb9f88d2fa7439e1c9f86899deae44205323a7ba7709e6b4b513f01fa",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/stream.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/stream.h",
+      "bytes": 6694,
+      "source_sha256": "58e37336dafded31177eb2381f0d553de8a5fd33c8580873de32b0e467d85677",
+      "vendored_sha256": "58e37336dafded31177eb2381f0d553de8a5fd33c8580873de32b0e467d85677",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/stringbuffer.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/stringbuffer.h",
+      "bytes": 3984,
+      "source_sha256": "8434f52ca786bf876b3d3d693ce8e2d399325ddf891e0437becd41ed590806e9",
+      "vendored_sha256": "8434f52ca786bf876b3d3d693ce8e2d399325ddf891e0437becd41ed590806e9",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/writer.h",
+      "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/writer.h",
+      "bytes": 26178,
+      "source_sha256": "b42eca28a42d7b3806aaf691ee921accabcf911be6728c35fa04e14162a72bdf",
+      "vendored_sha256": "b42eca28a42d7b3806aaf691ee921accabcf911be6728c35fa04e14162a72bdf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/CHANGELOG.md",
+      "destination": "third_party/livox_ros_driver2/CHANGELOG.md",
+      "bytes": 1688,
+      "source_sha256": "197e45d1594227d0a9fa95c51faa026d45c12411ee969532beaa839f6c74bc5d",
+      "vendored_sha256": "197e45d1594227d0a9fa95c51faa026d45c12411ee969532beaa839f6c74bc5d",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/CMakeLists.txt",
+      "destination": "third_party/livox_ros_driver2/CMakeLists.txt",
+      "bytes": 10967,
+      "source_sha256": "a8d5929f29ddaef782db21132590506ec36dc554d35f2735be64e5a2efc19643",
+      "vendored_sha256": "a8d5929f29ddaef782db21132590506ec36dc554d35f2735be64e5a2efc19643",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/LICENSE.txt",
+      "destination": "third_party/livox_ros_driver2/LICENSE.txt",
+      "bytes": 19928,
+      "source_sha256": "5d965fd1439196751d5ccad8064a51dafdb2d88548174bb5516d393c7a4c0717",
+      "vendored_sha256": "5d965fd1439196751d5ccad8064a51dafdb2d88548174bb5516d393c7a4c0717",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/README.md",
+      "destination": "third_party/livox_ros_driver2/README.md",
+      "bytes": 20225,
+      "source_sha256": "13b234ff3715e4542f72f8b1a8cee23a9c93b14b6884e1e95abaf43a070ca902",
+      "vendored_sha256": "13b234ff3715e4542f72f8b1a8cee23a9c93b14b6884e1e95abaf43a070ca902",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/__init__.py",
+      "destination": "third_party/livox_ros_driver2/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/build.sh",
+      "destination": "third_party/livox_ros_driver2/build.sh",
+      "bytes": 1763,
+      "source_sha256": "05ffb76f017e796ff5230b53ad4e8e2bcd52e43ce2215e03c4ee78a44cb46b7a",
+      "vendored_sha256": "05ffb76f017e796ff5230b53ad4e8e2bcd52e43ce2215e03c4ee78a44cb46b7a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/cmake/version.cmake",
+      "destination": "third_party/livox_ros_driver2/cmake/version.cmake",
+      "bytes": 990,
+      "source_sha256": "698b065d680a20695f2163ca5bbe601792b24069357919bee3136768d75f8f7f",
+      "vendored_sha256": "698b065d680a20695f2163ca5bbe601792b24069357919bee3136768d75f8f7f",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/HAP_config.json",
+      "destination": "third_party/livox_ros_driver2/config/HAP_config.json",
+      "bytes": 863,
+      "source_sha256": "956414d48bf17af2427e2b8f3dbbeff92345f93fe81e97422f22117ea0ef3f35",
+      "vendored_sha256": "956414d48bf17af2427e2b8f3dbbeff92345f93fe81e97422f22117ea0ef3f35",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/MID360_config.json",
+      "destination": "third_party/livox_ros_driver2/config/MID360_config.json",
+      "bytes": 884,
+      "source_sha256": "6eba01156ce604a5a5aab8b102179d21ba0729aa4652cd9b0d2ad2a6afd7ca4d",
+      "vendored_sha256": "6eba01156ce604a5a5aab8b102179d21ba0729aa4652cd9b0d2ad2a6afd7ca4d",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/MID360s_config.json",
+      "destination": "third_party/livox_ros_driver2/config/MID360s_config.json",
+      "bytes": 794,
+      "source_sha256": "874b4c619dfe7ed7172631df462c0ac433eb9b5e667ef9595567f9261e77bcae",
+      "vendored_sha256": "874b4c619dfe7ed7172631df462c0ac433eb9b5e667ef9595567f9261e77bcae",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/display_point_cloud_ROS1.rviz",
+      "destination": "third_party/livox_ros_driver2/config/display_point_cloud_ROS1.rviz",
+      "bytes": 5650,
+      "source_sha256": "89d934b783d9f0386dbaef7cbbf0ea3f4ee0c87c57b313178d822cec93320caf",
+      "vendored_sha256": "89d934b783d9f0386dbaef7cbbf0ea3f4ee0c87c57b313178d822cec93320caf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/display_point_cloud_ROS2.rviz",
+      "destination": "third_party/livox_ros_driver2/config/display_point_cloud_ROS2.rviz",
+      "bytes": 4834,
+      "source_sha256": "ae7cea85c28bcb532f3504994aa287ad14100048cd53b30821b73df0a1f94e61",
+      "vendored_sha256": "ae7cea85c28bcb532f3504994aa287ad14100048cd53b30821b73df0a1f94e61",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/config/mixed_HAP_MID360_config.json",
+      "destination": "third_party/livox_ros_driver2/config/mixed_HAP_MID360_config.json",
+      "bytes": 1665,
+      "source_sha256": "99895013db7bfc1d58fef1abb2d25461624ab468bce5f5c4381172f3b7d235cf",
+      "vendored_sha256": "99895013db7bfc1d58fef1abb2d25461624ab468bce5f5c4381172f3b7d235cf",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+      "bytes": 1743,
+      "source_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
+      "vendored_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+      "bytes": 1744,
+      "source_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
+      "vendored_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+      "bytes": 1745,
+      "source_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
+      "vendored_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+      "bytes": 1754,
+      "source_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
+      "vendored_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+      "bytes": 1930,
+      "source_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
+      "vendored_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+      "bytes": 1933,
+      "source_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
+      "vendored_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+      "bytes": 1934,
+      "source_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
+      "vendored_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+      "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+      "bytes": 1943,
+      "source_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
+      "vendored_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/__init__.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/__init__.py",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_HAP_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_HAP_launch.py",
+      "bytes": 1968,
+      "source_sha256": "bb58699d0b6d344f579f5b2991db54561621ddb395e6ade8c94425c563cd9ef6",
+      "vendored_sha256": "bb58699d0b6d344f579f5b2991db54561621ddb395e6ade8c94425c563cd9ef6",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_MID360_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_MID360_launch.py",
+      "bytes": 1902,
+      "source_sha256": "11b0618d2a9a0def7f6e1a6831646d261674014344496fa1497fea67d6c0e826",
+      "vendored_sha256": "11b0618d2a9a0def7f6e1a6831646d261674014344496fa1497fea67d6c0e826",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py",
+      "bytes": 1903,
+      "source_sha256": "29d48e9e2dd2b21352e4ecff9c0a7db2a18994fe688dc68f361b3b70b33ee05a",
+      "vendored_sha256": "29d48e9e2dd2b21352e4ecff9c0a7db2a18994fe688dc68f361b3b70b33ee05a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_HAP_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_HAP_launch.py",
+      "bytes": 2186,
+      "source_sha256": "da07dc3d0402cccffe3e068108066fede37ed71ef47c191541158665d67b478f",
+      "vendored_sha256": "da07dc3d0402cccffe3e068108066fede37ed71ef47c191541158665d67b478f",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_MID360_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360_launch.py",
+      "bytes": 2189,
+      "source_sha256": "8331565b4c8fe1a80ec77d518b4bb2fcbe40ea8bf60a20de691d9c61417b678e",
+      "vendored_sha256": "8331565b4c8fe1a80ec77d518b4bb2fcbe40ea8bf60a20de691d9c61417b678e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_MID360s_launch.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360s_launch.py",
+      "bytes": 2190,
+      "source_sha256": "5660e8982e12c003bac4880b6804b27a611e2c6fda999ebc454e173282e9614b",
+      "vendored_sha256": "5660e8982e12c003bac4880b6804b27a611e2c6fda999ebc454e173282e9614b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_mixed.py",
+      "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_mixed.py",
+      "bytes": 2199,
+      "source_sha256": "decc75ab24173f20455c849c0cbe6cb3931d33d4901f39b52c105d381405b8d0",
+      "vendored_sha256": "decc75ab24173f20455c849c0cbe6cb3931d33d4901f39b52c105d381405b8d0",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/msg/CustomMsg.msg",
+      "destination": "third_party/livox_ros_driver2/msg/CustomMsg.msg",
+      "bytes": 341,
+      "source_sha256": "f42d6709db951b1fa307e929e742c0593cbf0d1b0ff977d2ed63ad8d7cee0a96",
+      "vendored_sha256": "f42d6709db951b1fa307e929e742c0593cbf0d1b0ff977d2ed63ad8d7cee0a96",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/msg/CustomPoint.msg",
+      "destination": "third_party/livox_ros_driver2/msg/CustomPoint.msg",
+      "bytes": 353,
+      "source_sha256": "b64b31a8edc8c8b3765d82b5d3ccd2d2e1f217b9525ef7007ab918674c619c59",
+      "vendored_sha256": "b64b31a8edc8c8b3765d82b5d3ccd2d2e1f217b9525ef7007ab918674c619c59",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/package.xml",
+      "destination": "third_party/livox_ros_driver2/package.xml",
+      "bytes": 1123,
+      "source_sha256": "084b1db3a68ef3cf979da0c8ce6a8bf9566dc586ebfdd51d0dbe012f43c3d2dd",
+      "vendored_sha256": "084b1db3a68ef3cf979da0c8ce6a8bf9566dc586ebfdd51d0dbe012f43c3d2dd",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/package_ROS1.xml",
+      "destination": "third_party/livox_ros_driver2/package_ROS1.xml",
+      "bytes": 3395,
+      "source_sha256": "2e3eb6932e9fe365d31aa69926aa6cae76464f4176008cf33de26f0fbee29c27",
+      "vendored_sha256": "2e3eb6932e9fe365d31aa69926aa6cae76464f4176008cf33de26f0fbee29c27",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/package_ROS2.xml",
+      "destination": "third_party/livox_ros_driver2/package_ROS2.xml",
+      "bytes": 1123,
+      "source_sha256": "084b1db3a68ef3cf979da0c8ce6a8bf9566dc586ebfdd51d0dbe012f43c3d2dd",
+      "vendored_sha256": "084b1db3a68ef3cf979da0c8ce6a8bf9566dc586ebfdd51d0dbe012f43c3d2dd",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/call_back/lidar_common_callback.cpp",
+      "destination": "third_party/livox_ros_driver2/src/call_back/lidar_common_callback.cpp",
+      "bytes": 2276,
+      "source_sha256": "8f37b7dda4236edbcb4a87cfa6a016e4105ca1e0b8e0e99f2446953636412196",
+      "vendored_sha256": "8f37b7dda4236edbcb4a87cfa6a016e4105ca1e0b8e0e99f2446953636412196",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/call_back/lidar_common_callback.h",
+      "destination": "third_party/livox_ros_driver2/src/call_back/lidar_common_callback.h",
+      "bytes": 1575,
+      "source_sha256": "e0fd66f13ad20b0426b9b5384abee61c8b2b85ace2e9904c470da9fd7c0cc366",
+      "vendored_sha256": "e0fd66f13ad20b0426b9b5384abee61c8b2b85ace2e9904c470da9fd7c0cc366",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/call_back/livox_lidar_callback.cpp",
+      "destination": "third_party/livox_ros_driver2/src/call_back/livox_lidar_callback.cpp",
+      "bytes": 15386,
+      "source_sha256": "4ea8189ca228f5f5730b07006f7472b46b28bfd942795b865455117c89b980c0",
+      "vendored_sha256": "4ea8189ca228f5f5730b07006f7472b46b28bfd942795b865455117c89b980c0",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/call_back/livox_lidar_callback.h",
+      "destination": "third_party/livox_ros_driver2/src/call_back/livox_lidar_callback.h",
+      "bytes": 3238,
+      "source_sha256": "8b491e57ee77c0b020458338f5bf9a5b8776c0d875c96654531e622e92159c45",
+      "vendored_sha256": "8b491e57ee77c0b020458338f5bf9a5b8776c0d875c96654531e622e92159c45",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/cache_index.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/cache_index.cpp",
+      "bytes": 3858,
+      "source_sha256": "dca25f47674f530249e94c0ac8ac368d122910ca66336bd1bee65a06d2f01667",
+      "vendored_sha256": "dca25f47674f530249e94c0ac8ac368d122910ca66336bd1bee65a06d2f01667",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/cache_index.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/cache_index.h",
+      "bytes": 2055,
+      "source_sha256": "65c635bd6903564bc1e0547113a6aff52e592c16295ed23264b5726317327c01",
+      "vendored_sha256": "65c635bd6903564bc1e0547113a6aff52e592c16295ed23264b5726317327c01",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/comm.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/comm.cpp",
+      "bytes": 2209,
+      "source_sha256": "73e6b7469337528ffb60b0f670bedc3c01dfcd7d8a048e72e8f04bd5d839f126",
+      "vendored_sha256": "73e6b7469337528ffb60b0f670bedc3c01dfcd7d8a048e72e8f04bd5d839f126",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/comm.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/comm.h",
+      "bytes": 8580,
+      "source_sha256": "72c639ba1d6eaf7c355050672c865c7615cea3619abee628683d98920fb31fa4",
+      "vendored_sha256": "72c639ba1d6eaf7c355050672c865c7615cea3619abee628683d98920fb31fa4",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/ldq.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/ldq.cpp",
+      "bytes": 4682,
+      "source_sha256": "b5a11f2b4b658e4fc2c53dc261a7401e09516a6276e9b1a9c7568a4ee6d86a3f",
+      "vendored_sha256": "b5a11f2b4b658e4fc2c53dc261a7401e09516a6276e9b1a9c7568a4ee6d86a3f",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/ldq.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/ldq.h",
+      "bytes": 2330,
+      "source_sha256": "01ccf8d13f84475cb126dea1f15546a59ce9398968360e6484da5832729aa077",
+      "vendored_sha256": "01ccf8d13f84475cb126dea1f15546a59ce9398968360e6484da5832729aa077",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/lidar_imu_data_queue.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/lidar_imu_data_queue.cpp",
+      "bytes": 2248,
+      "source_sha256": "7f9ecbdad433653233b2701dbd06dd4f7f523d0e972cc5cb4bf0aca2ed7494b5",
+      "vendored_sha256": "7f9ecbdad433653233b2701dbd06dd4f7f523d0e972cc5cb4bf0aca2ed7494b5",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/lidar_imu_data_queue.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/lidar_imu_data_queue.h",
+      "bytes": 2632,
+      "source_sha256": "cc8ae6d425cf6fb173b59072e5310f7b984e776a9d8277c8e9e0ef9d9dc58998",
+      "vendored_sha256": "cc8ae6d425cf6fb173b59072e5310f7b984e776a9d8277c8e9e0ef9d9dc58998",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/pub_handler.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/pub_handler.cpp",
+      "bytes": 16204,
+      "source_sha256": "b98444be352bf6ed7b59ff7393bd488ddfc9825fb0357f67f0e6b49a48cbe9ae",
+      "vendored_sha256": "b98444be352bf6ed7b59ff7393bd488ddfc9825fb0357f67f0e6b49a48cbe9ae",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/pub_handler.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/pub_handler.h",
+      "bytes": 4436,
+      "source_sha256": "dbf0633c2117026936b72bdb825a62cb8dfb831b845a05e985cf12c51cd30e07",
+      "vendored_sha256": "dbf0633c2117026936b72bdb825a62cb8dfb831b845a05e985cf12c51cd30e07",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/semaphore.cpp",
+      "destination": "third_party/livox_ros_driver2/src/comm/semaphore.cpp",
+      "bytes": 1470,
+      "source_sha256": "7ea77d2b2b9f5aca1aa1c4f239d427398699b504a25b5bcd1667545650a0c587",
+      "vendored_sha256": "7ea77d2b2b9f5aca1aa1c4f239d427398699b504a25b5bcd1667545650a0c587",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/comm/semaphore.h",
+      "destination": "third_party/livox_ros_driver2/src/comm/semaphore.h",
+      "bytes": 1623,
+      "source_sha256": "a07dedf139d6a1f85d572b23f4a69b1f0574577366b2ecd759f06da4995eadcb",
+      "vendored_sha256": "a07dedf139d6a1f85d572b23f4a69b1f0574577366b2ecd759f06da4995eadcb",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/driver_node.cpp",
+      "destination": "third_party/livox_ros_driver2/src/driver_node.cpp",
+      "bytes": 1485,
+      "source_sha256": "2367146dbf888b8eb6ac661792c3858ae7c2f8bb3136888fbbaee7593f1c1a1c",
+      "vendored_sha256": "2367146dbf888b8eb6ac661792c3858ae7c2f8bb3136888fbbaee7593f1c1a1c",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/driver_node.h",
+      "destination": "third_party/livox_ros_driver2/src/driver_node.h",
+      "bytes": 2482,
+      "source_sha256": "503851a1fe806c633377f891479b8b434e89a0ac4070db80d9e3b8fc36070a6a",
+      "vendored_sha256": "503851a1fe806c633377f891479b8b434e89a0ac4070db80d9e3b8fc36070a6a",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/include/livox_ros_driver2.h",
+      "destination": "third_party/livox_ros_driver2/src/include/livox_ros_driver2.h",
+      "bytes": 1734,
+      "source_sha256": "4d2410dbcab335bea5b84de91176c86dbbb8958c1bded396a650dae0361c4781",
+      "vendored_sha256": "4d2410dbcab335bea5b84de91176c86dbbb8958c1bded396a650dae0361c4781",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/include/ros1_headers.h",
+      "destination": "third_party/livox_ros_driver2/src/include/ros1_headers.h",
+      "bytes": 2216,
+      "source_sha256": "25d868b0c4e1972ad61619b26e47c5538d282b520143f6c03300b0adeab8fb0b",
+      "vendored_sha256": "25d868b0c4e1972ad61619b26e47c5538d282b520143f6c03300b0adeab8fb0b",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/include/ros2_headers.h",
+      "destination": "third_party/livox_ros_driver2/src/include/ros2_headers.h",
+      "bytes": 2478,
+      "source_sha256": "16aa2833be3b35acb0bbb9c71e78e261f65d7251740565571ae24d2c43b579d1",
+      "vendored_sha256": "16aa2833be3b35acb0bbb9c71e78e261f65d7251740565571ae24d2c43b579d1",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/include/ros_headers.h",
+      "destination": "third_party/livox_ros_driver2/src/include/ros_headers.h",
+      "bytes": 1341,
+      "source_sha256": "67c52fefe87f71fb83d99774ba8569fff0de7c698a6917c31de2f4ccff3c78eb",
+      "vendored_sha256": "67c52fefe87f71fb83d99774ba8569fff0de7c698a6917c31de2f4ccff3c78eb",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lddc.cpp",
+      "destination": "third_party/livox_ros_driver2/src/lddc.cpp",
+      "bytes": 22762,
+      "source_sha256": "37dcc252a743fafe14c7ee5341d8827f1a5298ec910502b201bd0feb3476c71e",
+      "vendored_sha256": "37dcc252a743fafe14c7ee5341d8827f1a5298ec910502b201bd0feb3476c71e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lddc.h",
+      "destination": "third_party/livox_ros_driver2/src/lddc.h",
+      "bytes": 5868,
+      "source_sha256": "31a78f172caf82f3b2938c9e2c296cd582da228d0043c17849f7a9b20788d4ea",
+      "vendored_sha256": "31a78f172caf82f3b2938c9e2c296cd582da228d0043c17849f7a9b20788d4ea",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lds.cpp",
+      "destination": "third_party/livox_ros_driver2/src/lds.cpp",
+      "bytes": 5950,
+      "source_sha256": "a53c0f737a61282c523a00bbdc5a76bfbb7ed5616fc5bbb4265bc64ca0853efe",
+      "vendored_sha256": "a53c0f737a61282c523a00bbdc5a76bfbb7ed5616fc5bbb4265bc64ca0853efe",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lds.h",
+      "destination": "third_party/livox_ros_driver2/src/lds.h",
+      "bytes": 2689,
+      "source_sha256": "090334fb09e5b9a946042af06abe46d0f5a098b9978527b42ac1d0b7ce022b63",
+      "vendored_sha256": "090334fb09e5b9a946042af06abe46d0f5a098b9978527b42ac1d0b7ce022b63",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lds_lidar.cpp",
+      "destination": "third_party/livox_ros_driver2/src/lds_lidar.cpp",
+      "bytes": 6520,
+      "source_sha256": "637cac3ab27239717bb434ac35210551a98d17b08153e7205eb733da84a1153d",
+      "vendored_sha256": "637cac3ab27239717bb434ac35210551a98d17b08153e7205eb733da84a1153d",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/lds_lidar.h",
+      "destination": "third_party/livox_ros_driver2/src/lds_lidar.h",
+      "bytes": 2705,
+      "source_sha256": "2a36a2f0c890ce7a4692a8e546a8dca5b1c8815766788f1ad95dc89a3d943822",
+      "vendored_sha256": "2a36a2f0c890ce7a4692a8e546a8dca5b1c8815766788f1ad95dc89a3d943822",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/livox_ros_driver2.cpp",
+      "destination": "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp",
+      "bytes": 7899,
+      "source_sha256": "5be8fe1854e345660e78cf4f1c600eb87bb34ead54ef50b16033fba0cecdd621",
+      "vendored_sha256": "5be8fe1854e345660e78cf4f1c600eb87bb34ead54ef50b16033fba0cecdd621",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.cpp",
+      "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.cpp",
+      "bytes": 2381,
+      "source_sha256": "f893a7397f05e81826d6097233ae6a90d3428f921ceb04d9f957427f4bcf7e5e",
+      "vendored_sha256": "f893a7397f05e81826d6097233ae6a90d3428f921ceb04d9f957427f4bcf7e5e",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.h",
+      "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.h",
+      "bytes": 1721,
+      "source_sha256": "c0512f0ddb732861ec152e93d7d6477dd620865b4a92c385379d013286506998",
+      "vendored_sha256": "c0512f0ddb732861ec152e93d7d6477dd620865b4a92c385379d013286506998",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.cpp",
+      "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.cpp",
+      "bytes": 5293,
+      "source_sha256": "ce7cc5df5f7e09768a2d256f0d1cae30ae9c6214d821be95036311cef08912ed",
+      "vendored_sha256": "ce7cc5df5f7e09768a2d256f0d1cae30ae9c6214d821be95036311cef08912ed",
+      "modified": false
+    },
+    {
+      "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.h",
+      "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.h",
+      "bytes": 2018,
+      "source_sha256": "1d5b9f606deedb7c78e1a6d0c3c10d62a886fcc2aac1ac42e1a4a1ae6a9b6d49",
+      "vendored_sha256": "1d5b9f606deedb7c78e1a6d0c3c10d62a886fcc2aac1ac42e1a4a1ae6a9b6d49",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/pct_cli.cpp",
+      "destination": "third_party/pct/pct_cli.cpp",
+      "bytes": 993,
+      "source_sha256": "36f187f94a8b9defac72c2ddf119902469fb873a116b8bf1e7e761d4d967a02d",
+      "vendored_sha256": "36f187f94a8b9defac72c2ddf119902469fb873a116b8bf1e7e761d4d967a02d",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/native/a_star/a_star_search.cc",
+      "destination": "third_party/pct/native/a_star/a_star_search.cc",
+      "bytes": 14641,
+      "source_sha256": "d9595beb4efb4e78f7328ed30e806b0a6442796439506be6d3e676f4d0efe282",
+      "vendored_sha256": "d9595beb4efb4e78f7328ed30e806b0a6442796439506be6d3e676f4d0efe282",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/native/a_star/a_star_search.h",
+      "destination": "third_party/pct/native/a_star/a_star_search.h",
+      "bytes": 3165,
+      "source_sha256": "2b1a24f63d17e3b75017d14a9bcb6c7dd313a2d8b744d70efa45d6b9e9a19a18",
+      "vendored_sha256": "2b1a24f63d17e3b75017d14a9bcb6c7dd313a2d8b744d70efa45d6b9e9a19a18",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/native/common/data_types.h",
+      "destination": "third_party/pct/native/common/data_types.h",
+      "bytes": 994,
+      "source_sha256": "3a740c4e50c71b2a343509e5ef22de41dc9ad2fbd6132b38ee5d17f3102204dc",
+      "vendored_sha256": "3a740c4e50c71b2a343509e5ef22de41dc9ad2fbd6132b38ee5d17f3102204dc",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/LICENSE",
+      "destination": "third_party/pct/LICENSE",
+      "bytes": 18092,
+      "source_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "vendored_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "modified": false
+    },
+    {
+      "source": "src/planning/pct/NOTICE",
+      "destination": "third_party/pct/NOTICE",
+      "bytes": 1440,
+      "source_sha256": "f54d537d2af9c11952abd6dbcb60fdfa536c7d996844ef3afa5f77b1a8b10ca7",
+      "vendored_sha256": "f54d537d2af9c11952abd6dbcb60fdfa536c7d996844ef3afa5f77b1a8b10ca7",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/LICENSE.Apache-2.0",
+      "destination": "third_party/fastdds/LICENSE.Apache-2.0",
+      "bytes": 11358,
+      "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "vendored_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/LICENSE.Asio-Boost-1.0",
+      "destination": "third_party/fastdds/LICENSE.Asio-Boost-1.0",
+      "bytes": 1338,
+      "source_sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+      "vendored_sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/LICENSE.Boost-1.0",
+      "destination": "third_party/fastdds/LICENSE.Boost-1.0",
+      "bytes": 1337,
+      "source_sha256": "8d8291caf1cee26d23acf3eb67c9f9a2d58f1c681b16a4fbe8cbfb9e3c0b5a9b",
+      "vendored_sha256": "8d8291caf1cee26d23acf3eb67c9f9a2d58f1c681b16a4fbe8cbfb9e3c0b5a9b",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/LICENSE.filewatch-MIT",
+      "destination": "third_party/fastdds/LICENSE.filewatch-MIT",
+      "bytes": 1071,
+      "source_sha256": "abf819cb52a3f37430a30e37e61185af2f2178b3c86a9377ab59fcd38da8d3f8",
+      "vendored_sha256": "abf819cb52a3f37430a30e37e61185af2f2178b3c86a9377ab59fcd38da8d3f8",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/README.md",
+      "destination": "third_party/fastdds/README.md",
+      "bytes": 2584,
+      "source_sha256": "32ed96a9bf900c60558178515b3d4f65819e8710b9935a69cece2c6074073139",
+      "vendored_sha256": "32ed96a9bf900c60558178515b3d4f65819e8710b9935a69cece2c6074073139",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/SOURCES.json",
+      "destination": "third_party/fastdds/SOURCES.json",
+      "bytes": 1824,
+      "source_sha256": "0aa8bcfc7eeed4cdd29002bb34cf7cd9a80afb07ad21c736be2ab531a17ccb3c",
+      "vendored_sha256": "0aa8bcfc7eeed4cdd29002bb34cf7cd9a80afb07ad21c736be2ab531a17ccb3c",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/heartbeat_2_14_6.patch",
+      "destination": "third_party/fastdds/heartbeat_2_14_6.patch",
+      "bytes": 1564,
+      "source_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+      "vendored_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/heartbeat_2_14_6_tests.patch",
+      "destination": "third_party/fastdds/heartbeat_2_14_6_tests.patch",
+      "bytes": 9092,
+      "source_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+      "vendored_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+      "modified": false
+    },
+    {
+      "source": "third_party/fastdds/heartbeat_fixture_r2.patch",
+      "destination": "third_party/fastdds/heartbeat_fixture_r2.patch",
+      "bytes": 5782,
+      "source_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+      "vendored_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+      "modified": false
+    },
+    {
+      "source": "build_support/private_dds/build_private_dds.py",
+      "destination": "docker/private_dds/build_private_dds.py",
+      "bytes": 6619,
+      "source_sha256": "678187ecccb00050a59cee5820ea241cca632dfcca1d36fa758b3813c68df47f",
+      "vendored_sha256": "678187ecccb00050a59cee5820ea241cca632dfcca1d36fa758b3813c68df47f",
+      "modified": false
+    },
+    {
+      "source": "build_support/private_dds/common.py",
+      "destination": "docker/private_dds/common.py",
+      "bytes": 2958,
+      "source_sha256": "3a33a3de6e40c168dd6338af62fdf4af3d76436eb097d94df06ce7179433fff3",
+      "vendored_sha256": "3a33a3de6e40c168dd6338af62fdf4af3d76436eb097d94df06ce7179433fff3",
+      "modified": false
+    },
+    {
+      "source": "LICENSES/FAST_LIVO2_GPL_2.0.txt",
+      "destination": "third_party/fast_livo2/LICENSE",
+      "bytes": 18092,
+      "source_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "vendored_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "modified": false
+    },
+    {
+      "source": "LICENSES/SCAN_PLANNER_APACHE_2.0.txt",
+      "destination": "third_party/scan/LICENSE",
+      "bytes": 11357,
+      "source_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "vendored_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "modified": false
+    },
+    {
+      "source": "LICENSES/SCAN_PLANNER_NOTICE.txt",
+      "destination": "third_party/scan/NOTICE",
+      "bytes": 741,
+      "source_sha256": "2c94da707e9520cf05ecccab75b2715a9c8a3148741a1785660dfd2bfc933cd3",
+      "vendored_sha256": "2c94da707e9520cf05ecccab75b2715a9c8a3148741a1785660dfd2bfc933cd3",
+      "modified": false
+    },
+    {
+      "source": "LICENSES/FAST_LIVO2_GPL_2.0.txt",
+      "destination": "third_party/fast_livo2/fast_livo2_core/LICENSE",
+      "bytes": 18092,
+      "source_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "vendored_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "modified": false,
+      "placement_note": "Original package-local LICENSE was absent. This is the verified existing repository GPL-2.0 text, not a new license grant."
+    },
+    {
+      "source": "LICENSES/FAST_LIVO2_GPL_2.0.txt",
+      "destination": "third_party/fast_livo2/fast_livo2_ros/LICENSE",
+      "bytes": 18092,
+      "source_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "vendored_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+      "modified": false,
+      "placement_note": "Original package-local LICENSE was absent. This is the verified existing repository GPL-2.0 text, not a new license grant."
+    }
+  ],
+  "excluded": [
+    ".git, build, install, __pycache__, compiled outputs and datasets",
+    "vikit_common/test (not referenced by its current CMakeLists.txt)",
+    "PCT Python bindings and smoothing, which are not used by pct_astar and require separate pybind11/OSQP dependencies"
+  ]
+}

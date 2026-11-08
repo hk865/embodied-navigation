@@ -1,0 +1,32 @@
+--- a/src/cpp/rtps/transport/shared_mem/SharedMemGlobal.hpp
++++ b/src/cpp/rtps/transport/shared_mem/SharedMemGlobal.hpp
+@@ -593,10 +593,14 @@
+                     boost::system_time const timeout =
+                             boost::get_system_time() + boost::posix_time::milliseconds(node_->port_wait_timeout_ms);
+ 
+-                    if (node_->empty_cv.timed_wait(lock, timeout, [&]
+-                            {
+-                                return is_listener_closed.load() || listener.head() != nullptr;
+-                            }))
++                    // Keep the available-data and close fast paths. A health-check
++                    // notification without data must also refresh this heartbeat.
++                    if (is_listener_closed.load() || listener.head() != nullptr)
++                    {
++                        break;
++                    }
++                    node_->empty_cv.timed_wait(lock, timeout);
++                    if (is_listener_closed.load() || listener.head() != nullptr)
+                     {
+                         break; // Codition met, Break the while
+                     }
+@@ -887,7 +891,9 @@
+ 
+                 if (!is_check_ok)
+                 {
+-                    std::this_thread::sleep_for(std::chrono::milliseconds(node_->port_wait_timeout_ms));
++                    // Ask the waiting listeners for fresh liveness evidence.
++                    node_->empty_cv.notify_all();
++                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                 }
+             }
+ 

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(navigation_actuators LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(gz-sim8 REQUIRED)
+find_package(gz-plugin2 REQUIRED COMPONENTS register)
+add_library(teacher_actuator SHARED teacher_actuator.cpp)
+target_link_libraries(teacher_actuator PRIVATE gz-sim8::gz-sim8 gz-plugin2::register)
+install(TARGETS teacher_actuator LIBRARY DESTINATION lib)
