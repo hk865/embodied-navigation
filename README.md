@@ -29,7 +29,7 @@
 - Native完整镜像：docker compose --env-file .env.local build
 - 依赖和资产检查：python3 start.py --check，或先设置 PROJECT_DATA_ROOT 再运行 docker compose --env-file .env.local run --rm navigation
 
-Docker/Compose默认命令是检查。直接运行python3 start.py会实际启动系统；先使用--check核对配置、ROS域、资源和数据目录，必要时用--duration限制运行时间。
+Docker/Compose默认命令是检查。`python3 start.py --check` 解析配置、校验 ROS domain 的数值范围，并检查所需解释器、资产和构建产物是否为文件；它不验证 ROS 域占用、资产内容或系统可运行性。显式加 `--resource-check` 才检查本机 CPU 负载和可用内存；`--check --resource-check` 也会执行该资源检查。`install/` 缺失通常表示本机尚未构建，应按 [原生构建说明](docs/dependencies/BUILD.md) 或根 Dockerfile 生成，不把二进制加入 Git。直接运行 `python3 start.py` 会实际启动系统；可用有限正数 `--duration` 限制墙钟运行时间。
 
 ## 数据、权重和资产
 
@@ -39,9 +39,11 @@ Git不包含数据、日志、地图、权重、USD/纹理、图片、视频、b
 
 ## 验证状态与限制
 
-2026-11-08验证：
+2026-11-09 独立复核、两项启动参数修复及本轮 54 项单元/62 项回归结果见 [独立复核记录](docs/verification/independent-review-2026-11-09.md)。5 项可选 Torch 测试跳过；本轮未重跑仿真。
 
-- 当前源码48项单元测试通过，包括1000组原PID公式精确对比、导航任务、停车来源契约、生产SLAM入口及仿真安全门禁。官方ROS Jazzy纯CPU镜像的当前结果见docs/verification/cpu-container.json。
+2026-11-08 历史验证（针对当时的源码快照，不能代替后续修改的运行验证）：
+
+- 当时源码48项单元测试通过，包括1000组原PID公式精确对比、导航任务、停车来源契约、生产SLAM入口及仿真安全门禁。官方ROS Jazzy纯CPU镜像的当时结果见docs/verification/cpu-container.json。
 - 无数据的干净Git候选导出：62项回归成功结束；7项因未提供Torch或私有测量地图而明确跳过。双后端门禁集成和原native fixture另在装有CPU Torch的公共依赖容器实测通过；RoboGauge真实权重30帧输出与原JIT一致。
 - FAST-LIVO2/SCAN等11个ROS包、PCT、4个自有原生模块、私有DDS补丁测试已在隔离公共依赖环境中从本仓库源码编译。完整Docker镜像已从公开ROS基础镜像构建成功，实际资源preflight通过；最终源码刷新和验证结果记录于docs/verification。
 - 最终自足镜像45秒隔离软件栈通过：只挂本项目assets、models和新runs，不挂源码或其它工程的install；全部关键源码SHA匹配。1330次CPU策略推理、798帧相机、797帧LiDAR、57580个地图点；SCAN接受2条轨迹，22个健康非零命令样本及25个native执行确认样本。103条仿真安全门禁来源遥测全部有效，无物理fault；末段原有命令新鲜度门禁因来源超时拒绝并置零。15个组件全部退出0，日志无Traceback或未取回异常。详见docs/verification/software-startup.json。

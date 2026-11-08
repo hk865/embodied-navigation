@@ -1,0 +1,142 @@
+{
+  "schema": "embodied_navigation_independent_review/v1",
+  "reviewed_at": "2026-11-09T03:02:35.853831+08:00",
+  "timezone": "Asia/Shanghai",
+  "scope": "Independent static review plus CPU unit/regression tests; no navigation, simulation, ROS, Docker or full-route execution.",
+  "before_snapshot": {
+    "files": 648,
+    "sha256": "f462bf75bd25648cd37f1b3e6cff6205e0220766f08888478f8a4bf8d53fe079",
+    "contains_runtime_data": false
+  },
+  "corrections_to_dsh_report": {
+    "missing_install_outputs": "Expected generated outputs, not missing source. Six remain absent on this host; build recipes exist.",
+    "world_hash": "Original archive hash and migrated parameterized template are different provenance layers; no original-byte comparison was made.",
+    "historical_python_count": "Current docker + third_party AST count is 29. Historical 28 remains unchanged.",
+    "historical_run_directories": "Not included in source export by design; historical claims were not rerun.",
+    "readme_symlink_statement": "The statement refers to code, not the separately linked assets/models/runs."
+  },
+  "hash_checks": {
+    "startup_before_edit": {
+      "matched": 15,
+      "total": 15
+    },
+    "startup_after_edit": {
+      "matched": 14,
+      "total": 15,
+      "changed_since_historical_run": [
+        "src/embodied_navigation/launch/main.py"
+      ],
+      "expected_reason": "launch/main.py changed in this review; historical run receipt is preserved."
+    },
+    "vendored_files": {
+      "matched": 304,
+      "total": 304,
+      "mismatches": []
+    },
+    "world_template": {
+      "path": "configs/robogauge/world.sdf.in",
+      "current_sha256": "9646f43915de6f157bbfe1a9a936b2bc17a85429c64b357b80c10c2b2391f692",
+      "original_archive_sha256": "f268c4680b8ad38820f8784e15c895ec8a9871bd2a94bf08dad21f9e70088b32",
+      "original_archive_bytes_compared": false
+    },
+    "python_ast": {
+      "total": 29,
+      "files": [
+        "docker/build_owned_native.py",
+        "docker/build_native.py",
+        "docker/verify_native_sources.py",
+        "docker/private_dds/common.py",
+        "docker/private_dds/build_private_dds.py",
+        "third_party/livox_ros_driver2/__init__.py",
+        "third_party/scan/plan_manage/__init__.py",
+        "third_party/scan/plan_manage/launch/run.launch.py",
+        "third_party/scan/plan_manage/launch/__init__.py",
+        "third_party/scan/plan_manage/launch/simulator.launch.py",
+        "third_party/scan/plan_manage/launch/rviz.launch.py",
+        "third_party/scan/plan_manage/test/test_planner_startup.py",
+        "third_party/scan/plan_manage/test/test_waypoint_parameters.py",
+        "third_party/scan/plan_manage/test/__init__.py",
+        "third_party/scan/plan_manage/scripts/__init__.py",
+        "third_party/scan/plan_manage/scripts/keypoint_recorder.py",
+        "third_party/fast_livo2/fast_livo2_ros/__init__.py",
+        "third_party/fast_livo2/fast_livo2_ros/launch/__init__.py",
+        "third_party/fast_livo2/fast_livo2_ros/launch/mapping_aviz.launch.py",
+        "third_party/fast_livo2/fast_livo2_ros/scripts/decompress_images.py",
+        "third_party/fast_livo2/fast_livo2_ros/scripts/__init__.py",
+        "third_party/livox_ros_driver2/launch_ROS2/rviz_HAP_launch.py",
+        "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360_launch.py",
+        "third_party/livox_ros_driver2/launch_ROS2/__init__.py",
+        "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360s_launch.py",
+        "third_party/livox_ros_driver2/launch_ROS2/rviz_mixed.py",
+        "third_party/livox_ros_driver2/launch_ROS2/msg_MID360_launch.py",
+        "third_party/livox_ros_driver2/launch_ROS2/msg_HAP_launch.py",
+        "third_party/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py"
+      ]
+    }
+  },
+  "fixes": [
+    "Reject nonfinite or nonpositive --duration before configuration/side effects.",
+    "Honor explicit --resource-check in --check mode.",
+    "Separate CLI argument validation from runtime lifecycle.",
+    "Ignore .dsh-subagents; update stale paths and provenance wording."
+  ],
+  "tests": {
+    "unit": {
+      "command": "PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests/unit -v",
+      "ran": 54,
+      "passed": 54,
+      "skipped": 0,
+      "failures": 0,
+      "errors": 0,
+      "exit_code": 0,
+      "ok": true
+    },
+    "regression": {
+      "command": "PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests/regression -v",
+      "ran": 62,
+      "passed": 57,
+      "skipped": 5,
+      "failures": 0,
+      "errors": 0,
+      "exit_code": 0,
+      "ok": true
+    }
+  },
+  "runtime_preflight": {
+    "command": "python3 -B start.py --check",
+    "exit_code": 2,
+    "ready": false,
+    "simulation_started": false,
+    "present": [
+      "Student",
+      "Actor Python",
+      "Go2 URDF",
+      "Go2 SDF",
+      "world",
+      "route",
+      "L1 mesh"
+    ],
+    "missing_build_outputs": [
+      "actuator",
+      "writer helper",
+      "patched DDS",
+      "ROS install",
+      "SLAM",
+      "SCAN"
+    ]
+  },
+  "tested_code_sha256": {
+    "src/embodied_navigation/launch/main.py": "5d6182313fa9a4a8511b93a46624162ed6b099001e0b8800ed7edcf872b1f71e",
+    "tests/unit/test_launch_cli.py": "dd5af0d8e2f6333060f5112199b5ae272fb23c3bf637cf9d347ce2fe4e12d74a"
+  },
+  "historical_records_rewritten": false,
+  "not_executed": [
+    "Torch-dependent cases (5 skipped)",
+    "full native build",
+    "Docker build",
+    "ROS/Gazebo/Isaac startup",
+    "full route",
+    "hardware robot"
+  ],
+  "remote_push_performed": false
+}

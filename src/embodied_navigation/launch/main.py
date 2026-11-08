@@ -1,6 +1,6 @@
 """Normal navigation process lifecycle. Development acceptance is a separate tool."""
 from pathlib import Path
-import argparse,datetime as dt,fcntl,json,os,signal,subprocess,time,uuid
+import argparse,datetime as dt,fcntl,json,math,os,signal,subprocess,time,uuid
 from embodied_navigation.common.config import ROOT, read, path
 
 
@@ -33,23 +33,30 @@ def preflight_resources():
     if int(fields['MemAvailable'].split()[0])*1024<4*1024**3:raise RuntimeError('Available memory below 4GiB')
 
 
-def main(argv=None):
+def parse_arguments(argv=None):
+    """Reject invalid launch limits before configuration or runtime side effects."""
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check',action='store_true');parser.add_argument('--prepare-only',action='store_true')
     parser.add_argument('--domain',type=int,default=231);parser.add_argument('--label',default='navigation')
     parser.add_argument('--resource-check',action='store_true',help='Opt-in developer resource precheck')
-    parser.add_argument('--duration',type=float,default=None,help='Optional wall-clock run limit in seconds')
+    parser.add_argument('--duration',type=float,default=None,help='Optional finite positive wall-clock run limit in seconds')
     args=parser.parse_args(argv)
     if not 1<=args.domain<=232:parser.error('Domain must be in 1..232')
-    if args.duration is not None and args.duration<=0:parser.error('Duration must be positive')
+    if args.duration is not None and (not math.isfinite(args.duration) or args.duration<=0):
+        parser.error('Duration must be finite and positive')
+    return args
+
+
+def main(argv=None):
+    args=parse_arguments(argv)
     profile=read()
     from embodied_navigation.launch.preflight import check
     dependencies=check()
-    if args.check:
-        print(json.dumps(dependencies,ensure_ascii=False,indent=2));return 0 if dependencies['ready'] else 2
-    if not args.prepare_only and not dependencies['ready']:
+    if not (args.check or args.prepare_only) and not dependencies['ready']:
         raise RuntimeError('Missing runtime dependencies; run start.py --check for the full list')
     if args.resource_check:preflight_resources()
+    if args.check:
+        print(json.dumps(dependencies,ensure_ascii=False,indent=2));return 0 if dependencies['ready'] else 2
     locks=[];children=[];logs=[];stop=False;failure=None
     try:
         for name in ['go2_pid_physics_serial.lock','go2_model_pid_simulation.lock','go2_navigation_dispatch.lock']:

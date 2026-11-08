@@ -13,4 +13,4 @@
 
 完整来源与逐文件 SHA256 见 `../docs/dependencies/vendored-source-manifest.json`。哈希用于复制和来源校验，不作为机器人运行或导航验收条件。
 
-原许可继续适用。特别是 Vikit 的独立许可文本缺失、项目自有代码和模型的对外授权尚未统一，见 `../docs/dependencies/LICENSE-STATUS.md`。不能把本目录统一标记为 MIT/Apache，也不能把可构建等同于已解决再分发授权。
+各组件保留已有的许可声明和文本。Vikit 已附 `COPYING`（按 `package.xml` 声明补充的标准 GPLv3 文本），其原上游随附许可文本及准确来源仍待核实；项目自有代码和模型的对外授权尚未统一，见 `../docs/dependencies/LICENSE-STATUS.md`。构建和复制校验的通过不表示这些来源与授权问题已核实。

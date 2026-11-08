@@ -2,6 +2,7 @@
 /dynanav/
 /history/
 /perception_history/
+/.dsh-subagents/
 /.env
 /.env.local
 /assets
