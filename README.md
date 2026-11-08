@@ -4,6 +4,8 @@
 
 ## 系统结构
 
+各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，共 46 个模块 README。可读性整理及独立复核结果见 [本轮验证记录](docs/review/readability-verification.md)，校验和阈值的源码审计见 [审计明细](docs/review/validation-and-threshold-audit.md)。
+
 - src/embodied_navigation/simulation：Gazebo/Isaac 场景与物理生命周期。simulation/dynanav 负责 DynaNav 场景中的真实 Go2 RGB-D capture，不承载整个导航系统。
 - perception：深度反投影、自身点过滤、传感流适配。
 - localization_mapping：FAST-LIVO2 接入、相对里程计、地图配准和后端。实际 FAST-LIVO2 源码在 third_party/fast_livo2，不依赖另一个本机工程。
@@ -11,7 +13,7 @@
 - control：单步跟踪/控制律、碰撞与支撑检查、parking停车执行、safety统一仿真门禁和定位反馈来源检查。
 - robot/unitree：Go2 观测、关节顺序、策略推理和执行桥。没有训练流程。
 - navigation：完整任务状态和模块协作。task.py 是从原多航点 bridge 提取的真实跟随/到点稳定/转向/停车/失败状态机；已有PID任务状态位于 pid_navigation.py，Building任务位于 building_navigation.py，任务组件位于 mission/；ROS适配位于 ros_node.py、relative_slam_node.py。
-- evaluation：轨迹长度/误差等离线指标。真值只用于明确标注的评测和仿真安全门禁，不作为SLAM定位输入。
+- evaluation：轨迹长度/误差等离线指标及独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为 SLAM 定位输入或上层导航位姿。
 - launch：模块装配、环境、进程生命周期。业务任务状态不放在 launch。
 - configs、scripts、tests、docs：功能配置、少数可发现入口、回归测试和说明。
 
