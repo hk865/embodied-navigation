@@ -1,4 +1,10 @@
-"""Same-source causal IMU FIFO, with optional owner-consumed safety mailbox."""
+"""同源因果 IMU FIFO，附带可选的、由控制 owner 消费的安全信箱。
+
+职责：缓存 `/livox/imu` 上通过私有 validator 的回调，为同一个 pose 源时间配对
+最近的一条 IMU；并在开启 `r85_imu_source_buffer.enabled` 时把标量交给
+`SafetyIntake`（见 `imu_mailbox.py`）。
+边界：不写 `node.raw_imu`、gyro、pose 或 tilt；配对只是选择已有回调，绝不重打时间戳。
+"""
 
 import copy
 import time
@@ -7,23 +13,39 @@ from threading import Lock
 
 import numpy as np
 
-FIFO_DEPTH = 64  # 200 Hz x original .25 s freshness = 50 messages; finite headroom.
+# 200 Hz x 原有 0.25 s 新鲜度 = 50 条消息，64 是有限余量（硬编码）。
+FIFO_DEPTH = 64
+# 历史行最多 128 条；配对窗口 20 ms；事件去重表上限 64 条（均为硬编码）。
 HISTORY_DEPTH = 128
 PAIR_NS = 20_000_000
 EVENT_CAP = 64
 
 
 def enabled(profile):
+    """`profile["r85_imu_source_buffer"]["enabled"] is True` 时启用；缺省或类型不符视为关闭。
+
+    这是 profile（本次运行快照）里的开关，不是 launch 参数；它只决定是否构造
+    `CausalImuBuffer`。
+    """
     config = profile.get("r85_imu_source_buffer", {})
     return isinstance(config, dict) and config.get("enabled") is True
 
 
 class CausalImuBuffer:
+    """同源 IMU 的私有接收器；回调与配对均在锁内，读侧只返回已有记录。
+
+    构造时创建独立 validator（不触碰控制 owner 的 `node.raw_imu`）。可选安全
+    信箱只在控制 owner 的 guard 内消费；本类不发布命令、不做停车判定。
+    """
+
     def __init__(self, node, validator_type):
+        """`node` 提供 `stamp`/`imu_body_rotation`/`raw_imu.timeout`/`evidence`；
+        `validator_type` 是 IMU 校验器类。开关关闭时 `safety_intake` 为 `None`。
+        """
         self.node = node
         self._lock = Lock()
-        # Private receiver validator: never writes node.raw_imu, gyro, pose or
-        # tilt. The opt-in mailbox is consumed only by the control owner.
+        # 私有接收器 validator：绝不写 node.raw_imu、gyro、pose 或 tilt。可选信箱
+        # 只由控制 owner 消费。
         self.validator = validator_type(
             node.imu_body_rotation, node.imu_reference_rotation, timeout=node.raw_imu.timeout
         )
@@ -39,14 +61,20 @@ class CausalImuBuffer:
 
         self.safety_intake = None
         if safety_enabled():
-            # Preserve the original latest port's actual validator object.
-            # Only guard consumption updates the separate safety reading view.
+            # 保留原 latest 端口实际使用的 validator 对象；只有 guard 消费时才会
+            # 更新这里独立的安全读取视图。
             reading_view = validator_type(
                 node.imu_body_rotation, node.imu_reference_rotation, timeout=node.raw_imu.timeout
             )
             self.safety_intake = SafetyIntake(node.raw_imu, reading_view)
 
     def callback(self, msg, info):
+        """订阅回调：校验并记录一条 IMU；不在此应用保护。
+
+        `wall` 是单调墙钟 ns，`clock` 是 ROS 时钟 ns，`stamp` 是消息源时间 ns，
+        三者不同域，分别保留。orientation 校验通过且开启信箱时，先把标量交给
+        `SafetyIntake`；之后 gyro 非有限也会拒绝入 history。
+        """
         wall = time.monotonic_ns()
         clock = self.node.get_clock().now().nanoseconds
         with self._lock:
@@ -60,16 +88,19 @@ class CausalImuBuffer:
                 clock / 1e9,
                 msg.orientation_covariance[0] >= 0,
             )
-            # Tilt safety accepts orientation independently of finite gyro.
-            # The independent receiver only offers scalars; it never mutates
-            # the original control owner's raw_imu, tilt hold or publications.
+            # 倾角安全只依赖 orientation 校验，与 gyro 是否有限无关：因此先 offer
+            # 标量。独立接收器只提交标量，绝不改原控制 owner 的 raw_imu、tilt hold
+            # 或发布状态。
             if accepted and self.safety_intake is not None:
                 self.safety_intake.offer(
                     self.counts["fifo_callbacks"], stamp, wall, clock, self.validator.tilt
                 )
+            # gyro 转到 body 系后再判有限；非有限时记录 reason（validator 的拒绝原因
+            # 优先，否则 "nonfinite_gyro"）。
             gyro = self.node.imu_body_rotation @ np.array([v.x, v.y, v.z])
             accepted = bool(accepted and np.isfinite(gyro).all())
             reason = None if accepted else self.validator.last_rejected or "nonfinite_gyro"
+            # 保留 RMW 提供的原始时间/序号字段（各自时钟域），不做换算。
             meta = {}
             for key in (
                 "source_timestamp",
@@ -89,12 +120,13 @@ class CausalImuBuffer:
                 reason=reason,
                 **meta,
             )
+            # recent 只保留最近 16 条摘要（deque maxlen），用于事件回执。
             self.recent.append(summary)
             self.counts["fifo_accepted" if accepted else "fifo_rejected"] += 1
             if not accepted:
                 return
-            # Capture this actual callback receipt ONCE. Pair/consume never retimes it.
-            # RMW timestamps retain their own clock domain; no fabricated conversion.
+            # 本次真实回调收据只捕获一次；pair/consume 之后都不会重打时间戳。
+            # RMW 时间戳保留自己的时钟域，不做虚构换算。
             row = dict(
                 stamp_ns=stamp,
                 received_wall_ns=wall,
@@ -113,11 +145,17 @@ class CausalImuBuffer:
                 fifo_callback_sequence=self.counts["fifo_callbacks"],
                 **meta,
             )
+            # header 晚于回调时钟的样本只进 history，不参与配对（标记后仍保留证据）。
             if stamp > clock:
                 row["r85_original_future_header_history_only"] = True
             self.history.append(row)
 
     def note_latest(self, stamp, wall, clock, recorded, rejection):
+        """记录原 latest 端口的一次回调（诊断用），时间单位 ns。
+
+        `recorded` 表示该回调是否真的进了 history，`rejection` 是原 validator 的
+        拒绝原因（可能为 `None`）。本方法不改变任何控制状态。
+        """
         with self._lock:
             self.counts["latest_callbacks"] += 1
             self.counts["latest_history_recorded"] += int(recorded)
@@ -133,8 +171,16 @@ class CausalImuBuffer:
             )
 
     def pair(self, pose_stamp, original, clock, *, snapshot=False):
+        """为 `pose_stamp` 选一条同源 IMU；无可用记录返回 `None`。
+
+        `pose_stamp`/`clock` 单位 ns。pose 源时间晚于当前控制时钟时直接返回 None
+        （未来 pose 不与过去 IMU 配对）。`original`（原端口数据）优先；否则在
+        `[pose_stamp, pose_stamp + 20 ms]` 内选最新 stamp，同一 stamp 取最早收据。
+        `snapshot=True` 时用 `scalar_snapshot` 转成标量快照。
+        """
         if snapshot:
             from embodied_navigation.control.parking.causal_join import scalar_snapshot
+        # 未来 pose 不与过去 IMU 配对；源时间晚于控制时钟即视为不可因果。
         if pose_stamp > clock:
             return None
         if original is not None:
@@ -142,17 +188,24 @@ class CausalImuBuffer:
                 scalar_snapshot(original) if snapshot else original
             )  # Original port retains priority.
         with self._lock:
+            # 只接受 pose 之前 0~20 ms 内的 IMU；不使用未来样本做“预测”。
             options = [r for r in self.history if 0 <= pose_stamp - r["stamp_ns"] <= PAIR_NS]
             if not options:
                 return None
             newest = max(r["stamp_ns"] for r in options)
-            # A duplicate source header cannot acquire a fresher receipt on consume.
+            # 重复源 header 不能在消费时获得更新的收据：同 stamp 取最早 wall 收据。
             selected = min(
                 (r for r in options if r["stamp_ns"] == newest), key=lambda r: r["received_wall_ns"]
             )
             return scalar_snapshot(selected) if snapshot else selected
 
     def event(self, pose_stamp, clock, wall, phase, pair):
+        """记录一次配对/失配事件到证据流；同一 `(pose_stamp, phase)` 只记一次。
+
+        `phase` 是事件阶段标签，`pair` 为选中的 IMU 记录或 `None`。事件表达到
+        `EVENT_CAP`（64）后只保留 `last_event` 并计 `events_omitted_by_cap`，保证
+        最后的失配/恢复仍可查。写盘走 `node.evidence.append`，默认是空操作。
+        """
         with self._lock:
             key = (pose_stamp, phase)
             if key in self.events:
@@ -174,7 +227,8 @@ class CausalImuBuffer:
                 counters=dict(self.counts),
                 navigation_ground_truth_used=False,
             )
-            self.last_event = row  # Retain the final miss/recovery even after the append cap.
+            # 即使事件表已达上限，也保留最后一条失配/恢复行供回执使用。
+            self.last_event = row
             if len(self.events) >= EVENT_CAP:
                 self.counts["events_omitted_by_cap"] += 1
                 return
@@ -182,6 +236,12 @@ class CausalImuBuffer:
         self.node.evidence.append(self.node.run / "imu_source_timing_events.jsonl", row)
 
     def finish(self):
+        """写两个回执文件（`evidence.atomic`）：IMU 配对时序与安全信箱。
+
+        回执 schema 为 `same_source_causal_imu_timing_receipt/v1`；路径在
+        `node.run/imu_source_timing_receipt.json` 与 `r103_imu_safety_intake.json`。
+        默认 `RuntimeTelemetry.atomic` 会真正落盘（与多数 append 证据不同）。
+        """
         with self._lock:
             receipt = dict(
                 schema="same_source_causal_imu_timing_receipt/v1",

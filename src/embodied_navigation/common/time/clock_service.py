@@ -1,8 +1,8 @@
-"""One non-waiting service of the original /clock before the original body gate.
+"""在原始 /clock body 门槛之前执行一次非等待式服务。
 
-No new subscription, clock value, future-frame retention, executor task or thread.
-The original TimeSource callback, jump handling and PID/Teacher now reads remain.
-"""
+不新建订阅、不产生时钟值、不保留未来帧、不新增 executor 任务或线程；
+原 TimeSource 回调、跳变处理以及 PID/Teacher 的 now 读取保持不变。
+开关为环境变量 ``R114_CLOCK_SERVICE``（只接受 "0"/"1"，默认关闭）。"""
 
 from collections import deque
 import hashlib
@@ -18,7 +18,7 @@ _value = os.environ.get(KEY, "0")
 if _value not in ("0", "1"):
     raise ValueError(KEY + " must be 0 or 1")
 CLOCK_SERVICE_ENABLED = _value == "1"
-CAPACITY = 64
+CAPACITY = 64  # 诊断行环形缓冲上限（仅观测，不参与业务状态）
 COLUMNS = (
     "source_ns",
     "begin_mono_ns",
@@ -39,6 +39,12 @@ def _same_method(a, b):
 
 
 class Service:
+    """包装原始 /clock 订阅的一次同步分发，并记录逐次诊断行。
+
+    ``take_limit_per_call=1``：每次服务最多从 executor 取一个就绪实体；
+    只执行原始同步回调，若回调意外挂起则关闭协程并 fail-closed。
+    """
+
     def __init__(self, node, executor, sub, original_callback, sources):
         self.enabled = True
         self.node, self.executor, self.sub = node, executor, sub
@@ -60,7 +66,12 @@ class Service:
         )
 
     def service(self, source_ns):
-        """Called only by the original body method while R86 owns its control group."""
+        """仅供原始 body 方法在 R86 拥有其控制组时调用。
+
+        ``source_ns`` 必须与 R86 正在提交的 bundle 一致；任何绑定变化
+        （回调、take 方法、回调组、TimeSource 关联）都直接报错，而不是
+        退化成另一条分发路径。
+        """
         self.counts["calls"] += 1
         begin, cpu = time.monotonic_ns(), time.thread_time_ns()
         before = self.node.get_clock().now().nanoseconds
@@ -88,8 +99,8 @@ class Service:
                 outcome = "busy"
                 return
             acquired = True
-            # Exactly one original take. Never write _executor_event: a previously
-            # queued handler still owns its scheduling marker, not a cached message.
+            # 只做一次原始 take，且绝不写 _executor_event：此前已排队的 handler
+            # 仍持有自己的调度标记，这里缓存的是消息而不是调度权。
             execute = self.take(self.sub)
             if execute is None:
                 outcome = "empty"
@@ -103,8 +114,8 @@ class Service:
                 except StopIteration:
                     pass
                 else:
-                    # No second send, scheduling or hidden await. Closing unwinds
-                    # the existing probe ContextVar finally before fail-closed.
+                    # 不第二次 send、不重排、不做隐藏 await；close 会先执行
+                    # 既有探针的 ContextVar finally，再按 fail-closed 处理。
                     raise RuntimeError("R114 original clock unexpectedly suspended")
             finally:
                 coroutine.close()
@@ -147,6 +158,8 @@ class Service:
                     self.counts["diagnostic_errors"] += 1
 
     def receipt(self):
+        # 收据明确声明“未新增等待/未来帧接受、不声称硬实时上界”，并记录所
+        # 校验的 rclpy 模块源码 sha256，避免把不同实现的结果混为一谈。
         return dict(
             schema="r114_original_clock_service/v1",
             enabled=self.enabled,
@@ -168,6 +181,9 @@ class Service:
 
 
 def install(node, executor):
+    # 默认关闭时完全不触碰 node/executor。启用时先确认 R86 已就绪、R99 已关闭，
+    # 再逐项校验原始 /clock 订阅、回调类型、QoS（BEST_EFFORT、depth=1）与
+    # 独立回调组；任何一项不符都拒绝安装。
     if not CLOCK_SERVICE_ENABLED:
         return None
     import rclpy.executors as execution
@@ -177,6 +193,7 @@ def install(node, executor):
     import rclpy.clock as clock
     from rclpy.qos import ReliabilityPolicy
 
+    # 与旧实验互斥：R99 反馈或 R86 mailbox 缺失时不允许 R114 接管。
     if (
         os.environ.get("R99_CLOCK_FEEDBACK", "0") != "0"
         or getattr(node, "_r99_policy", None) is not None
@@ -231,7 +248,7 @@ def install(node, executor):
 def finish(node):
     service = getattr(node, "_r114_clock_service", None)
     if service is not None:
-        # Exit-only observation. A diagnostic failure never revises business state.
+        # 仅退出期观测：诊断写盘失败只增加计数，绝不改写业务状态或退出结果。
         try:
             (Path(node.run) / "r114_clock_service.json").write_text(
                 json.dumps(service.receipt(), allow_nan=False) + "\n"

@@ -1,11 +1,10 @@
-"""ROS interface for the capture probe: node, topics, callbacks, publishers.
+"""采集探针的 ROS 接口：节点、话题、回调与发布者。
 
-Owning module for ``rclpy``: it initialises the context/node, creates the
-unchanged ``/dynanav/*`` publishers and the odometry/approved-command
-subscribers, defines the two callbacks, and turns sensor-loop data into ROS
-messages. Topic names, message types and QoS (``qos_profile_sensor_data``) are
-identical to the original probe. Everything is created by
-``create_ros_interface`` at run time, never at import time.
+本模块独占 ``rclpy`` 的初始化/销毁：在运行期由 ``create_ros_interface``
+创建 context 与节点、原样创建 ``/dynanav/*`` 发布者以及里程计/已批准指令
+订阅者，定义两个回调，并把传感器循环拿到的数据转换成 ROS 消息。话题名、
+消息类型与 QoS（``qos_profile_sensor_data``）与原探针保持一致；import 本模块
+不会创建任何 ROS 实体。
 """
 
 import os
@@ -18,7 +17,11 @@ import numpy as np
 
 @dataclass
 class RosInterface:
-    """Handles to the rclpy node, publishers, callbacks and latest samples."""
+    """rclpy 节点、发布/订阅回调与最新样本的句柄集合。
+
+    ``latest_odom``/``latest_nav`` 是单元素列表，回调原地写入，读取方拿到的
+    是最近一次样本（不是队列）；``published`` 只是本进程内的发布计数。
+    """
 
     node: Any
     header: Callable
@@ -36,10 +39,11 @@ class RosInterface:
 
 
 def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None):
-    """Trace the local publish boundary, never DDS delivery or acknowledgement.
+    """记录“本地 publish 调用”边界，不代表 DDS 已投递或收到确认。
 
-    Only scalar metadata is journalled: two rows per selected sensor frame.
-    Journal and publisher failures deliberately propagate to capture cleanup.
+    仅记录标量元数据，每个被跟踪的传感器帧写两行（publish_call/
+    publish_returned），``delivery_confirmed`` 恒为 False。journal 或
+    publisher 抛异常时故意向上传播，由 capture 的清理路径收尾。
     """
     if journal is None:
         publisher.publish(message)
@@ -63,7 +67,14 @@ def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None
     })
 
 def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=None):
-    """Create the capture ROS node exactly as the original probe did."""
+    """按原探针的语义创建采集 ROS 节点。
+
+    ``experiment`` 是本次运行的配置映射：``odometry_topic`` 缺省为
+    ``/aft_mapped_to_init``；``slam_pose_source`` 决定里程计是否带速度
+    （livo_post_vio 为纯位姿，速度置 None）；``lidar_frontend_topic`` 缺省时
+    按是否启用 learned_mapper 在 filtered/static 之间选择。``journal`` 非空且
+    环境变量 ``DYNANAV_PUBLISH_TRACE=1`` 时，才跟踪前端点云的发布边界。
+    """
     import rclpy
     from geometry_msgs.msg import TwistStamped
     from nav_msgs.msg import Odometry
@@ -72,6 +83,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2, PointField
 
+    # 发布追踪是显式实验开关：开启后必须提供 journal，否则直接拒绝启动，
+    # 避免把“未记录”误当成“已投递”。
     trace_enabled = os.environ.get("DYNANAV_PUBLISH_TRACE") == "1"
     if trace_enabled and journal is None:
         raise ValueError("DYNANAV_PUBLISH_TRACE=1 requires a journal callback")
@@ -89,6 +102,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             point_count=message.width * message.height,
         )
 
+    # 交给采集编排统一处理 SIGINT/SIGTERM：rclpy 不安装自己的信号处理器，
+    # 这样关停顺序（先停传感器循环再销毁节点）由上层保证。
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = rclpy.create_node("actual_go2_rgbd_source")
     pub_imu = node.create_publisher(Imu, "/dynanav/imu", qos_profile_sensor_data)
@@ -113,6 +128,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     latest_odom = [None]
 
     def odom_callback(m):
+        # 只保留最近一帧里程计；source_ns 用消息头时间，arrival_wall 用本机
+        # 单调时钟，二者分属不同时间域，消费方不能直接相减。
         latest_odom[0] = {
             "source_ns": m.header.stamp.sec * 1_000_000_000 + m.header.stamp.nanosec,
             "time": m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
@@ -127,6 +144,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
                 m.pose.pose.orientation.y,
                 m.pose.pose.orientation.z,
             ],
+            # 纯位姿后端（livo_post_vio）不提供可信速度，显式置 None，
+            # 而不是把 Twist 里的零当成“静止”。
             "estimated_velocity": None
             if experiment.get("slam_pose_source") == "livo_post_vio"
             else [
@@ -140,6 +159,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             "arrival_wall": time.perf_counter(),
         }
 
+        # learned 建图在里程计回调里顺带推进：投递位姿并取走已完成的建图结果；
+        # scorer 只观察完成事件，不参与 ROS 回调的返回值。
         if learned_mapper is not None:
             learned_mapper.offer_pose(latest_odom[0])
             for completion in learned_mapper.take_completed():
@@ -153,9 +174,11 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         qos_profile_sensor_data,
     )
     latest_nav = [None]
+    # /clock 使用默认可靠 QoS（depth=10），由采集循环按传感器时间戳发布。
     pub_clock = node.create_publisher(Clock, "/clock", 10)
 
     def nav_callback(m):
+        # 已批准指令按“导航请求”保存：request=[vx, vy, wz]（m/s、m/s、rad/s）。
         latest_nav[0] = {
             "time": m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
             "request": [m.twist.linear.x, m.twist.linear.y, m.twist.angular.z],
@@ -167,6 +190,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     )
 
     def header(m, stamp, frame):
+        # 传感器时间统一为浮点秒，这里一次性拆成 ROS 的 sec/nanosec；
+        # round 避免浮点乘法截断出少 1 ns 的边界误差。
         ns = round(stamp * 1e9)
         m.header.stamp.sec = ns // 1000000000
         m.header.stamp.nanosec = ns % 1000000000
@@ -181,6 +206,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             rclpy.spin_once(node, timeout_sec=0.0)
 
     def publish_imu_and_clock(it, reading, orientation_available):
+        # 先发布 /clock 再发布 IMU，保证订阅方看到的时间不落后于同批数据；
+        # it 为本迭代的传感器时间（秒），不是墙钟。
         clock = Clock()
         ns = round(it * 1e9)
         clock.clock.sec = ns // 1000000000
@@ -203,12 +230,17 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             msg.orientation.y = float(qq[2])
             msg.orientation.z = float(qq[3])
         else:
+            # 惯导约定：orientation_covariance[0] = -1 表示姿态字段不可用，
+            # 下游必须改用角速度积分，不能把默认四元数当成有效姿态。
             msg.orientation_covariance[0] = -1.0
         pub_imu.publish(msg)
         published["imu"] += 1
 
 
     def publish_cloud(it, xyz, states, frontend_keep, oracle_mapper, learned_mapper):
+        # 输入 xyz 为 N×3（来自 frames.depth_cloud_packet，已在 IMU 系），
+        # 这里补成 x/y/z/intensity 四个 float32 字段（point_step=16）；
+        # intensity 列没有上游数据，保持 0，本函数不计算强度。
         xyzi = np.zeros((len(xyz), 4), dtype="<f4")
         xyzi[:, :3] = xyz
         msg = PointCloud2()
@@ -225,6 +257,7 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         msg.data = xyzi.tobytes()
         publish_cloud_message(pub_cloud, msg, "/dynanav/lidar_filtered")
         published["cloud"] += 1
+        # oracle 建图只消费静态点：STATIC 标签来自上游语义状态，不在此处判据。
         if oracle_mapper is not None:
             from embodied_navigation.localization_mapping.semantic_mapping import (
                 STATIC,
@@ -239,6 +272,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             static_msg.is_dense = True
             static_msg.data = static_xyzi.tobytes()
             publish_cloud_message(pub_static_cloud, static_msg, "/dynanav/lidar_static")
+        # learned 建图消费前端过滤后的点，frontend_keep 是与 xyz 等长的布尔掩码；
+        # 仅这条 filtered 话题的发布边界会被 DYNANAV_PUBLISH_TRACE 跟踪。
         if learned_mapper is not None:
             filtered_xyzi = xyzi[frontend_keep]
             filtered_msg = PointCloud2()
@@ -255,6 +290,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
 
 
     def publish_depth_and_info(it, zz):
+        # 深度图按 32FC1（米）发布，frame 为相机光学系；图像尺寸取自数组形状，
+        # 因此不强制 512x512。
         depth_msg = Image()
         header(depth_msg, it, "go2_camera_optical")
         depth_msg.height, depth_msg.width = zz.shape
@@ -264,6 +301,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         info = CameraInfo()
         header(info, it, "go2_camera_optical")
         info.height, info.width = zz.shape
+        # 内参沿用原探针公式 focal = 512*24/42（约 292.57 px），主点固定在
+        # 图像中心 (256, 256)，零畸变；这些常数对应的标定来源代码与文档均未说明。
         focal = 512 * 24 / 42
         info.k = [focal, 0.0, 256.0, 0.0, focal, 256.0, 0.0, 0.0, 1.0]
         info.p = [
@@ -286,6 +325,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
 
 
     def publish_rgb(it, rgb):
+        # RGB 固定 512x512 rgb8（step=1536），尺寸在本函数里硬编码，
+        # 不做缩放；与相机内参的 512 像素假设保持一致。
         msg = Image()
         header(msg, it, "go2_camera_optical")
         msg.height = 512
@@ -297,6 +338,8 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         published["rgb"] += 1
 
     def destroy():
+        # 顺序固定：先销毁节点再关闭 rclpy context，避免遗留订阅/发布者。
+        # 由采集编排在收尾时统一调用，本函数不判断是否已关闭。
         node.destroy_node()
         rclpy.shutdown()
 

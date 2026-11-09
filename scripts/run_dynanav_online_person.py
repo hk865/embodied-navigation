@@ -18,6 +18,25 @@ starting ROS, Isaac or a model (exit 0 ready / 2 not ready, mirroring
 prints the equivalent shell commands and also creates nothing.
 """
 
+# 中文模块说明（首轮补充；上方 docstring 恢复 HEAD 原文，以保持 --help/--doc 文案不变）：
+# 监督一次在线行人 DynaNav 运行：worker -> LIVO observer -> capture。
+#
+# ``docs/experiments/dynanav-online-person-20261109.md`` 的三终端流程要求行人
+# worker 先就绪，再启动带 ``ready.json`` 握手和 ``launch.json`` 收据的 LIVO
+# observer，最后启动绑定该收据的 capture。本脚本保持该顺序，在成功、失败、
+# 超时或收到 SIGINT/SIGTERM 时停止它启动的每个子进程（先停 capture），
+# 为每个子进程在 ``<run>/logs/`` 下保留一份日志，并把 argv、pid、退出码与
+# 错误写入 ``supervision.json``。
+#
+# 手工流程会在每个终端 source ROS Jazzy；监督器 source 同一个 ``--ros-setup``
+# 文件（默认 ``/opt/ros/jazzy/setup.bash``）并把结果传给所有子进程；
+# ``--no-ros-setup`` 表示沿用继承环境。
+#
+# ``--check`` 只校验仓库文件与传入路径，不启动 ROS/Isaac/模型
+# （就绪返回 0、不就绪返回 2，与 ``start.py --check`` 一致），且不创建
+# run 目录；``--print-commands`` 只打印等价 shell 命令，同样不产生任何文件。
+
+
 from __future__ import annotations
 
 import argparse
@@ -47,11 +66,11 @@ LOG_DIR = "logs"
 
 
 class ChildExit(RuntimeError):
-    """A child process exited or failed while the supervisor expected it alive."""
+    """在监督器仍期望子进程存活时，该子进程提前退出或失败。"""
 
 
 class Interrupted(RuntimeError):
-    """A termination signal arrived; the supervisor stops every child."""
+    """收到终止信号；监督器据此停止所有子进程并记录信号号。"""
 
     def __init__(self, signum: int):
         super().__init__("received signal " + str(signum))
@@ -59,7 +78,11 @@ class Interrupted(RuntimeError):
 
 
 class Child:
-    """One spawned process plus its log file and supervision record."""
+    """一个被拉起的子进程及其日志文件、监督记录。
+
+    ``exit_code`` 在 ``stop()`` 中回填；``stopped_by_supervisor`` 标记该退出
+    是否由监督器主动触发，用于区分正常收尾与异常早退。
+    """
 
     def __init__(self, name: str, argv: list, process, log_path: Path, stream):
         self.name = name
@@ -89,7 +112,10 @@ class Child:
 
 
 def project_data() -> Path:
-    """``<PROJECT_DATA_ROOT>/embodied-navigation``, failing closed when unset."""
+    """返回 ``<PROJECT_DATA_ROOT>/embodied-navigation``；未设置时直接失败。
+
+    数据根目录必须显式给出（--data-root 或环境变量），不做隐式回退。
+    """
     root = os.environ.get("PROJECT_DATA_ROOT")
     if not root:
         raise SystemExit(
@@ -99,11 +125,17 @@ def project_data() -> Path:
 
 
 def snapshot_parameter_file(run: Path) -> Path:
-    """Bounded native keyframe snapshot parameters for the LIVO observer."""
+    """LIVO observer 的有界原生关键帧快照参数文件路径。
+
+    路径固定为 ``<run>/livo/snapshots.yaml``，由本脚本写入后经
+    ``--parameter-override`` 传给 observer。
+    """
     return run / "livo" / "snapshots.yaml"
 
 
 def snapshots_yaml(run: Path) -> str:
+    # 快照目录落在 observer 输出下；256 个就绪目录上限、1.0–2.0 s 的最小/最大
+    # 间隔用于限制原生关键帧快照的落盘量与频率（单位：秒）。
     observer = run / "livo" / "observer"
     return (
         "/**:\n"
@@ -116,12 +148,12 @@ def snapshots_yaml(run: Path) -> str:
 
 
 def ros_environment(setup: Path | None, base: dict | None = None) -> dict:
-    """Source a ROS ``setup.bash`` once and return the resulting environment.
+    """source 一次 ROS ``setup.bash`` 并返回结果环境。
 
-    ``None`` keeps the inherited environment (``--no-ros-setup``). A missing or
-    failing setup file is an explicit error, not a silent fallback: the manual
-    recipe sources ROS in every terminal, and a supervisor without it would run
-    children with a different environment.
+    ``None`` 表示沿用继承环境（--no-ros-setup）。setup 文件缺失或 source
+    失败都是显式错误而非静默回退：手工流程每个终端都会 source ROS，
+    监督器若跳过会让子进程运行在不同环境里。子进程以 ``env -0`` 的形式
+    取回完整环境，避免逐行解析 shell 引号。
     """
     environment = dict(os.environ if base is None else base)
     if setup is None:
@@ -135,7 +167,8 @@ def ros_environment(setup: Path | None, base: dict | None = None) -> dict:
     completed = subprocess.run(
         ["bash", "-c", 'set -e; source "$1" >/dev/null 2>&1; env -0', "_", str(setup)],
         capture_output=True,
-        check=False,  # Inspect returncode below to include the setup failure context.
+        # 不在 subprocess 层抛错：下面统一检查 returncode，把 stderr 尾部带进异常。
+        check=False,
         env=environment,
     )
     if completed.returncode != 0:
@@ -157,7 +190,11 @@ def ros_environment(setup: Path | None, base: dict | None = None) -> dict:
 
 
 def child_environment(domain: int, data: Path, ros_env: dict | None = None) -> dict:
-    """Environment shared by every child; ``data`` is the project data directory."""
+    """所有子进程共享的环境；``data`` 是项目数据目录（其父目录即 PROJECT_DATA_ROOT）。
+
+    PYTHONPATH 前置本仓库 ``src``；ROS_DOMAIN_ID 由 --domain 指定；
+    RMW/内置传输只在未设置时补默认值（rmw_fastrtps_cpp、UDPv4），不覆盖调用方环境。
+    """
     env = dict(os.environ if ros_env is None else ros_env)
     env["PROJECT_DATA_ROOT"] = str(Path(data).resolve().parent)
     env["PYTHONPATH"] = str(ROOT / "src") + (
@@ -170,7 +207,11 @@ def child_environment(domain: int, data: Path, ros_env: dict | None = None) -> d
 
 
 def build_plan(args) -> dict:
-    """Pure plan: paths, the three argv lists and readiness targets."""
+    """纯规划：路径、三段 argv 与就绪目标，不产生任何副作用。
+
+    返回的 argv 直接交给 Popen；``--slam-capture-*`` 的 0.05/0.10/0.15/0.20 m
+    与行人间隔 0.2–0.4 s 是本次在线采集的硬编码实验参数，不对应 CLI 开关。
+    """
     run = Path(args.output).expanduser().resolve()
     data = Path(args.data_root).expanduser().resolve()
     channel = run / "person-worker"
@@ -280,7 +321,11 @@ def build_plan(args) -> dict:
 
 
 def check_entries(plan: dict, python: str, weights: Path, ros_setup: Path | None) -> list:
-    """Read-only readiness entries; no ROS sourcing, no simulator, no model load."""
+    """只读就绪检查项：不 source ROS、不启动仿真、不加载模型。
+
+    每项返回 name/value/present；present 只表示该文件/目录当前存在，
+    不代表内容有效或系统可运行。
+    """
     run = plan["run"]
     entries = [
         ("worker script", WORKER_SCRIPT, WORKER_SCRIPT.is_file()),
@@ -320,6 +365,7 @@ def check_entries(plan: dict, python: str, weights: Path, ros_setup: Path | None
 
 
 def check(plan: dict, python: str, weights: Path, ros_setup: Path | None) -> int:
+    # 输出一行 JSON 便于机器读取；0=就绪、2=不就绪，与 start.py --check 一致。
     entries = check_entries(plan, python, weights, ros_setup)
     ready = all(entry["present"] for entry in entries)
     print(
@@ -338,6 +384,8 @@ def check(plan: dict, python: str, weights: Path, ros_setup: Path | None) -> int
 
 
 def shell_commands(plan: dict, domain: int, ros_setup: Path | None) -> str:
+    # 只用于人工复现：打印的顺序与 supervise() 一致（worker -> observer ->
+    # capture），并显式写出快照 yaml 的生成步骤；不执行任何命令。
     lines = []
     if ros_setup is not None:
         lines.append("source " + shlex_quote(str(ros_setup)))
@@ -372,6 +420,8 @@ def shlex_quote(value: str) -> str:
 
 
 def write_json(path: Path, value) -> None:
+    # 先写 .tmp 再原子替换；allow_nan=False 让非法浮点直接失败，而不是写出
+    # 非标准 JSON 让下游解析器产生歧义。
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
@@ -379,6 +429,8 @@ def write_json(path: Path, value) -> None:
 
 
 def spawn(name: str, argv: list, env: dict, run: Path) -> Child:
+    # start_new_session=True 让子进程成为独立进程组组长，stop() 才能用
+    # killpg 连后代一起收；stdout/stderr 合并写 <run>/logs/<name>.log。
     log_path = run / LOG_DIR / (name + ".log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     stream = log_path.open("wb")
@@ -398,7 +450,12 @@ def spawn(name: str, argv: list, env: dict, run: Path) -> Child:
 
 
 def wait_ready(path: Path, timeout: float, child: Child, expect_state=None, others=()) -> None:
-    """Wait for a readiness artifact, failing fast when the child exits."""
+    """等待就绪产物，子进程提前退出时立即失败。
+
+    每 0.1 s 轮询一次；``expect_state`` 非空时要求 JSON 的 state 字段等于它，
+    否则只要求文件存在。``others`` 中的支撑进程也会被检查，避免等待期间
+    另一个关键子进程已死而无人发现。
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for dependency in (child, *others):
@@ -421,11 +478,10 @@ def wait_ready(path: Path, timeout: float, child: Child, expect_state=None, othe
 
 
 def monitor_capture(capture: Child, others: list, timeout: float) -> int:
-    """Wait for capture, failing when a supporting child dies or capture times out.
+    """等待 capture 结束；支撑子进程死亡或 capture 超时都算失败。
 
-    Supporting children are polled *before* capture: when capture and a worker
-    exit between two polls, a capture that happens to report 0 first must not
-    mask the dead worker/observer.
+    先轮询 worker/observer 再轮询 capture：若两者在两次轮询之间先后退出，
+    capture 恰好先报 0 也不能掩盖已经死掉的支撑进程。
     """
     deadline = time.monotonic() + timeout if timeout else None
     while True:
@@ -446,10 +502,10 @@ def monitor_capture(capture: Child, others: list, timeout: float) -> int:
 
 
 def validate_capture_result(path: Path) -> None:
-    """Exit 0 is insufficient: require this run's truthful terminal receipt.
+    """退出码 0 不足以判定成功：必须读到本次运行真实的终态收据。
 
-    Older capture receipts used ``stage``. Accept that only when ``outcome``
-    is absent; a conflicting or incomplete outcome must never be overridden.
+    旧版 capture 收据用 ``stage`` 字段；仅在 ``outcome`` 缺失时才接受
+    ``stage``，二者冲突或终态不完整时绝不覆盖为成功。
     """
     try:
         result = json.loads(path.read_text())
@@ -465,11 +521,15 @@ def validate_capture_result(path: Path) -> None:
 
 
 def stop(child: Child | None, grace: float = 10.0) -> None:
-    """SIGINT the child's process group, then SIGKILL; record the result."""
+    """先向子进程组发 SIGINT，宽限期后发 SIGKILL，并记录结果。
+
+    即使组长已退出也要处理整个进程组（可能仍有孙进程）；``grace`` 为
+    SIGINT 后等待后代退出的秒数（默认 10 s），随后无条件 SIGKILL。
+    """
     if child is None:
         return
-    # The group may still contain grandchildren after its leader has exited.
-    # Never skip it just because poll() returned an exit code.
+    # 组长退出后组内仍可能有孙进程：不能因为 poll() 已有退出码就跳过清理。
+    # stopped_by_supervisor 只记录“本次 stop 是否为主动停止”。
     child.stopped_by_supervisor = child.poll() is None
     def signal_group(signum):
         try:
@@ -479,8 +539,8 @@ def stop(child: Child | None, grace: float = 10.0) -> None:
             return False
 
     def live_group_members():
-        # Orphan zombies cannot run and may remain until the host's PID 1
-        # reaps them. Do not burn the entire grace period waiting on those.
+        # 孤儿僵尸进程不会再运行，可能一直留到宿主 PID 1 回收；因此判断存活时
+        # 排除 Z 状态，避免把整个宽限期耗在等待僵尸上。
         if not signal_group(0):
             return False
         if not Path("/proc/self/stat").exists():
@@ -511,10 +571,10 @@ def stop(child: Child | None, grace: float = 10.0) -> None:
 
 
 def final_verdict(capture: Child | None, children: list, error, interrupted):
-    """Decide success; a supporting child death must never be masked by capture 0.
+    """判定最终成功；支撑子进程死亡绝不能被 capture 的 0 退出码掩盖。
 
-    ``stopped_by_supervisor`` is set by :func:`stop`, so a normal post-capture
-    SIGINT cleanup is not a failure; a worker/observer that exited on its own is.
+    ``stopped_by_supervisor`` 由 ``stop()`` 设置，因此 capture 结束后正常
+    SIGINT 收尾不算失败；worker/observer 自行退出才算异常早退。
     """
     unexpected = [
         {"name": child.name, "exit_code": child.exit_code}
@@ -537,14 +597,15 @@ def final_verdict(capture: Child | None, children: list, error, interrupted):
 
 
 def _signal_handler(signum, _frame):
+    # 运行期把 SIGINT/SIGTERM 转成 Interrupted，让 finally 统一清理。
     raise Interrupted(signum)
 
 
 def supervise(plan: dict, args) -> int:
     run = plan["run"]
     setup = None if args.no_ros_setup else Path(args.ros_setup).expanduser().resolve()
-    # Resolve the environment before creating the run directory: a missing or
-    # failing ROS setup must not leave a half-created run that looks usable.
+    # 先解析环境再创建 run 目录：ROS setup 缺失或失败时不能留下一个看起来
+    # 可用的半成品 run。run 目录用 exist_ok=False，重复运行会直接报错。
     env = child_environment(args.domain, plan["data"], ros_environment(setup))
     run.mkdir(parents=True, exist_ok=False)
     snapshot_parameter_file(run).parent.mkdir(parents=True, exist_ok=True)
@@ -558,8 +619,9 @@ def supervise(plan: dict, args) -> int:
     cleanup_errors = []
 
     def start(name, argv):
-        # Defer cancellation until registration without blocking OS signals:
-        # a blocked mask would be inherited by the child across exec().
+        # 在 spawn 期间把 SIGINT/SIGTERM 暂存到 pending 而不是屏蔽信号：
+        # 被屏蔽的信号掩码会跨 exec() 继承给子进程。注册完成后再抛出，
+        # 保证子进程已进入 children 列表、会被 finally 清理。
         pending = []
         saved = {signum: signal.signal(signum, lambda sig, _frame: pending.append(sig))
                  for signum in (signal.SIGINT, signal.SIGTERM)}
@@ -586,7 +648,7 @@ def supervise(plan: dict, args) -> int:
         observer = start("observer", plan["observer_argv"])
         wait_ready(plan["observer"] / "ready.json", args.startup_timeout, observer,
                    "ready", others=[worker])
-        # launch.json is provenance, not readiness; require both artifacts.
+        # launch.json 是来源证据而非就绪信号：必须同时具备 ready.json 才继续。
         receipt = json.loads(plan["launch_receipt"].read_text())
         if not isinstance(receipt, dict):
             raise RuntimeError("observer launch receipt must be an object")
@@ -633,6 +695,7 @@ def supervise(plan: dict, args) -> int:
                 "interrupted": interrupted,
                 "error": error,
                 "ok": ok,
+                # 明确边界：本收据只证明进程监督发生过，不是导航或动态感知验收。
                 "scope": (
                     "technical process supervision only; not navigation or dynamic-perception acceptance"
                 ),
@@ -647,6 +710,8 @@ def supervise(plan: dict, args) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
+    # 参数默认值即本次实验基线：domain=116、speed=0.30 m/s、duration=45 s、
+    # imu=200 Hz、cuda:0、单 tile；--capture-timeout=0 表示不限墙钟。
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True, help="New run directory")
     p.add_argument("--data-root", type=Path)
@@ -684,6 +749,8 @@ def parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     p = parser()
     args = p.parse_args(argv)
+    # --check/--print-commands 是纯只读模式，不要求两份输入文件；真正监督运行
+    # 时必须同时给出 capture 结果与 SLAM 参考，否则直接参数错误退出。
     if not (args.check or args.print_commands) and not (
         args.capture_result and args.slam_reference
     ):

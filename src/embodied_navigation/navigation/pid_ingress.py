@@ -1,7 +1,15 @@
-"""Sensors and command ingress for ``PIDNavigation``.
+"""``PIDNavigation`` 的传感器与命令入口。
 
-The callbacks here only translate/validate ROS inputs and update the node's
-state; admission, routing and velocity decisions stay in the other mixins.
+这里的回调只做 ROS 输入的翻译、校验与节点状态更新，准入、路线与速度决策留在
+其他 mixin。入口对来源的限制沿用基类：``TeacherNavigation`` 先要求请求与本 run
+冻结的 ``navigation_request.json`` 一致、SLAM 位姿/点云 header 合法且前进，
+``base_node`` 再按 frame、时间戳与相邻姿态过滤，所以下文说的“基类接受”指这些
+检查全部通过。
+
+边界：本模块不主动产生运动命令；换任务时会调用 ``publish_command()`` 发零速并
+撤销命令源（见 ``on_request``），其余停车由基类保护路径触发。默认 writer 下
+``evidence.append``/``enqueue`` 均为空操作，除非替换为记录型 writer
+（navigation/README.md“日志与输出”节），否则这里写的证据不落盘。
 """
 
 from .pid_support import (
@@ -22,9 +30,17 @@ from .pid_support import (
 
 
 class IngressMixin:
-    """Inbound ROS callbacks: requests/goals, corridor snapshots, IMU, odometry, cloud and archives."""
+    """订阅回调集合：请求/目标、走廊快照、IMU、里程计、点云与点云归档。"""
 
     def on_request(self, msg):
+        """接受/拒绝一条新请求，并在 request_id 真正切换时清空按阶段状态。
+
+        ``super().on_request(msg)`` 先做准入：``TeacherNavigation`` 要求请求内容与本
+        run 冻结的 ``navigation_request.json`` 一致，``base_node`` 要求目标可解析、
+        同一 request_id 不得改目标、运行中不接收新任务；被拒绝时 request_id 不变，
+        这里也不会重置任何状态。切换成功后清掉 cascade、路径收据、准入 hold 与连续
+        路线进度，并发一条零速命令；IMU/SLAM 历史保持有效。
+        """
         previous = self.request_id
         super().on_request(msg)
         if self.request_id != previous and hasattr(self, "cascade"):
@@ -32,8 +48,8 @@ class IngressMixin:
             asynchronous = getattr(self, "_r88_admission", None)
             if asynchronous is not None:
                 asynchronous.invalidate("accepted_request_changed")
-            # Each stage has its own measured path and PI state. Source/IMU
-            # histories and the immutable original registration remain valid.
+            # 每个阶段各自持有一条实测路径与 PI 状态；来源/IMU 历史与不可变的原始
+            # 注册仍然有效，故不在这里清空。
             self.cascade = None
             self.cascade_key = None
             self.cascade_last_row = None
@@ -50,6 +66,7 @@ class IngressMixin:
             self.pid_prepared_output = None
             self.reference_consistency_hold = False
             self.reference_consistency_check = None
+            # 先发零速并撤销旧命令源，避免上一任务的末速度被带入新任务。
             self.publish_command()
             self.continuous_route = (
                 RouteProgress(
@@ -64,6 +81,16 @@ class IngressMixin:
             self.coverage_replan_index = None
 
     def on_corridor_snapshot(self, msg):
+        """把一条走廊快照交给 shadow 观察者，并归档输入与提交结果。
+
+        ``corridor_observer`` 只在 ``corridor.mode=shadow`` 时由
+        ``pid_navigation.__init__`` 创建；正常启动（``mode=off``）为 ``None``，回调
+        直接返回。快照解码与摘要来自 ``common.observation.api("corridor_runtime")``，
+        本检出该端口恒为禁用实现（common/observation.py:86-88），其
+        ``CorridorObserver`` 构造即抛 ``ValueError``，所以这些路径只有外部实验包接管
+        该端口时才可用。时间戳均为 ns：``wall`` 为 monotonic，``clock`` 为 ROS clock。
+        回调无控制权，证据固定标 ``control_authority=False``；任何异常只写拒绝证据。
+        """
         from embodied_navigation.common.observation import api as _observer_api
 
         decode_snapshot = _observer_api("corridor_runtime").decode_snapshot
@@ -78,8 +105,8 @@ class IngressMixin:
             if self.cascade is None or self.feedback is None or self.path_receipt is None:
                 return
             reference = self.cascade.preview_reference(self.pose)
-            # The route identity disambiguates overlapping floor paths; the
-            # actual surface still has to be established by measured points.
+            # layer_id 用“任务号:航点号”区分重叠的地面路径；实际可通行表面仍须由
+            # 实测点云建立，不能只看路线身份。
             layer_id = str(self.request_id) + ":" + str(self.waypoint_index)
             path = dict(
                 points_xyz=self.cascade.path.tolist(),
@@ -98,6 +125,8 @@ class IngressMixin:
             )
             digest = sha_text(msg.data)
             if self.corridor_observer.submit(snapshot, path, state, clock, wall, digest):
+                # 观察者接受该快照后才归档原始字节；写盘放在 enqueue 闭包里，默认
+                # writer 不执行该闭包。
                 import gzip
 
                 raw = msg.data.encode("utf-8")
@@ -126,6 +155,7 @@ class IngressMixin:
                     ),
                 )
         except Exception as error:
+            # 解码/提交失败只记拒绝证据，不改变控制状态。
             self.evidence.append(
                 self.run / "corridor_input_rejections.jsonl",
                 dict(
@@ -137,6 +167,7 @@ class IngressMixin:
             )
 
     def poll_corridor(self, now):
+        """轮询走廊观察结果；异常只写拒绝证据，不向控制链路抛出。"""
         try:
             return self._poll_corridor(now)
         except Exception as error:
@@ -150,6 +181,14 @@ class IngressMixin:
             )
 
     def _poll_corridor(self, now):
+        """归档走廊证书，并按 profile 周期请求一条未来走廊路径。
+
+        证书写入 ``corridor_certificates.jsonl``。仅当任务 running、已有级联路径、
+        且距上次请求超过 ``profile["corridor"]["snapshot_request_period_s"]``（经
+        prepare pin 进 profile，单位 s）时才发请求：从当前位姿起沿路径取 13 个采样点
+        （连当前位姿共 14 个位姿），前瞻 1.2 m（硬编码，与 pid_navigation 中
+        ``horizon_m=1.2`` 一致），frame 为 ``camera_init``。
+        """
         if self.corridor_observer is None:
             return
         result = self.corridor_observer.poll()
@@ -194,6 +233,14 @@ class IngressMixin:
         self.corridor_last_request_wall = now
 
     def on_imu(self, msg):
+        """先让基类校验并接受 IMU，再补一条配对历史与安全缓冲注记。
+
+        只有 ``super().on_imu`` 接受（gyro 时间戳前进）且 header 不晚于当前 ROS
+        clock 时才写历史；R85 自动参考运行时，未来 header 也保留为历史但不参与因果
+        配对（行内标 ``r85_original_future_header_history_only``）。单位：stamp/clock
+        为 ns，``received_wall_ns`` 为 monotonic ns；角速度已转到 body 系。
+        ``source_topic`` 固定 ``/livox/imu``。
+        """
         before = self.gyro_stamp
         before_records = self.imu_records
         wall = time.monotonic_ns()
@@ -202,9 +249,8 @@ class IngressMixin:
         stamp = int(self.stamp(msg))
         q = msg.orientation
         v = msg.angular_velocity
-        # R85 retains original safety-accepted IMU bytes until their headers
-        # become causal. The unchanged odometry pairing still requires
-        # IMU <= pose <= control clock and the original 20ms pair window.
+        # R85 会保留安全接受过的原始 IMU 字节，直到其 header 变成因果；未改动的
+        # 里程计配对仍要求 IMU <= pose <= 控制时钟，并沿用原来的 20 ms 配对窗。
         r85_history_only = getattr(self, "automatic_reference", None) is not None
         if (
             self.gyro_stamp is not None
@@ -239,6 +285,17 @@ class IngressMixin:
             )
 
     def on_odom(self, msg):
+        """校验一条 SLAM 里程计，配对同刻 IMU，并在基类接受后重建反馈。
+
+        header 晚于当前 ROS clock 时先交给 ``_sensor_callback_odom(early_future=True)``
+        记账后直接返回，不更新位姿。否则优先走 R104 因果配对（环境变量
+        ``R104_PARKING_CAUSAL_JOIN``，代码默认 "0"，configs/launch/settings.json 设为
+        "1"），否则在 IMU 历史里取最近一条满足 ``0 <= stamp - imu_stamp <= 20 ms`` 的
+        记录；配对失败仍交给基类，但 ``paired_imu`` 为空，若随后仍无法从 IMU 缓冲补配，
+        ``select_pid_velocity`` 会因缺因果 IMU 而 hold。
+        只有 ``pose_stamp`` 前进（基类真正接受）时才重建 ``feedback`` 与
+        ``pid_velocity``；位置单位 m、速度 m/s，姿态为 world 系 WXYZ。
+        """
         stamp = int(self.stamp(msg))
         if CLOCK_SERVICE_ENABLED:
             self._r114_clock_service.service(stamp)
@@ -249,10 +306,12 @@ class IngressMixin:
         wall = time.monotonic_ns()
         _r99_clock_probe.note(self, stamp, clock, wall, self.pose_stamp, _clock_read_before)
         if stamp > clock:
+            # header 在未来：只记账，不参与位姿/配对。
             _sensor_callback_odom(
                 self, stamp, clock, wall, self.pose_stamp, self.pose_stamp, early_future=True
             )
             return
+        # R104 因果配对优先；未安装（None，模块默认关闭）时回退到 IMU 历史。
         join = getattr(self, "_r104_parking_causal_join", None)
         bound, paired = (False, None) if join is None else join.bound_pair(self, stamp, clock, wall)
         if not bound:
@@ -271,8 +330,11 @@ class IngressMixin:
                         "odom_pair_missing" if paired is None else "odom_pair_from_fifo",
                         paired,
                     )
+        # 先保存基类回调前的 gyro 值；给基类一个与位姿配对的因果 IMU，回调结束再
+        # 还原为最新值。
         latest = (self.gyro_body, self.gyro_stamp, self.gyro_wall)
         if paired:
+            # 有配对才替换 gyro；否则清空，避免旧 IMU 冒充当前配对。
             self.gyro_body = paired["angular_velocity_body"]
             self.gyro_stamp = paired["stamp_ns"] / 1e9
             self.gyro_wall = paired["received_wall_ns"] / 1e9
@@ -281,6 +343,7 @@ class IngressMixin:
         before = self.pose_stamp
         quiet = getattr(self.heading_gate, "quiet_target_enabled", False)
         if quiet:
+            # 安静目标模式下，位姿回调要包进 begin/finish，用于交接期的静默判定。
             self.heading_gate.begin_quiet_pose(
                 stamp,
                 clock,
@@ -299,6 +362,7 @@ class IngressMixin:
             if quiet:
                 self.heading_gate.finish_quiet_pose(stamp, self.pose_stamp > before)
         if self.pose_stamp > before:
+            # 只有基类真正前移位姿时间戳时才更新反馈；否则保留上一条已接受反馈。
             q = msg.pose.pose.orientation
             v = msg.twist.twist.linear
             from embodied_navigation.perception.sensors.feedback_mailbox import receipt_ns
@@ -328,9 +392,18 @@ class IngressMixin:
         _sensor_callback_odom(self, stamp, clock, wall, before, self.pose_stamp, message=msg)
 
     def on_cloud(self, msg):
+        """记录一次点云回调收据，并在基类接受（``cloud_stamp`` 前进）时归档。
+
+        无论接受与否都写一行 ``navigation_cloud_callbacks.jsonl``；``reason`` 由基类
+        ``note_cloud_decision`` 的分支填写（帧、解码、无有限点、邻近姿态等拒绝原因），
+        若回调返回时仍未填写则记为 ``callback_returned_without_branch_receipt``。
+        归档只对接受的点云执行（``archive_cloud``）。时间戳同时记录 ROS clock ns 与
+        monotonic wall 秒。
+        """
         wall = time.monotonic()
         clock = self.get_clock().now().nanoseconds
         before = self.cloud_stamp
+        # 先把待填的收据行挂到节点上，基类的 note_cloud_decision 会就地补 reason。
         self.cloud_callback_records += 1
         self.pending_cloud_callback_row = dict(
             schema="pid_actual_cloud_callback/v1",
@@ -351,6 +424,7 @@ class IngressMixin:
             if self.cloud_stamp > before:
                 self.archive_cloud(msg)
         finally:
+            # 无论接受/拒绝都补齐耗时与接受标志并写证据；归档只在接受时进行。
             row = self.pending_cloud_callback_row
             end = time.monotonic()
             row.update(
@@ -370,11 +444,20 @@ class IngressMixin:
             self.pending_cloud_callback_row = None
 
     def archive_cloud(self, msg):
+        """归档一条被接受的点云；``disabled`` 模式只留收据，``legacy_all`` 另存数组。
+
+        归档模式来自 profile 的 ``engineering_recording.registered_cloud_archive``，
+        由 ``pid_navigation.__init__`` 限定为 ``legacy_all``/``disabled``。``disabled``
+        不复制点、不写数组文件，只写一行收据并清空 ``guard_cloud_receipt`` 的归档字段；
+        ``legacy_all`` 把过滤后的 ``<f8`` xyz 与原始 payload 写到
+        ``navigation_cloud_arrays/``，真正的写盘在 ``evidence.enqueue`` 闭包里（默认
+        writer 不执行）。``cloud_archive_records`` 只统计被接受并进入归档的点云。
+        """
         self.cloud_archive_records += 1
         seq = self.cloud_archive_records
         if getattr(self, "registered_cloud_archive_mode", "legacy_all") == "disabled":
-            # Keep the accepted live geometry and exact native guard receipt.
-            # Do not allocate an additional point copy or write payload files.
+            # disabled 模式保留实时几何与精确的 native guard 收据，但不额外复制点，
+            # 也不写 payload 文件。
             self.guard_cloud_receipt.update(
                 cloud_array_file=None,
                 cloud_raw_payload_file=None,
@@ -404,6 +487,7 @@ class IngressMixin:
                 ),
             )
             return
+        # legacy_all：保留过滤后的 float64 xyz 与原始 payload 字节，供回放核对。
         xyz = np.array(self.guard_cloud, dtype="<f8", copy=True)
         raw = bytes(msg.data)
         directory = self.run / "navigation_cloud_arrays"
@@ -443,6 +527,7 @@ class IngressMixin:
             cloud_archive_sequence=seq,
         )
 
+        # 真正的文件写入延后到 writer 的 enqueue 闭包；默认 writer 直接丢弃该闭包。
         def archive():
             directory.mkdir(exist_ok=True)
             np.save(array, xyz, allow_pickle=False)

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Fast DDS profile: publish the localization metadata bundle asynchronously
-     so a slow reader cannot stall the callback that produced the measurement. -->
+<!-- Fast DDS profile：异步发布定位元数据 bundle，使慢读者无法阻塞产生
+     该测量的回调。profile_name 即话题名，异步只改变发布路径，不改变
+     历史/深度等 QoS 语义。 -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <publisher profile_name="/demo/navigation/localization_bundle">

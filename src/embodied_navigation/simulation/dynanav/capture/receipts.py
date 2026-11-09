@@ -1,11 +1,9 @@
-"""Result receipts and evidence journals for one DynaNav capture run.
+"""单次 DynaNav 采集运行的结果收据与证据 journal。
 
-This module owns the ``<output>/result.json`` contract: the initial result
-dictionary and stage names, the throttled atomic save (the 200 Hz physics loop
-must not write the data volume every tick), the append-only JSONL journals, and
-the failure receipt that records the traceback before the caller re-raises and
-the process exits non-zero. It imports no Isaac, ROS, torch or project runtime
-modules at import time.
+本模块定义 ``<output>/result.json`` 契约：初始结果字典与阶段名、限频的原子
+保存（200 Hz 物理循环不能每 tick 写数据卷）、只追加的 JSONL journal，以及
+在调用方重新抛异常、进程非零退出之前记录 traceback 的失败收据。import 本模块
+不会加载 Isaac、ROS、torch 或项目运行时模块。
 """
 
 import json
@@ -15,7 +13,14 @@ from dataclasses import dataclass, field
 
 
 def initial_result(experiment, gt_diagnostic, slam_control):
-    """Build the initial result dict written before Isaac starts."""
+    """构造 Isaac 启动前写入的初始结果字典。
+
+    ``stage`` 从 ``startup`` 开始，``outcome`` 为 ``running``；
+    ``SLAM_control_enabled`` 与 ``ground_truth_navigation`` 互斥。
+    ``truth_usage`` 按运行模式分四支：真值诊断、SLAM + learned 行人语义、
+    普通 SLAM、以及 COM 速度 PID（导航消费 SLAM）。分支由本函数内的条件
+    表达式决定，不是运行时再判断。
+    """
     result = {
         "stage": "startup",
         "outcome": "running",
@@ -23,6 +28,8 @@ def initial_result(experiment, gt_diagnostic, slam_control):
         "ground_truth_navigation": gt_diagnostic,
         "SLAM_control_enabled": not gt_diagnostic,
         "stair_speed_cap_enabled": False,
+        # 真值用途声明会写入 result.json，供离线审计区分“策略本体感知/物理保护/
+        # 诊断建图”与“实测估计位姿驱动路线”两类运行。
         "truth_usage": "policy proprioception, physics guards, diagnostic mapping and native-pose tracking"
         if gt_diagnostic
         else "policy proprioception, physical guards, optional isolated identity scoring; measured estimator poses drive the route and online mapping"
@@ -38,10 +45,11 @@ def initial_result(experiment, gt_diagnostic, slam_control):
 
 
 class Receipts:
-    """Own ``result.json`` plus the append-only JSONL journals for one run.
+    """持有一次运行的 ``result.json`` 与只追加 JSONL journal。
 
-    ``save`` is throttled to 0.25 s unless forced, and writes atomically through
-    ``result.json.tmp`` so a crash never leaves a truncated receipt.
+    ``save`` 默认限频 0.25 s（force=True 可绕过），并通过 ``result.json.tmp``
+    原子替换，崩溃时不会留下被截断的收据；journal 首次写入时才打开文件，
+    由 ``close_journals`` 统一收尾。
     """
 
     def __init__(self, output, experiment, gt_diagnostic, slam_control):
@@ -51,7 +59,8 @@ class Receipts:
         self._journals = {}
 
     def save(self, force=False):
-        # Receipt I/O must not run at the 200 Hz physics rate on the data volume.
+        # 收据 I/O 不能按 200 Hz 物理频率写数据卷：非强制调用在 0.25 s 内
+        # 直接返回。force 用于失败收尾与终态，保证最后一次写入不被限频吞掉。
         now = time.perf_counter()
         if not force and now - self._last_receipt_wall < 0.25:
             return
@@ -61,6 +70,8 @@ class Receipts:
         self._last_receipt_wall = now
 
     def journal(self, name, payload, *, flush=False):
+        # 每个 journal 是独立追加流，按 name 懒打开；payload 必须可 JSON 序列化，
+        # flush=True 供需要立刻可读的边界事件使用（不改变持久性语义）。
         if name not in self._journals:
             self._journals[name] = (self.out / name).open("a")
         self._journals[name].write(json.dumps(payload) + "\n")
@@ -68,7 +79,10 @@ class Receipts:
             self._journals[name].flush()
 
     def close_journals(self):
-        """Attempt every stream, then propagate the first close/flush failure."""
+        """逐个尝试关闭所有 journal，最后抛出第一个关闭/刷新异常。
+
+    其余流的异常以 note 形式附在第一个异常上，避免清理阶段互相掩盖。
+    """
         errors = []
         for name, stream in self._journals.items():
             try:
@@ -84,10 +98,10 @@ class Receipts:
 
 @dataclass
 class CaptureContext:
-    """Optional runtime components referenced by the failure receipt.
+    """失败收据可能引用的可选运行时组件。
 
-    The original script inspected ``locals()`` in its ``except`` block; this
-    object records the same components explicitly as each one is constructed.
+    原脚本在 ``except`` 块里检查 ``locals()``；这里改为在组件构造时显式
+    登记同一批对象，未构造成功的组件保持 None，收据阶段据此跳过。
     """
 
     receipts: Receipts
@@ -119,26 +133,27 @@ def _safe_repr(error):
 
 
 def record_failure(receipts, error, context, *, interrupted_error=None):
-    """Best-effort failure receipt and cleanup that never masks the primary error.
+    """尽力写失败收据并清理，且绝不掩盖主异常。
 
-    The original top-level ``except`` block did one thing at a time and a failure
-    in any receipt/cleanup step (for example a second ``app.close`` error) could
-    replace the real simulation exception.  Here every receipt/cleanup step is
-    attempted independently, cleanup errors are recorded under
-    ``failure_cleanup_errors`` when the receipt can still be written, and the
-    primary exception is left untouched for the caller to re-raise.
+    原顶层 ``except`` 块逐步执行，任何收据/清理步骤再抛错（例如第二次
+    ``app.close`` 失败）都会替换真正的仿真异常。这里每个步骤独立尝试，
+    清理错误在收据仍可写时记入 ``failure_cleanup_errors``，主异常保持原样
+    交给调用方重新抛出。``interrupted_error`` 用于记录“收尾时又被中断”的
+    次要异常。
     """
     result = receipts.result
     cleanup_errors = []
 
     def attempt(label, action):
+        # 每个收尾动作单独隔离：任何 BaseException（含 SystemExit）都只记录
+        # 到 cleanup_errors，不向上传播，确保后续收尾仍会执行。
         try:
             action()
         except BaseException as cleanup_error:  # noqa: BLE001 - cleanup must not mask the primary error
             cleanup_errors.append(f"{label}: {_safe_repr(cleanup_error)}")
 
-    # Put the primary error in the receipt first so it survives a later
-    # receipt-write or cleanup failure.
+    # 先把主错误写进收据，后续收据写入或清理再失败也不会丢掉它；
+    # KeyboardInterrupt/SystemExit 记为 cancelled，其余为 failed。
     result.update(
         error=_safe_repr(error),
         outcome="cancelled" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failed",
@@ -190,7 +205,7 @@ def record_failure(receipts, error, context, *, interrupted_error=None):
     def failure_report():
         report = getattr(error, "report", None)
         if report is not None:
-            # Reject unserializable diagnostics before they poison result.json.
+            # 先剔除不可序列化的诊断值，避免它们污染 result.json 的写入。
             json.dumps(report)
             result["failure_report"] = report
 
@@ -213,12 +228,14 @@ def record_failure(receipts, error, context, *, interrupted_error=None):
 
     attempt("runtime_evidence", runtime_evidence)
 
+    # 先声明“已请求关闭、尚未返回”：若随后 native 快速关闭直接结束进程，
+    # result.json 仍能证明关闭请求发生过。
     if context.app is not None:
         result.update(app_close_requested=True, app_close_returned=False)
     if cleanup_errors:
         result["failure_cleanup_errors"] = cleanup_errors
-    # This is the last guaranteed Python write: native fast shutdown may exit
-    # the process directly, without returning to our cleanup handler.
+    # 这是 Python 侧最后一次有保证的写入：native 快速关闭可能直接结束进程，
+    # 不再回到本清理函数；因此必须在 app.close 之前强制保存收据。
     attempt("receipt", lambda: receipts.save(force=True))
     attempt("traceback_output", lambda: print(result["traceback"], flush=True))
     if context.app is not None:
@@ -230,5 +247,6 @@ def record_failure(receipts, error, context, *, interrupted_error=None):
 
     if cleanup_errors:
         result["failure_cleanup_errors"] = cleanup_errors
-    # Best effort on returning paths; terminal outcome already precedes close.
+    # 若 app.close 正常返回，再补存一次，把 app_close_returned 等终态落盘；
+    # 终态 outcome 已在关闭前写入，这一步只是尽力而为。
     attempt("receipt_after_cleanup", lambda: receipts.save(force=True))

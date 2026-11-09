@@ -6,6 +6,13 @@ trajectories. This wrapper narrows scope, fixes duplicate-stamp acceptance and
 requires measured stopping before obstacle recovery. It owns no joint actuator.
 """
 
+# 中文模块说明（首轮补充；上方 docstring 恢复 HEAD 原文，以保持 --help/--doc 文案不变）：
+# 在既有 measured-pose Go2 SCAN 之上、面向 Teacher 的有限包装。
+#
+# 共享控制器消费 SLAM、真实配准点云与已检查的 SCAN 轨迹。本包装只收窄适用范围、
+# 修正重复时间戳的接受逻辑，要求障碍恢复前先实测停车。它不拥有任何关节执行器。
+
+
 from embodied_navigation.localization_mapping.known_scene_hold_guard import record_clear_release
 import embodied_navigation.common.paths as _package_paths
 import argparse
@@ -56,10 +63,10 @@ SCAN_SHORT_INTAKE_ENABLED = _SCAN_SHORT_INTAKE == "1"
 
 
 class RecordedPublisher:
-    """Status publisher that adds this run's immutable evidence to each message.
+    """在每帧状态 JSON 中补充本次运行不可变证据的状态发布者。
 
-    The wrapped publisher is the shared controller's original one; this class
-    only augments the JSON body with measured receipts and published stop facts.
+    被包装的发布者是共享控制器原有的发布者；本类只把实测回执、已发布的停止事实等
+    字段加进 JSON 主体，不改变原状态字段的语义。
     """
 
     def __init__(self, publisher, run, node):
@@ -68,8 +75,9 @@ class RecordedPublisher:
         self.node = node
 
     def publish(self, msg):
-        """Publish the enriched status plus append/atomic evidence for this tick."""
+        """发布增强后的状态，并为本次 tick 追加/原子写入证据。"""
         data = json.loads(msg.data)
+        # 每次发布都显式声明实验模式与范围，并固定 ground truth 未被使用。
         data.update(
             mode=self.node.profile["controller_kind"],
             scope=self.node.profile["experiment"],
@@ -110,15 +118,20 @@ class RecordedPublisher:
             pending_reference_stamp=self.node.trajectory_association.reference_stamp,
             occupancy_or_terrain_support_certified=False,
         )
+        # TeacherHeadingGate 的转向交接证据（相位、锁定航向、零速确认等）。
         data["teacher_transition"] = self.node.heading_gate.evidence(
             self.node.get_clock().now().nanoseconds / 1e9, time.monotonic()
         )
+        # after_measured_dwell 策略下，纯转速率上限取自 Teacher gate；到点仍必须由
+        # 原 ArrivalWindow 确认。
         if self.node.profile.get("arrival_stop_policy") == "after_measured_dwell":
             data["motion_limits"]["pure_turn_rate_rad_s"] = self.node.heading_gate.max_turn_rate
             data["arrival_stop_policy"] = "after_measured_dwell"
             data["arrival_stop_policy_source"] = (
                 "Actual raw SLAM original control-region ArrivalWindow; no tracking-pose arrival"
             )
+        # 先发 JSON（allow_nan=False：出现 NaN 直接抛错，而不是发出非法状态），
+        # 再追加 JSONL 并原子写快照。
         self.publisher.publish(String(data=json.dumps(data, ensure_ascii=False, allow_nan=False)))
         self.node.evidence.append(
             self.run / "navigation_status.jsonl",
@@ -132,16 +145,19 @@ class RecordedPublisher:
 
 
 class TeacherNavigation(base.Navigation):
-    """Teacher-only wrapper: measured-pose gating, guard receipts, no actuators.
+    """Teacher 专用包装：实测位姿门控、guard 回执，不拥有执行器。
 
-    Core path/control calculations delegate to the shared base controller.
-    This subclass retains measured-input, tilt/bridge/evidence gates and records
-    accepted-input and native-guard receipts for the isolated simulation.
+    路径/控制计算委托给共享基类控制器；本子类保留实测输入、倾角/执行桥/证据门，
+    并为隔离仿真记录“被接受的输入”与“原生 guard”回执。与基类的主要差异是：用
+    TeacherHeadingGate 替换基类 HeadingGate、用 profile 覆盖 ROS 参数、把状态
+    发布者换成 RecordedPublisher。
     """
 
     def __init__(self, run):
         self._bridge_safety_handoff = None
         self.run = run
+        # profile 来自本次 run 的 runtime_context.json（业务阈值/开关由 prepare
+        # 生成后 pin 进该文件）。
         receipt = load_context(run / "runtime_context.json")
         self.profile = receipt["profile"]
         super().__init__()
@@ -149,10 +165,12 @@ class TeacherNavigation(base.Navigation):
         self.gyro_body = None
         self.gyro_stamp = None
         self.gyro_wall = None
+        # 替换基类 HeadingGate：转向交接、零速确认与主动制动由 Teacher gate 负责。
         self.heading_gate = TeacherHeadingGate(self.profile)
         self.handoff_scope_sha256 = (
             self.run.name
-        )  # Live instance identity; never settings/source bytes.
+        )  # 交接范围用运行实例名标识；不用设置或源码字节。
+        # 包装原发布者：状态 JSON 增加本次 run 的证据字段并落盘。
         self.status_pub = RecordedPublisher(self.status_pub, run, self)
         self.bridge_updated = -math.inf
         self.guard_cloud = None
@@ -164,11 +182,11 @@ class TeacherNavigation(base.Navigation):
         self.last_actual_guard_clock_ns = None
         self.guard_continuity_resets = 0
         self.native_guard_audit = NativeGuardAudit(NATIVE_STEERING_GUARD)
-        # This module instance belongs only to the independent Teacher process.
-        # The shared camera-mode files and native geometry remain unchanged.
-        # Native guard is called through an explicit subclass method; no globals are mutated.
+        # 本模块实例只属于独立的 Teacher 进程；共享的 camera 模式文件与原生几何
+        # 都保持原样。原生 guard 通过显式子类方法调用，不修改任何全局状态。
 
     def destroy_node(self):
+        """销毁前关闭 bridge safety handoff，并把交接快照写到 run 目录。"""
         try:
             handoff = getattr(self, "_bridge_safety_handoff", None)
             if handoff is not None:
@@ -181,6 +199,8 @@ class TeacherNavigation(base.Navigation):
         return result
 
     def create_subscription(self, msg_type, topic, callback, qos_profile, *args, **kwargs):
+        # SCAN_SHORT_INTAKE=1 时，四类 SCAN 输入订阅必须复用 R86 原回调组，且要求
+        # R88 异步物理已开启（=1）、R116 接收压力关闭（=0）；不满足则启动即报错。
         if SCAN_SHORT_INTAKE_ENABLED and topic in (
             "/demo/navigation/reference_attempt",
             "/demo/navigation/bspline",
@@ -197,8 +217,11 @@ class TeacherNavigation(base.Navigation):
             if group is None:
                 raise ValueError("SCAN short intake requires the original R86 group")
             kwargs["callback_group"] = group
+        # 高频传感器统一用 depth=1 BEST_EFFORT（只保留最新一帧）。
         if topic in ("/demo/slam/body_odom", "/cloud_registered_full", "/livox/imu"):
             qos_profile = latest_sensor_qos()
+        # /demo/control/safety 用 depth=1；启用 handoff 时挂到 R86 intake 回调组，
+        # 并在订阅建立后绑定。
         if topic == "/demo/control/safety":
             qos_profile = 1
             from embodied_navigation.control.safety.bridge_safety_handoff import selected, Handoff
@@ -217,14 +240,15 @@ class TeacherNavigation(base.Navigation):
         return subscription
 
     def create_causal_imu_subscription(self, callback):
-        # Separate same-source history consumer. Original latest tilt stays at
-        # depth one and retains sole ownership of physical safety state.
+        # 同一 IMU 源的独立历史消费者；原来的“最新倾角”仍是 depth=1，并独占
+        # 物理安全状态的判定权。
         from embodied_navigation.control.safety.imu_causal_buffer import enabled, FIFO_DEPTH
 
         if not enabled(self.profile):
             raise RuntimeError("causal_imu_buffer_not_enabled")
         from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
+        # FIFO_DEPTH 由 imu_causal_buffer 决定；BEST_EFFORT + 独立互斥回调组。
         self.causal_imu_callback_group = MutuallyExclusiveCallbackGroup()
         qos = base.QoSProfile(depth=FIFO_DEPTH, reliability=base.ReliabilityPolicy.BEST_EFFORT)
         return super().create_subscription(
@@ -232,6 +256,13 @@ class TeacherNavigation(base.Navigation):
         )
 
     def declare_parameter(self, name, value=None, *args, **kwargs):
+        """把基类声明的 ROS 参数替换为本次 run 的 profile 取值。
+
+        scenario_path 指向 run 目录下的 navigation_scenario.json；max_speed 取
+        profile["max_speed_mps"]；pose_timeout 与 cloud_timeout 共用
+        profile["pose_cloud_timeout_s"]。因此 Teacher 路径的数值来自 profile，
+        不是 launch 参数或基类默认值。
+        """
         if name == "scenario_path":
             value = str(self.run / "navigation_scenario.json")
         if name == "max_speed":
@@ -241,16 +272,20 @@ class TeacherNavigation(base.Navigation):
         return super().declare_parameter(name, value, *args, **kwargs)
 
     def on_bridge_safety(self, msg):
+        """接收执行桥安全状态；只接受本控制器类型、来源 scan_slam 且状态合法的消息。"""
         try:
             data = json.loads(msg.data)
         except (ValueError, TypeError):
             return
+        # 三个字段任一不符即丢弃：controller_kind、source、state 白名单。
         if (
             data.get("mode") != self.profile["controller_kind"]
             or data.get("source") != "scan_slam"
             or data.get("state") not in ("hold", "ready", "failed")
         ):
             return
+        # 墙钟新鲜度：消息自带的 monotonic_wall 必须落在 [now-0.3, now+0.05) 秒内；
+        # 0.3 s 与 0.05 s 未来容差为本文件硬编码。
         try:
             if minimal_baseline_enabled(self.profile):
                 now = time.monotonic()
@@ -278,6 +313,8 @@ class TeacherNavigation(base.Navigation):
         self._accept_bridge_safety(data, receipt)
 
     def _accept_bridge_safety(self, data, receipt, *, force_protection=False, service_wall=None):
+        """采用一条已通过门控的 bridge 状态；必要时立即执行倾角/执行桥保护。"""
+        # bridge_updated 是墙钟回执，供 apply_tilt_guard 的 bridge 新鲜度门使用。
         self.bridge_updated = receipt
         self.bridge_safety = data
         if (force_protection or self.state == "running") and self.apply_tilt_guard(
@@ -285,17 +322,19 @@ class TeacherNavigation(base.Navigation):
             self.get_clock().now().nanoseconds / 1e9,
         ):
             self.reset_region_arrival("protected")
-            # Do not feed bridge hold -> repeated zero -> bridge status back
-            # into another zero. A moving command still stops immediately.
+            # 不把“bridge hold → 零命令 → bridge 状态”回灌成新的零命令；正在移动的
+            # 命令仍然立即停。
             if force_protection or any(self.command):
                 self.publish_command()
             if self.state == "failed":
                 self.publish_status()
 
     def on_imu(self, msg):
+        """接收原始 IMU：更新物理安全用倾角缓存，并在运行中立即执行保护停车。"""
         now = time.monotonic()
         ros_now = self.get_clock().now().nanoseconds / 1e9
         q = msg.orientation
+        # 物理安全状态只由“最新原始样本”决定；存在因果缓冲时取它的原始入口。
         intake = getattr(getattr(self, "imu_source_buffer", None), "safety_intake", None)
         original_raw = self.raw_imu if intake is None else intake.original_raw_imu
         accepted = original_raw.update(
@@ -309,6 +348,7 @@ class TeacherNavigation(base.Navigation):
             if intake is not None:
                 intake.note_original_accepted(round(ros_now * 1e9))
             self.counts["imu"] += 1
+            # 角速度转到机身系后缓存，供 TeacherHeadingGate 观察；非有限值不更新。
             v = msg.angular_velocity
             gyro = self.imu_body_rotation @ np.array([v.x, v.y, v.z])
             if np.isfinite(gyro).all():
@@ -317,33 +357,34 @@ class TeacherNavigation(base.Navigation):
                 self.gyro_wall = now
         if self.state == "running" and self.apply_tilt_guard(now, ros_now):
             self.reset_region_arrival("protected")
-            # Protection still stops a moving robot in this very callback.
-            # Already-zero held commands use the unchanged 20Hz timer heartbeat.
+            # 保护在本回调内就停住移动中的机器人；已经是零的保持命令交给 20 Hz
+            # 定时器心跳即可，不在这里重复发。
             if any(self.command):
                 self.publish_command()
             if self.state == "failed":
                 self.publish_status()
 
     def apply_tilt_guard(self, now, ros_now):
-        """Combine measured SLAM/IMU tilt with bridge/evidence faults; True = stop now."""
+        """合并实测 SLAM/IMU 倾角与执行桥/证据故障；True 表示立即停车。"""
         buffer = getattr(self, "imu_source_buffer", None)
         intake = getattr(buffer, "safety_intake", None)
         pending_peak = None if intake is None else intake.consume(self, now, ros_now)
-        # A communication hold is not measured tilt and must not reset a
-        # parked Teacher's heading/path every time a fresh cloud is delayed.
-        # Physical IMU/SLAM tilt protections retain the original thresholds.
+        # 通信 hold 不是实测倾角：不能因为新点云延迟就重置已停住 Teacher 的航向/路径；
+        # 物理 IMU/SLAM 倾角保护保留原有阈值。
         slam_tilt = body_tilt(self.rotation)
         fresh = raw_imu_fresh(self, now, ros_now, self.raw_imu.fresh(now, ros_now))
         sources = [("SLAM", slam_tilt)] + ([("raw_imu", self.raw_imu.tilt)] if fresh else [])
-        # Recovery interruption/high/severe tilt is an event: a later level
-        # sample from either port must not erase it.
-        # Consume through the original thresholds and recovery state machine.
+        # 恢复中断/高倾角/严重倾角是一个事件：后续任一端口来的正常样本不能把它抹掉。
+        # 仍按原阈值与恢复状态机消费该事件。
         if pending_peak is not None:
             sources.append(("raw_imu_pending_peak", pending_peak[4]))
         self.max_tilt = max(self.max_tilt, *(tilt for _, tilt in sources))
+        # 阈值与基类一致：0.50 rad 锁定 failed，0.30 rad 保持，0.18 rad 且 0.8 s 恢复；
+        # 代码与现有文档未说明这些阈值的标定依据。
         severe = [name for name, tilt in sources if tilt >= 0.50]
         if self.bridge_safety.get("state") == "failed":
             severe.append("execution_bridge")
+        # 证据写入错误被当作 severe 故障：无法留证时直接锁定 failed。
         if self.evidence.error:
             severe.append("evidence_writer")
         if severe:
@@ -358,10 +399,13 @@ class TeacherNavigation(base.Navigation):
             self.tilt_hold = True
             self.tilt_source = "+".join(high)
             self.tilt_clear_since = None
+        # 原始 IMU 超时与倾角无关，单独按停车处理。
         if not fresh:
             self.message = "原始IMU超时，停车"
             self.tilt_clear_since = None
             return True
+        # 恢复要求两路 < 0.18 rad、SLAM 位姿新鲜且连续 0.8 s；恢复后清空轨迹并
+        # 重新请求 SCAN。
         if self.tilt_hold:
             if all(tilt < 0.18 for _, tilt in sources) and pose_cloud_fresh(
                 self, "pose", now, ros_now, now - self.pose_updated < self.pose_timeout
@@ -378,6 +422,7 @@ class TeacherNavigation(base.Navigation):
                 self.tilt_clear_since = None
             self.message = "实际倾角保护，停车等待稳定"
             return True
+        # bridge 回执超过 0.30 s 或状态不是 ready 时停车，等待执行门/传感器预热。
         if (
             wall_stale(
                 self,
@@ -396,7 +441,7 @@ class TeacherNavigation(base.Navigation):
 
     @_r87_diag.observe("teacher.odom")
     def on_odom(self, msg):
-        """Validate one measured-pose callback in the original gate order, then delegate."""
+        """按原门控顺序校验一帧实测位姿回调，然后委托基类处理。"""
         stamp = self.stamp(msg)
         ns = self.get_clock().now().nanoseconds
         received = time.monotonic()
@@ -404,8 +449,8 @@ class TeacherNavigation(base.Navigation):
         v = msg.twist.twist.linear
         w = msg.twist.twist.angular
         p = msg.pose.pose.position
-        # Preserve the original short-circuit order and its single ROS clock.
-        # The observer records the branch actually taken, never a second gate.
+        # 保持原有短路顺序与同一个 ROS 时钟；observer 只记录实际走到的分支，
+        # 不新增第二道门。
         rejection = None
         if msg.header.frame_id != "camera_init":
             rejection = "frame_id"
@@ -413,8 +458,10 @@ class TeacherNavigation(base.Navigation):
             rejection = "child_frame_id"
         elif stamp <= self.pose_stamp:
             rejection = "source_not_advancing"
+        # header 年龄允许 0.05 s 未来容差，上限为 pose_timeout 秒。
         elif not -0.05e9 <= ns - stamp < self.pose_timeout * 1e9:
             rejection = "header_age"
+        # 四元数模长允许 0.98..1.02，超出即视为非法姿态。
         elif not 0.98 <= q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w <= 1.02:
             rejection = "quaternion_norm"
         elif not all(math.isfinite(x) for x in (p.x, p.y, p.z, v.x, v.y, v.z, w.x, w.y, w.z)):
@@ -438,6 +485,8 @@ class TeacherNavigation(base.Navigation):
         )
         if self.pose_stamp == stamp:
             self.pose_quaternion = [q.x, q.y, q.z, q.w]
+        # stop_zero 是“实测停车”的候选事实：命令为零、未处于受控制动、且允许
+        # 正向停车资格（_r86_positive_stop_allowed）。
         stop_zero = (
             not any(self.command)
             and not getattr(self.heading_gate, "controlled_braking", False)
@@ -453,6 +502,8 @@ class TeacherNavigation(base.Navigation):
                     ns,
                     round(received * 1e9),
                 )
+            # 只有 IMU 角速度足够新（< 0.3 s）时才把实测运动喂给 Teacher gate；
+            # 位置/四元数一并提供，用于零速与航向收敛判定。
             self.heading_gate.observe(
                 stamp / 1e9,
                 received,
@@ -465,6 +516,7 @@ class TeacherNavigation(base.Navigation):
                 quaternion=[q.x, q.y, q.z, q.w],
                 positive_qualification_allowed=getattr(self, "_r86_positive_stop_allowed", True),
             )
+        # 逐帧位姿回执：原始 header、机身速度、零命令与停车证据一并归档。
         row = {
             "stamp_ns": stamp,
             "frame_id": msg.header.frame_id,
@@ -486,7 +538,7 @@ class TeacherNavigation(base.Navigation):
         self.evidence.append(self.run / "navigation_slam_poses.jsonl", row)
 
     def on_cloud(self, msg):
-        """Record header-age/duplicate decisions and archive the accepted cloud receipt."""
+        """记录 header 新鲜度/重复判定，并归档被接受点云的回执。"""
         stamp = self.stamp(msg)
         ns = self.get_clock().now().nanoseconds
         received = time.monotonic()
@@ -494,6 +546,7 @@ class TeacherNavigation(base.Navigation):
             from embodied_navigation.perception.sensors.feedback_mailbox import receipt_ns
 
             received = receipt_ns(self, "cloud", round(received * 1e9)) / 1e9
+        # 只接受严格推进的 header：重复或回退的点云直接拒绝并记录判定。
         if stamp <= self.cloud_stamp:
             self.note_cloud_decision(
                 "rejected_duplicate_or_backward_header",
@@ -501,6 +554,7 @@ class TeacherNavigation(base.Navigation):
                 previous_accepted_stamp_ns=int(self.cloud_stamp),
             )
             return
+        # header 年龄窗口：[now-cloud_timeout, now+0.05 s)；超出即视为过期点云。
         if not -0.05e9 <= ns - stamp < self.cloud_timeout * 1e9:
             self.note_cloud_decision(
                 "rejected_header_age",
@@ -527,6 +581,8 @@ class TeacherNavigation(base.Navigation):
                     np.asarray(self.cloud, dtype="<f8").tobytes()
                 ).hexdigest(),
             }
+            # guard_cloud / guard_cloud_receipt 是 native guard 允许使用的唯一输入
+            # 身份：之后 record_native_guard 会核对对象身份与 stamp 是否仍然一致。
             self.guard_cloud = self.cloud
             self.guard_cloud_receipt = {
                 **row,
@@ -536,15 +592,17 @@ class TeacherNavigation(base.Navigation):
             self.evidence.append(self.run / "navigation_cloud_history.jsonl", row)
 
     def note_cloud_decision(self, reason, **details):
-        # A read-only hook into the actual rejection/acceptance branch. It never
-        # retries a message, decodes another cloud, or changes a freshness gate.
+        # 只读钩子：记录实际发生的拒绝/接受分支。它从不重试消息、不重新解码点云，
+        # 也不改变任何新鲜度门。
         row = getattr(self, "pending_cloud_callback_row", None)
         if row is not None:
             row.update(reason=reason, decision_details=details)
 
     def accept_spline(self, msg, metadata):
+        """基类接受轨迹后，为本次新轨迹归档压缩 npz 与 JSON 摘要。"""
         before = self.replans
         super().accept_spline(msg, metadata)
+        # 只有 replans 增加且 samples 就位（确实接受了一条新轨迹）时才归档。
         if self.replans == before or self.samples is None:
             return
         directory = self.run / "navigation_trajectories"
@@ -565,6 +623,7 @@ class TeacherNavigation(base.Navigation):
         }
         self.trajectory_archive_reference = str(array_path.relative_to(self.run))
 
+        # 文件写盘放进 evidence.enqueue 的异步队列，避免占用控制回调。
         def archive():
             directory.mkdir(exist_ok=True)
             np.savez_compressed(array_path, coefficients=coefficients, knots=knots, samples=samples)
@@ -576,7 +635,9 @@ class TeacherNavigation(base.Navigation):
         self.evidence.enqueue(archive)
 
     def on_request(self, msg):
+        """只接受与本次 run 冻结的 navigation_request.json 完全一致的请求。"""
         try:
+            # 与冻结请求逐字段比较；不一致直接拒绝，不进入基类状态机。
             requested = json.loads(msg.data)
             frozen = json.loads((self.run / "navigation_request.json").read_text())
             if requested != frozen:
@@ -588,28 +649,36 @@ class TeacherNavigation(base.Navigation):
         super().on_request(msg)
 
     def measured_region_arrival(self):
+        """after_measured_dwell 策略下，必须由原 ArrivalWindow 确认后才允许推进。"""
         inside, arrived = super().measured_region_arrival()
         if self.profile.get("arrival_stop_policy") == "after_measured_dwell":
-            # The original raw-SLAM ArrivalWindow, protection flags, integer
-            # stamps, observation gap and dwell remain unchanged. Continue only
-            # the checked SCAN route until that same window confirms arrival;
-            # all native path-end/obstacle/tilt/stale stops still run below.
+            # 原 raw-SLAM ArrivalWindow、保护标志、整数时间戳、观测间隔与停顿都
+            # 不变；在同一个窗口确认到达之前，只允许沿已检查的 SCAN 路线继续，
+            # 下面的原生路径终点/障碍/倾角/超时停车全部照常生效。
             return inside and arrived, arrived
         return inside, arrived
 
     def control(self, now):
-        # Shared recovery already requires one clear second and a new checked
-        # trajectory; additionally hold it until measured body motion is small.
+        """Teacher 控制封装：证据/guard 连续性门通过后才调用基类状态机。
+
+        先做两项 Teacher 专属检查：证据写入错误直接 failed；障碍保持期间要求真实
+        guard 输入连续新鲜。之后调用基类 control()，并在返回后补齐 guard 行证据与
+        pre_turn/settle 的零速说明。
+        """
+        # 共享恢复流程已经要求 1 s 无阻断与一条新的已检查轨迹；这里再要求实测
+        # 机身运动足够小才允许恢复。
+        # 证据队列出错时不再运动：进入 failed 并发布零速。
         if self.evidence.error:
             self.state = "failed"
             self.message = self.evidence.error
             self.publish_command()
             return
+        # 只有配置了 clear_guard_gap_max_sim_s 的 run 才启用 guard 连续性检查。
         if self.profile.get("clear_guard_gap_max_sim_s") is not None and self.obstacle_hold:
             ns = self.get_clock().now().nanoseconds
             if not self.guard_continuity(ns, now):
-                # Keep the existing physical protections active even when an
-                # extra actual-source freshness check holds this callback.
+                # 即使被额外的实测源新鲜度检查挡在本回调，物理保护仍然执行；连续
+                # 8 s 失联升级为 failed。
                 self.apply_tilt_guard(now, ns / 1e9)
                 self.reset_region_arrival("stale")
                 self.stale_since = self.stale_since or now
@@ -623,9 +692,8 @@ class TeacherNavigation(base.Navigation):
                 and ns / 1e9 - self.obstacle_clear_since >= 1.0
                 and not now - self.last_obstacle_check >= 0.05
             ):
-                # A cached clear result cannot finish the original one-second
-                # gate. Wait for the next already scheduled native evaluation;
-                # do not run another geometry check or refresh input stamps.
+                # 缓存的无障碍结果不能单独完成原来的 1 s 门：必须等下一次已排定的
+                # 原生评估，不额外跑几何检查，也不刷新输入时间戳。
                 protected = self.apply_tilt_guard(now, ns / 1e9)
                 stale = control_sources_stale(
                     self,
@@ -642,10 +710,13 @@ class TeacherNavigation(base.Navigation):
                     self.obstacle_clear_since = None
                 self.publish_command()
                 return
+        # 未确认实测停住前不允许累计障碍清除时间。
         if self.obstacle_hold and not self.heading_gate.stopped(
             self.get_clock().now().nanoseconds / 1e9, now
         ):
             self.obstacle_clear_since = None
+        # 每周期先清空上一行待归档 guard 回执；基类 control() 评估 native guard
+        # 时会重新设置它。
         self.pending_guard_row = None
         try:
             super().control(now)
@@ -672,6 +743,8 @@ class TeacherNavigation(base.Navigation):
                 record_clear_release(self, row)
                 self.evidence.append(self.run / "navigation_guard_history.jsonl", row)
                 self.pending_guard_row = None
+        # pre_turn/settle 期间用实测速度与角速度确认停车；消息与基类不同，但命令
+        # 仍然是零速。
         if (
             self.state == "running"
             and not getattr(self, "reference_consistency_hold", False)
@@ -684,19 +757,24 @@ class TeacherNavigation(base.Navigation):
             self.message = "Teacher 等待实际SLAM机身速度和IMU角速确认停车，保持零速度"
 
     def record_native_guard(self, cloud, pose, checked_target, steering_direction, route):
-        """Run the unchanged native guard on accepted inputs and freeze one receipt row."""
+        """在接受过的输入上运行未改动的原生 guard，并冻结一行回执。"""
         ns = self.get_clock().now().nanoseconds
         received = time.monotonic()
         previous_guard_ns = self.last_actual_guard_clock_ns
         if self.profile.get("clear_guard_gap_max_sim_s") is not None:
+            # 实际 guard 时钟重复或倒退是硬故障：先置 failed，再抛错终止本周期的
+            # guard 记录。
             if previous_guard_ns is not None and ns <= previous_guard_ns:
                 self.state = "failed"
                 self.message = "实际native guard时钟重复或倒退，停车"
                 raise RuntimeError(self.message)
+            # 障碍保持期间，guard 输入必须仍然新鲜；否则拒绝这次评估。
             if self.obstacle_hold and not self.guard_continuity(ns, received):
                 raise RuntimeError(
                     "Actual native guard source ceased being fresh before evaluation"
                 )
+        # 输入身份校验：点云对象、回执 stamp 与当前已接受点云、以及 SLAM 四元数
+        # 必须完全对应，否则不允许评估。
         if (
             cloud is not self.guard_cloud
             or self.guard_cloud_receipt is None
@@ -711,6 +789,8 @@ class TeacherNavigation(base.Navigation):
         self.last_actual_guard_clock_ns = ns
         from embodied_navigation.control.safety.clear_guard_window import ClearGuardWindow
 
+        # 清除窗要求 >=10 次真实评估、跨度 >=1 s、且尾随 1.35 s 内无阻断；未满足
+        # 时不会放行障碍恢复。
         if not hasattr(self, "_actual_clear_guard_window"):
             self._actual_clear_guard_window = ClearGuardWindow()
         if self.obstacle_clear_since is None:
@@ -720,6 +800,7 @@ class TeacherNavigation(base.Navigation):
         )
         self.guard_sequence += 1
         c = self.guard_cloud_receipt
+        # 冻结这一行回执：字段与原始几何结果一一对应，之后只读、不再补算。
         self.pending_guard_row = {
             "schema": "teacher_native_steering_guard/v1",
             "sequence": self.guard_sequence,
@@ -769,7 +850,7 @@ class TeacherNavigation(base.Navigation):
                 route_float64_sha256=reference["route_float64_sha256"],
             )
         else:
-            # Legacy/unbound inputs retain the original complete replay row.
+            # 未绑定路线引用的 legacy 输入仍保留完整的可重放行（含路线坐标与哈希）。
             self.pending_guard_row.update(
                 route=np.asarray(route).tolist(),
                 route_float64_sha256=hashlib.sha256(
@@ -786,7 +867,8 @@ class TeacherNavigation(base.Navigation):
         return result
 
     def guard_continuity(self, ns, wall):
-        """V44 only: original clear timer cannot span missing actual checks."""
+        """V44 专属：原清除计时器不能跨越缺失的实际评估。"""
+        # 允许的最大实际评估间隔（profile.clear_guard_gap_max_sim_s，转成 ns）。
         maximum_ns = round(self.profile["clear_guard_gap_max_sim_s"] * 1e9)
         previous = self.last_actual_guard_clock_ns
         if previous is not None and ns < previous:
@@ -796,10 +878,12 @@ class TeacherNavigation(base.Navigation):
             return False
         reset = previous is None or ns - previous > maximum_ns
         fresh_ns = round(self.profile["pose_cloud_timeout_s"] * 1e9)
+        # 源新鲜窗口：[ns-pose_cloud_timeout, ns+0.05 s]；stamp<0 表示从未收到。
         source_fresh = all(
             stamp >= 0 and -50_000_000 <= ns - stamp < fresh_ns
             for stamp in (self.pose_stamp, self.cloud_stamp)
         )
+        # 间隔超限或源过期都会清空清除起点并计数；这里只记录，不重算任何几何。
         if reset or not source_fresh:
             before = self.obstacle_clear_since
             self.obstacle_clear_since = None
@@ -827,13 +911,16 @@ class TeacherNavigation(base.Navigation):
 
 
 def main():
-    """CLI entry: bind the frozen run directory, spin the node, then drain evidence."""
+    """CLI 入口：绑定冻结的 run 目录、自旋节点，然后排空证据队列。"""
     import rclpy
 
+    # description 取自模块 docstring，因此模块文档的措辞会反映到 --help 输出。
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", type=Path, required=True)
     args, ros = p.parse_known_args()
     run = args.run.resolve()
+    # 导出解析后的 run 目录：同进程组件与子进程（如 geometry_worker）都通过它
+    # 定位本次 run。
     os.environ["DEMO_RUN_DIR"] = str(run)
     rclpy.init(args=ros)
     node = TeacherNavigation(run)
@@ -848,6 +935,7 @@ def main():
         try:
             node.evidence.close()
         finally:
+            # dynamic_fixture 运行时额外写一份 guard writer 回执，声明队列已排空。
             if node.profile.get("dynamic_fixture"):
                 (run / "navigation_guard_writer_receipt.json").write_text(
                     json.dumps(

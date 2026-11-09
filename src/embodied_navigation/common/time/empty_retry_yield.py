@@ -1,14 +1,13 @@
-"""Default-OFF, source-pinned experimental executor empty-retry cooperation.
+"""默认关闭、锁定源码版本的 executor 空转重试协作实验。
 
-This isolated candidate never imports ROS.  It copies only two installed methods,
-leaving their original expressions intact.  Every eight complete no-handler loops
-inside the installing owner's public spin_once(None) request a 100 us sleep.
-Actual sleep duration can be longer; shutdown can race with the final check.
-The sleep is after the original timeout check and outside ExitStack.  Its failure
-propagates unchanged.  There are no hot-path clocks, records, logging or I/O.
+这个隔离候选不 import ROS：只复制已安装 executor 的两个方法，并保留其原有
+表达式不变。在安装方公共 spin_once(None) 内，每 8 次完整的“无 handler”循环
+请求一次 100 µs sleep；实际 sleep 可能更长，shutdown 也可能与最后一次检查
+竞争。sleep 放在原 timeout 检查之后、ExitStack 之外，其异常原样传播；
+热路径不取时钟、不记录、不写日志、不做 I/O。
 
-Install before first spin. Snapshot after the spinner stops. Restore only after
-shutdown clears the cached generator; live restoration/reuse is unsupported.
+安装必须在首次 spin 之前；快照必须在 spinner 停止之后；恢复只允许在
+shutdown 清空缓存的生成器之后，不支持运行中恢复或复用。
 """
 
 from __future__ import annotations
@@ -23,8 +22,8 @@ import time
 import types
 
 
-EMPTY_RETRY_INTERVAL = 8
-SLEEP_SECONDS = 0.0001
+EMPTY_RETRY_INTERVAL = 8  # 连续空转多少轮后请求一次 sleep
+SLEEP_SECONDS = 0.0001  # 请求的 sleep 时长（s）
 _ATTRIBUTE = "_r91_empty_retry_yield"
 _MISSING = object()
 
@@ -34,6 +33,9 @@ def _statements(source):
 
 
 def _compile(original, *, ready):
+    # 直接从运行中 executor 的源码做 AST 改写：先断言关键表达式/结构仍是
+    # 预期版本（否则报错拒绝安装），再注入计数与 sleep。返回值附带改写后
+    # 源码及其 sha256，作为本次安装的源码证据。
     tree = ast.parse(textwrap.dedent(inspect.getsource(original)))
     function = tree.body[0]
     if ready:
@@ -44,7 +46,8 @@ def _compile(original, *, ready):
             ast.unparse(loop.test)
             == "not yielded_work and (not self._is_shutdown) and (not condition())"
         )
-        # This final original node is after ExitStack and all ready-entity scans.
+        # 该节点位于 ExitStack 与所有 ready-entity 扫描之后；只有在这里插入
+        # sleep 才不会改变原有资源清理与超时顺序。
         timeout_check = loop.body[-1]
         assert isinstance(timeout_check, ast.If)
         assert ast.unparse(timeout_check.body[0]) == "raise TimeoutException()"
@@ -68,8 +71,8 @@ if _r91_state._active and not yielded_work and not self._is_shutdown:
             and ast.unparse(scope.body[0]) == "self._spin_once_impl(timeout_sec)"
         )
         assert len(scope.finalbody) == 1 and ast.unparse(scope.finalbody[0]) == "self._exit_spin()"
-        # Keep _enter_spin outside try: a rejected nested/concurrent entry cannot
-        # clear the active caller's scope. No state changes precede its success.
+        # _enter_spin 必须留在 try 之外：嵌套/并发进入被拒绝时不能清掉当前
+        # 活跃调用方的状态；在它成功之前也不做任何状态修改。
         scope.body[0:0] = _statements("""
 self._r91_empty_retry_yield._active = timeout_sec is None and _r91_get_ident() == self._r91_empty_retry_yield.owner_ident
 self._r91_empty_retry_yield._empty_streak = 0
@@ -90,7 +93,11 @@ self._r91_empty_retry_yield._empty_streak = 0
 
 
 class Candidate:
-    """Fixed state and one cumulative intervention count; no event history."""
+    """固定状态与一个累计干预计数，不保留事件历史。
+
+    ``owner_ident``/``owner_tid`` 标识安装方线程；``yield_count`` 只统计
+    “注入的 sleep 成功返回”次数，不是内核唤醒或已分发回调数。
+    """
 
     __slots__ = (
         "enabled",
@@ -120,6 +127,7 @@ class Candidate:
         self.restored = False
 
     def snapshot(self):
+        # 只允许在 spinner 停止后取快照，否则计数与状态可能在读取过程中变化。
         if self.executor is not None and self.executor.is_spinning:
             raise RuntimeError("snapshot requires stopped spinner")
         return dict(
@@ -136,6 +144,8 @@ class Candidate:
         )
 
     def restore(self):
+        # 恢复前提：executor 已 shutdown 且缓存生成器已清空；运行中替换方法
+        # 不受支持，直接拒绝而不是尝试热恢复。
         if self.executor is None or self.restored:
             return
         if not self.executor._is_shutdown or self.executor._cb_iter is not None:
@@ -151,7 +161,11 @@ class Candidate:
 
 
 def install(executor, enabled=False):
-    """OFF leaves the instance and all original methods exactly unchanged."""
+    """enabled=False 时实例与所有原方法完全不变。
+
+    启用时先校验 executor 未在 spin、未缓存生成器、未重复安装，并确认两个
+    待改写方法来自同一安装文件；随后用 AST 生成替换方法并绑定到实例。
+    """
     candidate = Candidate(enabled)
     if not enabled:
         return candidate

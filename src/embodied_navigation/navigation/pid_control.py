@@ -1,8 +1,15 @@
-"""Velocity control and publication for ``PIDNavigation``.
+"""``PIDNavigation`` 的速度控制与命令发布。
 
-Owns cascade setup, ACK cache, PID velocity selection, motion guard, terminal
-protection/parking ownership and command publication. The base task state
-machine remains in ``base_node.Navigation.control()``.
+负责 cascade 的建立与复用、ACK 读取与选择、PID 速度选择、native 几何 guard 的
+执行、终端停车所有权与命令发布。基类任务状态机仍在
+``base_node.Navigation.control()``；本 mixin 覆写 ``control``，在进入基类状态机
+前插入准入、任务保持、时钟保持与终点捕获分支。
+
+边界：不实现控制律数学（core 在 ``control/tracking``），不解析请求或传感器消息
+（在 ``pid_ingress``），也不决定路线（在 ``pid_admission``/``pid_route``）。
+
+命令语义：``publish_command()`` 不带速度 = 零速停车并撤销命令源；带速度 = 一次
+正常发布，且必须与 native guard 之后准备好的输出一致，否则宁可不发并报错。
 """
 
 from .pid_support import (
@@ -48,9 +55,20 @@ from .pid_support import (
 
 
 class ControlMixin:
-    """Cascade/velocity selection, ACK gating, parking, publication and terminal protection."""
+    """级联/速度选择、ACK 门控、停车、发布与终端保护的 mixin。"""
 
     def ensure_cascade(self):
+        """按 ``(request_id, waypoint_index)`` 建立或复用本段的 cascade 控制器。
+
+        控制器类型是硬编码的三选一：连续路线启用时用
+        ``CausalHandoffProjectionController``，否则全局参考启用时用
+        ``StableProjectionController``，否则 ``Controller``；配置取自 run profile 的
+        ``cascade`` 节（由 prepare 生成并 pin，见 navigation/README.md 配置节）。
+        段切换（key 变化）时清空本段缓存并写固定目标收据；同一段内只在收到新
+        ``path_id`` 且尚未捕获路径时装入路径。副作用是追加
+        ``navigation_fixed_goal_references.jsonl``/``navigation_cascade_paths.jsonl``
+        证据（默认 writer 下为空操作）。
+        """
         if getattr(self, "_r105_terminal_context", None) is not None:
             _r105_terminal.validate_context(self)
             self.cascade.diagnostic_observe_only = dict(
@@ -138,8 +156,14 @@ class ControlMixin:
             )
 
     def _decode_ack_entries_reusing_lines(self, raw):
-        # Parse-tree reuse only: causal selection, freshness and selected deepcopy
-        # remain in get_ack on every call. Cached mutable trees stay private.
+        """按行复用已解析的 ACK JSON，避免每个 tick 重解析整份文件。
+
+        只缓存解析树：因果选择、新鲜度与选中行的深拷贝仍在 ``get_ack`` 每次执行。
+        输入必须是本模块约定的固定前缀/后缀格式；任何不符合（超过 32 行、行内换行、
+        非 dict）都回退到整文件 ``json.loads``。行缓存最多 32 项、按完整行字节索引并
+        按 LRU 淘汰；新文件版本中字节完全相同的行会复用已解析的 row，因此未变的行
+        可以跨文件版本复用。
+        """
         prefix = b'{"entries":['
         suffix = b'],"schema":"teacher_known_velocity_ack/v1"}\n'
         if not (raw.startswith(prefix) and raw.endswith(suffix)):
@@ -176,8 +200,14 @@ class ControlMixin:
         return entries
 
     def _read_ack_entries_cached(self, path):
-        # Cache parsing only. Every get_ack still selects against its own real
-        # pose header; no freshness or causal result is memoized.
+        """读取 ACK 文件，并按 ``(inode, mtime_ns, size)`` 缓存解析结果。
+
+        缓存只省解析，不省新鲜度判定；每次 ``get_ack`` 仍用自己的真实位姿 header 选择。
+        读取时在同一打开 fd 上比较读取前后的元数据，并核对 raw 长度与读取后 size 一致，
+        变化或长度不符即报错；通过后缓存整份文件的解析结果。该检查只覆盖同一 fd 的读取
+        过程：路径被原子替换不会改变已打开的 fd，因此不声称能检测所有替换或并发变化。
+        条目类型必须是 list。
+        """
         def key(stat):
             return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
 
@@ -201,6 +231,16 @@ class ControlMixin:
 
     @_r96_cpu.observe("ack.get_ack")
     def get_ack(self, pose_stamp_ns=None):
+        """选择与给定位姿时间戳因果一致的最新一条执行 ACK；失败返回 ``None``。
+
+        ``pose_stamp_ns`` 缺省取当前 ``feedback["stamp_ns"]``；没有反馈时也返回
+        ``None``。ACK 文件是 run 目录的 ``closed_loop_executor_ack.json``（由
+        ``robot/unitree/policy/worker.py`` 写入，navigation/README.md:85），schema 为
+        ``teacher_known_velocity_ack/v1``。选中条件：条目 ``stamp_ns <= pose_stamp_ns``；
+        若 profile 配置了 ``r85_student_lower_loop_ack``，还要求 ``run_id`` 等于本次
+        交接作用域 ``handoff_scope_sha256``。文件缺失或格式错误一律返回 ``None``，
+        由调用方转成保护停车，不在这里重试。返回深拷贝，调用方改不到缓存。
+        """
         if pose_stamp_ns is None:
             if not self.feedback:
                 return None
@@ -228,7 +268,7 @@ class ControlMixin:
                 selected = next(
                     (r for r in reversed(entries) if r["stamp_ns"] <= pose_stamp_ns), None
                 )
-            # Cached parse trees remain private; callers own only this small ACK.
+            # 缓存解析树保持私有；调用方只拿到这一小份 ACK 深拷贝。
             return copy.deepcopy(selected)
         except (OSError, KeyError, ValueError, TypeError):
             return None
@@ -237,6 +277,20 @@ class ControlMixin:
     def select_pid_velocity(
         self, velocity, yaw_rate, target, allow_translation, mode_override=None
     ):
+        """计算一次身体系速度命令，并写入本 tick 的 PID 收据行。
+
+        参数：``velocity``/``yaw_rate`` 是任务状态机给的期望（body 系，m/s 与
+        rad/s）；``target`` 是当前检查目标；``allow_translation`` 决定能否平移；
+        ``mode_override`` 用于停车/保持等强制模式。返回 ``(vx, vy), yaw_rate``。
+        模式优先级硬编码为：hold（障碍/参考一致性/转向预段/未主动制动的 settle）>
+        brake（受控制动）> drive（允许平移）> turn；交接失败会强制 hold 并把
+        ``state`` 置 ``failed``。
+        缺 ``feedback``/``paired_imu``/ACK 时以
+        ``actual_causal_feedback_or_ack_missing`` 转保护；``failure_latched`` 同样置
+        failed。最后按硬编码的每轴加速度上限 [0.6, 0.6, 0.8] 调 ``slew``（m/s²、
+        m/s²、rad/s²）；停车/保持模式直接给零，``ordinary_zero_hold`` 再强制精确零。
+        真正的发布由调用方完成。
+        """
         if _r96_cpu.PROBE is None:
             ns = self.get_clock().now().nanoseconds
             wall = time.monotonic_ns()
@@ -254,6 +308,8 @@ class ControlMixin:
             controlled_settle = bool(getattr(self.heading_gate, "controlled_settle", False))
             controlled_braking = bool(getattr(self.heading_gate, "controlled_braking", False))
             active_settle = controlled_settle or controlled_braking
+            # 模式优先级：障碍/参考一致性/转向预段 hold > 受控制动 brake > 允许平移
+            # drive > turn（硬编码，不来自 profile）。
             mode = mode_override or (
                 "hold"
                 if self.obstacle_hold
@@ -289,6 +345,7 @@ class ControlMixin:
             ack = self.get_ack()
             _r47_mark(self, _r47_call, "get_ack_after")
             guard = None
+            # 缺当前反馈、缺配对 IMU 或缺 ACK 都表示本 tick 没有可用的因果输入。
             if self.feedback is None or self.paired_imu is None or ack is None:
                 guard = "actual_causal_feedback_or_ack_missing"
             if handoff_failure:
@@ -357,8 +414,8 @@ class ControlMixin:
                 ns,
                 wall,
             )
-            # Consume the token on any non-pre-turn call; a duplicate or another
-            # protection cannot reuse this single valid-source seed exception.
+            # 任何非 pre-turn 调用都会消费掉这个种子令牌；重复调用或另一种保护不能
+            # 复用同一次“单一有效来源”的例外。
             self._pre_turn_hold_seed_context = (
                 dict(
                     cascade=self.cascade,
@@ -404,8 +461,9 @@ class ControlMixin:
             )
             _r47_mark(self, _r47_call, "postcore_protection_logic_complete")
             desired = cmd.copy()
-            # Sample only time already elapsed at the final slew decision.
-            # Later native guard time is neither predicted nor credited here.
+            # 只采样进入最终 slew 决策前已经流逝的时间；之后 native guard 的耗时既
+            # 不预测也不计入。每轴上限 [0.6, 0.6, 0.8] 为硬编码（m/s²、m/s²、rad/s²），
+            # slew 内部把 dt 截断到 [0, 0.1] s。
             cmd = (
                 np.zeros(3)
                 if diagnostic["mode"]
@@ -426,6 +484,7 @@ class ControlMixin:
                 )
             )
             if diagnostic["mode"] == "ordinary_zero_hold":
+                # 普通终端零速：直接给精确零，不再走 launch 约束。
                 cmd[:] = 0.0
                 launch_constraint = dict(
                     reason="identity_bound_ordinary_terminal_zero", exact_body_zero=True
@@ -515,14 +574,22 @@ class ControlMixin:
             _r47_end(self, _r47_call)
 
     def evaluate_motion_guard(self, *args):
+        """执行 native 几何 guard，并把结果挂到本 tick 的 PID/guard 收据上。
+
+        ``*args`` 原样交给 ``record_native_guard``（实测点云、位姿、目标、航向与
+        路线）；本方法只加观测包裹：默认关闭的慢 guard 窗口探针、保持原生上下文、
+        记住 guard 结果，并在 ``pending_guard_row`` 中回填点云归档与 PID 序号。
+        返回 ``record_native_guard`` 的原始结果；副作用是清空
+        ``pid_guard_needs_evaluation`` 并通知 ``control_clock_hold`` 本轮 guard
+        已完成。
+        """
         _r47_call = _r47_begin(self, "guard")
         _r47_bind(self, _r47_call, getattr(self, "pid_row", None))
         _r47_guard_dimensions(self, _r47_call, args)
         try:
             _r47_mark(self, _r47_call, "native_geometry_guard_before")
-            # Default-OFF slow-guard window: per-thread CPU/scheduler and gc
-            # deltas at both ends, plus C-watchdog stack blocks only if the
-            # guard runs long. The guard call itself is unchanged.
+            # 默认关闭的慢 guard 窗口：两端采集每线程 CPU/调度与 gc 差值，只有 guard
+            # 运行过久时才抓 C watchdog 栈块；guard 调用本身不变。
             _guard_window = _r86_probe_guard_begin()
             try:
                 result = self.record_native_guard(*args)
@@ -556,6 +623,18 @@ class ControlMixin:
             _r47_end(self, _r47_call)
 
     def observe_ordinary_terminal_protection(self, ns):
+        """发布零速时检查终端停车所有者的失败，并锁存本任务的失败状态。
+
+        只在 ``terminal_parking_owner`` 属于当前 request、且已就绪
+        （``ready_stamp`` 非空）时生效。失败原因优先取 owner 自身 ``failure``；否则
+        依次检查已知场景来源/epoch、动态障碍 hold、倾角 hold 与 ``state == failed``。
+        若 ``mission46_status.json`` 显示本 run 已 completed 且 final_parking_verified，
+        则不再用回退原因把完成态判成失败（owner 自报的 failure 仍会锁存）。开启
+        诊断观测且失败可被观测时，先验证来源与 ACK 全部新鲜
+        （位姿/点云/桥接 0.3 s 墙钟窗、ACK 300 ms 内且不晚于位姿）再记诊断；不满足时
+        改记实际来源保护。最终调用 ``owner.guard(reason)``，把 ``state`` 置 failed，并
+        只锁存一次 ``ordinary_terminal_failure_history.jsonl``。
+        """
         owner = getattr(self, "terminal_parking_owner", None)
         if (
             owner is None
@@ -564,8 +643,8 @@ class ControlMixin:
         ):
             return
         reason = owner.failure
-        # Completed normal shutdown is a distinct lifecycle edge. Existing
-        # physical/control failure remains recorded even after a formal receipt.
+        # 正常完成是独立的生命周期边界；即使之后有正式收据，已有的物理/控制失败
+        # 仍要记录。
         completed = False
         try:
             final = json.loads((self.run / "mission46_status.json").read_text())
@@ -604,6 +683,8 @@ class ControlMixin:
                     and getattr(self, "ordinary_terminal_failure_latched", None) is None
                 )
             if observed_business:
+                # 诊断观测只在来源与 ACK 全部新鲜时成立：位姿/点云/桥接在 0.3 s
+                # 墙钟内、原始 IMU 新鲜、ACK 在 300 ms 内且不晚于当前位姿。
                 now = time.monotonic()
                 source_ready = False
                 try:
@@ -658,6 +739,7 @@ class ControlMixin:
                     return
                 reason = "actual_source_or_ACK_protection_during_observed_parking_business_failure"
             owner.guard(reason)
+            # 失败原因只锁存一次；锁存后本任务的后续 tick 都直接按 failed 发零速。
             if getattr(self, "ordinary_terminal_failure_latched", None) is None:
                 self.ordinary_terminal_failure_latched = dict(
                     request_id=self.request_id,
@@ -677,6 +759,12 @@ class ControlMixin:
     @_callback_cost_observe("control")
     @_r96_cpu.observe("embodied_navigation.navigation.pid_navigation")
     def control(self, now):
+        """每个控制 tick 的入口：先处理已锁定的停车失败与主动交接，再进入候选控制。
+
+        已锁定普通停车失败时直接发零速并保持 ``failed``；交接超时或失败同样置
+        failed 并发布停车。候选控制抛出的异常在此转成 failed + 零速命令 + 错误证据，
+        不让异常逃到 executor 去依赖下游的 300 ms watchdog。
+        """
         failed = getattr(self, "ordinary_terminal_failure_latched", None)
         if failed is not None and failed.get("request_id") == self.request_id:
             self.state = "failed"
@@ -700,8 +788,8 @@ class ControlMixin:
         try:
             return self._control_candidate(now)
         except Exception as error:
-            # A reference/handoff error must stop this tick, not escape the
-            # executor and rely only on the 300 ms downstream watchdog.
+            # 参考/交接异常必须在本 tick 内停车，不能逃出 executor 只依赖下游
+            # 300 ms watchdog。
             self.state = "failed"
             self.message = "V33控制参考异常，停车：" + type(error).__name__ + ": " + str(error)
             self.reference_replan_pending = False
@@ -720,11 +808,18 @@ class ControlMixin:
 
     @_r96_cpu.observe("embodied_navigation.control.candidate")
     def _control_candidate(self, now):
+        """按固定顺序推进一个 tick：走廊 → 时钟保持 → 终端 → 准入 → 任务保持 → 基类状态机。
+
+        顺序即安全语义：``control_clock_hold`` 在同一 ROS clock 重复 tick 时先发精确
+        零，且要求新的实测几何检查后才能恢复非零命令；``_r105_terminal`` 与
+        ``path_admission_hold`` 可以各自先接管；``mission46_required`` 时按 mission
+        保持发零速（``succeeded`` 且已有 final_bundle 则转入停车）。最后才调用
+        ``super().control(now)``（``base_node`` 的任务状态机）。
+        """
         self.poll_corridor(now)
-        # The wall timer can run twice while real ROS /clock is unchanged.
-        # Before any PI, heading, arrival or geometry operation, emit exact
-        # zero and leave original source receipts untouched. On clock advance,
-        # a new actual geometry check is mandatory before any nonzero command.
+        # 真实 ROS /clock 未前进时，墙钟定时器可能在一个时钟周期内跑两次。这里在
+        # 任何 PI、航向、到点或几何运算之前发精确零，并不改动原始来源收据；只有
+        # 时钟前进后重新做一次实测几何检查，才允许恢复非零命令。
         if self.control_clock_hold.before_control(
             self, self.get_clock().now().nanoseconds, round(now * 1e9)
         ):
@@ -754,9 +849,8 @@ class ControlMixin:
                     self.publish_command()
                     return
                 self.message = "Teacher46 transition: " + reason
-                # A reached phase endpoint retains the existing feedback hold.
-                # A connector pause is a zero VELOCITY request to the live
-                # Teacher, never a zero action or a second joint controller.
+                # 已到达相位终点时保留既有反馈保持；连接段暂停是向现役 Teacher
+                # 发零速度请求，绝不是零动作或另起一个关节控制器。
                 if self.state == "succeeded" and self.final_bundle is not None:
                     return self.control_parking(now)
                 self.apply_tilt_guard(now, self.get_clock().now().nanoseconds / 1e9)
@@ -765,6 +859,7 @@ class ControlMixin:
         self.continuous_release_target()
         if self.state == "succeeded" and self.final_bundle is not None:
             return self.control_parking(now)
+        # 末航点且采样路径已就绪时，先冻结最终路径收据，停车路径随后按它重建目标。
         if (
             self.state == "running"
             and self.samples is not None
@@ -776,9 +871,20 @@ class ControlMixin:
         return super().control(now)
 
     def control_parking(self, now):
+        """终点捕获/停车：按最终路径收据重建目标，再由实测点云 guard 决定走或停。
+
+        进入时把 ``waypoint_index`` 临时切到 ``final_bundle["index"]``，并恢复其参考
+        时间戳、轨迹与路径；``ordinary_parking_enabled(profile)`` 时把终端停车所有权
+        交给 cascade 的 ordinary parking。来源新鲜度阈值硬编码为 0.3 s（位姿/点云
+        墙钟），任一项 stale、缺配对 IMU、倾角保护或障碍 hold 都只发 hold 零速。
+        native 几何 guard 报保护时立即发零速停车、把受检候选归档，再以 hold 模式选一次
+        零命令；否则发布捕获命令。``finally`` 恢复原 ``waypoint_index`` 并结束本 tick 的
+        传感器保持记录。
+        """
         ns = self.get_clock().now().nanoseconds
         bundle = self.final_bundle
         index = self.waypoint_index
+        # 用 final_bundle 的索引、参考时间戳与路径临时切换本 tick 的目标；finally 恢复。
         self.waypoint_index = bundle["index"]
         self.active_reference_stamp = bundle["reference_stamp"]
         self.active_trajectory_id = bundle["trajectory_id"]
@@ -787,6 +893,8 @@ class ControlMixin:
         self.segment_start = bundle["start"]
         goal = self.waypoints[self.waypoint_index]
         if ordinary_parking_enabled(self.profile):
+            # 普通停车启用时，把终端停车所有权交给 cascade 的 ordinary parking，
+            # 并登记到当前 request；收据由 publish_command 侧的观察路径读取。
             self.cascade.begin_ordinary_terminal(
                 int(ns), round(float(self.goals[self.waypoint_index].timeout_sim_s) * 1e9)
             )
@@ -802,6 +910,7 @@ class ControlMixin:
         _parking_stale = None
         try:
             _parking_sensor_row = _sensor_hold_begin(self, "ordinary_parking", now, ns)
+            # 停车只依赖实测来源：位姿/点云墙钟超过 0.3 s 或没有配对 IMU 都按 stale。
             stale = (
                 now - self.pose_updated > 0.3
                 or now - self.cloud_updated > 0.3
@@ -811,6 +920,7 @@ class ControlMixin:
             _parking_tilt = self.apply_tilt_guard(now, ns / 1e9)
             _sensor_parking_protection(self, _parking_sensor_row, _parking_tilt)
             if _parking_tilt or stale or self.obstacle_hold:
+                # stale、倾角保护或障碍 hold 时只发 hold 零速。
                 self.select_pid_velocity(np.zeros(2), 0.0, goal, False, mode_override="hold")
                 self.publish_command()
                 return
@@ -826,7 +936,8 @@ class ControlMixin:
             )
             if result[0]:
                 self.message = "终点实际点云保护停车"
-                self.publish_command()  # Stop immediately and archive the guarded candidate.
+                # guard 报保护：立即发零速停车，并归档被检查过的候选。
+                self.publish_command()
                 self.select_pid_velocity(np.zeros(2), 0.0, goal, False, mode_override="hold")
                 self.publish_command()
             else:
@@ -846,21 +957,36 @@ class ControlMixin:
                 )
                 self.pending_guard_row = None
         finally:
+            # 恢复原航点索引并结束本 tick 的传感器保持记录。
             self.waypoint_index = index
             _sensor_hold_end(self, _parking_sensor_row, _parking_stale)
 
     def publish_command(self, velocity=None, yaw_rate=0.0, *, duplicate_ordinary_hold=None):
+        """发布一条命令；``velocity is None`` 表示零速停车，否则发布正常速度命令。
+
+        参数：``velocity`` 为 body 系平面速度（m/s）或 ``None``；``yaw_rate`` 为
+        rad/s；``duplicate_ordinary_hold`` 只供普通停车重复零命令的源文件保留事务使用。
+        发布前：执行桥接交接存在时先 ``reserve`` 申请发布权，抢不到就交给
+        ``cancel_publication``（走原零速保护路径）；正常速度必须与
+        ``pid_prepared_output`` 在 1e-12 绝对容差内一致，否则抛 RuntimeError（防止
+        guard 之后命令被改）。零速路径会 reset PID、撤销命令源，并在主动交接中把非权威零速判为交接
+        失败。副作用：写 ``cascade_command_source.json``（临时文件 + replace 原子替换）、
+        PID 行证据、``/demo/cmd_vel`` Twist 与 ``/demo/navigation/execution_frozen`` 开关
+        （state 非 running、障碍 hold 或 |v_xy| < 0.015 m/s 时为 True，阈值硬编码）。
+        返回 source_preservation（仅重复零命令保留事务时可能非 None）。
+        """
         handoff = getattr(self, "_bridge_safety_handoff", None)
         reservation = False
         if velocity is not None and handoff is not None:
+            # 有执行桥接交接时先申请写租约；抢不到就把这次发布交给原零速保护路径。
             reservation = handoff.reserve(self)
             if not reservation:
                 return handoff.cancel_publication(self)
         try:
             join = getattr(self, "_r104_parking_causal_join", None)
             prior_join_source = None if join is None else join.published_source
-            # Any unsuccessful publication/source replacement invalidates the cache.
-            # A successful original duplicate-preservation transaction may restore it.
+            # 任何未成功的发布或命令源替换都会让 join 缓存失效；只有成功的原始重复
+            # 零命令保留事务才能把它恢复。
             if join is not None:
                 join.published(None)
             _r47_call = _r47_begin(self, "publication", stopped=velocity is None)
@@ -881,6 +1007,7 @@ class ControlMixin:
             msg = Twist()
             ns = self.get_clock().now().nanoseconds
             if velocity is None:
+                # 零速发布是检查终端停车所有者失败的时机。
                 self.observe_ordinary_terminal_protection(ns)
             self.last_publication_ros_clock_ns = ns
             if velocity is not None:
@@ -888,15 +1015,20 @@ class ControlMixin:
                 if self.pid_prepared_output is None or not np.allclose(
                     output, self.pid_prepared_output, rtol=0, atol=1e-12
                 ):
+                    # 正常速度必须与 native guard 之前准备的输出完全一致；不一致说明
+                    # 命令在 guard 之后被改，宁可抛错也不发布未受检的命令。
                     raise RuntimeError("Cascade command changed after native guard")
                 msg.linear.x, msg.linear.y, msg.angular.z = map(float, output)
             elif hasattr(self, "pid"):
+                # 零速路径重置计数器并清空本轮 prepared 输出，避免下一次正常发布复用它。
                 self.pid.reset("exact_zero_stop_or_protection")
                 self.pid_prepared_output = None
             self.command = [msg.linear.x, msg.linear.y, msg.angular.z]
             self.last_command_time = ns / 1e9
             gate = self.heading_gate
             if getattr(gate, "handoff_active", False) and velocity is None:
+                # 主动交接期间的显式零速：来源/状态不新鲜，或零速不是权威零阶段，都判
+                # 为交接失败并置 failed。
                 now = time.monotonic()
                 protected = (
                     self.state != "running"
@@ -915,6 +1047,7 @@ class ControlMixin:
                     gate.fail_handoff("explicit_zero_protection_or_stop", ns / 1e9)
                     self.state = "failed"
                     self.message = "主动转向交接失败：" + str(gate.handoff_failure)
+            # 只把“权威零阶段 + 交接仍活跃 + 未失败”的零发布记为最终零。
             note_final_zero = (
                 velocity is None
                 and not any(self.command)
@@ -925,6 +1058,7 @@ class ControlMixin:
             row = getattr(self, "pid_row", None)
             _r47_bind(self, _r47_call, row)
             if row is not None:
+                # 命令源快照与该行 PID 收据同源；时间戳与来源回执都取实际值。
                 row.update(
                     publish_ros_clock_ns=ns,
                     command_after_slew=list(self.command),
@@ -1014,6 +1148,7 @@ class ControlMixin:
                         ordinary.first_zero_publication_clock = ns
                 elif velocity is None:
                     source["ordinary_parking_stage"] = "revoked"
+                # 临时文件 + replace 原子替换，保证下游读到与本 tick 命令一致的来源。
                 tmp = self.run / "cascade_command_source.tmp"
                 _r47_mark(self, _r47_call, "source_tmp_write_before")
                 tmp.write_text(json.dumps(source, allow_nan=False) + "\n")
@@ -1030,6 +1165,7 @@ class ControlMixin:
                 self._pid_row_receipt_snapshot = None
             source_preservation = None
             if velocity is None and row is None:
+                # 重复零命令尝试保留既有命令源；不允许保留时写一条显式撤销来源记录。
                 if duplicate_ordinary_hold is not None:
                     from embodied_navigation.control.safety.duplicate_source import (
                         preserve_existing_source,
@@ -1155,6 +1291,8 @@ class ControlMixin:
             _r47_publication_anchor(self, _r47_call, completed=True)
             _r67_attach_known_frame_failure(self, _r47_call, publication_before)
             # PUBLICATION_OBSERVER_END actual_publish_completed
+            # 执行冻结开关：非 running、障碍 hold 或平面速度 < 0.015 m/s（硬编码，
+            # 命令单位 m/s）时为 True。
             self.freeze_pub.publish(
                 Bool(
                     data=bool(
@@ -1166,6 +1304,7 @@ class ControlMixin:
             )
             if source_preservation is not None and source_preservation["allowed"]:
                 observe_unchanged_after_publish(self, source_preservation)
+            # 返回保留事务结果（仅重复零命令路径可能非 None），供上层核对。
             return source_preservation
         finally:
             if reservation:

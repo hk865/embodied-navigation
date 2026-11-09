@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Isolated local DDS graph for one run: loopback-only UDPv4 plus shared memory,
-     builtin transports disabled. Children apply this profile via
-     FASTRTPS_DEFAULT_PROFILES_FILE so runs cannot see each other. -->
+<!-- 单次运行的隔离本地 DDS 图：仅回环 UDPv4 + 共享内存，禁用内置传输。
+     子进程通过 FASTRTPS_DEFAULT_PROFILES_FILE 应用本 profile，使不同 run
+     之间互相不可见。
+     数值说明：UDP maxMessageSize=65500 字节、初始 peer 范围 32；SHM 段
+     67108864 字节（64 MiB）、port_queue_capacity=512、健康检查 1000 ms；
+     interfaceWhiteList 只允许 127.0.0.1。缓冲大小 0 表示不在本 profile 指定，
+     具体回退语义由 Fast DDS 实现决定，仓库文档未展开。 -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <transport_descriptors>

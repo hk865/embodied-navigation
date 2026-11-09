@@ -1,4 +1,8 @@
-"""Bounded nonblocking contacts-only IPC; no position, orientation or velocity."""
+"""有界、非阻塞、只传接触值的进程间通信；不含位置、姿态或速度。
+
+职责：发送端 best-effort 投递定长报文，接收端只保留严格更新的最新样本。
+边界：不落盘、不做几何或安全判定；邮箱缺失/满时丢样本而不是阻塞调用方。
+"""
 
 import errno
 import math
@@ -6,26 +10,28 @@ import socket
 import struct
 import time
 
-# Wire layout, fixed little-endian: stamp_ns (u64), five contact values (f64),
-# fault flag (u64). The five values are scalar contact counts/flags, not poses.
+# 线格式固定为小端（"<" 前缀，无对齐填充）：stamp_ns(u64)、5 个接触标量(f64)、
+# 故障标志(u64)。五个值只是接触计数/标志，不是位姿。收发表双方必须共用此布局。
 PACKET = struct.Struct("<Q5dQ")
 
 
 class ContactPublisher:
-    """Best-effort datagram sender; a full or absent mailbox drops a sample."""
+    """best-effort 数据报发送端；邮箱缺失或已满时直接丢弃该样本。"""
 
     def __init__(self, endpoint):
+        """按 `endpoint` 建立非阻塞 `AF_UNIX`/`SOCK_DGRAM` 套接字；`dropped` 计数丢弃量。"""
         self.endpoint = str(endpoint)
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.socket.setblocking(False)
         self.dropped = 0
 
     def publish(self, stamp_ns, contacts, fault=False):
-        """Send one packet; return False when a recoverable send error drops it.
+        """发送一个报文；可恢复的发送错误返回 False 并计入 `dropped`。
 
-        Only the expected nonblocking mailbox conditions (no listener, refused,
-        would-block, buffer full) are counted; any other OS error is re-raised so
-        real transport breakage stays visible.
+        `stamp_ns` 为整数时间戳（由调用方提供）；`contacts` 为 5 个标量；`fault`
+        转为 0/1 的整型标志。只有预期的非阻塞邮箱条件（无监听者、连接被拒、
+        would-block、缓冲区满）会被吞掉并计数；其他 `OSError` 原样抛出，避免
+        真实的传输故障被隐藏。
         """
         packet = PACKET.pack(stamp_ns, *contacts, int(bool(fault)))
         try:
@@ -38,14 +44,17 @@ class ContactPublisher:
             return False
 
     def close(self):
+        """关闭本端套接字；不等待发送完成（数据报本身不保证送达）。"""
         self.socket.close()
 
 
 class ContactMailbox:
-    """Latest-sample receiver; ``drain`` keeps only strictly newer valid packets."""
+    """只保留最新样本的接收端；`drain` 只接受严格更新的合法报文。"""
 
     def __init__(self, endpoint):
+        """绑定 `endpoint`；初始状态为“无样本 + `fault=True`”，即未收到样本前视为故障。"""
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        # 8192 字节接收缓冲：容量有限，队列满时发送端会丢样本（best-effort）。
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
         self.socket.setblocking(False)
         self.socket.bind(str(endpoint))
@@ -55,10 +64,11 @@ class ContactMailbox:
         self.fault = True
 
     def drain(self):
-        """Consume at most 64 queued packets and retain the newest valid one.
+        """一次最多消费 64 个排队报文，只保留最新的合法样本。
 
-        Backward stamps, wrong-sized datagrams and non-finite or negative contact
-        values are ignored, so a corrupt sample cannot age out a good one.
+        `stamp_ns` 不前进（回退或重复）、报文长度不符、接触值非有限或为负的样本
+        一律忽略，因此损坏样本不会把已有的好样本挤掉。新样本到达时会更新
+        `receipt_wall_ns`（单调墙钟，ns）。
         """
         for _ in range(64):
             try:
@@ -75,7 +85,11 @@ class ContactMailbox:
             self.receipt_wall_ns = time.monotonic_ns()
 
     def fresh(self, clock_ns):
-        """Require no fault, sim age in [-50, 300) ms and wall receipt age in [0, 300) ms."""
+        """要求无故障、仿真龄在 [-50, 300) ms 且墙钟收据龄在 [0, 300) ms。
+
+        `clock_ns` 是调用方的仿真/ROS 时钟（ns）。允许 -50 ms 未来容差；两个时间窗
+        都是硬编码常量，不是配置项。任一条件不满足即返回 False（调用方按过期处理）。
+        """
         return (
             not self.fault
             and -50_000_000 <= clock_ns - self.stamp_ns < 300_000_000

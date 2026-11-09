@@ -1,10 +1,23 @@
-"""Teacher stop/heading transitions proven from fresh SLAM and raw body gyro.
+"""教师停/航向相位门：只用新鲜 SLAM 与原始机体陀螺证明停/转向转换。
 
-No truth, timer-only standstill, CHAMP phase reset or IMU yaw localization.
+证据边界（不做什么）：
+- 不用导航真值；不用"仅计时器"认定静止；不做 CHAMP 相位复位；不拿 IMU yaw 当定位。
+- 导航 heading 只取 SLAM 机体 yaw；陀螺只参与停/倾判定，从不进入定位。
 
-Independent simulation experiment: allow profile turn caps up to 0.6 rad/s.
-The NAV 0.6 cap has no physical validation yet. At cap 0.3 all transition
-mathematics, measured-stop conditions and 300 ms freshness are unchanged.
+相位状态机（由 update() 推进）：
+- drive：航向误差在 drive_heading_max_rad 内则继续直行；超出即停车、从 pre_turn 重来。
+- pre_turn：必须先由实测静止（或诊断观察分支）放行，才允许进入 align。
+- align：以 max_yaw_rate_radps 限幅转向，误差进入 turn_complete_rad 后进入 settle。
+- settle：受控收敛 / 主动刹车 / 零速握手；只有释放判据通过才回到 drive。
+失败即保持：任何握手失败都把 phase 置 failed，之后 update 返回 (False, 0.0)；
+只有新的 request/waypoint 身份才会清掉失败状态。
+
+独立仿真实验：profile 允许把转向上限开到 0.6 rad/s。这个 NAV 0.6 上限尚无物理验证；
+在 0.3 rad/s 下，全部过渡数学、实测停止条件与 300 ms 新鲜度都保持不变。
+
+模块级依赖：navigation_stop_window 提供 1 s 稳态统计窗与 eligible_purposes，
+common.input_freshness 只做 pass-through（从不放宽新鲜度）。其余扩展与下层 ACK
+都在函数内延迟 import，用于压住 parking <-> tracking / robot 的包级环。
 """
 
 from collections import deque
@@ -16,12 +29,22 @@ from embodied_navigation.common.input_freshness import enabled as minimal_baseli
 
 
 def stance_support_handoff_configuration(profile):
-    """Explicit experimental internal target; original business stop owner remains."""
+    """校验实验性 stance support 内部目标配置（profile 键 r85_stance_support_handoff）。
+
+    参数：profile 为合并后的运行 profile。
+    返回：合法的配置副本；enabled=false 时返回 None（此时只接受 {"enabled"} 单键）。
+    失败：kind 不是 locked_heading_PD_stance_support_v1、依赖开关组合不成立（要求
+    r85_active_turn_braking/r85_quiet_handoff_target 开启、r85_neutral_rate_brake_capture
+    显式关闭、cascade 外部 heading 门与 locked_heading_pd_v1 参考齐备），或缺少
+    原始协调积分卸载配置时，直接 raise。
+    边界：只替换内部目标，原始业务停车 owner 与验收阈值保持不变。
+    """
     if "r85_stance_support_handoff" not in profile:
         return None
     value = profile["r85_stance_support_handoff"]
     if not isinstance(value, dict) or type(value.get("enabled")) is not bool:
         raise ValueError("r85_stance_support_handoff requires an explicit boolean enabled")
+    # 关闭态必须"干净"：多带任何键都说明配置意图不明确，直接拒绝。
     if value["enabled"] is False:
         if set(value) != {"enabled"}:
             raise ValueError("Disabled stance support admits only enabled false")
@@ -55,14 +78,42 @@ def stance_support_handoff_configuration(profile):
 
 
 class TeacherHeadingGate:
+    """教师停/转向相位门：drive -> pre_turn -> align -> settle 的实测判据与握手。
+
+    由 navigation/ros_node.py 构造（初始化时替换 base_node 里的同名 gate），
+    localization_mapping/known_scene_hold_guard.py 延迟引用。
+    输入：每帧 SLAM 位姿/速度/机体 yaw 角速度、原始机体陀螺、调用方的零命令标志，
+    以及下层 ACK 与 profile；输出：update() 的 (release, yaw_command) 与 evidence()。
+    副作用：只维护相位、历史窗口、握手事件与失败原因；不写盘、不发命令、不做 IO。
+    失败行为：握手失败进入 failed 并保持，直到 request/waypoint 身份变化。
+    """
+
     def __init__(self, profile):
+        """从 profile 冻结本门配置并初始化相位状态。
+
+        读取的 profile 键（configs/control/settings.json 是基值，启动器/运行上下文
+        可覆盖）：
+        - max_yaw_rate_radps：转向上限，rad/s，只接受 (0, 0.6]；
+        - teacher_transition：9 个停/转向判据键（单位见 update/stopped 内注释）；
+        - navigation_settle_statistics_contract：交给 NavigationStopWindow 的 1 s 统计窗；
+        - r85_* / ordinary_turn_control_handoff：实验扩展开关，只接受显式形状。
+        构造期 raise 是"配置错误即失败"契约：这里不降级、不猜默认值。
+        """
+        # r73 最小诊断基线：input_freshness.enabled() 恒返回 False，重新开启会直接
+        # raise，所以本进程里这个放宽分支不可达（只保留历史语义）。
         self.minimal_simulation_baseline = minimal_baseline_enabled(profile)
+        # 转向上限来自 profile 键 max_yaw_rate_radps（基值 0.6 rad/s，单位 rad/s）。
+        # 只接受 (0, 0.6]：0.6 是 NAV 上限且尚无物理验证；0.3 是过渡数学与停止条件
+        # 保持不变的历史口径。
         self.max_turn_rate = profile["max_yaw_rate_radps"]
         if not math.isfinite(self.max_turn_rate) or not 0 < self.max_turn_rate <= 0.6:
             raise ValueError(
                 "Simulation experimental turn limit must be finite and within (0,0.6]rad/s; NAV0.6 is not physically validated"
             )
+        # teacher_transition 的 9 个判据键，直接取自 profile 且不做范围校验；单位分别
+        # 为 rad(0.2/0.1)、s(0.15/0.2/0.3)、rad/s(0.05/0.05)、m/s(0.03)、个(3)。
         self.config = profile["teacher_transition"]
+        # 历史窗口容量硬编码 64，只用于限制内存；与控制回调频率的换算关系未说明。
         self.history = deque(maxlen=64)
         self.neutral_rate_brake_capture_config = None
         if "r85_neutral_rate_brake_capture" in profile:
@@ -73,6 +124,8 @@ class TeacherHeadingGate:
             self.neutral_rate_brake_capture_config = neutral_rate_brake_capture_configuration(
                 profile
             )
+        # 三组实验扩展（neutral rate brake capture / stance support / quiet target）
+        # 各自维护 64 容量的"旧口径"影子历史，只做诊断对照，不参与新决策。
         self.stance_support_handoff_config = stance_support_handoff_configuration(profile)
         self.stance_old_brake_history = deque(maxlen=64)
         self.stance_old_quiet_history = deque(maxlen=64)
@@ -84,6 +137,8 @@ class TeacherHeadingGate:
         self.neutral_old_quiet_history = deque(maxlen=64)
         self.neutral_old_capture_last_decision = None
         self.neutral_old_capture_last_sample = None
+        # r85_active_turn_braking：默认 false；开启后转向结束走"主动刹车 + 零速握手"，
+        # 而不是直接放行。只接受 {"enabled": bool} 单键。
         braking = profile.get("r85_active_turn_braking", {"enabled": False})
         if (
             not isinstance(braking, dict)
@@ -92,6 +147,9 @@ class TeacherHeadingGate:
         ):
             raise ValueError("r85_active_turn_braking requires only explicit boolean enabled")
         self.active_braking_enabled = braking["enabled"]
+        # ordinary_turn_control_handoff：基值 enabled=true + schema v1，允许转向结束时
+        # 用连续控制直接交回既有 PID drive，不插入零速边沿；它与最小诊断基线、主动
+        # 刹车、非外部 heading 门互斥，非法组合在下面直接 raise。
         continuous = profile.get("ordinary_turn_control_handoff", {"enabled": False})
         if not isinstance(continuous, dict) or type(continuous.get("enabled")) is not bool:
             raise ValueError("Explicit ordinary turn control handoff configuration required")
@@ -127,6 +185,9 @@ class TeacherHeadingGate:
             self.active_braking_lower_ack_config = lower_ack_configuration(
                 cascade.get("r85_student_lower_loop_ack")
             )
+            # cascade.command_limits 的顺序是 [前向 m/s, 侧向 m/s, 偏航 rad/s]（与
+            # cascade_core 中 [1.0, 0.4, 1.0] 的同序上限检查一致）；基值 [0.6, 0.2, 0.6]，
+            # 这里的 [0.8, 0.35, 0.8] 只是缺键时的回退默认值。
             limits = cascade.get("command_limits", [0.8, 0.35, 0.8])
             if (
                 self.active_braking_lower_ack_config is None
@@ -140,6 +201,8 @@ class TeacherHeadingGate:
                     "Active braking requires frozen Student lower ACK and command limits"
                 )
             self.active_braking_command_limits = copy.deepcopy(limits)
+        # r85_quiet_handoff_target：默认 false；开启后额外要求"低总命令 + 低 yaw 速率"
+        # 的静默窗口才允许零速交接，并要求主动刹车与 locked_heading_pd_v1 参考。
         quiet = profile.get("r85_quiet_handoff_target", {"enabled": False})
         if (
             not isinstance(quiet, dict)
@@ -163,9 +226,13 @@ class TeacherHeadingGate:
             != {"kind": "locked_heading_pd_v1"}
         ):
             raise ValueError("Quiet handoff target requires active locked-heading braking")
-        # Half the original drift budgets over5s are conservative command
-        # targets, not a claim that velocity commands guarantee physical drift.
+        # 取原始 5 s 漂移预算的一半再摊到 5 s：xy = 0.05/2/5 = 0.005 m/s，
+        # yaw = 0.1/2/5 = 0.01 rad/s，heading = 0.005 rad。这些只是保守的命令目标，
+        # 不声称"给出这样的速度命令就一定能得到对应的物理漂移"。
         self.quiet_limits = dict(xy=0.05 / 2 / 5.0, yaw=0.1 / 2 / 5.0, heading=0.005)
+        # 两个实验口径会改写静默带：neutral 放宽到完整 turn_complete_rad(0.1 rad)；
+        # stance 收紧到 0.25*turn_complete_rad(0.025 rad)，并把命令 yaw 上限降到
+        # 0.035 rad/s（默认 quiet_command_yaw_cap 仍是 0.01 rad/s）。
         if self.neutral_rate_brake_capture_config is not None:
             self.quiet_limits["heading"] = self.config["turn_complete_rad"]
         self.quiet_command_yaw_cap = self.quiet_limits["yaw"]
@@ -204,6 +271,8 @@ class TeacherHeadingGate:
         )
         self.diagnostic_run = None
         self.diagnostic_zero_ack_ready = False
+        # 1 s 稳态统计窗：与 legacy 300 ms 判据是 OR 关系（见 settle 的释放分支），
+        # 每样本有效性仍沿用 teacher_transition 的瞬时门。
         self.stop_window = NavigationStopWindow(
             profile.get("navigation_settle_statistics_contract"), self.config
         )
@@ -215,13 +284,20 @@ class TeacherHeadingGate:
         self.last_stamp = None
         self.latest_motion = None
         self.zero_handoff_count = 0
+        # 初始相位是 pre_turn：第一次 update 必须先证明静止才会转向（drive 除外）。
         self.reset()
 
     @staticmethod
     def error(target, yaw):
+        """返回 target - yaw 的归一化角度差，单位 rad，落在闭区间 [-pi, pi]。"""
         return math.atan2(math.sin(target - yaw), math.cos(target - yaw))
 
     def reset(self):
+        """回到 pre_turn 并清空本相位的观测与握手状态。
+
+        副作用：进行中的主动刹车握手先被标记为失败（active_handoff_reset）；已经
+        存在失败时只把相位钉在 failed 并返回，不再清理任何证据。
+        """
         if self.handoff_active:
             self.fail_handoff("active_handoff_reset")
         if self.handoff_failure:
@@ -246,9 +322,17 @@ class TeacherHeadingGate:
         self.last_release = None
         self.settle_control_stage = None
         self.last_zero_handoff = None
-        # Goal/replan resets heading, not the real observed standstill history.
+        # goal/replan 复位只重置 heading，不清除真实观测到的静止历史：history 在 reset
+        # 里被有意保留（stop_window 的统计窗则清空），避免用一次复位抹掉实测证据。
 
     def set_transition_context(self, purpose, context):
+        """绑定本帧的转移目的与身份（request_id、waypoint_index 等）。
+
+        参数：purpose 为转移目的，决定统计分支是否生效（取值见
+        navigation_stop_window.SPEC["eligible_purposes"]）；context 为身份字典。
+        语义：进行中握手遇到目的变化或上下文变化即失败；身份变化会清掉旧失败、旧
+        握手与旧 ACK 水位；目的或上下文任一变化都会清空统计窗。
+        """
         changed = context != self.transition_context
         old_identity = (
             self.transition_context.get("request_id"),
@@ -280,10 +364,12 @@ class TeacherHeadingGate:
 
     @property
     def controlled_braking(self):
+        """当前是否处于 settle 的主动刹车阶段（controlled_braking）。"""
         return self.phase == "settle" and self.settle_control_stage == "controlled_braking"
 
     @property
     def handoff_active(self):
+        """是否存在进行中（status=pending）的主动刹车握手。"""
         return bool(
             self.active_braking_enabled
             and self.handoff_event is not None
@@ -291,6 +377,12 @@ class TeacherHeadingGate:
         )
 
     def fail_handoff(self, reason, sim_time=None):
+        """把进行中的握手标记为失败，并把相位钉在 failed。
+
+        参数：reason 为失败原因字符串；sim_time 为失败时的控制时间（秒），写进事件。
+        返回：确实从 pending 转为失败时 True，否则 False（幂等，重复调用无副作用）。
+        副作用：清空历史、统计窗、刹车历史与静默历史；积分卸载失败 id 只保留首个。
+        """
         if not self.handoff_active:
             return False
         self.handoff_failure = self.handoff_failure or str(reason)
@@ -311,6 +403,14 @@ class TeacherHeadingGate:
         return True
 
     def bind_integral_unload(self, run_id, scope, path_sha256, goal_sha256, clock_ns):
+        """把当前握手绑定到 R16 协调积分卸载事件。
+
+        参数：run_id/scope/path_sha256/goal_sha256 为身份；clock_ns 为控制时钟（纳秒）。
+        返回：事件副本；未启用积分卸载、或当前不在主动刹车时返回 None。
+        语义：同一个 pending 条目始终保留最初的路径身份、过期时间与哈希；合法的
+        路径刷新只重启静默采样，不重建握手事件。
+        失败：先前事件已失败或绑定被改写时判握手失败并返回 None。
+        """
         if self.integral_unload_config is None:
             return None
         if not self.handoff_active or not self.controlled_braking:
@@ -321,8 +421,8 @@ class TeacherHeadingGate:
         from embodied_navigation.control.parking.integral_unload import make_event
 
         old = self.integral_unload_event
-        # Same owned pending entry always keeps its original path identity,
-        # expiry, and hash. A legal path refresh only restarts quiet samples.
+        # 同一个受管的 pending 条目始终保留最初的路径身份、过期时间与哈希；合法的
+        # 路径刷新只重启静默采样，不改写事件身份。
         initial_path = (
             old["initial_path_sha256"]
             if old is not None
@@ -353,6 +453,7 @@ class TeacherHeadingGate:
         return copy.deepcopy(self.integral_unload_event) if self.handoff_active else None
 
     def check_integral_unload_deadline(self, clock_ns):
+        """主动刹车期间检查积分卸载事件是否过期；过期即判握手失败。"""
         event = self.integral_unload_event
         if (
             event is not None
@@ -363,6 +464,13 @@ class TeacherHeadingGate:
             self.fail_handoff("pre_zero_integral_unload_timeout", clock_ns / 1e9)
 
     def _unloaded_actual_pair(self, publication, ack):
+        """核对发布侧与 ACK 侧的积分卸载回执是否同属一个零事件。
+
+        返回：两侧都证明 yaw 积分归零、且路径/目标哈希一致时 True；未启用时恒 True。
+        语义：原生"精确零 I 观测"分支只观察复位状态，本身不授权事件；当前 Teacher
+        事件与原有因果/静默前提仍然约束这一对证据。
+        失败：缺回执、哈希不一致或形状非法一律返回 False（不向调用方抛出）。
+        """
         if self.integral_unload_config is None:
             return True
         try:
@@ -390,9 +498,8 @@ class TeacherHeadingGate:
                 validate_native_extension(
                     native, ack["run_id"], ack["input_clock_ns"], ack["input_frame_serial"]
                 )
-                # This observes actual original reset state; it does not itself
-                # authorize an event. Current published Teacher event and all
-                # original causal/quiet source predicates still bind this pair.
+                # 这一支只观察原生复位状态，本身不授权事件；当前发布的 Teacher 事件与
+                # 所有原有因果/静默前提仍然约束这一对证据。
                 return bool(
                     teacher["yaw_integral_after"] == 0.0
                     and ack["exact_zero"]
@@ -418,6 +525,7 @@ class TeacherHeadingGate:
             return False
 
     def _post_entry_brake_heading_band(self):
+        """刹车入口之后的航向中心带（rad）：默认 0.25*turn_complete_rad；neutral 口径取全带。"""
         return (
             self.config["turn_complete_rad"]
             if self.neutral_rate_brake_capture_config is not None
@@ -425,6 +533,7 @@ class TeacherHeadingGate:
         )
 
     def _clear_quiet(self, reason):
+        """清空静默历史并记录原因；实验扩展的影子历史一并清空。"""
         self.quiet_history.clear()
         self.quiet_reason = str(reason)
         if self.neutral_rate_brake_capture_config is not None:
@@ -436,6 +545,7 @@ class TeacherHeadingGate:
 
     @staticmethod
     def _quiet_binding(context, purpose, scope, path_id, path_sha256, goal_sha256):
+        """组装静默证据的绑定额（上下文/目的/scope/路径 id/路径与目标哈希）。"""
         return dict(
             context=copy.deepcopy(context),
             purpose=purpose,
@@ -446,6 +556,11 @@ class TeacherHeadingGate:
         )
 
     def _low_total_command(self, value, yaw_cap=None):
+        """判断一条三元素机体命令是否"总命令足够低"。
+
+        判据：平面速度范数 <= quiet_limits["xy"]（0.005 m/s），且 |yaw| <= yaw_cap
+        （默认 quiet_command_yaw_cap，单位 rad/s）。形状非法或非有限值直接 False。
+        """
         return bool(
             isinstance(value, (list, tuple))
             and len(value) == 3
@@ -458,6 +573,12 @@ class TeacherHeadingGate:
 
     @staticmethod
     def _quiet_publication_fresh(record, clock_ns, wall_ns):
+        """检查发布记录在仿真时钟与墙钟两个域是否都足够新鲜（均 < 300 ms）。
+
+        300 ms 是来源新鲜度上限（硬编码 3e8 ns），不是 pose/gyro 配对窗（停车样本的
+        配对窗是 teacher_transition.gyro_pose_pair_max_s 的 150 ms，零契约里另用
+        20 ms 判配对）。两个时钟域分别相减，绝不相减。
+        """
         return bool(
             all(
                 0 <= clock_ns - record[k] < 300_000_000
@@ -480,6 +601,13 @@ class TeacherHeadingGate:
         )
 
     def note_quiet_publication(self, record):
+        """登记一条"低总命令 + 来源新鲜"的正常刹车发布，作为静默交接的发布侧证据。
+
+        参数：record 为发布记录（含命令、上下文、时钟与路径身份）。
+        返回：登记成功 True；未启用静默目标或任一门不通过则 False（并清空静默历史）。
+        语义：上下文/目的/scope/路径任一不符即判不静默；同一目标的路径刷新只重启
+        内部静默窗口，不重置握手事件与预算。
+        """
         if not self.quiet_target_enabled:
             return False
         self.quiet_publication = None
@@ -512,6 +640,8 @@ class TeacherHeadingGate:
                 self._quiet_publication_fresh(
                     record, record["publish_clock_ns"], record["publish_wall_ns"]
                 )
+                # 20 ms 是 pose 与配对陀螺的因果配对上限（硬编码），与 300 ms 源龄、
+                # 150 ms 停车配对窗回答的是不同问题；发布还必须晚于刹车入口。
                 and 0
                 <= record["source_pose_stamp_ns"] - record["paired_imu_stamp_ns"]
                 <= 20_000_000
@@ -546,9 +676,11 @@ class TeacherHeadingGate:
                     for k in ("context", "purpose", "scope", "goal_sha256")
                 ):
                     raise ValueError("publication_source_binding_changed")
-                # A legitimate same-goal SCAN path refresh restarts only this
-                # internal target window, never the handoff event or budget.
+                # 同目标、合法的 SCAN 路径刷新只重启这个内部目标窗口，绝不重置握手
+                # 事件或预算（预算被刷新等于无限延长等待）。
                 self._clear_quiet("publication_path_refreshed")
+            # 启用积分卸载时，Teacher 实际发布的 I 必须与事件回执一致且为 0，
+            # 否则这条发布不能当静默证据。
             if self.integral_unload_config is not None:
                 from embodied_navigation.control.parking.integral_unload import validate_receipt
 
@@ -567,8 +699,8 @@ class TeacherHeadingGate:
                     raise ValueError("actual_published_Teacher_I_not_zero")
             self.quiet_binding = copy.deepcopy(binding)
             self.quiet_publication = copy.deepcopy(record)
-            # A high support publication between poses must interrupt the old
-            # strict shadow even if a later low publication precedes the next pose.
+            # 两个位姿之间若出现高支撑发布，即使它之后、下一位姿之前还有低发布，
+            # 也必须打断旧的严格影子（否则旧口径影子会被"夹"出来）。
             if self.stance_support_handoff_config is not None and not self._low_total_command(
                 record["command_body"], 0.01
             ):
@@ -596,6 +728,11 @@ class TeacherHeadingGate:
         path_sha256,
         goal_sha256,
     ):
+        """记录本次位姿观测的绑定额；必须在每个接受位姿的观测开始前调用。
+
+        参数：stamp_ns 为位姿 stamp（纳秒）；control_clock_ns 为控制时钟（纳秒）；
+        wall_ns 为接收墙钟（纳秒）；其余为身份绑定字段。
+        """
         if not self.quiet_target_enabled:
             return
         self.quiet_observed_stamp_ns = None
@@ -607,10 +744,18 @@ class TeacherHeadingGate:
         )
 
     def finish_quiet_pose(self, stamp_ns, accepted):
+        """位姿观测收尾：接受的位姿若没有对应的合格运动观测，就清空静默历史。"""
         if self.quiet_target_enabled and accepted and self.quiet_observed_stamp_ns != stamp_ns:
             self._clear_quiet("accepted_pose_without_qualified_motion_observation")
 
     def _observe_quiet(self, stamp_s, wall_s, brake_valid, observed_yaw):
+        """在主动刹车中观察一次"静默"样本：发布、ACK、运动与航向必须同时成立。
+
+        参数：stamp_s 为位姿 stamp（秒，仿真时钟）；wall_s 为接收墙钟（秒）；
+        brake_valid 为本次刹车样本是否合格；observed_yaw 为四元数解析出的偏航（rad）。
+        语义：任一门不通过都会清空静默历史并记录原因；通过则追加样本、推进 ACK 水位
+        并同步实验扩展的影子样本。失败不抛异常，只"清空 + 记原因"。
+        """
         stamp_ns = round(stamp_s * 1e9)
         self.quiet_observed_stamp_ns = stamp_ns
         p = self.quiet_publication
@@ -632,6 +777,8 @@ class TeacherHeadingGate:
                 and abs(m["body_gyro"][2]) <= self.quiet_limits["yaw"]
             ):
                 raise ValueError("motion_heading_or_publication_not_quiet")
+            # 发布与 ACK 都要在两个时钟域内 300 ms 新鲜；ACK 必须属于同一 run/request/
+            # waypoint、晚于刹车入口，且请求命令与实际命令都"总命令足够低"。
             if not (
                 self._quiet_publication_fresh(p, obs["clock_ns"], round(wall_s * 1e9))
                 and 0 <= stamp_ns - ack["input_clock_ns"] < 300_000_000
@@ -653,11 +800,14 @@ class TeacherHeadingGate:
                 ack[k]
                 for k in ("sequence", "input_clock_ns", "input_frame_serial", "inference_sequence")
             )
+            # ACK 水位四元组必须严格前进：同一推理帧不得被两个静默样本重复消费。
             if self.quiet_ack_watermark is not None and any(
                 a <= b for a, b in zip(watermark, self.quiet_ack_watermark)
             ):
                 raise ValueError("quiet_ACK_frame_not_independent")
             self.quiet_ack_watermark = watermark
+            # 与上一样本间隔超过 stop_pose_gap_max_s（基值 0.2 s）即视为窗口断裂，
+            # 之前累积的样本不能跨过这个空档继续计数。
             if (
                 self.quiet_history
                 and stamp_s - self.quiet_history[-1]["stamp_s"] > self.config["stop_pose_gap_max_s"]
@@ -675,6 +825,8 @@ class TeacherHeadingGate:
                 )
             )
             self.quiet_reason = None
+            # neutral 口径的影子样本：只在"新判定"通过后记录旧口径的两个瞬时条件，
+            # 0.25*turn_complete_rad 记 brake，0.005 rad 记 quiet。
             if self.neutral_rate_brake_capture_config is not None:
                 error = self.quiet_history[-1]["heading_error_rad"]
                 if abs(error) <= 0.25 * self.config["turn_complete_rad"]:
@@ -691,6 +843,8 @@ class TeacherHeadingGate:
                     old_brake_instantaneous=abs(error) <= 0.25 * self.config["turn_complete_rad"],
                     old_quiet_instantaneous=abs(error) <= 0.005,
                 )
+            # stance 口径的影子样本：旧上限还要求发布/请求/实际三条命令都在
+            # 0.01 rad/s 以内（与新的 quiet_command_yaw_cap 不同）。
             if self.stance_support_handoff_config is not None:
                 sample = copy.deepcopy(self.quiet_history[-1])
                 error = sample["heading_error_rad"]
@@ -726,6 +880,12 @@ class TeacherHeadingGate:
             self._clear_quiet(error)
 
     def _quiet_qualified(self, sim_time, wall_time, error):
+        """判断静默目标是否已连续成立（发布、ACK、运动与锁定航向的联合判定）。
+
+        返回：样本数 >= stop_min_pose_samples 且跨度 >= stop_window_sim_s 时 True。
+        语义：任一来源/绑定/命令不再满足即清空静默历史并返回 False；这里只证明
+        "内部目标成立"，不证明原始停车 PASS（last_quiet_qualification 里显式标注）。
+        """
         if not self.quiet_target_enabled:
             return True
         h = self.quiet_history
@@ -739,6 +899,8 @@ class TeacherHeadingGate:
             and ack is not None
             and abs(error) <= self.quiet_limits["heading"]
             and h[-1]["stamp_s"] == self.latest_motion["stamp_s"]
+            # 墙钟域只看 300 ms 上界；仿真域额外允许 50 ms 未来容差（-0.05），
+            # 与导航侧新鲜度表达式同形，都是硬编码字面量。
             and 0 <= wall_time - h[-1]["wall_s"] < 0.3
             and -0.05 <= sim_time - h[-1]["stamp_s"] < 0.3
             and self._quiet_publication_fresh(p, clock_ns, wall_ns)
@@ -746,6 +908,8 @@ class TeacherHeadingGate:
             and 0 <= wall_ns - ack["received_wall_ns"] < 300_000_000
             and ack["ack_native_clock_ns"] <= clock_ns
             and ack["input_clock_ns"] <= round(self.latest_motion["stamp_s"] * 1e9)
+            # 最近静默样本记录的 ACK 水位必须与当前 ACK 完全一致：判定用的样本与
+            # 判定时刻的 ACK 不能是两帧。
             and [
                 ack[k]
                 for k in ("sequence", "input_clock_ns", "input_frame_serial", "inference_sequence")
@@ -768,6 +932,8 @@ class TeacherHeadingGate:
         if not self._unloaded_actual_pair(p, ack):
             self._clear_quiet("actual_same_event_integrals_not_zero")
             return False
+        # 两个条件共用 teacher_transition：至少 stop_min_pose_samples(3) 个样本，且首尾
+        # 跨度 >= stop_window_sim_s(0.3 s)；1e-9 只是浮点窗口边界松弛，不是几何容差。
         ready = (
             len(h) >= self.config["stop_min_pose_samples"]
             and h[-1]["stamp_s"] - h[0]["stamp_s"] >= self.config["stop_window_sim_s"] - 1e-9
@@ -788,6 +954,12 @@ class TeacherHeadingGate:
     def _record_neutral_old_capture_decision(
         self, sim_time, wall_time, error, new_brake_ready, new_quiet_ready
     ):
+        """记录 neutral 旧口径的诊断对照决策；不改变任何新判定。
+
+        参数：new_brake_ready/new_quiet_ready 为本次新判定的中间结果；error 为锁定
+        航向误差（rad）。纯记录：结果字典显式带 diagnostic_only 与
+        affects_new_decision=False。
+        """
         if self.neutral_rate_brake_capture_config is None:
             return
         b = self.neutral_old_brake_history
@@ -825,6 +997,11 @@ class TeacherHeadingGate:
     def _record_stance_old_capture_decision(
         self, sim_time, wall_time, error, new_brake_ready, new_quiet_ready
     ):
+        """记录 stance 旧口径的诊断对照决策；不改变任何新判定。
+
+        参数同 _record_neutral_old_capture_decision；结果字典显式标注 diagnostic_only
+        与 affects_new_decision=False，避免被误读成交替判定。
+        """
         if self.stance_support_handoff_config is None:
             return
         b = self.stance_old_brake_history
@@ -860,6 +1037,13 @@ class TeacherHeadingGate:
         )
 
     def bind_handoff_deadline(self, deadline_s, binding):
+        """绑定本次转移的绝对握手截止时间（秒）与身份。
+
+        参数：deadline_s 为绝对控制时钟（秒，>=0 的有限数）；binding 为身份字典。
+        语义：身份与本帧 transition_context 不一致时不绑定（进行中握手会失败）；
+        握手已在进行中时，重绑定只能在原冻结截止时间上收紧，绝不延长。
+        失败：deadline 或 binding 形状非法即 raise。
+        """
         if not self.active_braking_enabled:
             return
         if (
@@ -876,6 +1060,7 @@ class TeacherHeadingGate:
             self.transition_context.get("request_id"),
             self.transition_context.get("waypoint_index"),
         )
+        # 身份不符：不绑定新截止时间；若正在握手则视为绑定被改写，直接失败。
         if identity != expected:
             if self.handoff_active:
                 self.fail_handoff("active_handoff_binding_changed")
@@ -885,7 +1070,7 @@ class TeacherHeadingGate:
             if bound != self.handoff_event["deadline_binding"]:
                 self.fail_handoff("active_handoff_binding_changed")
                 return
-            # Rebinding may tighten the frozen original deadline, never extend it.
+            # 重绑定只能收紧已冻结的原始截止时间，绝不能延长（延长等于放宽超时）。
             self.handoff_deadline_s = min(self.handoff_deadline_s, float(deadline_s))
             self.handoff_event["deadline_s"] = self.handoff_deadline_s
         self.handoff_deadline_candidate = float(deadline_s)
@@ -894,6 +1079,15 @@ class TeacherHeadingGate:
     def bind_zero_ack(
         self, ack, expected_scope, request_id, waypoint_index, control_clock_ns, wall_ns
     ):
+        """登记一份"当前帧、当前 scope"的下层零输入 ACK 候选。
+
+        参数：ack 为下层 ACK；expected_scope 为冻结的来源 scope；request_id/
+        waypoint_index 为当前身份；control_clock_ns 为控制时钟（纳秒）；wall_ns 为
+        接收墙钟（纳秒）。
+        返回：登记成功 True；任一校验失败则记录 zero_ack_error 并返回 False（不抛）。
+        语义：ACK 必须属于当前 request/waypoint 与 scope；两个时钟域都 300 ms 内新鲜；
+        原生时钟严格晚于输入时钟且间隔固定 20 ms；水位只能前进。
+        """
         self.zero_ack_candidate = None
         self.zero_ack_error = None
         try:
@@ -905,8 +1099,8 @@ class TeacherHeadingGate:
                     residual as lower_ack_residual,
                 )
 
-                # Final exact-zero uses core hold, whose protective early return
-                # precedes its normal ACK checks. Reuse that same v1 validator.
+                # 最终精确零走核心 hold 路径，它的保护性提前返回早于常规 ACK 校验；
+                # 这里复用同一个 v1 校验器，避免另写一套放宽的校验。
                 lower_ack_residual(
                     ack, self.active_braking_lower_ack_config, self.active_braking_command_limits
                 )
@@ -926,6 +1120,9 @@ class TeacherHeadingGate:
             )
             if context != expected or scope != expected_scope:
                 raise ValueError("ACK current context or frozen source scope differs")
+            # 两个时钟域各自的 300 ms 源龄：仿真域(control-stamp)与墙钟域(接收时刻)；
+            # 原生时钟不得晚于本帧控制时钟，且与输入时钟固定相差 20 ms（硬编码
+            # 20_000_000 ns 的接口契约，代码与现有文档未说明该间隔的推导来源）。
             if (
                 not 0 <= control_clock_ns - stamp < 300_000_000
                 or not 0 <= wall_ns - ack["received_wall_ns"] < 300_000_000
@@ -944,6 +1141,8 @@ class TeacherHeadingGate:
                 input_frame_serial=frame,
                 inference_sequence=inference,
             )
+            # 水位契约：sequence 只能前进；新 sequence 必须同时严格推进其余三个字段
+            # （否则就是换了帧却没换序号）；同 sequence 不得改变内容。
             old = self.zero_ack_highwater
             if old is not None:
                 keys = ("sequence", "input_clock_ns", "input_frame_serial", "inference_sequence")
@@ -986,6 +1185,11 @@ class TeacherHeadingGate:
             return False
 
     def note_zero_publication(self, clock_ns):
+        """登记最后零命令发布的控制时钟（纳秒），只记第一次。
+
+        返回：登记成功 True；不在 authoritative_zero 阶段或没有零命令边沿时 False。
+        失败：发布早于零命令控制边沿时 raise。
+        """
         if (
             not self.handoff_active
             or self.settle_control_stage != "authoritative_zero"
@@ -1002,6 +1206,12 @@ class TeacherHeadingGate:
         return True
 
     def _post_handoff_zero_ack(self, stamp_s, wall_s):
+        """检查零命令发布之后是否出现了一帧独立、精确零、身份匹配的 ACK。
+
+        返回：满足则 True，并在首次满足时锁存 final_zero_ack；否则 False。
+        语义：ACK 输入时钟必须晚于零发布、不晚于当前位姿、墙钟 300 ms 内，且四元水位
+        全部严格前进；这里不改写任何命令。
+        """
         edge = self.last_zero_handoff
         ack = self.zero_ack_candidate
         if not self.handoff_active or edge is None or ack is None or not ack["exact_zero"]:
@@ -1029,6 +1239,13 @@ class TeacherHeadingGate:
         return True
 
     def _begin_braking(self, sim_time):
+        """从 controlled_convergence 进入主动刹车，并冻结本次 handoff 事件。
+
+        前置：截止时间与身份绑定必须已就绪且与当前上下文一致，否则直接判失败。
+        副作用：写入 brake_entry_control_s/deadline/context/purpose，清空历史与统计窗，
+        把阶段置 controlled_braking，并重置静默与实验扩展状态。
+        返回：成功进入刹车且未越过截止时间时 True；否则 False（相位已被置 failed）。
+        """
         binding = self.handoff_deadline_binding
         if (
             self.handoff_deadline_candidate is None
@@ -1039,9 +1256,12 @@ class TeacherHeadingGate:
                 self.transition_context.get("waypoint_index"),
             )
         ):
+            # 先造一个 pending 事件，fail_handoff 才会真正落失败原因与相位
+            # （否则 handoff_active 为 False，失败会被静默丢弃）。
             self.handoff_event = dict(status="pending")
             self.fail_handoff("active_handoff_deadline_missing", sim_time)
             return False
+        # 冻结本次握手事件：之后所有 ACK/发布/证据都以这里的控制边沿与身份为准。
         self.handoff_deadline_s = self.handoff_deadline_candidate
         self.handoff_event = dict(
             status="pending",
@@ -1087,12 +1307,18 @@ class TeacherHeadingGate:
                 if self.zero_ack_highwater is not None
                 else None
             )
+        # 进入刹车时若已经晚于截止时间，直接判超时失败，不做"先刹车再看"。
         if sim_time > self.handoff_deadline_s:
             self.fail_handoff("active_handoff_deadline_exceeded", sim_time)
             return False
         return True
 
     def _braking_qualified(self, sim_time, wall_time, error, center_band):
+        """判断主动刹车是否已连续成立（航向在中心带内 + 运动门 + 样本窗口足够）。
+
+        返回：样本数 >= stop_min_pose_samples 且首尾跨度 >= stop_window_sim_s。
+        语义：任一样本不合格即清空刹车历史；neutral 口径强制使用全带宽中心带。
+        """
         m = self.latest_motion
         c = self.config
         if self.neutral_rate_brake_capture_config is not None:
@@ -1121,9 +1347,23 @@ class TeacherHeadingGate:
         *,
         positive_qualification_allowed=True,
     ):
+        """喂入一帧 SLAM 位姿/速度与配对机体陀螺，更新各相位判据的样本窗口。
+
+        参数（调用点见 navigation/ros_node.py 的里程计回调）：
+        - stamp_s：SLAM header 时间（秒，仿真/ROS 时钟）；wall_s：接收墙钟（秒，monotonic）；
+        - velocity：机体线速度 [vx, vy, vz]（m/s）；slam_wz：SLAM 机体 yaw 角速度（rad/s）；
+        - body_gyro：原始机体陀螺 [wx, wy, wz]（rad/s）；gyro_stamp_s：配对陀螺 stamp（秒）；
+        - zero_command：调用方给出的零命令标志（命令为零且不在受控刹车）；
+        - position/quaternion：可选 SLAM 位姿（米 / xyzw），四元数用于解析机体偏航；
+        - positive_qualification_allowed：False 时本帧只算运动观测，不得产生新资格。
+        返回：是否满足 legacy 每样本停止门。
+        副作用：更新 latest_motion、history、brake_history、静默历史与统计窗。
+        拒绝：输入非有限或时间不前进时返回 False，且不更新任何窗口。
+        """
         values = list(velocity) + [stamp_s, wall_s, slam_wz, gyro_stamp_s] + list(body_gyro)
         if len(velocity) != 3 or len(body_gyro) != 3 or not all(math.isfinite(x) for x in values):
             return False
+        # 时间必须严格前进：重复或倒退的 header 不参与任何窗口，避免同一帧被重复计数。
         if self.last_stamp is not None and stamp_s <= self.last_stamp:
             return False
         self.last_stamp = stamp_s
@@ -1138,11 +1378,11 @@ class TeacherHeadingGate:
             zero_command=bool(zero_command),
             positive_qualification_allowed=positive_qualification_allowed is True,
         )
-        # Delayed input from another command/request scope remains a motion
-        # observation but cannot seed new brake/quiet/zero qualification.
+        # 来自其他命令/请求 scope 的延迟输入仍算一次运动观测，但不得作为新的刹车/
+        # 静默/零速资格种子（否则旧 scope 的帧会污染当前握手）。
         zero_command = bool(zero_command and positive_qualification_allowed)
-        # Every accepted header participates: a bad sample cannot disappear
-        # when another odometry callback arrives before the control callback.
+        # 每个被接受的 header 都要参与：坏样本不能因为控制回调之前又来了一个里程计
+        # 回调就"消失"，否则窗口会漏掉实际发生的跳变。
         if self.controlled_braking:
             self.brake_last_stamp = stamp_s
             q = list(quaternion or [])
@@ -1151,6 +1391,8 @@ class TeacherHeadingGate:
             )
             heading_valid = False
             observed_yaw = None
+            # 四元数范数窗 0.98..1.02 与导航侧位姿校验同区间；范数非法时 heading_valid
+            # 保持 False（本帧不算合格刹车样本，但仍在下面被计入 history 的候选门）。
             if 0.98 <= qnorm <= 1.02:
                 x, y, z, w = [v / math.sqrt(qnorm) for v in q]
                 observed_yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
@@ -1158,6 +1400,8 @@ class TeacherHeadingGate:
                     abs(self.error(self.heading, observed_yaw))
                     <= self._post_entry_brake_heading_band()
                 )
+            # 合格刹车样本 = 允许资格 + 瞬时运动门 + 航向在中心带内 + 握手确实存在 +
+            # 晚于刹车入口（入口那一帧本身不算刹车样本）。
             brake_valid = (
                 positive_qualification_allowed
                 and self._motion_ready_for_zero(stamp_s, wall_s)
@@ -1198,10 +1442,13 @@ class TeacherHeadingGate:
                         old_command_caps_passed=False,
                     )
                 self._observe_quiet(stamp_s, wall_s, brake_valid, observed_yaw)
-        # Brake output (including natural exact zero) is never parking evidence.
+        # 刹车输出（包括自然出现的精确零）永远不算停车证据：这是本门最关键的
+        # 反自证规则——不能因为"我们刹出了零"就认定"机器人静止了"。
         if self.active_braking_enabled and self.handoff_failure:
             zero_command = False
         if self.active_braking_enabled and self.phase == "settle":
+            # 受控收敛/受控刹车阶段一律不认零命令；只有 authoritative_zero 阶段且
+            # 拿到零发布之后的独立 ACK，才把零命令继续传下去。
             if self.settle_control_stage in ("controlled_convergence", "controlled_braking"):
                 zero_command = False
             elif (
@@ -1220,6 +1467,9 @@ class TeacherHeadingGate:
             position,
             quaternion,
         )
+        # legacy 每样本门（单位：m/s、rad/s、s）：零命令 + 平面速度 <= 0.03 + |SLAM wz|
+        # <= 0.05 + 陀螺范数 <= 0.05 + pose/gyro 配对 <= 0.15。这些值来自
+        # teacher_transition，是"连续 0.3 s 实测静止"判据的样本级前提。
         valid = (
             zero_command
             and math.hypot(*velocity[:2]) <= c["stop_planar_speed_mps"]
@@ -1227,6 +1477,8 @@ class TeacherHeadingGate:
             and math.sqrt(sum(x * x for x in body_gyro)) <= c["stop_body_gyro_radps"]
             and abs(stamp_s - gyro_stamp_s) <= c["gyro_pose_pair_max_s"]
         )
+        # 样本不合格，或与上一样本间隔超过 stop_pose_gap_max_s(0.2 s)，都清空历史：
+        # 窗口必须连续，不能跨过空档把两段静止拼成一段。
         if not valid or self.history and stamp_s - self.history[-1][0] > c["stop_pose_gap_max_s"]:
             self.history.clear()
         if valid:
@@ -1235,10 +1487,17 @@ class TeacherHeadingGate:
 
     @property
     def controlled_settle(self):
+        """当前是否处于 settle 的受控收敛阶段（controlled_convergence）。"""
         return self.phase == "settle" and self.settle_control_stage == "controlled_convergence"
 
     def _ordinary_handoff_enabled(self):
-        # Existing dynamic/tilt/unknown safety holds retain their exact-zero path.
+        """判断本帧转移是否属于"普通"交回范围（统计/连续交接分支的准入条件）。
+
+        要求：purpose 在 SPEC["eligible_purposes"] 内、context 带字符串 request_id 与
+        整数 waypoint_index、且 dynamic_recovery 为 False。
+        """
+        # 既有的动态/倾斜/unknown 安全保持仍走原来的精确零路径：只有普通转移才允许
+        # 统计窗或连续交接这些"更宽松"的分支。
         return (
             self.transition_purpose in SPEC["eligible_purposes"]
             and isinstance(self.transition_context.get("request_id"), str)
@@ -1247,8 +1506,14 @@ class TeacherHeadingGate:
         )
 
     def _motion_ready_for_zero(self, sim_time, wall_time):
-        # Same instantaneous limits/freshness as the original measured-stop
-        # predicate, with no claim of zero-command dwell before the handoff.
+        """检查最新一帧运动观测是否满足"瞬时静止"门（不含零命令驻留）。
+
+        判据：墙钟 300 ms 内、仿真时钟在 [-0.05, 0.3) 内、pose/gyro 配对窗内，且
+        平面速度/|SLAM wz|/陀螺范数都在 teacher_transition 的瞬时上限内。
+        返回：布尔；不修改任何状态。
+        """
+        # 与原始"实测停止"判据使用同一组瞬时上限与新鲜度，但不在这里声称交接之前
+        # 已经存在零命令驻留（那是握手与 ACK 负责证明的事）。
         m = self.latest_motion
         c = self.config
         return bool(
@@ -1262,6 +1527,13 @@ class TeacherHeadingGate:
         )
 
     def _observe_stop_wait(self, sim_time, wall_time, phase):
+        """诊断观察分支：原始停止判据未通过、但实测确实静止时记录一条观察证据。
+
+        参数：phase 为当前相位名（写进观测 record 的 "teacher_heading_<phase>"）。
+        返回：记录成功 True；诊断开关关闭或条件不满足时 False。
+        语义：只在 diagnostic_run 存在、诊断 ACK 就绪、瞬时静止门通过且本帧为零命令
+        时记录；它记录的是"业务停止未通过"的事实，不能当原始 PASS。
+        """
         config = self.diagnostic_profile.get("diagnostic_observe_only", {})
         if not (
             isinstance(config, dict)
@@ -1294,6 +1566,12 @@ class TeacherHeadingGate:
         return True
 
     def stopped(self, sim_time, wall_time):
+        """legacy 连续 300 ms 实测停止判据。
+
+        要求：样本数 >= stop_min_pose_samples(3)、最近样本墙钟 300 ms 内、仿真时钟在
+        [-0.05, 0.3) 内、且首尾跨度 >= stop_window_sim_s(0.3 s) 减去 1e-9 浮点松弛。
+        返回：布尔；不修改状态。这是释放判据里与统计窗 OR 的那一支。
+        """
         c = self.config
         return (
             len(self.history) >= c["stop_min_pose_samples"]
@@ -1303,16 +1581,34 @@ class TeacherHeadingGate:
         )
 
     def resume_after_stop(self, yaw, fresh_path_heading, stopped_duration):
-        # Caller retains unchanged cloud-clearance/new-SCAN guard. A duration
-        # alone never establishes physical stopping for the Teacher.
+        """动态恢复后重新进入 drive：重置相位并把锁定航向换成新路径朝向。
+
+        参数：yaw 为当前实测偏航（rad）；fresh_path_heading 为新路径朝向（rad）；
+        stopped_duration 为已停止时长（秒）。
+        返回：恒定 False（本方法不释放，只重置状态）。
+        边界：调用方仍保留原云清晰度/新 SCAN 守卫；单靠一个时长永远不能为 Teacher
+        建立"物理已停"。
+        """
         self.reset()
         self.transition_purpose = "dynamic_recovery"
         self.heading = fresh_path_heading
         return False
 
     def update(self, sim_time, yaw, current_path_heading, wall_time=None):
+        """推进相位状态机，返回 (release, yaw_command)。
+
+        参数：sim_time 为控制时钟（秒，仿真时钟）；yaw 为实测机体偏航（rad，来自 SLAM
+        位姿）；current_path_heading 为当前路径朝向（rad，来自规划）；wall_time 为单调
+        墙钟（秒），缺省取 time.monotonic()。
+        返回：(False, 0.0) 表示继续停车/转向、不释放；(True, yaw_command) 表示回到
+        drive，yaw_command 为限幅在 ±0.08 rad/s 的航向修正。
+        失败与保持：握手失败时恒返回 (False, 0.0) 且不自动重试；只有新的
+        request/waypoint 身份才会解除 failed。
+        副作用：修改 phase/heading/settle_control_stage、各类历史与握手事件。
+        """
         import time
 
+        # 缺省用进程单调钟；调用方（navigation/ros_node.py）传的是同一单调时钟的接收时刻。
         wall_time = time.monotonic() if wall_time is None else wall_time
         c = self.config
         if self.minimal_simulation_baseline and not all(
@@ -1320,32 +1616,44 @@ class TeacherHeadingGate:
         ):
             raise ValueError("Finite actual diagnostic heading and clocks required")
         current_error = self.error(current_path_heading, yaw)
+        # 失败即保持：不复位、不重试，也不返回任何命令，直到身份变化（见
+        # set_transition_context）。这是"证据不足就不动"的落点。
         if self.handoff_failure:
             return False, 0.0
+        # 截止时间在任何相位都检查：超时即判失败，避免无限期停在 settle。
         if self.handoff_active and sim_time > self.handoff_deadline_s:
             self.fail_handoff("active_handoff_deadline_exceeded", sim_time)
             return False, 0.0
         if self.phase == "drive":
+            # drive：小误差直行，命令 = 0.5*误差并限幅 ±0.08 rad/s（硬编码增益与上限）。
             if abs(current_error) <= c["drive_heading_max_rad"]:
                 return True, max(-0.08, min(0.08, 0.5 * current_error))
+            # 误差超过 drive_heading_max_rad(0.2 rad) 时先停车再转向：reset 会清窗口并
+            # 回到 pre_turn，随后必须重新证明实测静止才允许 align。
             self.reset()  # Stop immediately before a substantial new heading.
             if self.transition_purpose not in ("dynamic_recovery", "tilt_recovery"):
                 self.transition_purpose = "heading_change"
         if self.phase == "pre_turn":
+            # 转向前的实测静止门：不静止就保持 (False, 0.0)，绝不"边走边转"。
+            # 诊断观察分支只记录"原始判据未通过"的静止事实，默认关闭。
             if (
                 not self.minimal_simulation_baseline
                 and not self.stopped(sim_time, wall_time)
                 and not self._observe_stop_wait(sim_time, wall_time, "pre_turn")
             ):
                 return False, 0.0
+            # 放行后把锁定航向设为当前路径朝向；之后对齐都用这个锁存值，不跟随路径漂移。
             self.phase = "align"
             self.heading = current_path_heading
         if self.heading is None:
             self.heading = current_path_heading
         error = self.error(self.heading, yaw)
         if self.phase == "align":
+            # 对齐：命令 = 1.3*误差（1.3 是硬编码比例增益，代码与文档未说明来源），
+            # 再按 max_yaw_rate_radps 限幅；误差进入 turn_complete_rad(0.1 rad) 才算转完。
             if abs(error) > c["turn_complete_rad"]:
                 return False, max(-self.max_turn_rate, min(self.max_turn_rate, 1.3 * error))
+            # 最小诊断基线只按几何航向放行，并显式记录"未证明实测停止"；该分支不可达。
             if self.minimal_simulation_baseline:
                 self.phase = "drive"
                 self.heading = None
@@ -1361,12 +1669,16 @@ class TeacherHeadingGate:
             self.phase = "settle"
             self.stop_window.clear()
             self.last_release = None
+            # 普通转移先进入受控收敛（继续用既有 PID/PI 向同一锁定中心收敛），
+            # 其它情形（动态恢复/倾斜恢复等）直接进入零速权威阶段。
             self.settle_control_stage = (
                 "controlled_convergence"
                 if self._ordinary_handoff_enabled()
                 else "authoritative_zero"
             )
         if self.phase == "settle":
+            # 路径朝向相对锁定航向偏得太多：握手中直接判失败（不能一边握手一边改目标）；
+            # 未握手则回到 pre_turn，重新证明静止后才允许再次转向。
             if abs(current_error) > c["drive_heading_max_rad"]:
                 if self.handoff_active:
                     self.fail_handoff("active_handoff_heading_rearm", sim_time)
@@ -1383,9 +1695,9 @@ class TeacherHeadingGate:
                 and self._ordinary_handoff_enabled()
                 and abs(error) > c["turn_complete_rad"]
             ):
-                # The completed turn was lost while waiting at zero. Resume the
-                # same locked target before drive release; old zero evidence
-                # cannot qualify another attempt with yaw control resumed.
+                # 已经在零速权威阶段等待，但转完的航向又丢失了。放行前先回到同一锁定
+                # 目标重新收敛；yaw 控制一旦恢复，旧的零速证据就不能再为下一次尝试
+                # 背书，因此下面把相关证据全部清空。
                 self.zero_reconvergence_count += 1
                 self.last_zero_reconvergence = dict(
                     reason="turn_complete_band_lost_during_authoritative_zero",
@@ -1411,14 +1723,15 @@ class TeacherHeadingGate:
                 self.quiet_ack_watermark = None
                 self.settle_control_stage = "controlled_convergence"
             if self.controlled_settle:
-                # This is a changed control handoff: keep the existing cascade
-                # yaw PD/PI and Student correction active toward the SAME locked
-                # center. It is not a new acceptance threshold or a timed wait.
-                # The center target is inside the original 0.1-rad band to leave
-                # room for the observed ~0.11-rad Actor zero-input recoil.
+                # 这里只改变控制交接口径：既有 cascade yaw PD/PI 与 Student 修正继续
+                # 作用在同一个锁定中心上，不是新的验收阈值，也不是定时等待。
+                # 中心带取 0.25*turn_complete_rad = 0.025 rad，留在原 0.1 rad 带内，
+                # 为实测约 0.11 rad 的 Actor 零输入回弹留出余量。
                 center_band = 0.25 * c["turn_complete_rad"]
                 if abs(error) > center_band or not self._motion_ready_for_zero(sim_time, wall_time):
                     return False, max(-self.max_turn_rate, min(self.max_turn_rate, 1.3 * error))
+                # 连续交接分支：只在 path_rebind/heading_change 且普通转移时允许"无缝"
+                # 交回 drive；本帧必须带正向资格，否则继续用转向命令收敛。
                 if (
                     self.continuous_turn_handoff_enabled
                     and self._ordinary_handoff_enabled()
@@ -1426,9 +1739,8 @@ class TeacherHeadingGate:
                 ):
                     if self.latest_motion.get("positive_qualification_allowed") is not True:
                         return False, max(-self.max_turn_rate, min(self.max_turn_rate, 1.3 * error))
-                    # Ordinary motion continues through the existing checked PID
-                    # drive path. No open-loop zero edge or standstill claim is
-                    # needed between two active control modes.
+                    # 普通运动直接交给既有受检 PID drive 路径继续，两个活跃控制模式之间
+                    # 不需要开环零命令边沿，也不声称出现过静止。
                     self.continuous_turn_handoff_count += 1
                     self.last_release = dict(
                         predicate="ordinary_turn_continuous_control/v1",
@@ -1449,6 +1761,8 @@ class TeacherHeadingGate:
                     self.heading = None
                     self.settle_control_stage = None
                     return True, max(-0.08, min(0.08, 0.5 * current_error))
+                # 启用主动刹车时先进入 controlled_braking（本帧仍不释放）；
+                # 否则直接进入零速权威阶段，开始零命令驻留。
                 if self.active_braking_enabled:
                     self._begin_braking(sim_time)
                     return False, 0.0
@@ -1467,6 +1781,8 @@ class TeacherHeadingGate:
                 )
                 return False, 0.0
             if self.controlled_braking:
+                # 主动刹车阶段：先要刹车样本窗口连续，再要静默目标连续，最后要真实
+                # 冻结的 Actor ACK；三者缺一都继续输出零命令并等待（不释放）。
                 center_band = self._post_entry_brake_heading_band()
                 brake_ready = self._braking_qualified(sim_time, wall_time, error, center_band)
                 if not brake_ready:
@@ -1486,6 +1802,8 @@ class TeacherHeadingGate:
                 )
                 if not quiet_ready:
                     return False, 0.0
+                # 没有真实冻结的 Actor ACK 水位就不给最终零命令边沿：零速交接不能靠
+                # "我们发了零"自证。
                 if self.zero_ack_candidate is None:
                     return False, 0.0  # No final edge without a real frozen Actor watermark.
                 self.last_brake_qualification = dict(
@@ -1522,16 +1840,22 @@ class TeacherHeadingGate:
                     context=copy.deepcopy(self.transition_context),
                     deadline_s=self.handoff_deadline_s,
                 )
+                # 冻结最终零命令时间；此后只有 post-handoff 独立 ACK 才能把它变成停车证据。
                 self.handoff_event.update(final_zero_control_s=sim_time)
                 return False, 0.0
+            # 非主动刹车路径（含默认配置）：legacy 300 ms 判据 OR 1 s 统计窗 OR
+            # 诊断观察分支，任一成立即释放。三支的 predicate 会写进 last_release。
             legacy = self.stopped(sim_time, wall_time)
             stats = self.stop_window.evidence(sim_time, wall_time)
+            # 这里把 _ordinary_handoff_enabled 的准入条件又写了一遍：释放处显式可见，
+            # 避免读者要跳一层才知道统计分支对谁生效。
             eligible = (
                 self.transition_purpose in SPEC["eligible_purposes"]
                 and isinstance(self.transition_context.get("request_id"), str)
                 and type(self.transition_context.get("waypoint_index")) is int
                 and self.transition_context.get("dynamic_recovery") is False
             )
+            # 统计分支只在 eligible purpose/身份下生效；观察分支要求当前没有进行中握手。
             statistical = bool(eligible and stats["enabled"] and stats["passed"])
             observed = (
                 not self.handoff_active
@@ -1541,6 +1865,8 @@ class TeacherHeadingGate:
             )
             if not legacy and not statistical and not observed:
                 return False, 0.0
+            # predicate 三选一：诊断观察 / legacy 连续 300 ms / 1 s 统计窗；
+            # 三者都不是"任务成功"，只是允许本门回到 drive。
             self.last_release = dict(
                 predicate=(
                     "diagnostic_observe_only_original_stop_not_passed"
@@ -1558,12 +1884,21 @@ class TeacherHeadingGate:
             )
             if self.handoff_active:
                 self.handoff_event.update(status="passed", release_control_s=sim_time)
+            # 释放：回到 drive 并清掉锁定航向；本帧给一次限幅 ±0.08 rad/s 的航向修正。
             self.phase = "drive"
             self.heading = None
             return True, max(-0.08, min(0.08, 0.5 * current_error))
+        # 未知相位（不应出现）：不释放、不输出命令。
         return False, 0.0
 
     def evidence(self, sim_time, wall_time):
+        """汇总本门的全部证据字典（只读，不修改状态）。
+
+        参数：sim_time 为控制时钟（秒）；wall_time 为墙钟（秒）。
+        返回：证据字典；键名是英文并属于对外证据接口，不能翻译或改名。
+        内容：相位与实测停止、样本计数、handoff 事件与失败原因、静默目标、积分卸载
+        以及各实验扩展的诊断影子。
+        """
         result = {
             "transition": "teacher_measured_stop_heading_v1",
             "phase": self.phase,
@@ -1571,6 +1906,7 @@ class TeacherHeadingGate:
             "stop_valid_pose_samples": len(self.history),
             "stop_first_stamp_s": self.history[0][0] if self.history else None,
             "stop_last_stamp_s": self.history[-1][0] if self.history else None,
+            # 两行是证据语义声明：heading 只来自 SLAM 机体 yaw；陀螺只用于停/倾判定。
             "navigation_heading_source": "SLAM body yaw only",
             "gyro_use": "stop/tilt only; never localization",
             "transition_purpose": self.transition_purpose,

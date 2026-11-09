@@ -1,6 +1,8 @@
-"""Bounded precommit IMU join for an existing, fresh ordinary typed zero hold.
+"""面向已有、新鲜普通 typed 零保持的有界预提交 IMU 因果配对。
 
-No new command/source/ACK, no clock disguise, and no second payload queue.
+不新增命令/来源/ACK，不伪装时钟，也不建第二个负载队列；只把已发布的 source 行
+与实测配对 IMU 样本做有界 FIFO 关联，并记录计数与一次性事件。默认关闭，环境
+变量 R104_PARKING_CAUSAL_JOIN 在模块导入时读取一次。
 """
 
 import math
@@ -11,11 +13,13 @@ from numbers import Real, Integral
 from embodied_navigation.control.parking.parking_zero_contract import exact_zero
 from embodied_navigation.robot.unitree.bridge import validate_controller_source
 
+# 模块导入时只读一次；缺省 "0"（关闭）；非法值直接 raise，不静默降级。
 _OPTION = os.environ.get("R104_PARKING_CAUSAL_JOIN", "0")
 if _OPTION not in ("0", "1"):
     raise ValueError("R104_PARKING_CAUSAL_JOIN must be 0 or 1")
 PARKING_CAUSAL_JOIN_ENABLED = _OPTION == "1"
-EVENT_CAP = 256
+EVENT_CAP = 256  # 事件列表上限；超出后只累加 events_omitted 计数。
+# 与 robot/unitree/bridge 的 envelope 完全一致（隐式契约）：只快照这些标量字段。
 SOURCE_KEYS = (
     "navigation_ground_truth_used",
     "command_after_slew",
@@ -45,7 +49,12 @@ SOURCE_KEYS = (
 
 
 def scalar_snapshot(value, *, limit=512):
-    """Bounded copy of the small native scalar record; no payload arrays."""
+    """对小原生标量记录做有界深拷贝；不复制负载数组。
+
+    最多 limit 个节点、深度 8、字符串 1024、键 128；超界或遇到非标量类型会 raise
+    （错误码 r104_scalar_snapshot_bound / r104_scalar_key /
+    r104_non_scalar_snapshot）。Integral/Real 分别归一化为 int/float。
+    """
     remaining = [limit]
 
     def visit(item, depth=0):
@@ -72,7 +81,13 @@ def scalar_snapshot(value, *, limit=512):
 
 
 def selected_pair(node, stamp, clock, *, snapshot=True):
-    """Same original-port priority and FIFO causal lookup as PID on_odom."""
+    """按与 PID on_odom 相同的 port 优先级和 FIFO 因果查找配对 IMU。
+
+    stamp 晚于 clock 直接返回 None（拒绝未来帧）；在 imu_history 中从最新往回找
+    第一个不晚于 stamp、且最多早 20 ms 的样本；有 imu_source_buffer 时优先用它
+    的 pair()。
+    snapshot=True 时返回标量快照，否则返回原始记录。
+    """
     if stamp > clock:
         return None
     pair = next(
@@ -84,10 +99,9 @@ def selected_pair(node, stamp, clock, *, snapshot=True):
 
 
 class ParkingCausalJoin:
-    """Bounded FIFO join of published source rows to a measured paired IMU sample.
+    """把已发布 source 行有界 FIFO 地关联到实测配对 IMU 样本。
 
-    Counts and one-shot events only; it never creates a zero publication, a
-    qualification, or a second payload queue.
+    只累计计数与一次性事件；绝不产生零发布、资格或第二个负载队列。
     """
 
     enabled = True
@@ -102,8 +116,12 @@ class ParkingCausalJoin:
         self.window = None
 
     def published(self, source):
-        # Called only after actual DDS publish returns, with source just written
-        # or explicitly preserved. Isolate from subsequent PID-row mutations.
+        """记录最近一次实际 DDS publish 返回后写出的 source 行。
+
+        仅当该行带普通终端零事件时才快照；快照只保留 SOURCE_KEYS 中的标量字段
+        （上限 2048），以隔离后续 PID-row 的原地修改。
+        """
+        # 只有真实 DDS publish 返回后才会调用，此时 source 刚写入或被显式保留。
         self.published_source = (
             None
             if source is None or source.get("ordinary_terminal_zero_event") is None
@@ -111,6 +129,7 @@ class ParkingCausalJoin:
         )
 
     def event(self, event, bundle=None, **fields):
+        """累计一次事件；超过 EVENT_CAP 后只增加 events_omitted 计数。"""
         self.counts[event] += 1
         if len(self.events) >= EVENT_CAP:
             self.counts["events_omitted"] += 1
@@ -126,6 +145,7 @@ class ParkingCausalJoin:
         self.events.append(row)
 
     def ordinary_scope(self, node):
+        """当前是否处于普通停车 zero_hold 且已有 ready 与零事件。"""
         core = getattr(node, "cascade", None)
         ordinary = getattr(core, "ordinary_parking", None)
         return bool(
@@ -137,6 +157,7 @@ class ParkingCausalJoin:
         )
 
     def owner(self, node):
+        """当前 owner 身份元组；任一分量变化都会让等待/绑定失效。"""
         core = node.cascade
         ordinary = core.ordinary_parking
         return (
@@ -161,6 +182,13 @@ class ParkingCausalJoin:
         )
 
     def health(self, node, clock, wall):
+        """确认普通零保持 owner、命令、保护与来源仍成立；不符即 raise。
+
+        覆盖：普通 zero_hold 作用域、节点状态、evidence 错误、owner 绑定、失败/
+        保护/障碍/倾斜锁存、精确零命令、tilt/bridge 守卫、generation 就绪、位姿/
+        点云/IMU/bridge 新鲜度、首窗口证明与已发布 source 身份。异常由 prepare
+        捕获并转为 fault。
+        """
         core = node.cascade
         ordinary = core.ordinary_parking
         if (
@@ -181,8 +209,8 @@ class ParkingCausalJoin:
             or not exact_zero(core.command)
         ):
             raise ValueError("ordinary_zero_owner_or_command_changed")
-        # Preserve original safety intake and physical/bridge protection while
-        # no positive control tick runs. Actual source receipts are not retimed.
+        # 没有正控制 tick 运行时也要保留原安全输入与物理/bridge 保护；实际来源回执
+        # 不做重新计时。
         if node.apply_tilt_guard(wall / 1e9, clock / 1e9):
             raise ValueError("original_tilt_or_bridge_guard")
         if not node._known_generation_ready():
@@ -214,6 +242,7 @@ class ParkingCausalJoin:
             raise ValueError("published_zero_source_identity_changed")
 
     def bundle_valid(self, node, bundle, clock, wall):
+        """校验一个待提交 bundle 的因果、新鲜度、作用域与世代。"""
         if bundle.source_ns > clock:
             raise ValueError("future_pose_original_rejection")
         if not 0 <= clock - bundle.source_ns < node.pose_timeout * 1e9:
@@ -229,6 +258,7 @@ class ParkingCausalJoin:
             raise ValueError("bundle_generation_changed")
 
     def pair_valid(self, node, bundle, pair, clock, wall):
+        """校验配对 IMU 样本：不晚于 source 20 ms，控制/接收都在 300 ms 内。"""
         stamp = pair["stamp_ns"]
         receipt = pair["received_wall_ns"]
         gyro = pair["angular_velocity_body"]
@@ -244,7 +274,12 @@ class ParkingCausalJoin:
             raise ValueError("pair_original_causality_or_freshness")
 
     def after_fixed_window(self, node, bundle):
-        """Validate the existing first proof at its original T0; never qualify anew."""
+        """按原 T0 校验既有首个证明；绝不重新授予资格。
+
+        window 为 None 时先快照首个零 ACK 证明并固定窗口结束时间
+        （qualification_clock_ns + 5 s）；同一窗口内证明或零事件变化会 raise。
+        返回 bundle 是否晚于固定窗口结束。
+        """
         core = node.cascade
         ordinary = core.ordinary_parking
         proof = ordinary.first_actor_zero_ack
@@ -262,6 +297,7 @@ class ParkingCausalJoin:
                 or not exact_zero(proof.get("actual_observation_command_body", []))
             ):
                 return False
+            # 固定 5 s 窗口：只读既有证明，不做新资格。
             self.window = dict(
                 proof=proof,
                 end_ns=start + 5_000_000_000,
@@ -272,6 +308,11 @@ class ParkingCausalJoin:
         return bundle.source_ns > self.window["end_ns"]
 
     def deadlines(self, node, bundle):
+        """计算等待该 bundle 配对 IMU 的 sim/wall 截止时间（纳秒）。
+
+        取各路来源 TTL 与 300 ms 来源年龄中的最早值；任一来源到期即失败，不会
+        延长原窗口。
+        """
         source = self.published_source
         sim = min(
             node.pose_stamp + int(node.pose_timeout * 1e9),
@@ -291,7 +332,13 @@ class ParkingCausalJoin:
         return sim, wall
 
     def prepare(self, node, mailbox):
-        """Return None for original path, else take exactly a fixed ready prefix."""
+        """返回 None 表示走原路径；否则只取固定的 ready 前缀。
+
+        先做纯资格投影（不跑 guard/control 回调）：普通作用域、首个证明存在、快照
+        全部晚于固定 5 s 窗口且尚未配对；随后做 health/owner/截止时间校验，只为确实
+        缺配对 IMU 的 bundle 建立一次等待，并在其配对到达后提交固定前缀。任何
+        fault 都会 mailbox.fail(...) 并返回空元组。
+        """
         self.bindings = {}
         if not self.waiting and not self.ordinary_scope(node):
             return None
@@ -299,9 +346,8 @@ class ParkingCausalJoin:
         clock = node.get_clock().now().nanoseconds
         wall = time.monotonic_ns()
         if not self.waiting:
-            # Pure eligibility projection BEFORE guard/control callbacks. All
-            # ordinary complete-pair traffic and the entire original first
-            # window keep the original path, including its original failures.
+            # 在 guard/control 回调之前做纯资格投影：所有已完整配对的普通流量与整个
+            # 原始首窗口都走原路径，包括其原有失败行为。
             if not self.ordinary_scope(node) or not snapshot:
                 return None
             proof = node.cascade.ordinary_parking.first_actor_zero_ack
@@ -337,7 +383,7 @@ class ParkingCausalJoin:
                     or wall >= self.waiting["deadline_wall_ns"]
                 ):
                     raise ValueError("original_frozen_wait_deadline_expired")
-            # R99 OFF: a future suffix must not be concealed behind a missing pair.
+            # R99 关闭：不能用“缺配对”掩盖位于未来的后缀帧。
             if any(b.source_ns > clock for b in snapshot):
                 if self.waiting:
                     raise ValueError("future_pose_original_rejection")
@@ -355,8 +401,8 @@ class ParkingCausalJoin:
                 pair = selected_pair(node, bundle.source_ns, clock)
                 if pair is None:
                     if self.waiting is None:
-                        # Before/boundary of the original fixed window, use the
-                        # unchanged immediate failure. No hidden negative sample.
+                        # 在原固定窗口之前/边界，使用未改动的立即失败路径；不塞入隐藏的
+                        # 负样本。
                         if not self.after_fixed_window(node, bundle):
                             self.bindings = {}
                             return None
@@ -405,6 +451,7 @@ class ParkingCausalJoin:
             return ()
 
     def bound_pair(self, node, stamp, clock, wall):
+        """在提交 body 前核对绑定未变，并返回 (True, pair)。"""
         bundle = getattr(node, "_r86_committing_bundle", None)
         binding = self.bindings.get(stamp)
         if binding is None:
@@ -421,6 +468,7 @@ class ParkingCausalJoin:
         return True, binding[2]
 
     def committed(self, bundle):
+        """bundle 已提交：弹出绑定并记录一次 commit 事件。"""
         if bundle.source_ns in self.bindings:
             pair = self.bindings.pop(bundle.source_ns)[2]
             self.event(
@@ -431,9 +479,17 @@ class ParkingCausalJoin:
             )
 
     def end_batch(self):
+        """每个批次结束后清空绑定表。"""
         self.bindings = {}
 
     def finish(self, node):
+        """结束 join：释放未处理批次，并同步写出 r104 JSON 证据。
+
+        仅在确实发生过 wait/fault 时把 mailbox 中未处理的批次取出并 release；然后
+        写 run/r104_parking_causal_join.json（本目录唯一的同步写盘），并声明
+        source_receipts_refreshed/new_zero_publications/positive_qualification_granted
+        全为 False。重复调用无操作。
+        """
         if self.closed:
             return
         self.closed = True

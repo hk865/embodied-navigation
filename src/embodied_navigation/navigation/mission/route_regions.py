@@ -1,7 +1,7 @@
-"""Preregistered arrival regions for the physical three-platform route.
+"""三段物理平台路线的预注册到达区域。
 
-The original point arrays remain the authoritative planner centers. Bounds
-describe body-position arrival, not contact verification or free-space maps.
+原始点数组仍是规划器权威中心；区域边界只描述机体位置到达，不代表接触验证
+或自由空间地图。本模块只做纯数据装配与校验，不建 ROS 节点、不发命令、不写文件。
 """
 
 import copy
@@ -9,16 +9,21 @@ import math
 
 from embodied_navigation.navigation.mission.goal_regions import IDENTITY, RigidTransform, parse_goal
 
+# 三条任务路线名；装配、校验与坐标变换都按这个固定集合遍历。
 ROUTES = ("exploration", "return_origin", "navigation_f1_f3")
 
 
 def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
-    """Attach the preregistered arrival volumes to a three-platform scenario.
+    """把预注册到达体积挂到三段平台场景上，返回深拷贝。
 
-    Only the two reviewed profiles are accepted. v2 uses the inner body volumes;
-    v1 keeps the original flat volumes. Planner centers are unchanged — the
-    regions describe body-position arrival, never measured contact.
+    只接受两个已审阅 profile：v2 使用内层机体体积并额外生成 ``control_band``，
+    v1 保留原始外层体积。规划中心不变——区域只描述机体位置到达，绝不表示实测
+    接触。区域数值（0.4 s dwell、0.2 s 最大间隔、平面半径 0.35 m、半高 0.10 m、
+    斜面半宽 0.30 m、原点球 0.22 m 等）在本文件硬编码；场景 JSON 的
+    ``goal_region_profile`` 必须与这里生成的结果逐字段一致（由
+    ``validate_route_regions`` 校验）。
     """
+    # profile 名是契约的一部分；未知名字直接拒绝，避免静默换几何。
     if profile not in ("three_platform_body_arrival_v1", "three_platform_body_arrival_v2"):
         raise ValueError("unknown arrival profile")
     inner = profile == "three_platform_body_arrival_v2"
@@ -42,6 +47,7 @@ def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
             "origin_radius_m": 0.17,
         }
     result["route_goals"] = {}
+    # 斜面轴归一化因子：斜率 0.1 -> 1/sqrt(1+0.1²)。
     scale = math.sqrt(1.01)
     for name in ROUTES:
         goals = []
@@ -54,8 +60,10 @@ def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
                 "axes": IDENTITY,
                 "dwell_sim_s": 0.4,
             }
+            # 平台面先按 z 高度粗分（硬编码容差 0.01 m）：0 / 1.2 / 2.4 m 三层。
+            # 斜面点随后由 slope 改写；其余点保持粗分结果。
             surface = "floor_1" if z < 0.01 else "floor_2" if abs(z - 1.2) < 0.01 else "floor_3"
-            # Both ramp seams use the oriented corridor as well as its interior.
+            # 两条斜面缝（y==2 / y==7、2<=x<=14）同时使用有向走廊与其内部区域。
             slope = (
                 0.1
                 if y == 2 and 2 <= x <= 14 and 0 <= z <= 1.2
@@ -75,11 +83,13 @@ def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
                     ],
                     "half_extents_m": [0.35, 0.30, 0.10],
                 }
+            # 返航最后一点必须回到初始化原点，使用预注册的 .22 m 球。
             if name == "return_origin" and index == len(result[name]) - 1:
                 if point != [0, 0, 0]:
                     raise ValueError("return_origin must end at the initialization origin")
                 surface = "origin"
                 arrival = {"type": "sphere", "radius_m": 0.22, "dwell_sim_s": 0.4}
+            # v2 控制带按面类型收窄（m）；与 goal_region_profile.control_band 对应。
             if inner:
                 arrival["control_band"] = (
                     {"radius_m": 0.17}
@@ -88,6 +98,7 @@ def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
                     if slope is not None
                     else {"radius_m": 0.25, "height_half_span_m": 0.10}
                 )
+            # 单区域进度期限 90 s（硬编码，仿真秒），同时写入每个目标。
             raw = {
                 "goal_id": f"{name}:{index}",
                 "center": point,
@@ -101,12 +112,19 @@ def add_route_regions(scenario, profile="three_platform_body_arrival_v2"):
 
 
 def validate_route_regions(scenario):
-    """Reject ambiguous/mismatched routes before snapshotting or moving."""
+    """在任何快照或运动前拒绝歧义/不一致的路线配置。
+
+    没有 ``route_goals`` 的历史纯航点场景仍然支持（直接返回）。否则要求恰好
+    三条路线、profile 名与声明一致、目标数与规划中心一致、goal_id 唯一、中心与
+    规划中心逐点相等，并且几何与按声明 profile 重新生成的结果完全一致；最后
+    校验返航终点是 .22 m 球。任何不符都抛 ``ValueError``。
+    """
     if "route_goals" not in scenario:
-        return  # Historical point-only scenarios remain supported.
+        return  # 历史纯航点场景仍受支持，不要求区域定义。
     configured = scenario["route_goals"]
     if not isinstance(configured, dict) or set(configured) != set(ROUTES):
         raise ValueError("route_goals must define exactly all three mission routes")
+    # 用声明 profile 重新生成期望值，再与场景中携带的副本逐字段比较。
     profile = scenario.get("goal_region_profile", {}).get("name")
     expected = add_route_regions({name: scenario[name] for name in ROUTES}, profile=profile)
     if scenario.get("goal_region_profile") != expected["goal_region_profile"]:
@@ -129,12 +147,12 @@ def validate_route_regions(scenario):
 
 
 def transformed_route_goals(scenario, name, origin, heading_alignment):
-    """Return this route's validated goals expressed in camera_init.
+    """返回该路线在 camera_init 内的已验证目标（元组）。
 
-    Validates the scenario first, then applies the declared waypoint reference:
-    ``relative_world_axes`` rotates by the measured world->camera_init heading,
-    ``relative_initial_body`` translates by the origin, and any other value is
-    treated as already absolute (identity transform).
+    先 ``validate_route_regions``，再按场景声明的 waypoint reference 变换：
+    ``relative_world_axes`` 用一次测量的 world->camera_init 航向旋转，
+    ``relative_initial_body`` 只平移 origin，其他值视为已是绝对坐标（恒等变换）。
+    路线不存在时返回空元组。
     """
     validate_route_regions(scenario)
     raw = scenario.get("route_goals", {}).get(name)

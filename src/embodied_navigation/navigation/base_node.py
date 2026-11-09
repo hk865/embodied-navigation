@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-"""Measured-pose SCAN execution with freshness watchdog and LiDAR stop/resume.
+"""按实测位姿执行 SCAN 轨迹：输入新鲜度看门狗与 LiDAR 障碍停车/恢复。
 
-This module owns the live navigation state machine: ``Navigation.control()``
-runs every control cycle and gates/replaces the SCAN trajectory with the
-idle/running/succeeded/failed/stopped states and the drive/pre_turn/align/settle
-heading phases. The default native launch reaches it through
-``ros_node.TeacherNavigation`` and ``pid_navigation.PIDNavigation``.
+职责：本模块持有在线导航状态机。``Navigation.control()`` 每个控制周期运行一次
+（默认 20 Hz，周期 0.05 s），用 idle/running/succeeded/failed/stopped 五个任务
+状态与 drive/pre_turn/align/settle 四个转向相位，对 SCAN 轨迹做门控与替换；同时
+负责输入超时停车、倾角保护、障碍停车/恢复与状态发布。
+默认原生 launch 经 ``ros_node.TeacherNavigation`` 与
+``pid_navigation.PIDNavigation`` 到达本类。
 
-The node never sets a simulator pose, never subscribes to ground truth and never
-drives directly to an unchecked waypoint when SCAN has not produced a trajectory.
+边界（不做什么）：节点从不设置仿真位姿、从不订阅真值，也绝不在 SCAN 尚未产出
+已关联轨迹时直接驶向未经检查的航点。关节/力矩执行不在本模块：本模块只发布
+``/demo/cmd_vel`` 速度指令、冻结标志与导航状态。
+
+时间口径：``now`` 是 ``time.monotonic()`` 墙钟秒，``ros_now`` 是 ROS（仿真）
+时钟秒；两者在本文件中分别传递，超时判定各自沿用原有来源。
 """
 
 from __future__ import annotations
@@ -106,7 +111,30 @@ _r74_protocol_observation = _observer_api("r74_protocol_observation_python")
 
 
 class Navigation(Node):
+    """默认的 measured-pose 导航节点，同时充当 Teacher 子类的基类。
+
+    任务状态（``self.state``，即状态话题的 ``state`` 字段）：``idle`` 等待任务；
+    ``running`` 已接受请求、正在执行；``succeeded`` 全部航点由实测 SLAM 位置确认
+    到达；``failed`` 倾角/传感器/交接/证据等保护或超时失败并停车；``stopped``
+    收到 ``/demo/navigation/stop`` 主动停车。只有 ``running`` 会下发非零速度，
+    其余状态每个控制周期都发布零速。
+
+    转向相位（``self.heading_gate.phase``）：``drive`` 可带平移跟随；``pre_turn``
+    与 ``settle`` 要求零速停稳 1 s；``align`` 只转不走。Teacher 子类会用
+    control.parking.transition_gate.TeacherHeadingGate 替换这个 gate。
+
+    参数：``max_speed``（m/s）、``arrival_radius``（m）、``pose_timeout``（s）、
+    ``cloud_timeout``（s）、``scenario_path`` 都是 ROS 参数声明默认值，启动时
+    读取一次；``ros_node.TeacherNavigation`` 会用 profile 覆盖前四项与
+    ``scenario_path``。
+
+    本类只提供公共执行骨架：轨迹选择、PID 输出、guard 几何等由子类钩子提供
+    （如 ``select_pid_velocity``、``evaluate_motion_guard``、
+    ``execution_guard_route``；基类本身不定义它们）。
+    """
+
     def destroy_node(self):
+        """节点销毁前先冲刷一次协议观测缓冲，再调用父类销毁。"""
         try:
             _r74_protocol_observation.flush_once(self)
         finally:
@@ -114,26 +142,33 @@ class Navigation(Node):
         return result
 
     def create_subscription(self, msg_type, topic, callback, qos_profile, *args, **kwargs):
+        # 统一订阅入口：只对 ``/clock`` 等少数 topic 注入订阅选项（独立回调组），
+        # 其余 topic 的 QoS 与回调语义原样透传。
         from embodied_navigation.common.time.clock_groups import subscription_options
 
         options = subscription_options(self, topic, kwargs)
         return super().create_subscription(msg_type, topic, callback, qos_profile, *args, **options)
 
     def subscribe_slam_body(self, msg_type, topic, callback, qos_profile, *args, **kwargs):
-        """Explicit body-input port; default subscription semantics are unchanged."""
+        """显式的机身反馈输入端口；订阅语义与默认 create_subscription 完全一致。"""
         return self.create_subscription(msg_type, topic, callback, qos_profile, *args, **kwargs)
 
     def subscribe_registered_cloud(self, msg_type, topic, callback, qos_profile, *args, **kwargs):
-        """Explicit registered-cloud port; preserves QoS and callback ownership."""
+        """显式的配准点云输入端口；保留原有 QoS 与回调归属。"""
         return self.create_subscription(msg_type, topic, callback, qos_profile, *args, **kwargs)
 
     def __init__(self):
         super().__init__("demo_navigation", parameter_overrides=[])
         self.set_parameters([rclpy.parameter.Parameter("use_sim_time", value=True)])
+        # 以下四项为 ROS 参数声明默认值（启动时读取一次，运行中不刷新）：
+        # max_speed m/s、arrival_radius m、pose_timeout s、cloud_timeout s。
+        # Teacher 子类在 declare_parameter 中用 profile 值覆盖它们。
         self.max_speed = self.declare_parameter("max_speed", 0.12).value
         self.arrival_radius = self.declare_parameter("arrival_radius", 0.22).value
         self.pose_timeout = self.declare_parameter("pose_timeout", 0.8).value
         self.cloud_timeout = self.declare_parameter("cloud_timeout", 1.0).value
+        # scenario_path 默认指向包内 simulation/scenario.json；本节点只从该文件
+        # 读取 IMU 的固定安装/参考旋转，不读取其它场景字段。
         scenario_path = self.declare_parameter(
             "scenario_path",
             str(FilePath(__file__).resolve().parent.parent / "simulation/scenario.json"),
@@ -152,6 +187,7 @@ class Navigation(Node):
         self.tilt_source = None
         self.bridge_safety = {}
         self.request_id = None
+        # 初始为 idle：在收到请求前，control() 每个周期只发布零速。
         self.state = "idle"
         self.message = "等待任务"
         self.waypoints = np.empty((0, 3))
@@ -226,6 +262,8 @@ class Navigation(Node):
         self.tracking_filter = TrackingPositionFilter()
         self.tracking_pose = None
         self.yaw_rate = 0.0
+        # 命令与冻结标志保持 10 的队列深度；状态/路径用 TRANSIENT_LOCAL(depth=1)
+        # 锁存最后一条，迟到订阅者也能拿到当前快照。
         self.cmd_pub = self.create_publisher(Twist, "/demo/cmd_vel", 10)
         self.freeze_pub = self.create_publisher(Bool, "/demo/navigation/execution_frozen", 10)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -255,12 +293,13 @@ class Navigation(Node):
         self.scan_cloud_pub = self.create_publisher(
             PointCloud2, "/demo/navigation/cloud", qos_profile_sensor_data
         )
+        # 请求/停止是普通 reliable 深度 10 的消息；停止话题只在 data=True 时生效。
         self.create_subscription(String, "/demo/navigation/request", self.on_request, 10)
         self.create_subscription(Bool, "/demo/navigation/stop", self.on_stop, 10)
         self.subscribe_slam_body(
             Odometry, "/demo/slam/body_odom", self.on_odom, qos_profile_sensor_data
         )
-        # Process only the newest raw sample; SLAM/SCAN remains the route feedback.
+        # 仅处理最新的原始样本（depth=1 BEST_EFFORT）；路线反馈仍以 SLAM/SCAN 为准。
         imu_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(Imu, "/livox/imu", self.on_imu, imu_qos)
         self.create_subscription(String, "/demo/control/safety", self.on_bridge_safety, 10)
@@ -273,9 +312,8 @@ class Navigation(Node):
         )
         _r74_protocol_observation.setup(self)
         if r85_enabled(getattr(self, "profile", {})):
-            # Poll on steady time, but enter unchanged control only when the
-            # actual ROS clock advances beyond both prior control and guard.
-            # Short repeats leave the original wall watchdog and receipts alone.
+            # 在 steady 时钟上轮询，但只有实际 ROS 时钟同时越过此前的 control 与
+            # guard 记录时才进入真正的 control；短重复周期保留原墙钟看门狗与回执不动。
             last_control_wall = None
             last_dispatched_clock_ns = None
 
@@ -316,6 +354,8 @@ class Navigation(Node):
                 ):
                     r85_control_tick()
 
+            # 两个 0.05 s（20 Hz）steady 定时器：一个按 ROS 时钟推进执行，一个做
+            # 0.3 s 墙钟兜底（见 r85_wall_watchdog）。
             self.create_timer(
                 0.05, r85_steady_control_tick, clock=Clock(clock_type=ClockType.STEADY_TIME)
             )
@@ -323,10 +363,12 @@ class Navigation(Node):
                 0.05, r85_wall_watchdog, clock=Clock(clock_type=ClockType.STEADY_TIME)
             )
         else:
+            # 非 R85 路径：单个 20 Hz steady 定时器直接调用 tick()。
             self.create_timer(0.05, self.tick, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
     @staticmethod
     def stamp(msg):
+        """把 ROS header.stamp 转成整数纳秒；输入门用整数比较保证严格单调。"""
         return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
 
     def on_imu(self, msg):
@@ -345,18 +387,21 @@ class Navigation(Node):
         if self.state == "running":
             if self.apply_tilt_guard(now, ros_now):
                 self.reset_region_arrival("protected")
-                # Exact zero immediately in this callback, before the 20 Hz tick.
+                # 倾角保护在本回调内立即生效：先发精确零速，不等 20 Hz tick；
+                # 若因此进入 failed，再补发一次状态。
                 self.publish_command()
             if self.state == "failed":
                 self.publish_status()
 
     def on_bridge_safety(self, msg):
+        """接收执行桥安全状态；只在 state 为 hold/ready/failed 时采用。"""
         try:
             safety = json.loads(msg.data)
             if safety.get("state") not in ("hold", "ready", "failed"):
                 return
         except (ValueError, AttributeError):
             return
+        # JSON 解析失败或状态取值不在白名单时直接丢弃，不更新已有回执。
         self.bridge_safety = safety
         if self.state == "running" and self.apply_tilt_guard(
             time.monotonic(), self.get_clock().now().nanoseconds / 1e9
@@ -366,6 +411,13 @@ class Navigation(Node):
             self.publish_status()
 
     def apply_tilt_guard(self, now, ros_now):
+        """合并 SLAM/原始 IMU 倾角与执行桥状态；返回 True 表示本周期必须停车。
+
+        阈值均为本文件硬编码：任一路倾角 ≥ 0.50 rad（约 28.6°）判为 severe 并锁定
+        ``failed``；≥ 0.30 rad（约 17.2°）进入 tilt_hold 零速保持；恢复要求两路
+        都 < 0.18 rad、执行桥不在 hold、持续 0.8 s ROS 时间且 SLAM 位姿新鲜。
+        原始 IMU 缺失/超时同样返回 True。代码与现有文档未说明这些阈值的标定依据。
+        """
         slam_tilt = body_tilt(self.rotation)
         raw_tilt = self.raw_imu.tilt
         self.max_tilt = max(self.max_tilt, slam_tilt, raw_tilt or 0.0)
@@ -373,6 +425,7 @@ class Navigation(Node):
         sources = [("SLAM", slam_tilt)]
         if fresh:
             sources.append(("raw_imu", raw_tilt))
+        # 0.50 rad 超限是终态失败，不会自动恢复；需要新请求重新开始。
         severe = [source for source, tilt in sources if tilt >= 0.50]
         if self.bridge_safety.get("state") == "failed":
             severe.append("execution_bridge")
@@ -385,6 +438,7 @@ class Navigation(Node):
                 else f"{self.tilt_source} 检测机身倾角超过 0.50 rad，停车"
             )
             return True
+        # 0.30 rad 只触发可恢复的零速保持；恢复后要重新获取 SCAN 轨迹。
         high = [source for source, tilt in sources if tilt >= 0.30]
         bridge_hold = self.bridge_safety.get("state") == "hold"
         if bridge_hold:
@@ -396,11 +450,14 @@ class Navigation(Node):
             self.tilt_source = "+".join(high)
             if not bridge_hold or any(tilt >= 0.30 for _, tilt in sources):
                 self.tilt_clear_since = None
+        # 原始 IMU 缺失/时间戳超时与倾角无关，单独按停车处理。
         if not fresh:
             self.tilt_source = "raw_imu_stale"
             self.tilt_clear_since = None
             self.message = "原始 IMU 缺失或时间戳超时，停车等待传感器"
             return True
+        # 恢复判据：两路倾角都 < 0.18 rad、SLAM 位姿新鲜、且连续 0.8 s ROS 时间；
+        # 恢复后清空轨迹并重新请求 SCAN（alignment_hold=True 先做零速转向交接）。
         if self.tilt_hold:
             self.message = f"{self.tilt_source} 倾角保护，停车等待两路姿态稳定"
             if all(tilt < 0.18 for _, tilt in sources) and pose_cloud_fresh(
@@ -423,6 +480,12 @@ class Navigation(Node):
         return False
 
     def on_odom(self, msg):
+        """处理一帧 SLAM 机身里程计；只接受 camera_init 系，其它坐标系直接拒绝。
+
+        时间戳只推进时刷新 pose_updated 回执与跟踪滤波；重复/回退帧不刷新新鲜度，
+        但仍会覆盖 self.pose 并转发给 SCAN。输入门统一在 control() 的 pose_timeout 上。
+        """
+        # 坐标系白名单：非 camera_init 的位姿直接拒绝，消息只记录用途。
         if msg.header.frame_id != "camera_init":
             self.message = "拒绝非 camera_init 的 SLAM 位姿"
             return
@@ -445,11 +508,13 @@ class Navigation(Node):
             )
             self.tracking_pose = self.tracking_filter.update(pose, stamp / 1e9)
         self.pose, self.rotation = pose, rotation
+        # 0.75/0.25 一阶低通，只用于状态上报的 filtered_yaw_rate，不参与控制。
         self.yaw_rate = 0.75 * self.yaw_rate + 0.25 * float(msg.twist.twist.angular.z)
         self.pose_history.append((stamp, pose.copy(), rotation.copy()))
         self.counts["odom"] += 1
-        # SCAN upstream consumes twist as world velocity; ROS Odometry specifies
-        # twist in child_frame_id. Make the nonstandard SCAN input explicit here.
+        # SCAN 上游把 twist 当作世界系速度消费，而 ROS Odometry 规定 twist 位于
+        # child_frame_id 系。这里把这一非标准输入显式转换后再转发：先旋转到世界系，
+        # 再用自定义 child_frame_id 标明语义。
         scan = copy.deepcopy(msg)
         v = msg.twist.twist.linear
         world_velocity = rotation @ np.array([v.x, v.y, v.z])
@@ -460,6 +525,7 @@ class Navigation(Node):
         self.scan_odom_pub.publish(scan)
 
     def on_cloud(self, msg):
+        """处理一帧配准点云：解码、按最近 SLAM 位姿做自体点过滤后转发。"""
         if msg.header.frame_id != "camera_init":
             self.message = "拒绝非 camera_init 的点云"
             self.note_cloud_decision("rejected_frame_id")
@@ -482,6 +548,8 @@ class Navigation(Node):
         pose_stamp, body_pose, body_rotation = min(
             self.pose_history, key=lambda sample: abs(sample[0] - stamp)
         )
+        # 150_000_000 ns = 150 ms 硬编码窗口：找不到与点云时间相邻的 SLAM 姿态时，
+        # 不做自体过滤、不发布点云，保持停车。
         if abs(pose_stamp - stamp) > 150_000_000:
             self.message = "点云无邻近时刻SLAM机身姿态，自体过滤暂停并停车"
             self.note_cloud_decision(
@@ -506,9 +574,8 @@ class Navigation(Node):
                 else time.monotonic()
             )
         self.cloud = cloud
-        # Own immutable per-message buffer; later callbacks only replace it.
-        # Retaining this exact buffer avoids recording a later scan for a cached
-        # guard result. No cropping/voxelization changes native event evidence.
+        # 每条消息独占不可变缓冲，后续回调只会整体替换它。保留这份精确缓冲可以
+        # 避免把更晚的扫描记到一个缓存的 guard 结果上；裁剪/体素化不会进原生事件证据。
         try:
             self.cloud.setflags(write=False)
             self.cloud_input_context = dict(
@@ -535,9 +602,16 @@ class Navigation(Node):
         )
 
     def on_request(self, msg):
+        """接受一个新任务请求并进入 running；重复或冲突请求只更新拒绝原因。
+
+        请求 JSON 由 ``mission.goal_regions.parse_request`` 解析。legacy 目标沿用
+        ROS 参数 ``arrival_radius``，新 schema 目标使用自带的到达定义。同一个
+        ``request_id`` 的重发是幂等的，但目标定义哈希变化会被拒绝；``running`` 期间
+        的新 ``request_id`` 一律拒绝，需要先 stop 或等任务结束。
+        """
         try:
             request_id, goals = parse_goal_request(json.loads(msg.data))
-            # Existing custom legacy arrival_radius still governs old requests.
+            # 既有自定义 legacy 任务仍由 arrival_radius 参数决定到点半径。
             goals = tuple(replace(g, radius=self.arrival_radius) if g.legacy else g for g in goals)
             goal_hash = definitions_sha256(goals)
         except (ValueError, TypeError) as exc:
@@ -547,19 +621,23 @@ class Navigation(Node):
         if request_id == self.request_id:
             if goal_hash != self.goals_definition_sha256:
                 self.last_rejected = f"{request_id}: 同一任务 ID 的目标定义哈希不同，拒绝变更"
-            self.publish_status()  # Idempotent retransmission.
+            self.publish_status()  # 幂等重发：状态照常发布，便于上游对账。
             return
         if self.state == "running":
             self.last_rejected = f"{request_id}: 已有任务正在运行"
             self.publish_status()
             return
+        # 新请求从零开始：下面的赋值清空上一任务的轨迹、关联、障碍/倾角保持与计数。
         self.request_id, self.goals = request_id, goals
         self.waypoints = np.array([g.center for g in goals], dtype=float)
         self.goals_definition_sha256 = goal_hash
         self.region_arrivals = []
         self.region_arrival_evidence = None
+        # legacy 请求用 0.4 s 计时到点（见 control()），新 schema 用 ArrivalWindow
+        # 的实测停顿窗。
         self.region_arrival = None if goals[0].legacy else ArrivalWindow(goals[0])
         self.waypoint_index = 0
+        # 进入 running 后，control() 才会在输入新鲜时请求 SCAN 规划。
         self.state = "running"
         self.message = "等待新鲜 SLAM 和点云，再请求 SCAN 规划"
         self.samples = None
@@ -597,6 +675,11 @@ class Navigation(Node):
         self.publish_status()
 
     def on_stop(self, msg):
+        """stop=True 时立即进入 stopped 并发布零速；stop=False 不改变状态。
+
+        stopped 只能由新的 request 退出（on_request 允许非 running 状态重新接受
+        任务），本回调不会自动恢复。
+        """
         if msg.data:
             self.reset_region_arrival("stopped")
             self.state, self.message = "stopped", "任务已停止"
@@ -607,6 +690,8 @@ class Navigation(Node):
             self.publish_status()
 
     def reset_region_arrival(self, reason):
+        """清空到点停顿窗并记录原因；只作用于新 schema 的 ArrivalWindow。"""
+        # evidence 中的 start_stamp_ns / dwell_ns 同步归零，避免把旧停顿算到新事件上。
         if self.region_arrival is not None:
             self.region_arrival.reset(reason)
             if self.region_arrival_evidence is not None:
@@ -615,12 +700,18 @@ class Navigation(Node):
                 self.region_arrival_evidence["dwell_ns"] = 0
 
     def measured_region_arrival(self):
-        """New schema only. Position and integer stamp are one accepted odom."""
+        """仅新 schema 使用：位置与整数时间戳来自同一条被接受的 odom。
+
+        返回 ``(control_inside, arrived)``：前者表示实测位置在控制到达带内（决定
+        能否推进相位），后者表示 ArrivalWindow 已确认停顿。障碍保持、倾角保持或
+        执行桥非 ready 时按 protected 传入，窗口会清零而不会累计到点时间。
+        """
         g = self.goals[self.waypoint_index]
         pose = self.region_raw_pose
         if pose is None:
             self.reset_region_arrival("no_measured_pose")
             return False, False
+        # protected 有三个来源：障碍保持、倾角保持、执行桥未处于 ready。
         protected = (
             self.obstacle_hold or self.tilt_hold or self.bridge_safety.get("state") != "ready"
         )
@@ -628,6 +719,7 @@ class Navigation(Node):
         control_inside = goal_contains_control(g, pose)
         arrived = self.region_arrival.observe(pose, self.pose_stamp, protected=bool(protected))
         since = self.region_arrival.since
+        # 逐帧到点证据：写入状态话题，并在确认到达时进入 region_arrivals 归档。
         self.region_arrival_evidence = dict(
             request_id=self.request_id,
             goal_id=g.goal_id,
@@ -651,11 +743,17 @@ class Navigation(Node):
         return control_inside and not protected, arrived
 
     def on_spline(self, msg):
+        """接收 SCAN B 样条；仅 running 且能关联到本次请求时才接受。
+
+        与 metadata/route_definition 的配对由 ``trajectory_association`` 完成；
+        关联失败、字段缺失或样条非法只记录拒绝原因，不改变已在执行的轨迹。
+        """
         _r85_intake_context = _r85_intake_begin(self, "bspline", msg)
         _r74_protocol_context = _r74_protocol_observation.begin(
             self, "bspline", msg, _r85_intake_context
         )
         self.counts["bspline"] += 1
+        # 非 running 时收到的轨迹一律忽略，可能是上一任务或其它运行的残留。
         if self.state != "running":
             _r85_intake_ignored(_r85_intake_context, "state_not_running")
             return
@@ -675,6 +773,7 @@ class Navigation(Node):
         _r85_intake_done(_r85_intake_context)
 
     def on_trajectory_metadata(self, msg):
+        """接收轨迹元数据；与 B 样条组成一对后才交给 accept_spline。"""
         _r85_intake_context = _r85_intake_begin(self, "trajectory_metadata", msg)
         _r74_protocol_context = _r74_protocol_observation.begin(
             self, "trajectory_metadata", msg, _r85_intake_context
@@ -688,6 +787,7 @@ class Navigation(Node):
                 _r74_protocol_context, _r85_intake_parsed(_r85_intake_context, json.loads(msg.data))
             )
             if hasattr(self.trajectory_association, "add_definition"):
+                # 有 R88 delivery 回执时用其接收墙钟，否则退回当前 monotonic 时间。
                 delivery = getattr(getattr(self, "_r88_admission", None), "delivery", None)
                 received_wall_ns = (
                     delivery["received_wall_ns"]
@@ -712,7 +812,7 @@ class Navigation(Node):
         _r85_intake_done(_r85_intake_context)
 
     def on_route_definition(self, msg):
-        """Low-frequency definition boundary; PID wrapper owns R88 dispatch."""
+        """低频的路线定义边界；R88 的派发由 PID 包装层负责。"""
         if self.state != "running" or not hasattr(self, "automatic_reference"):
             return
         association = self.trajectory_association
@@ -733,7 +833,7 @@ class Navigation(Node):
             association.reject("invalid route definition: " + str(exc))
 
     def pump_route_definition_pending(self):
-        """One existing pending pair; original PID/R88 owner gates the call."""
+        """尝试消费一个已存在的 pending 配对；调用时机由原 PID/R88 持有者决定。"""
         if self.state != "running" or not hasattr(self.trajectory_association, "match_pending"):
             return False
         matched = self.trajectory_association.match_pending()
@@ -744,6 +844,7 @@ class Navigation(Node):
 
     @_callback_cost_observe("reference_attempt")
     def on_reference_attempt(self, msg):
+        """接收 R85 参考请求尝试记录；与样条配对成功后同样走 accept_spline。"""
         _r85_intake_context = _r85_intake_begin(self, "reference_attempt", msg)
         _r74_protocol_context = _r74_protocol_observation.begin(
             self, "reference_attempt", msg, _r85_intake_context
@@ -771,6 +872,10 @@ class Navigation(Node):
         _r85_intake_done(_r85_intake_context)
 
     def make_local_replan_message(self, epoch, revision, sequence, stamp):
+        """构造本地重规划请求：layout 固定 5 个 uint64（epoch/revision/sequence + stamp 两段）。
+
+        ``stamp`` 是 R85 参考请求的二元时间戳（秒/纳秒），由自动参考运行时传入。
+        """
         msg = UInt64MultiArray()
         msg.layout.dim = [MultiArrayDimension(label=self.run.name, size=5, stride=5)]
         msg.layout.data_offset = 0
@@ -778,6 +883,14 @@ class Navigation(Node):
         return msg
 
     def accept_spline(self, msg, metadata):
+        """校验一条已关联的 SCAN 三次 B 样条，通过后替换当前执行轨迹。
+
+        校验项：order 必须为 3、节点数必须等于控制点数 + order + 1、系数与节点
+        有限且参数区间非空；按约 0.08 的参数间隔采样，最少 2 点、最多 2000 点。
+        起点距当前实测位姿超过 1.2 m（硬编码）的轨迹会被丢弃，或按诊断开关记录；
+        没有几何前进量的样条按“原地停车样条”拒绝并等待重规划。校验失败只更新
+        消息与拒绝原因，不会清掉已在执行的轨迹（无前进量分支除外）。
+        """
         try:
             coefficients = np.array([[p.x, p.y, p.z] for p in msg.pos_pts])
             knots = np.array(msg.knots)
@@ -787,11 +900,12 @@ class Navigation(Node):
             if not np.isfinite(coefficients).all() or not np.isfinite(knots).all() or end <= begin:
                 raise ValueError("nonfinite or empty trajectory")
             curve = BSpline(knots, coefficients, msg.order)
+            # 以约 0.08（参数单位）的间隔采样，限幅到 2..2000 点。
             samples = curve(
                 np.linspace(begin, end, min(2000, max(2, int((end - begin) / 0.08) + 1)))
             )
-            # Provenance was checked above; additionally reject a start far
-            # from actual measured pose. This does not replace collision checks.
+            # 上面已校验来源；这里额外拒绝起点远离实测位姿的轨迹。1.2 m 为本文件
+            # 硬编码门限，它不替代碰撞检查。
             if self.pose is not None and np.linalg.norm(samples[0] - self.pose) > 1.2:
                 config = getattr(self, "profile", {}).get("diagnostic_observe_only", {})
                 if (
@@ -826,8 +940,10 @@ class Navigation(Node):
                     ):
                         raise RuntimeError("lower_execution_start_observation_not_recorded")
                 else:
+                    # 非诊断模式：直接丢弃这条旧轨迹，保持现有轨迹与状态不变。
                     self.message = "忽略起点远离当前 SLAM 位姿的旧轨迹"
                     return
+            # 样条存在但没有几何前进量：按原地停车处理，清空轨迹并等待新规划。
             if not trajectory_has_progress(
                 samples, self.pose, self.waypoints[self.waypoint_index], self.arrival_radius
             ):
@@ -841,6 +957,7 @@ class Navigation(Node):
                 self.publish_command()
                 self.path_pub.publish(self.make_path([]))
                 return
+            # 接受后立即发布路径话题；replans 计数同时用作归档序号与轨迹序号。
             self.samples = samples
             self.execution_path_exhaustion = None
             self.active_trajectory_id = int(msg.traj_id)
@@ -853,15 +970,15 @@ class Navigation(Node):
             self.message = f"拒绝无效 SCAN 轨迹: {exc}"
 
     def mark_execution_path_exhausted(self, reason, now, ros_now):
-        """Internal evidence from the two real exhausted-clear branches only.
+        """只在两条真实“路径耗尽且已清空”的分支上生成内部证据。
 
-        No timer/command zero by itself labels a path exhausted. Samples and
-        immutable execution identity are pinned before the inherited clear.
-        This receipt has no motion authority and never refreshes source times.
+        定时器触发或命令归零本身不会把路径标记为耗尽；写入前先钉住 samples 与
+        不可变的执行身份。该回执没有运动授权，也从不刷新任何源时间戳。
         """
         self.execution_path_exhaustion = None
         values = np.asarray(self.samples)
         reference = self.active_reference_stamp
+        # 只接受两个白名单原因，且要求 samples/轨迹身份仍然完整，否则不生成证据。
         if (
             reason not in ("steering_exhausted", "low_command_exhausted_path")
             or values.ndim != 2
@@ -895,6 +1012,7 @@ class Navigation(Node):
         )
 
     def make_path(self, points, height_offset=0.0):
+        """构造 frame_id=camera_init 的 Path；朝向四元数固定 w=1，z 统一减去 height_offset。"""
         msg = Path()
         msg.header.frame_id = "camera_init"
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -908,14 +1026,21 @@ class Navigation(Node):
         return msg
 
     def planner_reference_points(self, goal):
-        # Subclasses may provide planning-only guides. Execution still requires
-        # an associated checked SCAN curve ending at this original goal.
+        # 子类可以提供“仅供规划”的引导点；执行阶段仍要求一条已关联、已检查、
+        # 且终点为原目标的 SCAN 曲线。
         return [goal]
 
     def planner_goal(self):
         return self.waypoints[self.waypoint_index]
 
     def request_plan(self):
+        """向 SCAN 请求一次参考轨迹；每个任务/航段可被多次调用。
+
+        先检查 SCAN 订阅者是否就绪，再把（规划用）目标点作为参考路径发布。
+        header stamp 是请求身份，必须严格单调（即使 ROS 时间暂停或同一 tick 内
+        多次请求）。R85 自动参考路径优先走 ``automatic_reference``，其异常按 hold
+        记录、零速停车并保留原状。
+        """
         if getattr(self, "automatic_reference", None) is not None:
             try:
                 return self.automatic_reference.request_plan(self)
@@ -936,12 +1061,12 @@ class Navigation(Node):
             self.message = "等待 SCAN 规划器订阅就绪"
             return
         goal = self.planner_goal()
-        # SCAN REFERENCE_PATH adds grid_map.body_height to every input z. Public
-        # mission waypoints are already body centers, so cancel that internal
-        # convention at this boundary (without altering requested coordinates).
+        # SCAN REFERENCE_PATH 会给每个输入 z 加上 grid_map.body_height。公共任务
+        # 航点本身就是机体质心，因此在这个边界抵消该内部约定（不改变请求坐标）。
+        # 0.4 为本文件硬编码常量，代码与现有文档未注明其单位与来源。
         reference = self.make_path(self.planner_reference_points(goal), height_offset=0.4)
-        # Stamp is an immutable request identity echoed by the planner. Ensure
-        # uniqueness even when ROS time pauses or multiple requests share a tick.
+        # stamp 是规划器回传的不可变请求身份；即使 ROS 时间暂停或同一 tick 内
+        # 多次请求，也要保证严格递增。
         stamp = max(self.last_reference_stamp + 1, self.stamp(reference))
         self.last_reference_stamp = stamp
         reference.header.stamp.sec, reference.header.stamp.nanosec = divmod(stamp, 1_000_000_000)
@@ -949,11 +1074,19 @@ class Navigation(Node):
             [reference.header.stamp.sec, reference.header.stamp.nanosec], goal
         )
         self.reference_pub.publish(reference)
+        # last_reference 是单调墙钟；control() 用它判断 3 s 的重发节奏。
         self.last_reference = time.monotonic()
         self.reference_requests += 1
         self.message = "已请求 SCAN 三维占据地图规划"
 
     def publish_command(self, velocity=None, yaw_rate=0.0):
+        """发布速度指令并更新冻结标志；velocity=None 表示显式发布零速。
+
+        ``velocity`` 为 m/s（世界系 x/y），``yaw_rate`` 为 rad/s。非零目标先经
+        control_core.limit_acceleration 按距上次发布的时间差限幅（其默认增量
+        系数为线 0.15、偏航 0.25，dt 上限 0.10 s）。frozen=True 当且仅当任务不在
+        running、处于障碍保持、或平面速度 < 0.015 m/s（硬编码门限）。
+        """
         msg = Twist()
         now = self.get_clock().now().nanoseconds / 1e9
         if velocity is not None:
@@ -972,16 +1105,17 @@ class Navigation(Node):
         self.freeze_pub.publish(Bool(data=bool(frozen)))
 
     def tick(self):
+        """20 Hz 控制入口：跑一次 control()；异常则失败停车，并按节流发布状态。"""
         now = time.monotonic()
         try:
             self.control(now)
         except Exception as exc:
+            # 控制器异常必须停车并进入 failed，不能沿用上一周期的命令继续走。
             self.state, self.message = "failed", f"控制器异常，已停车: {exc}"
             self.publish_command()
             self.get_logger().error(self.message)
-        # Fixed-window parking needs actual status coverage within 300 ms.
-        # Keep source stamps intact; only reduce the publisher's throttle while
-        # the existing controller is in its ordinary zero-command hold.
+        # 固定窗口停车要求 300 ms 内覆盖实际状态。这里只调整发布节流，不改任何源
+        # 时间戳：普通零命令保持（ordinary_zero_hold）时 0.1 s 发一次，否则 0.25 s。
         parking = getattr(self, "cascade_last_row", None) or {}
         status_period = 0.1 if parking.get("mode") == "ordinary_zero_hold" else 0.25
         if now - self.last_status >= status_period:
@@ -989,6 +1123,7 @@ class Navigation(Node):
             self.last_status = now
 
     def _diagnostic_business_observed(self, gate, reason, evidence):
+        """诊断观测开关开启时记录业务门被绕过的事实；否则返回 False。"""
         profile = getattr(self, "profile", {})
         config = profile.get("diagnostic_observe_only", {})
         if not (
@@ -997,6 +1132,7 @@ class Navigation(Node):
             and config["enabled"]
             and getattr(self, "run", None) is not None
         ):
+            # 未开启诊断或 run 未绑定：直接返回 False，不做任何记录。
             return False
         from embodied_navigation.common.observation import api as _observer_api
 
@@ -1005,6 +1141,10 @@ class Navigation(Node):
         return True
 
     def interrupt_active_handoff(self, reason, clock_ns=None):
+        """若有进行中的主动转向交接，则把它判为失败并进入 failed。
+
+        返回 True 表示确实打断了一个活动交接，调用方应只发零速并结束本周期。
+        """
         gate = getattr(self, "heading_gate", None)
         if not getattr(gate, "handoff_active", False):
             return False
@@ -1015,8 +1155,14 @@ class Navigation(Node):
         return True
 
     def raw_handoff_deadline(self):
-        # Read the original absolute deadline directly. Diagnostic observation
-        # may bypass its legacy business gate, never this active-event budget.
+        """返回当前航段的绝对截止时间（ROS 秒）与绑定信息；无截止时返回 None。
+
+        优先取 continuous_route 账本下一段的激活时间 + timeout；否则用本段起点
+        ROS 时间 + 目标 timeout。legacy 目标使用硬编码兜底公式
+        max(90 s, 距离/0.06 + 30 s)，新 schema 目标使用自己的 timeout_sim_s。
+        """
+        # 直接读取原始绝对截止时间。诊断观测可以绕过业务门，但绕不过这个活动
+        # 事件预算。
         ledger = getattr(self, "continuous_route", None)
         binding = dict(request_id=self.request_id, waypoint_index=self.waypoint_index)
         if ledger is not None:
@@ -1034,6 +1180,8 @@ class Navigation(Node):
         if self.segment_start is None:
             return None, binding
         goal = self.goals[self.waypoint_index]
+        # 0.06 m/s、30 s、90 s 是 legacy 路径的硬编码兜底参数；代码与现有文档未
+        # 说明其标定来源。
         activation = float(self.segment_started_ros)
         timeout = (
             max(
@@ -1053,6 +1201,7 @@ class Navigation(Node):
         return activation + timeout, binding
 
     def segment_deadline_exceeded(self, clock_ns):
+        """判断当前航段是否已超过仿真时间截止；诊断开关可把它降级为仅观测。"""
         ledger = getattr(self, "continuous_route", None)
         exceeded = (
             ledger.deadline_exceeded(clock_ns)
@@ -1060,6 +1209,7 @@ class Navigation(Node):
             else clock_ns / 1e9 - self.segment_started_ros
             > self.goals[self.waypoint_index].timeout_sim_s
         )
+        # 诊断模式下记录“本应超时”的事实并返回 False，即不真正判失败。
         if exceeded and self._diagnostic_business_observed(
             "navigation_waypoint_business_deadline",
             "original_waypoint_timeout_would_fail",
@@ -1075,14 +1225,24 @@ class Navigation(Node):
         return exceeded
 
     def control(self, now):
+        """单个控制周期的任务状态机：输入门 → 到点判定 → 转向/障碍 → 发布命令。
+
+        各停车分支彼此独立且顺序固定：非 running 零速；航段截止超时 failed；
+        倾角/执行桥保护；输入新鲜度（连续失联 8 s 升级 failed）；到点判定
+        （legacy 用 0.4 s 计时，新 schema 用 ArrivalWindow）；无轨迹时每 3 s 重发
+        规划请求；跟随轨迹后由 heading 相位与障碍 guard 决定是否允许平移。
+
+        ``now`` 为 monotonic 墙钟秒；ROS 仿真时钟在函数内自取。所有停车分支都在
+        返回前发布零速（或保持零速），并同步刷新状态与消息。
+        """
         if self.state != "running":
+            # 非 running 状态每个周期仍发布零速，避免下游沿用旧速度。
             self.publish_command()
             return
         control_clock_ns = self.get_clock().now().nanoseconds
         ros_now = control_clock_ns / 1e9
-        # A declared region deadline also bounds in-region dwell resets and
-        # protected waits after this segment has actually started. Legacy
-        # timer/arrival ordering retains its original behavior below.
+        # 已声明的区域截止时间同样约束本段真正开始后的到点停顿重置与受保护等待；
+        # legacy 目标的计时/到点顺序在下面保持原样。
         if (
             self.segment_start is not None
             and not self.goals[self.waypoint_index].legacy
@@ -1094,7 +1254,9 @@ class Navigation(Node):
             return
         protected = self.apply_tilt_guard(now, ros_now)
         if protected:
+            # 保护期不排队恢复，避免故障持续期间反复触发障碍恢复流程。
             self.obstacle_resume_pending = False
+        # apply_tilt_guard 可能已把状态改为 failed：本周期只发零速并结束。
         if self.state == "failed":
             self.reset_region_arrival("failed")
             self.publish_command()
@@ -1109,6 +1271,8 @@ class Navigation(Node):
                 or not self.raw_imu.fresh(now, ros_now)
             ),
         )
+        # 输入门：pose/cloud 超过各自超时，或原始 IMU 不新鲜 → 停车；持续 8 s
+        # 才升级为 failed（8.0 为本文件硬编码）。
         if stale:
             self.reset_region_arrival("stale")
             self.publish_command()
@@ -1117,11 +1281,13 @@ class Navigation(Node):
             if now - self.stale_since > 8.0:
                 self.state, self.message = "failed", "SLAM、点云或原始 IMU 连续失联超过 8 秒"
             return
+        # 任一输入恢复即重置失联计时。
         self.stale_since = None
         if protected:
             self.reset_region_arrival("protected")
             self.publish_command()
             return
+        # continuous_route 子类钩子：本段开始前先执行连续路线逻辑。
         if hasattr(self, "continuous_before_region") and self.continuous_before_region(
             now, control_clock_ns
         ):
@@ -1134,12 +1300,15 @@ class Navigation(Node):
             self.request_plan()
             return
         goal = self.waypoints[self.waypoint_index]
+        # 首次进入本航段时记录起点位姿与 ROS 时间，作为截止时间与超时公式的基准。
         if self.segment_start is None:
             self.segment_start = self.pose.copy()
             self.segment_started_ros = ros_now
             self.segment_started_ros_ns = control_clock_ns
             self.segment_start_pose_stamp_ns = int(self.pose_stamp)
         distance = float(np.linalg.norm(goal - self.pose))
+        # legacy 目标：在 arrival_radius（默认 0.22 m）内持续 0.4 s ROS 时间计为
+        # 到达；新 schema 由 ArrivalWindow 用实测停顿确认。
         if self.goals[self.waypoint_index].legacy:
             inside = distance < self.arrival_radius
             if inside:
@@ -1152,6 +1321,8 @@ class Navigation(Node):
                 self.publish_command()
                 return
             self.publish_command()
+            # 到达后推进到下一航点，并清空轨迹/关联/相位/保持状态；下一段必须重新
+            # 获取一条已关联的 SCAN 轨迹。
             if arrived:
                 if self.region_arrival is not None:
                     if hasattr(self, "continuous_record_hard"):
@@ -1178,16 +1349,18 @@ class Navigation(Node):
                     else None
                 )
                 if self.region_arrival is not None:
-                    # The prior goal's last odom cannot start the next dwell.
+                    # 上一目标的最后一条 odom 不能当作下一段停顿窗的起点。
                     self.region_arrival.last_stamp = int(self.pose_stamp)
                 if self.waypoint_index < len(self.goals):
                     self.region_arrival_evidence = None
+                # 最后一个航点确认到达即 succeeded，之后不再下发非零速度。
                 if self.waypoint_index == len(self.waypoints):
                     self.state, self.message = "succeeded", "所有航点均由实际 SLAM 位置确认到达"
                 else:
                     self.message = "当前航点已到达，准备下一段"
             return
         self.arrival_since = None
+        # legacy 目标没有声明 timeout，改用与 raw_handoff_deadline 相同的硬编码公式。
         max_segment_time = max(90.0, np.linalg.norm(goal - self.segment_start) / 0.06 + 30.0)
         if (
             self.goals[self.waypoint_index].legacy
@@ -1209,6 +1382,7 @@ class Navigation(Node):
             self.state, self.message = "failed", "当前航点超过仿真时间限制，停车"
             self.publish_command()
             return
+        # 无轨迹：保持零速；若刚拒绝过样条则把原因透出，并每 3 s 重发一次规划请求。
         if self.samples is None:
             if self.interrupt_active_handoff(
                 "active_handoff_execution_path_missing", control_clock_ns
@@ -1221,6 +1395,8 @@ class Navigation(Node):
             if now - self.last_reference > 3.0:
                 self.request_plan()
             return
+        # 跟随已检查轨迹只产生参考速度/角速度；是否允许平移由下面的 heading gate
+        # 与障碍 guard 决定。
         velocity, yaw_rate, target, self.steering = self.follow_checked_trajectory(
             self.pose,
             self.rotation,
@@ -1236,11 +1412,9 @@ class Navigation(Node):
             stamp=ros_now, odom_stamp=self.pose_stamp / 1e9, trajectory_id=self.active_trajectory_id
         )
         desired_yaw = self.steering["heading"]
-        # A v2 goal cannot finish during obstacle_hold. Even when the checked
-        # path ends inside its arrival region, recheck the real cloud before
-        # returning so a cleared obstacle can complete the existing 1 s gate.
-        # Held commands remain exact zero; clearance below discards this path
-        # and obtains a new checked SCAN before any movement resumes.
+        # 新 schema 目标不能停在 obstacle_hold 期间：即使已检查路径终结在到达窗内，
+        # 也要先重查真实点云再返回，这样清除的障碍可以走完原有 1 s 门。保持期间命令
+        # 仍为精确零速；清除后丢弃这条路径，重新取一条已检查的 SCAN 才恢复运动。
         if self.steering["exhausted"] and not (
             self.obstacle_hold and not self.goals[self.waypoint_index].legacy
         ):
@@ -1256,7 +1430,10 @@ class Navigation(Node):
                 self.samples = None
                 self.request_plan()
             return
+        # Teacher 恢复交接（known_scene_hold_guard）优先于普通障碍恢复。
         teacher_recovery = start_teacher_recovery(self, current_yaw, desired_yaw)
+        # 障碍清除后的恢复必须先经过一次完整实测停车；resume_after_stop 成功才
+        # 重新进入 drive 相位。无论成功与否，待恢复标记只消费一次。
         if self.obstacle_resume_pending and not teacher_recovery:
             if self.heading_gate.resume_after_stop(
                 current_yaw, desired_yaw, self.obstacle_stopped_duration
@@ -1264,10 +1441,11 @@ class Navigation(Node):
                 self.aligned_obstacle_resumes += 1
             self.obstacle_resume_pending = False
         if getattr(self, "reference_consistency_hold", False):
-            # Direction inconsistency has no authority to substitute a chord.
-            # Hold the heading state too, and obtain a new checked SCAN curve.
+            # 方向不一致时不允许用弦线替代；转向状态也一并保持，并重新获取一条
+            # 已检查的 SCAN 曲线。
             allow_translation, yaw_rate = False, 0.0
         else:
+            # 绑定本次转向交接的上下文；启用主动制动时把原始截止时间绑给 gate。
             bind_transition_context(self)
             if getattr(self.heading_gate, "active_braking_enabled", False):
                 deadline, binding = self.raw_handoff_deadline()
@@ -1293,7 +1471,8 @@ class Navigation(Node):
                         input_binding,
                     )
 
-                    input_binding(ack)  # Keeps the actual frozen Student/input binding.
+                    # 保留真实的 Student/输入绑定，供 gate 的零速 ACK 判据使用。
+                    input_binding(ack)
                     values = ack["requested_command_body"] + ack["applied_command_body"]
                     self.heading_gate.diagnostic_zero_ack_ready = bool(
                         len(values) == 6
@@ -1308,17 +1487,21 @@ class Navigation(Node):
                     )
                 except (ValueError, TypeError, KeyError, AttributeError):
                     pass
+            # 返回 (allow_translation, yaw_rate)：False 时本周期速度清零，但仍可转向。
             allow_translation, yaw_rate = self.heading_gate.update(
                 ros_now, current_yaw, desired_yaw
             )
+        # 交接失败是终态 failed：必须零速并停止后续周期。
         if getattr(self.heading_gate, "handoff_failure", None):
             self.state = "failed"
             self.message = "主动转向交接失败：" + str(self.heading_gate.handoff_failure)
             self.publish_command()
             return
+        # alignment_hold 反映当前是否禁止平移，会写入状态话题。
         self.alignment_hold = not allow_translation
         if not allow_translation:
             velocity = np.zeros(2)
+        # 子类钩子：把参考速度/角速度与“是否允许平移”合成 PID 输出（基类不实现）。
         velocity, yaw_rate = self.select_pid_velocity(velocity, yaw_rate, target, allow_translation)
         if getattr(self.heading_gate, "handoff_failure", None):
             self.state = "failed"
@@ -1326,6 +1509,8 @@ class Navigation(Node):
             self.publish_command()
             return
         actual_guard_evaluated = False
+        # guard 评估周期：障碍保持时 0.05 s（20 Hz），否则 0.10 s（10 Hz）；
+        # pid_guard_needs_evaluation 可要求本周期立即评估。
         guard_period = 0.05 if self.obstacle_hold else 0.10
         if now - self.last_obstacle_check >= guard_period or getattr(
             self, "pid_guard_needs_evaluation", False
@@ -1341,8 +1526,8 @@ class Navigation(Node):
             self.last_obstacle_check = now
             actual_guard_evaluated = True
             if self.obstacle_result[0] and not self.obstacle_hold:
-                # Freeze the input at computation time, including a cached
-                # result's scan, rather than reading self.cloud on a later tick.
+                # 在计算时刻冻结输入（包括缓存结果对应的点云），而不是等后续
+                # tick 再读 self.cloud。冻结失败只记录错误，不改变停车结论。
                 try:
                     if self.cloud_input_context is None:
                         raise ValueError("native event lacks matching cloud input context")
@@ -1384,6 +1569,7 @@ class Navigation(Node):
             self, "_actual_clear_guard_ready", False
         )
         if blocked:
+            # 首次阻断时开始计时并捕获事件证据；连续阻断只更新最小间距。
             if not self.obstacle_hold:
                 self.obstacle_stops += 1
                 self.obstacle_hold_started_ros = ros_now
@@ -1393,6 +1579,9 @@ class Navigation(Node):
             if self.min_obstacle_clearance is None or clearance < self.min_obstacle_clearance:
                 self.min_obstacle_clearance = clearance
         elif self.obstacle_hold:
+            # 清除要同时满足：持续 1.0 s ROS 时间无阻断，且本次控制周期真实评估过
+            # guard（_actual_clear_guard_ready 由 Teacher 子类在 record_native_guard
+            # 中设置）。满足后先停一次、丢弃旧路径并请求新轨迹再恢复。
             self.obstacle_clear_since = self.obstacle_clear_since or ros_now
             if ros_now - self.obstacle_clear_since >= 1.0 and clear_observations_ready:
                 arm_teacher_recovery(self)
@@ -1410,8 +1599,7 @@ class Navigation(Node):
                 self.last_reference = -math.inf
         if self.obstacle_hold:
             self.publish_command()
-            # Zero is sent before queueing. Compression, JSON conversion and
-            # file I/O never run in this safety/control callback.
+            # 先发零速再入队：压缩、JSON 转换与文件 IO 都不在这个安全/控制回调里执行。
             if self.pending_obstacle_event is not None:
                 event, metadata = self.pending_obstacle_event
                 self.pending_obstacle_event = None
@@ -1442,6 +1630,8 @@ class Navigation(Node):
             self.message = "SCAN 近端方向不一致，零速等待新的可执行参考"
             self.publish_command()
             return
+        # pre_turn（转向开始前）与 settle（转向完成后）都要求零速停稳 1 s；
+        # controlled_settle / controlled_braking 是 Teacher 的受控例外。
         if (
             self.heading_gate.phase == "pre_turn"
             or self.heading_gate.phase == "settle"
@@ -1457,8 +1647,8 @@ class Navigation(Node):
             )
             self.publish_command()  # Exact zero, as in the independently tested physical turn/drive sequence.
             return
-        # If upstream ends its trajectory before measured arrival, request a new
-        # trajectory from measured pose instead of declaring time-based success.
+        # 若上游轨迹在实测到达前结束，就从当前实测位姿重新请求轨迹，而不是按时间
+        # 判成功。这里复用 steering 的 exhausted 与低命令判定，避免把“已停住”误当到达。
         if (
             not self.alignment_hold
             and np.linalg.norm(velocity) < 0.015
@@ -1490,11 +1680,21 @@ class Navigation(Node):
             else f"实际 SLAM 反馈跟随 SCAN 路线，剩余 {distance:.2f} m"
         )
         self.publish_command(velocity, yaw_rate)
+        # 正常下发速度后才结束 Teacher 恢复交接。
         complete_teacher_recovery(self)
 
     @_callback_cost_observe("publish_status")
     def publish_status(self):
+        """把完整运行状态序列化为 JSON 发布到锁存的状态话题。
+
+        字段覆盖任务/航点、到点证据、轨迹关联、障碍与倾角保护、传感器年龄、
+        命令与计数。frame_id 固定为 camera_init；feedback_source、planner 与
+        avoidance 说明反馈来源与避障策略。周期发布由 tick() 节流控制（不是每个
+        控制周期都发），状态回调里也会补发。Teacher 子类会把发布者换成
+        RecordedPublisher，额外写 JSONL 与原子快照。
+        """
         now = time.monotonic()
+        # age() 把 monotonic 回执时间转成秒龄；从未收到过的源保持 None。
         age = lambda updated: None if not math.isfinite(updated) else round(now - updated, 3)
         status = dict(
             execution_path_exhaustion=copy.deepcopy(self.execution_path_exhaustion),
@@ -1588,10 +1788,13 @@ class Navigation(Node):
             )
         if _r85_intake_enabled(getattr(self, "profile", None)):
             status["r85_protocol_intake_trace"] = _r85_intake_summary(self)
+        # ensure_ascii=False 保留中文 message 原文；话题为 TRANSIENT_LOCAL，迟到的
+        # 订阅者也能收到最后一份完整快照。
         self.status_pub.publish(String(data=json.dumps(status, ensure_ascii=False)))
 
 
 def main():
+    """独立运行入口：初始化 rclpy、自旋，并在退出前补发零速、关闭事件归档。"""
     rclpy.init()
     node = Navigation()
     try:
@@ -1599,8 +1802,8 @@ def main():
     except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     except _ros.RCLError:
-        # SIGINT can invalidate the context between executor wait-set calls.
-        # Errors while the context is live must still fail this required node.
+        # SIGINT 可能在 executor 的 wait-set 调用之间让 context 失效；context 仍
+        # 有效时的错误必须让这个必需节点失败退出。
         if rclpy.ok():
             raise
     finally:

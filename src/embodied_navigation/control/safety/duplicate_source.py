@@ -1,7 +1,10 @@
-"""Preserve existing R85 typed zero bytes on one fresh short duplicate only.
+"""只在一次新鲜短重复上保留既有的 R85 typed 零字节。
 
-No source, event, frame authorization, receipt clock or command is manufactured.
-The bridge/executor still independently validate the unchanged source each frame.
+职责：当控制时钟出现一次短重复、且当前处于“无保护的 ordinary 零持有”状态时，
+核对源文件 `cascade_command_source.json` 的字节、时间戳与绑定身份，决定是否允许
+沿用这份既有零源而不重写它。
+边界：不制造来源、事件、frame 授权、收据时钟或命令；bridge/executor 仍会每帧
+独立校验这份未变来源。本模块只读源文件、不做 I/O 写；失败返回拒绝回执而非放行。
 """
 
 import hashlib
@@ -13,19 +16,28 @@ import time
 from embodied_navigation.control.parking.parking_zero_contract import exact_zero
 from embodied_navigation.robot.unitree.bridge import validate_controller_source
 
+# 300 ms（硬编码）：短重复上下文与来源收据的有效期，与 clock_hold 的 TTL 一致。
 TTL_NS = 300_000_000
 CONTEXT_SCHEMA = "r85_short_duplicate_ordinary_source_context/v1"
 RECEIPT_SCHEMA = "r85_short_duplicate_ordinary_source_preservation/v1"
 
 
 def canonical_sha(value):
+    """规范化 JSON 的 SHA-256（键排序、紧凑分隔符、拒绝 NaN）；用于字节身份比对。"""
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     ).hexdigest()
 
 
 def preserve_existing_source(node, context, clock_ns, *, command_before):
-    """Called after original terminal protection observation; never writes IO."""
+    """在原始 terminal 保护观察之后调用；不做 I/O 写。
+
+    参数：`node` 为控制节点；`context` 是 `clock_hold` 在短重复分支构造的上下文
+    （schema 与 `decision` 必须匹配）；`clock_ns` 是本帧控制时钟（ns）；
+    `command_before` 是发布前的命令（必须精确为零）。返回允许/拒绝回执：
+    允许时附源文件字节与时间证据；拒绝时 `allowed=False` 并带 `reason`/`error`。
+    捕获到的读取/校验异常都会转成拒绝回执（fail closed），不抛给控制路径。
+    """
     result = dict(
         schema=RECEIPT_SCHEMA,
         allowed=False,
@@ -35,6 +47,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
         frame_authorization_reused=False,
     )
     try:
+        # 第一组前置条件：必须是一次显式 R85 短重复，且发布前命令精确为零。
+        # 任一不满足都说明这不是“同一份零源”的场景，直接拒绝。
         if (
             getattr(node, "automatic_reference", None) is None
             or not isinstance(context, dict)
@@ -49,6 +63,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             or type(context.get("compute_monotonic_wall_ns")) is not int
         ):
             raise ValueError("not_explicit_R85_fresh_short_duplicate")
+        # 第二组：时钟保持状态必须仍是本帧那个短重复（holding/guard_required 都置位，
+        # last clock/wall 与上下文一致，且最后一次进度在 300 ms 内）。
         hold = node.control_clock_hold
         if (
             hold.holding is not True
@@ -59,9 +75,12 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             or not 0 <= context["compute_monotonic_wall_ns"] - hold.last_progress_wall_ns < TTL_NS
         ):
             raise ValueError("not_current_short_duplicate_clock_hold")
+        # 上下文本身不能过期或来自未来；墙钟用 monotonic_ns（ns）。
         now = time.monotonic_ns()
         if not 0 <= now - context["compute_monotonic_wall_ns"] < TTL_NS:
             raise ValueError("duplicate_context_expired_or_future")
+        # owner failure 只是诊断观察：仅在 diagnostic_observation 开启时才做额外判定，
+        # 不因此放宽正式业务失败。
         cascade = node.cascade
         ordinary = cascade.ordinary_parking
         owner = getattr(node, "terminal_parking_owner", None)
@@ -80,6 +99,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
                 ) and ordinary.diagnostic_failure_is_observed(
                     dict(run=node.run, profile=node.profile)
                 )
+        # 第三组：当前必须是无保护的 ordinary 零 owner。这里逐项核对状态、锁存、
+        # 交接阶段、请求身份与精确零命令；任一不符即拒绝（宁拒绝不误放行）。
         if (
             node.state not in ("running", "succeeded")
             or node.evidence.error
@@ -108,6 +129,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             or not node._known_generation_ready()
         ):
             raise ValueError("not_current_unprotected_ordinary_zero_owner")
+        # 第四组：SCAN epoch 必须属于当前 run 且 ready，planner epoch、planner 身份与
+        # localization generation 必须与本次自动参考 scope 完全一致。
         epoch = node.known_scene_scan_epoch
         scope = node.automatic_reference.scope
         if (
@@ -131,12 +154,15 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             or epoch.get("generation") != scope[2]
         ):
             raise ValueError("ordinary_source_current_planner_scope_not_ready")
+        # 读取既有源文件并记录发布前 stat；256 KiB 是硬编码大小预算，超限即拒绝。
         path = Path(node.run) / "cascade_command_source.json"
         before_stat = path.stat()
         raw = path.read_bytes()
         if len(raw) > 256 * 1024:
             raise ValueError("original_source_size_budget")
         source = json.loads(raw)
+        # 第五组：源字节必须是同一次 ordinary 零事件的 typed 来源，且各项身份
+        # （request/goal/path/cascade sequence）与当前节点一致。
         marker = source.get("ordinary_terminal_zero_event")
         if (
             source.get("schema")
@@ -156,10 +182,11 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             or source.get("cascade_sequence") != node.pid_records
         ):
             raise ValueError("not_same_existing_typed_ordinary_zero_source")
-        # The source has no epoch fields. Bind it through this exact already
-        # admitted physical path; a newly restarted planner cannot bless an
-        # older ordinary source merely by updating its ready tuple.
+        # 源文件本身没有 epoch 字段，需要通过“这条已准入的物理路径”来绑定；
+        # 这样新重启的 planner 不能只靠更新 ready 元组就为旧 ordinary 源背书。
         observed_physical_prediction = False
+        # 两个分支：terminal 参考身份直接比对；否则核对 automatic route fence 与
+        # 物理路径准入绑定（anchor/physical/identity/receipt 四组哈希与 scope）。
         if getattr(cascade, "terminal_reference", None) is not None:
             from embodied_navigation.control.parking.terminal_owner import validate_context
             from embodied_navigation.control.parking.terminal_reference import (
@@ -191,6 +218,7 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             certificate = physical["physical_certificate"]
             identity = active["identity"]
             runtime = node.automatic_reference
+            # 物理证书只接受 CERTIFIED_STATIC_SPACE_ONLY；否则仅记录诊断观察。
             certificate_passed = (
                 certificate.get("allowed") is True
                 and certificate.get("status") == "CERTIFIED_STATIC_SPACE_ONLY"
@@ -261,6 +289,7 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
                 active_physical_reference_file_sha256=anchor["reference_file_sha256"],
                 active_physical_planner_scope=list(scope),
             )
+        # 绑定核对可能耗时：之后必须再次确认 known generation 与短重复都未过期。
         now = time.monotonic_ns()
         if not node._known_generation_ready():
             raise ValueError("original_known_source_ready_expired_during_binding_check")
@@ -280,9 +309,10 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
                 raise ValueError("original_current_pose_or_cloud_expired")
         if not node.raw_imu.fresh(now / 1e9, clock_ns / 1e9):
             raise ValueError("original_current_raw_IMU_expired")
-        # Reuse the original bridge validator, including dual TTL, aliases,
-        # event ownership and exact guarded command binding; never bypass it.
+        # 复用原 bridge validator（双 TTL、别名、事件归属与精确 guard 命令绑定），
+        # 绝不绕过它。
         validate_controller_source(source, [0.0, 0.0, 0.0], clock_ns, now, node.run.name)
+        # 源时间字段必须是整数且非负；cascade_sequence 至少为 1（0 表示没有来源）。
         keys = (
             "source_pose_stamp_ns",
             "paired_imu_stamp_ns",
@@ -297,6 +327,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
         ):
             raise ValueError("original_source_integer_stamps_required")
         pose, gyro, control = (source[k] for k in keys[:3])
+        # 因果与龄期：pose 源龄 < 300 ms；pose 与 IMU 之间 <= 20 ms（硬编码，配对窗）；
+        # pose <= control <= 当前控制时钟。
         if not (
             0 <= clock_ns - pose < TTL_NS
             and 0 <= pose - gyro <= 20_000_000
@@ -309,17 +341,21 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             ("source_pose_received_monotonic_wall", "source_pose_received_wall_ns"),
             ("paired_imu_received_monotonic_wall", "source_imu_received_wall_ns"),
         ):
+            # 浮点秒别名必须与整数 ns 值一致，容差 1e-9 s（1 ns）。
             if (
                 not isinstance(source.get(alias), (int, float))
                 or not math.isfinite(source[alias])
                 or abs(source[alias] - source[nanos] / 1e9) > 1e-9
             ):
                 raise ValueError("original_source_wall_alias_mismatch")
+        # 事件 marker 里的 ready pose / handoff 时钟必须与当前 ordinary owner 一致，
+        # 防止把旧事件套到新交接上。
         if (
             marker["ready_pose_stamp_ns"] != ordinary.ready_stamp
             or marker["handoff_clock_ns"] != ordinary.handoff_clock
         ):
             raise ValueError("ordinary_owner_handoff_identity_changed")
+        # 诊断观察必须真的被记录；记录失败同样拒绝，避免“观察到了却没留下证据”。
         if observed_physical_prediction or observed_owner_failure:
             from embodied_navigation.common.observation import api as _observer_api
 
@@ -352,6 +388,8 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
                 is not True
             ):
                 raise ValueError("ordinary_duplicate_business_observation_not_recorded")
+        # 允许回执：完整记录发布前源文件路径/字节数/inode/mtime/sha 与原始 UTF-8 内容，
+        # 供发布后 `observe_unchanged_after_publish` 断言字节未变。
         result.update(
             allowed=True,
             reason="same_fresh_typed_zero_source_bytes_preserved",
@@ -382,6 +420,7 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
             native_guard_required_before_nonzero_resume=hold.guard_required,
         )
         return result
+    # 任何读取/校验失败都返回拒绝回执（reason 固定），不把异常抛给控制路径。
     except (
         OSError,
         ValueError,
@@ -399,7 +438,12 @@ def preserve_existing_source(node, context, clock_ns, *, command_before):
 
 
 def observe_unchanged_after_publish(node, receipt):
-    """Read-only assertion after actual zero publish; a changed file fails closed."""
+    """实际零发布之后的只读断言；源文件字节或元数据变化即 fail closed。
+
+    只在 `receipt["allowed"] is True` 时执行；重新读取源文件，把发布后的 sha/
+    inode/mtime/size 写入回执。任意一项变化都抛 `RuntimeError`，表示“保留的零源”
+    不再可信。
+    """
     if receipt.get("allowed") is not True:
         return receipt
     path = Path(node.run) / "cascade_command_source.json"
