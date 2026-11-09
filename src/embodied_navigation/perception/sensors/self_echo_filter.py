@@ -126,8 +126,9 @@ class SelfEchoFilter(Node):
         """
         super().__init__("demo_slam_self_echo_filter")
         self.lidar = json.loads(Path(scenario).read_text())["sensors"]["lidar"]
-        # FAST-LIVO2 请求 reliable 交付；若这里用 sensor-data 的 best-effort
-        # publisher，LiDAR 订阅端会因 QoS 不兼容而静默收不到数据。
+        # 本发布端采用默认 reliable/volatile、KEEP_LAST depth=10。
+        # 当前 native FAST-LIVO2 的 generic PointCloud2 订阅在 LIVMapper.cpp
+        # 中使用 best-effort SensorDataQoS depth=4，与此 reliable 发布端兼容。
         self.pub = self.create_publisher(PointCloud2, "/demo/slam/lidar_filtered", 10)
         self.identity_pub = self.create_publisher(String, "/demo/slam/raw_point_identity", 10)
         # 每个进程启动时生成一次 epoch，用于身份证明区分重启。
