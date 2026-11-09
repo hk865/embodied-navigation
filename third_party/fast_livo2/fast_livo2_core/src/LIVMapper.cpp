@@ -200,6 +200,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->declare_parameter<bool>("publish.pub_effect_point_en", false);
     this->node->declare_parameter<bool>("publish.dense_map_en", false);
     this->node->declare_parameter<bool>("publish.publish_base_tf", false);
+    this->node->declare_parameter<bool>("publish.post_vio_odometry_en", false);
     this->node->declare_parameter<std::string>("publish.base_frame", "base_footprint");
     this->node->declare_parameter<std::string>("publish.odom_frame", "camera_init");
     this->node->declare_parameter<std::string>("publish.child_frame", "aft_mapped");
@@ -274,6 +275,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->get_parameter("publish.pub_effect_point_en", pub_effect_point_en);
     this->node->get_parameter("publish.dense_map_en", dense_map_en);
     this->node->get_parameter("publish.publish_base_tf", publish_base_tf);
+    this->node->get_parameter("publish.post_vio_odometry_en", post_vio_odometry_en);
     this->node->get_parameter("publish.base_frame", base_frame);
     this->node->get_parameter("publish.odom_frame", odom_frame);
     this->node->get_parameter("publish.child_frame", raw_body_frame);
@@ -470,6 +472,12 @@ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node
         this->node->create_publisher<sensor_msgs::msg::PointCloud2>("/Laser_map", 100);
     pubOdomAftMapped =
         this->node->create_publisher<nav_msgs::msg::Odometry>("/aft_mapped_to_init", 10);
+    if (post_vio_odometry_en) {
+        pubPostVioOdometry =
+            this->node->create_publisher<nav_msgs::msg::Odometry>("/post_vio_odometry", 10);
+        pubPostVioOdometryStatus = this->node->create_publisher<std_msgs::msg::String>(
+            "/post_vio_odometry_status", 10);
+    }
     pubPath = this->node->create_publisher<nav_msgs::msg::Path>("/path", 10);
     plane_pub = this->node->create_publisher<visualization_msgs::msg::Marker>("/planner_normal", 1);
     voxel_pub = this->node->create_publisher<visualization_msgs::msg::MarkerArray>("/voxels", 1);
@@ -628,6 +636,7 @@ void LIVMapper::handleVIO() {
 
     backendVioSnapshot(vio_manager->last_frame_ekf_updated);
     diag_stage(12, 1, _state);
+    publish_post_vio_odometry(vio_manager->last_frame_ekf_updated);
     if (imu_prop_enable) {
         ekf_finish_once = true;
         latest_ekf_state = _state;
@@ -2115,6 +2124,70 @@ template <typename T> void LIVMapper::set_posestamp(T &out) {
     out.orientation.y = geoQuat.y;
     out.orientation.z = geoQuat.z;
     out.orientation.w = geoQuat.w;
+}
+
+void LIVMapper::publish_post_vio_odometry(bool visual_update_applied) {
+    if (!post_vio_odometry_en || !pubPostVioOdometry || !pubPostVioOdometryStatus ||
+        LidarMeasures.lio_vio_flg != VIO || LidarMeasures.measures.empty())
+        return;
+
+    const double source_time = LidarMeasures.measures.back().vio_time;
+    if (!std::isfinite(source_time) || source_time < 0.0 ||
+        source_time >= static_cast<double>(std::numeric_limits<int32_t>::max()) + 1.0 ||
+        !_state.pos_end.allFinite() || !_state.rot_end.allFinite() ||
+        !(_state.rot_end.transpose() * _state.rot_end).isApprox(M3D::Identity(), 1e-6) ||
+        std::abs(_state.rot_end.determinant() - 1.0) > 1e-6 || odom_frame.empty() ||
+        raw_body_frame.empty()) {
+        RCLCPP_WARN(this->node->get_logger(),
+                    "[ POST_VIO_POSE ] invalid final pose/time/frame; output withheld");
+        return;
+    }
+    const rclcpp::Time stamp = sec2Stamp(source_time);
+    const int64_t source_ns = stamp.nanoseconds();
+    if (post_vio_has_published_stamp && source_ns <= post_vio_last_published_stamp_ns) {
+        RCLCPP_WARN(this->node->get_logger(),
+                    "[ POST_VIO_POSE ] duplicate/backward image stamp=%lld previous=%lld; output withheld",
+                    static_cast<long long>(source_ns),
+                    static_cast<long long>(post_vio_last_published_stamp_ns));
+        return;
+    }
+
+    nav_msgs::msg::Odometry message;
+    message.header.stamp = stamp;
+    message.header.frame_id = odom_frame;
+    message.child_frame_id = raw_body_frame;
+    message.pose.pose.position.x = _state.pos_end.x();
+    message.pose.pose.position.y = _state.pos_end.y();
+    message.pose.pose.position.z = _state.pos_end.z();
+    const Eigen::Quaterniond quaternion(_state.rot_end);
+    message.pose.pose.orientation.w = quaternion.w();
+    message.pose.pose.orientation.x = quaternion.x();
+    message.pose.pose.orientation.y = quaternion.y();
+    message.pose.pose.orientation.z = quaternion.z();
+    // Pose-only contract: do not silently treat the 19-D right-tangent state
+    // covariance as ROS fixed-axis pose covariance. The VIO MeasureGroup also
+    // has no synchronized gyro sample. Twist's default zeros are unavailable
+    // placeholders, never measured rest. Status makes both omissions explicit;
+    // consumers must use measured pose windows and a measured IMU yaw rate.
+    for (size_t axis = 0; axis < 6; ++axis) {
+        message.pose.covariance[axis * 7] = 1e12;
+        message.twist.covariance[axis * 7] = 1e12;
+    }
+    std_msgs::msg::String status;
+    status.data = nlohmann::json{
+        {"schema", "fastlivo_post_vio_pose/v1"},
+        {"image_stamp_ns", source_ns},
+        {"pose_source", "livo_post_vio"},
+        {"state_stage", "post_vio"},
+        {"visual_update_applied", visual_update_applied},
+        {"pose_covariance_available", false},
+        {"twist_available", false},
+        {"unavailable_covariance_diagonal", 1e12},
+    }.dump();
+    post_vio_has_published_stamp = true;
+    post_vio_last_published_stamp_ns = source_ns;
+    pubPostVioOdometry->publish(message);
+    pubPostVioOdometryStatus->publish(status);
 }
 
 void LIVMapper::publish_odometry(

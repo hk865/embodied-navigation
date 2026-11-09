@@ -96,6 +96,7 @@
       point_filter_num: 1
       scan_line: 32
     publish:
+      post_vio_odometry_en: true
       base_frame: go2_imu
       blind_rgb_points: 0.0
       dense_map_en: true

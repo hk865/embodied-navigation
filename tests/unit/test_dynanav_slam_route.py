@@ -57,6 +57,44 @@ def reference(anchor=(0, 0, 1), goal=(4, 0, 1), yaw=0):
     }
 
 
+def post_vio_reference(goals=((4, 0, 1),)):
+    ref = reference()
+    ref["pose_source"] = "livo_post_vio"
+    ref["source"].update(pose_stage="post_vio", pose_only=True, twist_available=False)
+    ref["goals"] = [
+        measured_pose((index + 1) * 10_000_000_000, point)
+        for index, point in enumerate(goals)
+    ]
+    ref["source_correspondence"]["goal_stamps_ns"] = [
+        goal["stamp_ns"] for goal in ref["goals"]
+    ]
+    for pose in [ref["anchor"], *ref["goals"]]:
+        pose.update(
+            twist_available=False,
+            estimated_velocity_xyz_mps=None,
+            estimated_yaw_rate_rps=None,
+        )
+    for goal in ref["goals"]:
+        goal["stop_evidence"] = {
+            "method": "measured_pose_window",
+            "twist_used_to_confirm_stop": False,
+            "start_stamp_ns": goal["stamp_ns"] - 1_000_000_000,
+            "end_stamp_ns": goal["stamp_ns"],
+            "sample_count": 11,
+            "duration_s": 1.0,
+            "maximum_sample_gap_s": 0.1,
+            "maximum_distance_from_endpoint_m": 0.01,
+            "maximum_yaw_difference_from_endpoint_rad": 0.01,
+            "parameters": {
+                "dwell_s": 1.0,
+                "position_range_m": 0.03,
+                "yaw_range_rad": 0.03,
+                "max_sample_gap_s": 0.25,
+            },
+        }
+    return ref
+
+
 class MeasuredSlamRouteTests(unittest.TestCase):
     def tracker(self, ref=None, **kwargs):
         return SlamRouteTracker(
@@ -409,8 +447,412 @@ class MeasuredSlamRouteTests(unittest.TestCase):
             self.assertEqual(command, [0, 0, 0])
             self.assertEqual(len(route._pose_history), 0)
 
+    def test_source_binding_uses_dedicated_final_topic_and_rejects_pre_vio(self):
+        from embodied_navigation.simulation.dynanav.experiment import (
+            slam_odometry_topic,
+        )
+
+        self.assertEqual(
+            slam_odometry_topic("lio_estimate"),
+            "/dynanav/lio_observer/aft_mapped_to_init",
+        )
+        self.assertEqual(
+            slam_odometry_topic("livo_post_vio"),
+            "/dynanav/lio_observer/post_vio_odometry",
+        )
+        topic = "/dynanav/livo_navigation/post_vio_odometry"
+        self.assertEqual(slam_odometry_topic("livo_post_vio", topic), topic)
+        for requested in (
+            "/dynanav/lio_observer/aft_mapped_to_init",
+            "",
+            "relative",
+            "/bad topic",
+        ):
+            with self.subTest(requested=requested), self.assertRaises(ValueError):
+                slam_odometry_topic("livo_post_vio", requested)
+
+    def test_shared_profile_factory_binds_pose_only_and_explicit_capture_parameters(
+        self,
+    ):
+        from embodied_navigation.simulation.dynanav.experiment import (
+            make_slam_controller,
+        )
+
+        profile = {
+            "slam_route_reference": post_vio_reference(),
+            "speed_mps": 0.15,
+            "motion_end_s": 295.0,
+            "repeat_spawn_assumption": True,
+            "map_registration_enabled": False,
+            "slam_future_tolerance_s": 2e-6,
+            "slam_speed_source": "pose_window",
+            "slam_pose_speed_window_s": 0.5,
+            "slam_capture_remaining_m": 0.05,
+            "slam_capture_distance_m": 0.10,
+        }
+        route = make_slam_controller(profile)
+        self.assertFalse(route.twist_available)
+        self.assertEqual(route.parameters["pose_source"], "livo_post_vio")
+        self.assertEqual(route.tracker.capture_remaining_m, 0.05)
+        self.assertEqual(route.tracker.capture_distance_m, 0.10)
+
+    def test_post_vio_pose_only_never_coerces_unavailable_twist(self):
+        class PoisonTwist:
+            def __array__(self, *args, **kwargs):
+                raise AssertionError("unavailable twist must not be consumed")
+
+        for unavailable in (PoisonTwist(), (float("nan"),) * 3, None):
+            with self.subTest(unavailable=unavailable):
+                route = self.tracker(post_vio_reference(), speed_source="pose_window")
+                command, receipt = self.tick(route, estimated_velocity=unavailable)
+                self.assertGreater(command[0], 0)
+                self.assertEqual(receipt["pose_source"], "livo_post_vio")
+                self.assertFalse(receipt["twist_available"])
+                self.assertIsNone(receipt["reported_twist_speed_mps"])
+                for t in (7.2, 7.4, 7.6, 7.8, 8.0, 8.2, 8.4):
+                    command, receipt = self.tick(
+                        route, t=t, p=(3.85, 0, 1), estimated_velocity=unavailable
+                    )
+                self.assertTrue(route.arrived)
+                self.assertEqual(command, [0, 0, 0])
+
+    def test_missing_sdk_gyro_holds_and_clears_continuous_stop_evidence(self):
+        route = self.tracker(post_vio_reference(), speed_source="pose_window")
+        self.tick(route, estimated_velocity=None)
+        route.tracker.since = 7.0
+        command, receipt = self.tick(
+            route, t=7.2, measured_yaw_rate=None, estimated_velocity=None
+        )
+        self.assertEqual(command, [0, 0, 0])
+        self.assertEqual(receipt["reason"], "invalid_measured_odometry")
+        self.assertIsNone(route.tracker.since)
+        self.assertFalse(route.arrived)
+
+    def test_post_vio_three_goals_two_turns_and_final_stop_from_distinct_poses(self):
+        route = self.tracker(
+            post_vio_reference(((2, 0, 1), (2, 2, 1), (4, 2, 2))),
+            speed_source="pose_window",
+            capture_remaining_m=0.05,
+            capture_distance_m=0.10,
+        )
+        self.tick(route, estimated_velocity=None)
+        t = 7.0
+        for point, heading, next_heading in (
+            ((1.96, 0, 1), 0, math.pi / 2),
+            ((2, 1.96, 1), math.pi / 2, 0),
+            ((3.96, 2, 2), 0, None),
+        ):
+            for _ in range(8):
+                t += 0.2
+                self.tick(route, t=t, p=point, yaw=heading, estimated_velocity=None)
+            if next_heading is not None:
+                self.assertEqual(route.phase, "turn")
+                for _ in range(5):
+                    t += 0.2
+                    self.tick(
+                        route, t=t, p=point, yaw=next_heading, estimated_velocity=None
+                    )
+                self.assertEqual(route.phase, "cruise")
+        self.assertTrue(route.arrived)
+        self.assertEqual(route.stage, 2)
+        self.assertEqual(
+            sum(event["event"] == "turn_completed" for event in route.events), 2
+        )
+
+    def test_capture_bounds_are_explicit_per_tracker_and_old_defaults_survive(self):
+        default = self.tracker()
+        tight = self.tracker(capture_remaining_m=0.05, capture_distance_m=0.10)
+        for route in (default, tight):
+            self.tick(route)
+            self.tick(route, t=7.2, p=(3.85, 0, 1))
+        self.assertEqual(default.phase, "brake")
+        self.assertEqual(tight.phase, "cruise")
+        self.assertEqual(default.parameters["capture_remaining_m"], 0.20)
+        self.assertEqual(tight.parameters["capture_remaining_m"], 0.05)
+        for values in (
+            (0, 0.1),
+            (0.2, 0.1),
+            (0.2, 0.5),
+            (True, 0.3),
+            (float("nan"), 0.3),
+        ):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.tracker(
+                    capture_remaining_m=values[0], capture_distance_m=values[1]
+                )
+
+    def test_final_capture_changes_only_last_goal_and_retains_pose_stop_floor_and_dwell(
+        self,
+    ):
+        route = self.tracker(
+            post_vio_reference(((2, 0, 1), (4, 0, 1))),
+            speed_source="pose_window",
+            capture_remaining_m=0.05,
+            capture_distance_m=0.10,
+            final_capture_remaining_m=0.15,
+            final_capture_distance_m=0.20,
+        )
+        self.tick(route, estimated_velocity=None)
+        command, _ = self.tick(route, t=7.2, p=(1.85, 0, 1), estimated_velocity=None)
+        self.assertEqual(route.stage, 0)
+        self.assertEqual(route.phase, "cruise")
+        self.assertGreater(command[0], 0)
+        self.assertFalse(route.arrived)
+
+        # Reach the intermediate point using distinct measured pose samples.
+        # Its stop and turn dwell must complete before the final stage begins.
+        t = 7.2
+        for _ in range(14):
+            t += 0.2
+            self.tick(route, t=t, p=(1.96, 0, 1), estimated_velocity=None)
+            if route.stage == 1:
+                break
+        self.assertEqual(route.stage, 1)
+        self.assertEqual(route.phase, "cruise")
+        t += 0.2
+        command, receipt = self.tick(
+            route, t=t, p=(3.902, 0, 1), estimated_velocity=None
+        )
+        self.assertEqual(route.phase, "brake")
+        self.assertAlmostEqual(route.events[-1]["distance"], 0.098)
+        self.assertGreater(receipt["pose_window_speed_mps"], 0.04)
+        self.assertIsNone(route.tracker.since)
+        self.assertFalse(route.arrived)
+
+        # A stationary pose on another floor cannot contribute stop dwell.
+        for _ in range(4):
+            t += 0.2
+            _, receipt = self.tick(route, t=t, p=(3.902, 0, 2), estimated_velocity=None)
+            self.assertFalse(route.arrived)
+            self.assertIsNone(route.tracker.since)
+        self.assertTrue(receipt["speed_history_ready"])
+        self.assertAlmostEqual(receipt["pose_window_speed_mps"], 0)
+
+        # Returning to the correct floor first needs a fresh measured speed
+        # window, then another half-second of continuous low-speed evidence.
+        for _ in range(4):
+            t += 0.2
+            _, receipt = self.tick(route, t=t, p=(3.902, 0, 1), estimated_velocity=None)
+            self.assertFalse(route.arrived)
+        self.assertTrue(receipt["speed_history_ready"])
+        self.assertAlmostEqual(receipt["pose_window_speed_mps"], 0)
+        self.assertIsNotNone(route.tracker.since)
+        self.assertLess(t - route.tracker.since, 0.5)
+        for _ in range(3):
+            t += 0.2
+            command, receipt = self.tick(
+                route, t=t, p=(3.902, 0, 1), estimated_velocity=None
+            )
+        self.assertTrue(route.arrived)
+        self.assertEqual(command, [0, 0, 0])
+        self.assertFalse(receipt["twist_available"])
+        self.assertIsNone(receipt["reported_twist_speed_mps"])
+        self.assertTrue(route.tracker.stop_on_stall)
+        self.assertIsNone(route.failure)
+
+    def test_single_goal_uses_final_capture_bounds(self):
+        final = self.tracker(
+            post_vio_reference(),
+            speed_source="pose_window",
+            capture_remaining_m=0.05,
+            capture_distance_m=0.10,
+            final_capture_remaining_m=0.15,
+            final_capture_distance_m=0.20,
+        )
+        tight = self.tracker(
+            post_vio_reference(),
+            speed_source="pose_window",
+            capture_remaining_m=0.05,
+            capture_distance_m=0.10,
+        )
+        for route in (final, tight):
+            self.tick(route, estimated_velocity=None)
+            self.tick(route, t=7.2, p=(3.902, 0, 1), estimated_velocity=None)
+        self.assertEqual(final.stage, 0)
+        self.assertEqual(final.phase, "brake")
+        self.assertEqual(tight.phase, "cruise")
+        self.assertFalse(final.arrived)
+        self.assertEqual(final.tracker.final_capture_remaining_m, 0.15)
+        self.assertEqual(final.tracker.final_capture_distance_m, 0.20)
+
+    def test_none_final_capture_preserves_existing_defaults_and_explicit_base_bounds(
+        self,
+    ):
+        for remaining, distance in ((0.20, 0.30), (0.05, 0.10)):
+            with self.subTest(remaining=remaining, distance=distance):
+                options = {
+                    "speed_source": "pose_window",
+                    "capture_remaining_m": remaining,
+                    "capture_distance_m": distance,
+                }
+                previous = self.tracker(post_vio_reference(), **options)
+                explicit_none = self.tracker(
+                    post_vio_reference(),
+                    **options,
+                    final_capture_remaining_m=None,
+                    final_capture_distance_m=None,
+                )
+                self.assertIsNone(explicit_none.tracker.final_capture_remaining_m)
+                self.assertIsNone(explicit_none.tracker.final_capture_distance_m)
+                self.assertIsNone(explicit_none.parameters["final_capture_remaining_m"])
+                self.assertIsNone(explicit_none.parameters["final_capture_distance_m"])
+                self.assertEqual(
+                    explicit_none.parameters["effective_final_capture_remaining_m"],
+                    remaining,
+                )
+                self.assertEqual(
+                    explicit_none.parameters["effective_final_capture_distance_m"],
+                    distance,
+                )
+                for t, x in (
+                    (7.0, 0),
+                    (7.2, 3.85),
+                    (7.4, 3.96),
+                    (7.6, 3.96),
+                    (7.8, 3.96),
+                ):
+                    actual, _ = self.tick(
+                        explicit_none, t=t, p=(x, 0, 1), estimated_velocity=None
+                    )
+                    expected, _ = self.tick(
+                        previous, t=t, p=(x, 0, 1), estimated_velocity=None
+                    )
+                    self.assertEqual(actual, expected)
+                    self.assertEqual(explicit_none.phase, previous.phase)
+                    self.assertEqual(explicit_none.arrived, previous.arrived)
+
+    def test_final_capture_validates_effective_bounds_and_independent_inheritance(self):
+        for remaining, distance, effective_remaining, effective_distance in (
+            (None, None, 0.05, 0.10),
+            (0.08, None, 0.08, 0.10),
+            (None, 0.20, 0.05, 0.20),
+            (0.15, 0.20, 0.15, 0.20),
+            (0.40, 0.40, 0.40, 0.40),
+        ):
+            with self.subTest(remaining=remaining, distance=distance):
+                route = self.tracker(
+                    capture_remaining_m=0.05,
+                    capture_distance_m=0.10,
+                    final_capture_remaining_m=remaining,
+                    final_capture_distance_m=distance,
+                )
+                self.assertEqual(route.tracker.final_capture_remaining_m, remaining)
+                self.assertEqual(route.tracker.final_capture_distance_m, distance)
+                self.assertEqual(
+                    route.parameters["effective_final_capture_remaining_m"],
+                    effective_remaining,
+                )
+                self.assertEqual(
+                    route.parameters["effective_final_capture_distance_m"],
+                    effective_distance,
+                )
+
+        for remaining, distance in (
+            (0, 0.20),
+            (-0.01, 0.20),
+            (0.21, 0.20),
+            (0.10, 0.401),
+            (0.15, None),
+            (None, 0.04),
+            (True, 0.20),
+            (0.10, False),
+            (float("nan"), 0.20),
+            (0.10, float("inf")),
+            ("0.10", 0.20),
+            (0.10, []),
+        ):
+            options = {
+                "capture_remaining_m": 0.05,
+                "capture_distance_m": 0.10,
+                "final_capture_remaining_m": remaining,
+                "final_capture_distance_m": distance,
+            }
+            with self.subTest(remaining=remaining, distance=distance):
+                with self.assertRaises(ValueError):
+                    self.tracker(**options)
+                with self.assertRaises(ValueError):
+                    RouteTracker([[4, 0, 1]], [0, 0], **options)
+
+    def test_profile_factory_forwards_explicit_and_inherited_final_capture_options(
+        self,
+    ):
+        from embodied_navigation.simulation.dynanav.experiment import (
+            make_slam_controller,
+        )
+
+        profile = {
+            "slam_route_reference": post_vio_reference(),
+            "speed_mps": 0.15,
+            "motion_end_s": 295.0,
+            "repeat_spawn_assumption": True,
+            "map_registration_enabled": False,
+            "slam_future_tolerance_s": 2e-6,
+            "slam_speed_source": "pose_window",
+            "slam_pose_speed_window_s": 0.5,
+            "slam_capture_remaining_m": 0.05,
+            "slam_capture_distance_m": 0.10,
+        }
+        for overrides, expected in (
+            ({}, (None, None)),
+            (
+                {
+                    "slam_final_capture_remaining_m": None,
+                    "slam_final_capture_distance_m": None,
+                },
+                (None, None),
+            ),
+            (
+                {
+                    "slam_final_capture_remaining_m": 0.15,
+                    "slam_final_capture_distance_m": 0.20,
+                },
+                (0.15, 0.20),
+            ),
+            ({"slam_final_capture_distance_m": 0.20}, (None, 0.20)),
+        ):
+            with (
+                self.subTest(overrides=overrides),
+                patch(
+                    "embodied_navigation.simulation.dynanav.slam_route.SlamRouteTracker"
+                ) as factory,
+            ):
+                make_slam_controller({**profile, **overrides})
+                kwargs = factory.call_args.kwargs
+                self.assertEqual(kwargs["final_capture_remaining_m"], expected[0])
+                self.assertEqual(kwargs["final_capture_distance_m"], expected[1])
+
 
 class ReferenceValidationTests(unittest.TestCase):
+    def test_post_vio_contract_requires_explicit_stage_availability_and_stop_witness(
+        self,
+    ):
+        valid = post_vio_reference()
+        self.assertEqual(
+            validate_slam_route_reference(valid)["pose_source"], "livo_post_vio"
+        )
+        with self.assertRaisesRegex(ValueError, "pose_window"):
+            SlamRouteTracker(
+                valid, repeat_spawn_assumption=True, map_registration_enabled=False
+            )
+        changes = (
+            lambda ref: ref["source"].pop("pose_stage"),
+            lambda ref: ref["source"].update(twist_available=True),
+            lambda ref: ref["goals"][0].update(estimated_velocity_xyz_mps=[0, 0, 0]),
+            lambda ref: ref["goals"][0].pop("stop_evidence"),
+            lambda ref: ref["goals"][0]["stop_evidence"].update(
+                twist_used_to_confirm_stop=True
+            ),
+            lambda ref: ref["goals"][0]["stop_evidence"].update(duration_s=0.2),
+            lambda ref: ref["goals"][0]["stop_evidence"].update(
+                maximum_sample_gap_s=0.3
+            ),
+        )
+        for mutate in changes:
+            ref = deepcopy(valid)
+            mutate(ref)
+            with self.subTest(reference=ref), self.assertRaises(ValueError):
+                validate_slam_route_reference(ref)
+
     def test_hash_is_reference_content_not_a_source_or_truth_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reference.json"

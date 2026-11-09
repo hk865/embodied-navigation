@@ -74,7 +74,7 @@ else
     printf 'Set PROJECT_DATA_ROOT or pass --binary-prefix explicitly.\n' >&2
     exit 2
 fi
-binary_prefix=${binary_prefix:-"$project_data/build_cache/dynanav_lio_lifetime_20261109T043801Z"}
+binary_prefix=${binary_prefix:-"$project_data/build_cache/dynanav_post_vio_20261109T052245Z"}
 dependency_prefix=${dependency_prefix:-"$project_data/build_cache/native_validation_20261108T124116Z/project/install/ros"}
 binary_prefix=$(realpath -m -- "$binary_prefix")
 dependency_prefix=$(realpath -m -- "$dependency_prefix")
@@ -113,6 +113,10 @@ mode = sys.argv[7]
 capture_result = Path(sys.argv[8]) if sys.argv[8] else None
 blackboard = Path(sys.argv[9])
 observer_namespace = sys.argv[10]
+base_parameters = yaml.safe_load(parameters.read_text())["/**"]["ros__parameters"]
+post_vio_enabled = base_parameters.get("publish", {}).get("post_vio_odometry_en", False)
+if type(post_vio_enabled) is not bool or post_vio_enabled != (mode == "livo"):
+    raise SystemExit("Observer mode and explicit post-VIO output configuration disagree")
 calibration = None
 calibration_parameters = {}
 if mode == "livo":
@@ -152,7 +156,8 @@ if override is not None:
     fixed = {"common.img_en": int(mode == "livo"), "common.allow_lio_only": mode == "lio",
              "common.lidar_en": 1, "common.use_gps": False,
              "common.lid_topic": "/dynanav/lidar_static",
-             "common.imu_topic": "/dynanav/imu", "use_sim_time": True}
+             "common.imu_topic": "/dynanav/imu", "use_sim_time": True,
+             "publish.post_vio_odometry_en": post_vio_enabled}
     if mode == "livo":
         fixed["common.img_topic"] = "/dynanav/camera"
         fixed.update({key: value for key, value in calibration_parameters.items() if key != "extrin_calib"})
@@ -194,17 +199,32 @@ for path in (runner, core):
             failures.append(result.stderr.strip() or "ldd failed")
         if failures:
             unresolved[str(path)] = failures
-capability_marker = core.is_file() and b"common.allow_lio_only" in core.read_bytes()
+core_bytes = core.read_bytes() if core.is_file() else b""
+capability_marker = b"common.allow_lio_only" in core_bytes
+post_vio_capability = b"publish.post_vio_odometry_en" in core_bytes
+post_vio_contract = ({"pose_source": "livo_post_vio", "state_stage": "post_vio",
+                      "twist_available": False, "pose_covariance_available": False,
+                      "unavailable_covariance_diagonal": 1e12,
+                      "visual_update_on_every_image": False,
+                      "publication_scope": "one final pose after an actually processed image; per-image status records whether a visual update was retained"}
+                     if post_vio_enabled else None)
 receipt = {
     "scope": "File/hash/dependency inspection only; no ROS node or estimator executed",
     "mode": mode,
     "observer_namespace": observer_namespace,
     "tf_output_topic": "/tf" if observer_namespace == "/dynanav/lio_observer" else observer_namespace + "/tf",
+    "post_vio_odometry_enabled": post_vio_enabled,
+    "post_vio_output_capability_present": post_vio_capability,
+    "navigation_pose_topic": observer_namespace + ("/post_vio_odometry" if post_vio_enabled else "/aft_mapped_to_init"),
+    "navigation_pose_source": "livo_post_vio" if post_vio_enabled else "lio_estimate",
+    "post_vio_status_topic": observer_namespace + "/post_vio_odometry_status" if post_vio_enabled else None,
+    "post_vio_output_contract": post_vio_contract,
     "parameter_file": str(parameters),
     "camera_calibration": calibration,
     "camera_blackboard": str(blackboard) if mode == "livo" else None,
     "camera_parameter_service": observer_namespace + "/parameter_blackboard/get_parameters" if mode == "livo" else None,
-    "ready": not missing and not unresolved and capability_marker and not override_conflicts,
+    "ready": not missing and not unresolved and capability_marker and not override_conflicts
+             and (not post_vio_enabled or post_vio_capability),
     "observer_contract_conflicts": override_conflicts,
     "parameter_override": ({"path": str(override),
                              "sha256": hashlib.sha256(override.read_bytes()).hexdigest()}
@@ -272,6 +292,10 @@ for topic in cloud_registered_full cloud_registered visualization_marker cloud_v
              dyn_obj_removed dyn_obj_dbg_hist mavros/vision_pose/pose rgb_img LIVO2/imu_propagate planes; do
     command+=(-r "/$topic:=$observer_namespace/$topic")
 done
+if [[ $mode == livo ]]; then
+    command+=(-r "/post_vio_odometry:=$observer_namespace/post_vio_odometry"
+              -r "/post_vio_odometry_status:=$observer_namespace/post_vio_odometry_status")
+fi
 if [[ $observer_namespace != /dynanav/lio_observer ]]; then
     command+=(-r "/tf:=$observer_namespace/tf")
 fi
@@ -313,6 +337,12 @@ receipt = {
     "camera_parameter_service": preflight["camera_parameter_service"],
     "observer_namespace": preflight["observer_namespace"],
     "tf_output_topic": preflight["tf_output_topic"],
+    "post_vio_odometry_enabled": preflight["post_vio_odometry_enabled"],
+    "post_vio_output_capability_present": preflight["post_vio_output_capability_present"],
+    "navigation_pose_topic": preflight["navigation_pose_topic"],
+    "navigation_pose_source": preflight["navigation_pose_source"],
+    "post_vio_status_topic": preflight["post_vio_status_topic"],
+    "post_vio_output_contract": preflight["post_vio_output_contract"],
     "camera_config_sha256": hashlib.sha256(camera.read_bytes()).hexdigest() if mode == "livo" else None,
     "capture_calibration_sha256": hashlib.sha256(calibration_file.read_bytes()).hexdigest() if calibration_file else None,
     "visual_parameters_source": "native defaults explicitly selected as experiment settings; no accuracy acceptance claim" if mode == "livo" else None,

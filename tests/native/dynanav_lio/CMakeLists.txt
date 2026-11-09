@@ -20,3 +20,10 @@ ament_target_dependencies(test_dynanav_lio rclcpp fast_livo2_core image_transpor
 target_link_libraries(test_dynanav_lio fast_livo2_core::fast_livo2_core)
 enable_testing()
 add_test(NAME dynanav_lio_native COMMAND test_dynanav_lio)
+
+add_executable(test_dynanav_post_vio test_post_vio_output.cpp)
+target_include_directories(test_dynanav_post_vio PRIVATE "${native_prefix}/include")
+target_compile_definitions(test_dynanav_post_vio PRIVATE X86_ARCH ROOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/")
+ament_target_dependencies(test_dynanav_post_vio rclcpp fast_livo2_core image_transport)
+target_link_libraries(test_dynanav_post_vio fast_livo2_core::fast_livo2_core)
+add_test(NAME dynanav_post_vio_native COMMAND test_dynanav_post_vio)

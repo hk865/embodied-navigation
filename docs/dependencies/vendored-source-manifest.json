@@ -57,9 +57,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
-      "bytes": 12670,
+      "bytes": 13188,
       "source_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
-      "vendored_sha256": "58a9881a6f62e8a4df2e552e03a96342abf91021ea7452722dee679a3b6686e0",
+      "vendored_sha256": "73ceee92df97f67207b9bd9658ab763fc70073e8d2a8ffeb374c4a2b621efd17",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -76,6 +76,13 @@
         "patch": "third_party/fast_livo2/patches/0002-opt-in-lio-observer.patch",
         "functional_equivalence_to_upstream_claimed": false,
         "validation": "Independent new-prefix core/wrapper build, native opt-in/queue/mutex harness and observer launcher --check; not a full SLAM or physical route certification."
+      },
+      "local_post_vio_revision": {
+        "baseline_git_commit": "bffa2b647f02801913310ab35c41c967fd3616d0",
+        "baseline_vendored_sha256": "58a9881a6f62e8a4df2e552e03a96342abf91021ea7452722dee679a3b6686e0",
+        "patch": "third_party/fast_livo2/patches/0005-explicit-post-vio-pose-output.patch",
+        "reason": "Add opt-in final post-processFrame Odometry and explicit stage/status; unavailable twist is not used for stopping. Existing estimator update arithmetic and original output semantics are unchanged.",
+        "validation": "Separate fresh build and native output/lifecycle regressions; live full-route post-pose audit and closed-loop run recorded separately."
       }
     },
     {
@@ -428,9 +435,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/src/LIVMapper.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp",
-      "bytes": 127368,
+      "bytes": 131071,
       "source_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
-      "vendored_sha256": "da2ad848ce115334f45b3a60757a4bc08c4aabf18555322181410cc7b6e6bbb0",
+      "vendored_sha256": "2e08232bacd986086f40eaec3f18ef580d32f2ebba1d346ebc2a6b6aa572a395",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -454,6 +461,13 @@
         "reason": "ONLY_LIO generic instantaneous working-copy offsets now share the previous-propagation origin expected by UndistortPcl; raw points and non-generic timing retained; unused VIO diagnostic fields value-initialized. Default LIVO source unchanged.",
         "patch": "third_party/fast_livo2/patches/0003-lio-instantaneous-time-origin.patch",
         "validation": "Real native regression fails with pre-correction core (0.284937m erroneous deskew), passes corrected core for 100ms/200ms IMU motion and preserves raw identity/non-generic times. Separate new build/install prefix; no claim of physical SLAM drift acceptance."
+      },
+      "local_post_vio_revision": {
+        "baseline_git_commit": "bffa2b647f02801913310ab35c41c967fd3616d0",
+        "baseline_vendored_sha256": "da2ad848ce115334f45b3a60757a4bc08c4aabf18555322181410cc7b6e6bbb0",
+        "patch": "third_party/fast_livo2/patches/0005-explicit-post-vio-pose-output.patch",
+        "reason": "Add opt-in final post-processFrame Odometry and explicit stage/status; unavailable twist is not used for stopping. Existing estimator update arithmetic and original output semantics are unchanged.",
+        "validation": "Separate fresh build and native output/lifecycle regressions; live full-route post-pose audit and closed-loop run recorded separately."
       }
     },
     {

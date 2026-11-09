@@ -1,4 +1,4 @@
-"""Measured LIO route replay for an explicitly assumed repeat-spawn lab run.
+"""Measured estimator route replay for an explicit repeat-spawn lab run.
 
 Only current estimated sensor odometry enters this adapter. It aligns the first
 ready measured sensor pose with a previously measured anchor and delegates the
@@ -23,6 +23,7 @@ import numpy as np
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
 
 POSE_SOURCE = "lio_estimate"
+POSE_SOURCES = (POSE_SOURCE, "livo_post_vio")
 REFERENCE_VERSION = 1
 
 
@@ -74,11 +75,71 @@ def _reference_pose(pose, name):
     if type(stamp) is not int or stamp < 0:
         raise ValueError(f"{name}.stamp_ns must be a nonnegative integer")
     transform = pose_transform(pose.get("position_xyz_m"), pose.get("quaternion_wxyz"))
-    _vector(
-        pose.get("estimated_velocity_xyz_mps"), 3, f"{name}.estimated_velocity_xyz_mps"
-    )
-    _number(pose.get("estimated_yaw_rate_rps"), f"{name}.estimated_yaw_rate_rps")
+    available = pose.get("twist_available", True)
+    if type(available) is not bool:
+        raise ValueError(f"{name}.twist_available must be boolean")
+    if available:
+        _vector(
+            pose.get("estimated_velocity_xyz_mps"),
+            3,
+            f"{name}.estimated_velocity_xyz_mps",
+        )
+        _number(pose.get("estimated_yaw_rate_rps"), f"{name}.estimated_yaw_rate_rps")
+    elif (
+        pose.get("estimated_velocity_xyz_mps") is not None
+        or pose.get("estimated_yaw_rate_rps") is not None
+    ):
+        raise ValueError(
+            f"{name} unavailable twist must be null, never placeholder measurements"
+        )
     return transform
+
+
+def _pose_window_stop(goal):
+    """Validate the builder's pose-only stop witness without loading its source."""
+    stop = goal.get("stop_evidence")
+    if (
+        not isinstance(stop, dict)
+        or stop.get("method") != "measured_pose_window"
+        or stop.get("twist_used_to_confirm_stop") is not False
+    ):
+        raise ValueError(
+            "pose-only goals require measured_pose_window stop evidence without twist"
+        )
+    start, end, count = (
+        stop.get(key) for key in ("start_stamp_ns", "end_stamp_ns", "sample_count")
+    )
+    if (
+        type(start) is not int
+        or type(end) is not int
+        or not 0 <= start < end
+        or end != goal["stamp_ns"]
+        or type(count) is not int
+        or count < 2
+    ):
+        raise ValueError(
+            "pose-only stop witness must span distinct source samples ending at goal"
+        )
+    parameters = stop.get("parameters")
+    if not isinstance(parameters, dict):
+        raise ValueError("pose-only stop witness parameters are required")  # noqa: TRY004 - reference validation retains its ValueError contract.
+    duration = _number(stop.get("duration_s"), "stop duration", positive=True)
+    dwell = _number(parameters.get("dwell_s"), "stop dwell", positive=True)
+    if duration < dwell or not math.isclose(
+        duration, (end - start) * 1e-9, rel_tol=0, abs_tol=1e-9
+    ):
+        raise ValueError(
+            "pose-only stop witness has insufficient or inconsistent measured duration"
+        )
+    for observed, limit in (
+        ("maximum_sample_gap_s", "max_sample_gap_s"),
+        ("maximum_distance_from_endpoint_m", "position_range_m"),
+        ("maximum_yaw_difference_from_endpoint_rad", "yaw_range_rad"),
+    ):
+        value = _number(stop.get(observed), observed, nonnegative=True)
+        bound = _number(parameters.get(limit), limit, positive=True)
+        if value > bound:
+            raise ValueError(f"pose-only stop witness exceeds {limit}")
 
 
 def validate_slam_route_reference(reference):
@@ -88,9 +149,11 @@ def validate_slam_route_reference(reference):
     if (
         type(reference.get("version")) is not int
         or reference.get("version") != REFERENCE_VERSION
-        or reference.get("pose_source") != POSE_SOURCE
+        or reference.get("pose_source") not in POSE_SOURCES
     ):
-        raise ValueError("reference must identify version 1 measured LIO estimates")
+        raise ValueError(
+            "reference must identify version 1 measured LIO or post-VIO estimates"
+        )
     if (
         reference.get("repeat_spawn_assumption") is not True
         or reference.get("map_registration_enabled") is not False
@@ -106,6 +169,22 @@ def validate_slam_route_reference(reference):
     for field in ("bag", "topic", "map_frame", "sensor_frame"):
         if not isinstance(source.get(field), str) or not source[field]:
             raise ValueError(f"reference source {field} is required")
+    pose_only = source.get("pose_only", False)
+    twist_available = source.get("twist_available", True)
+    if (
+        type(pose_only) is not bool
+        or type(twist_available) is not bool
+        or twist_available == pose_only
+    ):
+        raise ValueError(
+            "source pose_only and twist_available must be opposite booleans"
+        )
+    if reference["pose_source"] == "livo_post_vio" and (
+        source.get("pose_stage") != "post_vio" or not pose_only
+    ):
+        raise ValueError(
+            "post-VIO references require explicit post_vio stage and pose-only evidence"
+        )
     files = source.get("files")
     if not isinstance(files, list) or not files:
         raise ValueError("reference source file hashes are required")
@@ -144,6 +223,8 @@ def validate_slam_route_reference(reference):
         raise ValueError("reference must contain a measured goal")
     source_paths = {file["path"] for file in files}
     for pose in [reference["anchor"], *goals]:
+        if pose.get("twist_available", True) != twist_available:
+            raise ValueError("reference pose/source twist availability mismatch")
         message = pose.get("source_message")
         if message is not None and (
             not isinstance(message, dict)
@@ -170,6 +251,8 @@ def validate_slam_route_reference(reference):
                 "reference segments require nonzero measured XY displacement"
             )
         previous, origin = goal["stamp_ns"], point
+        if pose_only:
+            _pose_window_stop(goal)
     # If a builder records endpoint stamps, require them to agree with the poses.
     # Geometry is always taken from the measured pose fields, never a second route.
     correspondence = reference.get("source_correspondence")
@@ -220,6 +303,10 @@ class SlamRouteTracker:
         stop_on_stall=True,
         speed_source="twist",
         pose_speed_window_s=0.5,
+        capture_remaining_m=0.20,
+        capture_distance_m=0.30,
+        final_capture_remaining_m=None,
+        final_capture_distance_m=None,
     ):
         self.reference = validate_slam_route_reference(reference)
         if repeat_spawn_assumption is not True or map_registration_enabled is not False:
@@ -236,6 +323,41 @@ class SlamRouteTracker:
         window = _number(pose_speed_window_s, "pose_speed_window_s", positive=True)
         if speed_source not in ("twist", "pose_window"):
             raise ValueError("speed_source must be twist or pose_window")
+        self.twist_available = self.reference["source"].get("twist_available", True)
+        if not self.twist_available and speed_source != "pose_window":
+            raise ValueError("pose-only references require speed_source=pose_window")
+        capture_remaining = _number(
+            capture_remaining_m, "capture_remaining_m", positive=True
+        )
+        capture_distance = _number(
+            capture_distance_m, "capture_distance_m", positive=True
+        )
+        if not capture_remaining <= capture_distance <= 0.40:
+            raise ValueError("capture bounds require remaining <= distance <= 0.40 m")
+        final_remaining = (
+            None
+            if final_capture_remaining_m is None
+            else _number(
+                final_capture_remaining_m, "final_capture_remaining_m", positive=True
+            )
+        )
+        final_distance = (
+            None
+            if final_capture_distance_m is None
+            else _number(
+                final_capture_distance_m, "final_capture_distance_m", positive=True
+            )
+        )
+        effective_final_remaining = (
+            capture_remaining if final_remaining is None else final_remaining
+        )
+        effective_final_distance = (
+            capture_distance if final_distance is None else final_distance
+        )
+        if not effective_final_remaining <= effective_final_distance <= 0.40:
+            raise ValueError(
+                "final capture bounds require remaining <= distance <= 0.40 m"
+            )
         if type(stop_on_stall) is not bool:
             raise ValueError("stop_on_stall must be boolean")
         self.parameters = {
@@ -256,6 +378,14 @@ class SlamRouteTracker:
             },
             "controller_initial_wait_s": 7.0,
             "speed_source": speed_source,
+            "pose_source": self.reference["pose_source"],
+            "twist_available": self.twist_available,
+            "capture_remaining_m": capture_remaining,
+            "capture_distance_m": capture_distance,
+            "final_capture_remaining_m": final_remaining,
+            "final_capture_distance_m": final_distance,
+            "effective_final_capture_remaining_m": effective_final_remaining,
+            "effective_final_capture_distance_m": effective_final_distance,
             "pose_speed_window_s": window,
             "pose_speed_method": "measured_window_endpoint_displacement_over_source_time",
             "pose_speed_limitations": "net_displacement_can_cancel_oscillatory_motion",
@@ -267,6 +397,10 @@ class SlamRouteTracker:
             speed=speed,
             motion_end=end,
             stop_on_stall=stop_on_stall,
+            capture_remaining_m=capture_remaining,
+            capture_distance_m=capture_distance,
+            final_capture_remaining_m=final_remaining,
+            final_capture_distance_m=final_distance,
         )
         self._alignment = None
         self._anchor_receipt = None
@@ -310,7 +444,7 @@ class SlamRouteTracker:
             evidence,
             status=status,
             reason=reason,
-            pose_source=POSE_SOURCE,
+            pose_source=self.reference["pose_source"],
             stage=self.stage,
             phase=self.phase,
             failure=self.failure,
@@ -419,12 +553,20 @@ class SlamRouteTracker:
             return self._invalid("nonmonotonic_odometry_stamp", evidence)
         try:
             current = pose_transform(position, quat_wxyz)
-            velocity = _vector(estimated_velocity, 3, "estimated_velocity")
+            # Pose-only native/derived contracts explicitly mark twist unavailable.
+            # Do not even coerce those fields: NaNs/zeros are not measurements.
+            velocity = (
+                _vector(estimated_velocity, 3, "estimated_velocity")
+                if self.twist_available
+                else None
+            )
             omega = _number(measured_yaw_rate, "measured_yaw_rate")
         except ValueError:
             return self._invalid("invalid_measured_odometry", evidence)
-        reported_speed = float(np.linalg.norm(velocity))
-        if not math.isfinite(reported_speed):
+        reported_speed = (
+            float(np.linalg.norm(velocity)) if velocity is not None else None
+        )
+        if reported_speed is not None and not math.isfinite(reported_speed):
             return self._invalid("invalid_measured_odometry", evidence)
         if self._alignment is None:
             anchor = pose_transform(
@@ -450,6 +592,7 @@ class SlamRouteTracker:
             aligned_position_xyz_m=p,
             aligned_yaw_rad=yaw,
             reported_twist_speed_mps=reported_speed,
+            twist_available=self.twist_available,
             measured_yaw_rate_rps=omega,
             speed_source=self.parameters["speed_source"],
         )

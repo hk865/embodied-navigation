@@ -58,6 +58,18 @@ def message(
     return result
 
 
+class PoisonTwistMessage(SimpleNamespace):
+    @property
+    def twist(self):
+        raise AssertionError("unavailable twist must never be accessed")
+
+
+def without_twist(value):
+    return PoisonTwistMessage(
+        **{key: item for key, item in vars(value).items() if key != "twist"}
+    )
+
+
 class BuilderTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -162,6 +174,134 @@ class BuilderTests(unittest.TestCase):
                     map_frame=builder.MAP_FRAME,
                     sensor_frame=builder.SENSOR_FRAME,
                 )
+
+    def test_post_vio_pose_only_source_never_reads_poison_or_nan_twist(self):
+        self.args.pose_source = "livo_post_vio"
+        self.args.odom_topic = "/dynanav/post_vio_diagnostic/odometry"
+        self.args.source_receipt = [self.root / "export-receipt.json"]
+        self.args.source_receipt[0].write_text(
+            json.dumps({"twist": "unavailable; no twist consumer permitted"})
+        )
+        self.messages[0] = message(0, velocity=(float("nan"),) * 3)
+        self.messages[1:] = [without_twist(value) for value in self.messages[1:]]
+        self.write_database()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE topics SET name=? WHERE id=1", (self.args.odom_topic,)
+            )
+        reference = self.build()
+        self.assertEqual(reference["pose_source"], "livo_post_vio")
+        self.assertEqual(reference["source"]["pose_stage"], "post_vio")
+        self.assertTrue(reference["source"]["pose_only"])
+        self.assertFalse(reference["source"]["twist_available"])
+        self.assertEqual(
+            reference["source"]["metadata_files"][0]["sha256"],
+            hashlib.sha256(self.args.source_receipt[0].read_bytes()).hexdigest(),
+        )
+        for pose in (reference["anchor"], *reference["goals"]):
+            self.assertFalse(pose["twist_available"])
+            self.assertIsNone(pose["estimated_velocity_xyz_mps"])
+            self.assertIsNone(pose["estimated_yaw_rate_rps"])
+        evidence = reference["goals"][0]["stop_evidence"]
+        self.assertEqual(evidence["method"], "measured_pose_window")
+        self.assertFalse(evidence["twist_used_to_confirm_stop"])
+        self.assertFalse(evidence["twist_available"])
+        self.assertIsNone(evidence["estimated_twist_speed_at_endpoint_mps"])
+
+    def test_explicit_lio_pose_only_mode_is_not_inferred_from_topic(self):
+        self.args.pose_only = True
+        self.messages = [without_twist(value) for value in self.messages]
+        self.write_database()
+        reference = self.build()
+        self.assertEqual(reference["pose_source"], "lio_estimate")
+        self.assertEqual(reference["source"]["pose_stage"], "lio")
+        self.assertFalse(reference["anchor"]["twist_available"])
+        self.args.output.unlink()
+        self.args.pose_only = False
+        # The identical topic does not silently opt into pose-only admission.
+        with self.assertRaisesRegex(AssertionError, "unavailable twist"):
+            self.build()
+        self.assertFalse(self.args.output.exists())
+
+    def test_three_pose_only_goals_have_independent_exact_stop_witnesses(self):
+        self.args.pose_source = "livo_post_vio"
+        self.args.goal_stamp_ns = [2_000_000_000, 4_000_000_000, 6_000_000_000]
+        self.messages = [without_twist(message(0))]
+        for second, position in ((1, (2, 0, 0.2)), (3, (2, 2, 0.2)), (5, (4, 2, 1.5))):
+            self.messages.extend(
+                without_twist(
+                    message(second * 1_000_000_000 + step * 250_000_000, position)
+                )
+                for step in range(5)
+            )
+        self.write_database()
+        reference = self.build()
+        self.assertEqual(
+            [goal["stamp_ns"] for goal in reference["goals"]],
+            self.args.goal_stamp_ns,
+        )
+        self.assertEqual(
+            [goal["stop_evidence"]["start_stamp_ns"] for goal in reference["goals"]],
+            [1_000_000_000, 3_000_000_000, 5_000_000_000],
+        )
+        self.assertEqual(
+            [goal["position_xyz_m"] for goal in reference["goals"]],
+            [[2.0, 0.0, 0.2], [2.0, 2.0, 0.2], [4.0, 2.0, 1.5]],
+        )
+        for goal in reference["goals"]:
+            self.assertEqual(goal["stop_evidence"]["sample_count"], 5)
+            self.assertEqual(goal["stop_evidence"]["method"], "measured_pose_window")
+        # A later goal cannot borrow a previous goal's valid stop window.
+        self.args.output.unlink()
+        self.messages[-3] = without_twist(message(5_500_000_000, (3.8, 2, 1.5)))
+        with self.assertRaisesRegex(ValueError, "not stopped"):
+            self.build()
+        self.assertFalse(self.args.output.exists())
+
+    def test_pose_only_invalid_frames_duplicate_stamps_and_gaps_still_fail_closed(self):
+        self.args.pose_source = "livo_post_vio"
+        self.messages = [without_twist(value) for value in self.messages]
+        for replacement, reason in (
+            (
+                without_twist(message(1_250_000_000, frame="native_map")),
+                "frame mismatch",
+            ),
+            (without_twist(message(1_000_000_000)), "duplicate or backward"),
+            (without_twist(message(1_249_999_999, (2, 0, 0.2))), "gap"),
+        ):
+            original = self.messages[2]
+            self.messages[2] = replacement
+            with (
+                self.subTest(reason=reason),
+                self.assertRaisesRegex(ValueError, reason),
+            ):
+                self.build()
+            self.assertFalse(self.args.output.exists())
+            self.messages[2] = original
+
+    def test_explicit_source_kind_and_pose_only_types_are_validated(self):
+        for field, value in (
+            ("pose_source", "GT"),
+            ("pose_source", None),
+            ("pose_only", 1),
+        ):
+            setattr(self.args, field, value)
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                self.build()
+            delattr(self.args, field)
+        arguments = builder.parser().parse_args(
+            [
+                "--bag",
+                str(self.database),
+                "--output",
+                str(self.args.output),
+                "--pose-source",
+                "livo_post_vio",
+                "--pose-only",
+            ]
+        )
+        self.assertEqual(arguments.pose_source, "livo_post_vio")
+        self.assertTrue(arguments.pose_only)
 
     def test_duplicate_backward_and_invalid_samples_fail_without_output(self):
         for replacement in (

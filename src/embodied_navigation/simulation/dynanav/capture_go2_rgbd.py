@@ -10,7 +10,6 @@ bounded number of physics steps. Every stage receipt is written to
 and is re-raised so the caller sees a non-zero exit.
 """
 
-import faulthandler
 import json
 import os
 import pathlib
@@ -43,7 +42,7 @@ result = {
     "stair_speed_cap_enabled": False,
     "truth_usage": "policy proprioception, physics guards, diagnostic mapping and native-pose tracking"
     if gt_diagnostic
-    else "policy proprioception, physical guards, diagnostic oracle map and scoring; LIO estimates alone drive the route"
+    else "policy proprioception, physical guards, diagnostic oracle map and scoring; measured estimator poses alone drive the route"
     if slam_control
     else "policy proprioception, COM velocity PID and scoring; navigation consumes SLAM",
     "navigation_running": False,
@@ -143,7 +142,9 @@ try:
     result["headless_fixed_display_delegate_count"] = len(_headless_delegates)
     result["rendering_dependencies_unloaded"] = False
     save()
-    faulthandler.dump_traceback_later(25, repeat=True)
+    # The embedded Python traceback timer can fault while walking SDK threads.
+    # Keep scalar receipts/journals; capture native failures with an external debugger.
+    result["periodic_python_stack_dump"] = False
     import numpy as np
     import omni.usd
     from pxr import Gf, PhysicsSchemaTools, PhysxSchema, UsdGeom, UsdPhysics
@@ -541,11 +542,14 @@ try:
                 m.pose.pose.orientation.y,
                 m.pose.pose.orientation.z,
             ],
-            "estimated_velocity": [
+            "estimated_velocity": None
+            if experiment.get("slam_pose_source") == "livo_post_vio"
+            else [
                 m.twist.twist.linear.x,
                 m.twist.twist.linear.y,
                 m.twist.twist.linear.z,
             ],
+            "pose_source": experiment.get("slam_pose_source", "lio_estimate"),
             "frame_id": m.header.frame_id,
             "child_frame_id": m.child_frame_id,
             "arrival_wall": time.perf_counter(),
@@ -763,7 +767,7 @@ try:
         policy_hz=50,
         command_source="native_pose_diagnostic"
         if gt_diagnostic
-        else "measured_lio_route"
+        else experiment.get("navigation_command_source", "measured_lio_route")
         if slam_control
         else "/dynanav/nav/approved_cmd",
         ground_truth_navigation=gt_diagnostic,
@@ -917,18 +921,14 @@ try:
                     tracker.invalidate_measurement()
                 if slam_control:
                     odom = latest_odom[0] or {}
-                    gyro = (
-                        locals()
-                        .get("reading", {})
-                        .get("angular_velocity", [0.0, 0.0, 0.0])
-                    )
+                    gyro = locals().get("reading", {}).get("angular_velocity")
                     measured_command, control_receipt = tracker.tick(
                         state[0],
                         odom.get("time"),
                         odom.get("position"),
                         odom.get("orientation_wxyz"),
                         odom.get("estimated_velocity"),
-                        float(gyro[2]),
+                        float(gyro[2]) if gyro is not None and len(gyro) == 3 else None,
                         ready=policy_stand_gate_done and not held,
                         now_wall=time.perf_counter(),
                         arrival_wall=odom.get("arrival_wall"),
@@ -1074,7 +1074,9 @@ try:
                     "navigation_source": latest_odom[0]
                     if slam_control
                     else latest_nav[0],
-                    "navigation_pose_source": "measured_lio"
+                    "navigation_pose_source": experiment.get(
+                        "navigation_pose_source", "measured_lio"
+                    )
                     if slam_control
                     else "native_truth"
                     if gt_diagnostic
@@ -1618,7 +1620,7 @@ try:
         navigation_running=False,
         navigation_command_source="native_pose_diagnostic"
         if gt_diagnostic
-        else "measured_lio_route"
+        else experiment.get("navigation_command_source", "measured_lio_route")
         if slam_control
         else "/dynanav/nav/approved_cmd",
     )
@@ -1627,7 +1629,6 @@ try:
     rclpy.shutdown()
     au.stop()
     _headless_previous_delegates.clear()
-    faulthandler.cancel_dump_traceback_later()
     app.close()
 except BaseException as e:
     close_journals()

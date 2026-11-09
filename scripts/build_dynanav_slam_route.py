@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a route reference from recorded estimated LIO Odometry only.
+"""Create a route reference from recorded estimated Odometry pose measurements.
 
 ROS is imported lazily for CDR decoding. The SQLite source is opened read-only;
 no simulator state, image archives, native poses, or truth transforms are read.
@@ -21,6 +21,7 @@ from pathlib import Path
 ODOM_TOPIC = "/dynanav/lio_observer/aft_mapped_to_init"
 MAP_FRAME = "dynanav_lio_map"
 SENSOR_FRAME = "go2_imu"
+POSE_SOURCES = ("lio_estimate", "livo_post_vio")
 
 
 def _finite_vector(values, size, name):
@@ -48,11 +49,15 @@ class MeasuredPose:
     stamp_ns: int
     position_xyz_m: list[float]
     quaternion_wxyz: list[float]
-    estimated_velocity_xyz_mps: list[float]
-    estimated_yaw_rate_rps: float
+    estimated_velocity_xyz_mps: list[float] | None
+    estimated_yaw_rate_rps: float | None
     storage: str
     message_id: int
     bag_timestamp_ns: int
+
+    @property
+    def twist_available(self):
+        return self.estimated_velocity_xyz_mps is not None
 
     def receipt(self):
         return {
@@ -61,6 +66,7 @@ class MeasuredPose:
             "quaternion_wxyz": self.quaternion_wxyz,
             "estimated_velocity_xyz_mps": self.estimated_velocity_xyz_mps,
             "estimated_yaw_rate_rps": self.estimated_yaw_rate_rps,
+            "twist_available": self.twist_available,
             "source_message": {
                 "storage": self.storage,
                 "message_id": self.message_id,
@@ -70,9 +76,18 @@ class MeasuredPose:
 
 
 def odometry_pose(
-    message, *, map_frame, sensor_frame, storage="", message_id=0, bag_timestamp_ns=0
+    message,
+    *,
+    map_frame,
+    sensor_frame,
+    storage="",
+    message_id=0,
+    bag_timestamp_ns=0,
+    pose_only=False,
 ):
-    """Read an allowlist from one decoded nav_msgs/Odometry message."""
+    """Read only admitted fields; pose-only sources never access ``twist``."""
+    if type(pose_only) is not bool:
+        raise ValueError("pose_only must be boolean")
     stamp = message.header.stamp
     if (
         type(stamp.sec) is not int
@@ -91,17 +106,20 @@ def odometry_pose(
     if abs(norm - 1.0) > 1e-3:
         raise ValueError("estimated quaternion must have unit norm")
     quaternion = [value / norm for value in quaternion]
-    v, omega = message.twist.twist.linear, message.twist.twist.angular
-    velocity = _finite_vector([v.x, v.y, v.z], 3, "estimated velocity")
-    angular = _finite_vector(
-        [omega.x, omega.y, omega.z], 3, "estimated angular velocity"
-    )
+    velocity, yaw_rate = None, None
+    if not pose_only:
+        v, omega = message.twist.twist.linear, message.twist.twist.angular
+        velocity = _finite_vector([v.x, v.y, v.z], 3, "estimated velocity")
+        angular = _finite_vector(
+            [omega.x, omega.y, omega.z], 3, "estimated angular velocity"
+        )
+        yaw_rate = angular[2]
     return MeasuredPose(
         stamp.sec * 1_000_000_000 + stamp.nanosec,
         position,
         quaternion,
         velocity,
-        angular[2],
+        yaw_rate,
         storage,
         message_id,
         bag_timestamp_ns,
@@ -135,7 +153,7 @@ def _decoder():
     return lambda data: deserialize_message(data, Odometry)
 
 
-def read_odometry(files, *, topic, map_frame, sensor_frame):
+def read_odometry(files, *, topic, map_frame, sensor_frame, pose_only=False):
     """Decode only the selected estimated Odometry topic, preserving correspondence."""
     decode = _decoder()
     poses = []
@@ -163,6 +181,7 @@ def read_odometry(files, *, topic, map_frame, sensor_frame):
                             storage=str(file),
                             message_id=message_id,
                             bag_timestamp_ns=timestamp,
+                            pose_only=pose_only,
                         )
                     except (
                         ValueError,
@@ -233,7 +252,9 @@ def confirm_stopped(
             "selected endpoint is not stopped within the measured pose window"
         )
     return {
-        "method": "estimated_pose_window",
+        "method": "estimated_pose_window"
+        if goal.twist_available
+        else "measured_pose_window",
         "start_stamp_ns": window[0].stamp_ns,
         "end_stamp_ns": goal.stamp_ns,
         "sample_count": len(window),
@@ -241,9 +262,12 @@ def confirm_stopped(
         "maximum_sample_gap_s": maximum_sample_gap,
         "maximum_distance_from_endpoint_m": maximum_position_range,
         "maximum_yaw_difference_from_endpoint_rad": maximum_yaw_range,
-        "estimated_twist_speed_at_endpoint_mps": math.sqrt(
-            sum(x * x for x in goal.estimated_velocity_xyz_mps)
+        "estimated_twist_speed_at_endpoint_mps": (
+            math.sqrt(sum(x * x for x in goal.estimated_velocity_xyz_mps))
+            if goal.twist_available
+            else None
         ),
+        "twist_available": goal.twist_available,
         "twist_used_to_confirm_stop": False,
         "parameters": {
             "dwell_s": dwell_s,
@@ -269,6 +293,15 @@ def build_reference(args):
     for key in ("odom_topic", "map_frame", "sensor_frame"):
         if not isinstance(getattr(args, key), str) or not getattr(args, key).strip():
             raise ValueError(f"{key} must be explicit and nonempty")
+    pose_source = getattr(args, "pose_source", "lio_estimate")
+    if pose_source not in POSE_SOURCES:
+        raise ValueError(f"pose source must be one of {POSE_SOURCES}")
+    pose_only = getattr(args, "pose_only", False)
+    if type(pose_only) is not bool:
+        raise ValueError("pose_only must be boolean")
+    # Native/derived post-VIO messages explicitly have unavailable twist. Do not
+    # inspect or infer availability from their placeholder values or covariance.
+    pose_only = pose_only or pose_source == "livo_post_vio"
     dwell = _positive(args.stop_dwell_s, "stop dwell")
     position_range = _positive(args.stop_position_range_m, "stop position range")
     yaw_range = _positive(args.stop_yaw_range_rad, "stop yaw range")
@@ -276,11 +309,16 @@ def build_reference(args):
     files = bag_files(args.bag)
     # Hash before/after reading to detect source mutation during construction.
     digests_before = [sha256_file(file) for file in files]
+    metadata_files = [
+        Path(path).resolve() for path in getattr(args, "source_receipt", [])
+    ]
+    metadata_digests_before = [sha256_file(path) for path in metadata_files]
     poses = read_odometry(
         files,
         topic=args.odom_topic,
         map_frame=args.map_frame,
         sensor_frame=args.sensor_frame,
+        pose_only=pose_only,
     )
     if len(poses) < 2:
         raise ValueError("at least an anchor and a later measured goal are required")
@@ -327,9 +365,12 @@ def build_reference(args):
     digests_after = [sha256_file(file) for file in files]
     if digests_before != digests_after:
         raise ValueError("source bag changed while constructing reference")
+    metadata_digests_after = [sha256_file(path) for path in metadata_files]
+    if metadata_digests_before != metadata_digests_after:
+        raise ValueError("source metadata changed while constructing reference")
     reference = {
         "version": 1,
-        "pose_source": "lio_estimate",
+        "pose_source": pose_source,
         "no_gt_pose_used": True,
         "repeat_spawn_assumption": True,
         "map_registration_enabled": False,
@@ -343,6 +384,13 @@ def build_reference(args):
             "topic": args.odom_topic,
             "map_frame": args.map_frame,
             "sensor_frame": args.sensor_frame,
+            "pose_stage": "post_vio" if pose_source == "livo_post_vio" else "lio",
+            "pose_only": pose_only,
+            "twist_available": not pose_only,
+            "metadata_files": [
+                {"path": str(path), "sha256": digest}
+                for path, digest in zip(metadata_files, metadata_digests_after)
+            ],
             "message_count": len(poses),
             "first_stamp_ns": poses[0].stamp_ns,
             "last_stamp_ns": poses[-1].stamp_ns,
@@ -369,6 +417,24 @@ def parser():
     result.add_argument("--odom-topic", default=ODOM_TOPIC)
     result.add_argument("--map-frame", default=MAP_FRAME)
     result.add_argument("--sensor-frame", default=SENSOR_FRAME)
+    result.add_argument(
+        "--pose-source",
+        choices=POSE_SOURCES,
+        default="lio_estimate",
+        help="Explicit estimator stage; livo_post_vio always uses pose-only fields",
+    )
+    result.add_argument(
+        "--pose-only",
+        action="store_true",
+        help="Never read unavailable twist; stop evidence comes only from measured pose windows",
+    )
+    result.add_argument(
+        "--source-receipt",
+        type=Path,
+        action="append",
+        default=[],
+        help="Hash an actual export/launch provenance receipt (repeatable; not used as pose data)",
+    )
     result.add_argument(
         "--goal-stamp-ns",
         type=int,

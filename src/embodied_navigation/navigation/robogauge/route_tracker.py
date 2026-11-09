@@ -1,10 +1,12 @@
-"""Pure bounded native-pose route controller; no simulator or policy side effects.
+"""Pure bounded measured-pose route controller; no simulator or policy side effects.
 
-``RouteTracker`` consumes one already measured native pose/speed sample per
-``tick`` and returns a bounded body-frame command ``[vx, vy, wz]``. It owns no
-ROS, simulator, model or admission state; its only outputs are the command,
-phase/failure state and recorded evidence events. The current tracked source
-has regression-test callers but no production caller for this independent helper.
+``RouteTracker`` consumes an already measured pose/speed sample per ``tick``
+and returns a bounded body-frame command ``[vx, vy, wz]``. It owns no ROS,
+simulator, model or admission state and does not identify the pose source or
+coordinate frame. Callers supply that contract: DynaNav uses it directly for
+native-pose diagnostics and through ``SlamRouteTracker`` for estimator poses
+aligned into a measured reference frame. Outputs are the command, phase/failure
+state and recorded evidence events.
 """
 
 import math
@@ -14,16 +16,30 @@ clip = lambda x, b: max(-b, min(b, x))
 
 
 class RouteTracker:
-    """Bounded waypoint tracker over one native 3D point list.
+    """Bounded waypoint tracker over one measured 3D point list.
 
-    ``points`` are native XYZ waypoints in metres (z is checked separately, so a
+    ``points`` are measured XYZ waypoints in metres (z is checked separately, so a
     wrong floor cannot fake arrival), ``start_xy`` is the initial XY pose used as
     the origin of stage 0, ``speed`` is the maximum forward command in m/s,
     ``motion_end`` is the deadline compared with ``t`` in seconds, and ``stop_on_stall``
-    chooses whether an observed low-progress stall becomes a failure.
+    chooses whether an observed low-progress stall becomes a failure. Capture
+    bounds default to the original 0.20/0.30 m; optional final-only overrides
+    inherit those bounds when None and never alter intermediate stages.
     """
 
-    def __init__(self, points, start_xy, speed=0.15, motion_end=230.0, stop_on_stall=True):
+    def __init__(
+        self,
+        points,
+        start_xy,
+        speed=0.15,
+        motion_end=230.0,
+        stop_on_stall=True,
+        *,
+        capture_remaining_m=0.20,
+        capture_distance_m=0.30,
+        final_capture_remaining_m=None,
+        final_capture_distance_m=None,
+    ):
         """Bind the route and initial controller state; performs no I/O."""
         self.points = points
         self.start = start_xy
@@ -38,6 +54,57 @@ class RouteTracker:
         self.phase_start = None
         self.stall = None
         self.stop_on_stall = stop_on_stall
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in (capture_remaining_m, capture_distance_m)
+            )
+            or not 0 < capture_remaining_m <= capture_distance_m <= 0.40
+        ):
+            raise ValueError(
+                "capture bounds require 0 < remaining <= distance <= 0.40 m"
+            )
+        # Defaults preserve the original controller. Measured-reference callers
+        # can explicitly select tighter capture only after checking turn margin.
+        self.capture_remaining_m = float(capture_remaining_m)
+        self.capture_distance_m = float(capture_distance_m)
+        final_values = (final_capture_remaining_m, final_capture_distance_m)
+        if any(
+            value is not None
+            and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            )
+            for value in final_values
+        ):
+            raise ValueError("final capture overrides must be finite numbers or None")
+        self.final_capture_remaining_m = (
+            None
+            if final_capture_remaining_m is None
+            else float(final_capture_remaining_m)
+        )
+        self.final_capture_distance_m = (
+            None
+            if final_capture_distance_m is None
+            else float(final_capture_distance_m)
+        )
+        effective_remaining = (
+            self.capture_remaining_m
+            if self.final_capture_remaining_m is None
+            else self.final_capture_remaining_m
+        )
+        effective_distance = (
+            self.capture_distance_m
+            if self.final_capture_distance_m is None
+            else self.final_capture_distance_m
+        )
+        if not 0 < effective_remaining <= effective_distance <= 0.40:
+            raise ValueError(
+                "final capture bounds require 0 < remaining <= distance <= 0.40 m"
+            )
 
     def invalidate_measurement(self):
         """Drop the current dwell/stall window without changing phase or failure.
@@ -49,10 +116,10 @@ class RouteTracker:
         self.stall = None
 
     def tick(self, t, p, yaw, speed, omega, ready=True):
-        """Return one bounded body command for a measured native pose sample.
+        """Return one bounded body command for a measured pose sample.
 
         ``t``      sim time, seconds.
-        ``p``      measured native XYZ position, metres.
+        ``p``      measured XYZ position in the supplied route frame, metres.
         ``yaw``    measured heading, radians.
         ``speed``  caller-provided speed scalar, m/s (compared with .04 to confirm a stop).
         ``omega``  measured yaw rate, rad/s (used only to confirm a stop).
@@ -94,6 +161,17 @@ class RouteTracker:
         cross = (p[0] - origin[0]) * normal[0] + (p[1] - origin[1]) * normal[1]
         distance = math.hypot(goal[0] - p[0], goal[1] - p[1])
         z_error = abs(p[2] - goal[2])
+        final_stage = self.stage == len(self.points) - 1
+        capture_remaining = (
+            self.final_capture_remaining_m
+            if final_stage and self.final_capture_remaining_m is not None
+            else self.capture_remaining_m
+        )
+        capture_distance = (
+            self.final_capture_distance_m
+            if final_stage and self.final_capture_distance_m is not None
+            else self.capture_distance_m
+        )
         if self.phase == "waiting":
             self.phase = "cruise"
             self.phase_start = t
@@ -109,7 +187,11 @@ class RouteTracker:
                 return command
             # Corner capture requires all three: close along the segment, close
             # to the waypoint and on the waypoint's floor (z).
-            if remaining <= 0.20 and distance <= 0.30 and z_error <= 0.18:
+            if (
+                remaining <= capture_remaining
+                and distance <= capture_distance
+                and z_error <= 0.18
+            ):
                 self.phase = "brake"
                 self.phase_start = t
                 self.since = None
@@ -118,6 +200,9 @@ class RouteTracker:
                     {
                         "event": "entered_corner_capture",
                         "stage": self.stage,
+                        "final_stage": final_stage,
+                        "capture_remaining_m": capture_remaining,
+                        "capture_distance_m": capture_distance,
                         "time": t,
                         "position": list(p),
                         "distance": distance,
@@ -139,7 +224,9 @@ class RouteTracker:
                 # it to .05 m/s.
                 correction = -0.5 * cross
                 world = (correction * normal[0], correction * normal[1])
-                command[1] = clip(-math.sin(yaw) * world[0] + math.cos(yaw) * world[1], 0.05)
+                command[1] = clip(
+                    -math.sin(yaw) * world[0] + math.cos(yaw) * world[1], 0.05
+                )
                 command[2] = clip(0.8 * error, 0.15)
                 if command[0] > 0:
                     along = (p[0] - origin[0]) * u[0] + (p[1] - origin[1]) * u[1]

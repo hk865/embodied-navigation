@@ -104,7 +104,38 @@ def make_slam_controller(profile):
         stop_on_stall=profile.get("stop_on_stall", True),
         speed_source=profile["slam_speed_source"],
         pose_speed_window_s=profile["slam_pose_speed_window_s"],
+        capture_remaining_m=profile.get("slam_capture_remaining_m", 0.20),
+        capture_distance_m=profile.get("slam_capture_distance_m", 0.30),
+        final_capture_remaining_m=profile.get("slam_final_capture_remaining_m"),
+        final_capture_distance_m=profile.get("slam_final_capture_distance_m"),
     )
+
+
+def slam_odometry_topic(pose_source, requested=None):
+    """Bind post-VIO control to its dedicated final-state output, never pre-VIO."""
+    if pose_source not in ("lio_estimate", "livo_post_vio"):
+        raise ValueError("unsupported measured navigation pose source")
+    post_vio = pose_source == "livo_post_vio"
+    topic = (
+        requested
+        if requested is not None
+        else (
+            "/dynanav/lio_observer/post_vio_odometry"
+            if post_vio
+            else "/dynanav/lio_observer/aft_mapped_to_init"
+        )
+    )
+    if (
+        not isinstance(topic, str)
+        or not topic.startswith("/")
+        or any(c.isspace() for c in topic)
+    ):
+        raise ValueError("measured navigation odometry topic must be absolute")
+    if post_vio and topic.rsplit("/", 1)[-1] != "post_vio_odometry":
+        raise ValueError(
+            "post-VIO navigation requires the dedicated /post_vio_odometry final topic"
+        )
+    return topic
 
 
 def main(argv=None):
@@ -150,7 +181,30 @@ def main(argv=None):
         help="Previous measured LIO route; repeat-spawn lab assumption, no global registration",
     )
     parser.add_argument(
-        "--odometry-topic", default="/dynanav/lio_observer/aft_mapped_to_init"
+        "--odometry-topic",
+        help="Explicit estimator output; default follows reference source",
+    )
+    parser.add_argument(
+        "--slam-capture-remaining-m",
+        type=float,
+        default=0.20,
+        help="Explicit measured-reference along-segment capture; old default retained",
+    )
+    parser.add_argument(
+        "--slam-capture-distance-m",
+        type=float,
+        default=0.30,
+        help="Explicit measured-reference XY capture; verify platform turn margin first",
+    )
+    parser.add_argument(
+        "--slam-final-capture-remaining-m",
+        type=float,
+        help="Final goal only: along-segment capture; omitted inherits --slam-capture-remaining-m",
+    )
+    parser.add_argument(
+        "--slam-final-capture-distance-m",
+        type=float,
+        help="Final goal only: XY capture; omitted inherits --slam-capture-distance-m",
     )
     parser.add_argument(
         "--imu-hz",
@@ -231,16 +285,33 @@ def main(argv=None):
         )
 
         profile["slam_route_reference"] = load_slam_route_reference(args.slam_reference)
+        profile["slam_pose_source"] = profile["slam_route_reference"]["pose_source"]
+        post_vio = profile["slam_pose_source"] == "livo_post_vio"
+        profile["navigation_pose_source"] = (
+            "measured_livo_post_vio" if post_vio else "measured_lio"
+        )
+        profile["navigation_command_source"] = (
+            "measured_livo_post_vio_route" if post_vio else "measured_lio_route"
+        )
+        profile["slam_twist_available"] = profile["slam_route_reference"]["source"].get(
+            "twist_available", True
+        )
         profile["slam_route_reference_path"] = str(args.slam_reference.resolve())
         profile["slam_route_reference_sha256"] = hashlib.sha256(
             args.slam_reference.read_bytes()
         ).hexdigest()
         profile["control_mode"] = "slam_pose_diagnostic"
-        profile["odometry_topic"] = args.odometry_topic
+        profile["odometry_topic"] = slam_odometry_topic(
+            profile["slam_pose_source"], args.odometry_topic
+        )
         profile["repeat_spawn_assumption"] = True
         profile["map_registration_enabled"] = False
         profile["slam_speed_source"] = "pose_window"
         profile["slam_pose_speed_window_s"] = 0.5
+        profile["slam_capture_remaining_m"] = args.slam_capture_remaining_m
+        profile["slam_capture_distance_m"] = args.slam_capture_distance_m
+        profile["slam_final_capture_remaining_m"] = args.slam_final_capture_remaining_m
+        profile["slam_final_capture_distance_m"] = args.slam_final_capture_distance_m
         profile["slam_future_tolerance_s"] = float32_sensor_time_tolerance(
             args.duration
         )
@@ -248,7 +319,9 @@ def main(argv=None):
             "SDK float32 sensor clock; half-ULP horizon bound plus numerical margin"
         )
         profile["navigation_scope"] = (
-            "measured LIO route in repeat-spawn lab; no native route-pose input or global localization"
+            "measured "
+            + ("post-VIO" if post_vio else "LIO")
+            + " route in repeat-spawn lab; no native route-pose input or global localization"
         )
     if args.slam_reference:
         make_slam_controller(profile)

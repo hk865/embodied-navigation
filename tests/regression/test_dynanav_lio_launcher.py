@@ -23,7 +23,9 @@ class ObserverOverride(unittest.TestCase):
         self.prefix = self.data / "build_cache/fake native prefix"
         lib = self.prefix / "install/ros/lib"
         (lib / "fast_livo2_ros").mkdir(parents=True)
-        (lib / "libfast_livo2_core.so").write_bytes(b"test-only common.allow_lio_only")
+        (lib / "libfast_livo2_core.so").write_bytes(
+            b"test-only common.allow_lio_only publish.post_vio_odometry_en"
+        )
         runner = lib / "fast_livo2_ros/fastlivo_mapping"
         runner.write_text(
             "#!/usr/bin/python3\n"
@@ -60,6 +62,10 @@ class ObserverOverride(unittest.TestCase):
         self.assertEqual(receipt["observer_namespace"], "/dynanav/lio_observer")
         self.assertIn("__ns:=/dynanav/lio_observer", receipt["command"])
         self.assertFalse(any(token.startswith("/tf:=") for token in receipt["command"]))
+        self.assertFalse(
+            any(token.startswith("/post_vio_") for token in receipt["command"])
+        )
+        self.assert_lio_output_contract(receipt, "/dynanav/lio_observer")
         self.assertIsNone(receipt["parameter_override"])
         self.assertEqual(receipt["command"].count("--params-file"), 1)
         self.assertEqual(
@@ -163,6 +169,32 @@ class ObserverOverride(unittest.TestCase):
             markers.append(marker)
         return capture, installation, blackboard, markers
 
+    def assert_lio_output_contract(self, report, namespace):
+        self.assertIs(report["post_vio_odometry_enabled"], False)
+        self.assertEqual(
+            report["navigation_pose_topic"], namespace + "/aft_mapped_to_init"
+        )
+        self.assertEqual(report["navigation_pose_source"], "lio_estimate")
+        self.assertIsNone(report["post_vio_status_topic"])
+        self.assertIsNone(report["post_vio_output_contract"])
+
+    def assert_livo_output_contract(self, report, namespace):
+        self.assertIs(report["post_vio_odometry_enabled"], True)
+        self.assertIs(report["post_vio_output_capability_present"], True)
+        self.assertEqual(
+            report["navigation_pose_topic"], namespace + "/post_vio_odometry"
+        )
+        self.assertEqual(report["navigation_pose_source"], "livo_post_vio")
+        self.assertEqual(
+            report["post_vio_status_topic"], namespace + "/post_vio_odometry_status"
+        )
+        contract = report["post_vio_output_contract"]
+        self.assertEqual(contract["pose_source"], "livo_post_vio")
+        self.assertEqual(contract["state_stage"], "post_vio")
+        self.assertIs(contract["twist_available"], False)
+        self.assertIs(contract["pose_covariance_available"], False)
+        self.assertIs(contract["visual_update_on_every_image"], False)
+
     def test_livo_check_uses_capture_camera_calibration_without_starting_nodes(self):
         capture, installation, blackboard, markers = self.livo_fixture()
         output = self.data / "experiments/livo check run"
@@ -183,6 +215,7 @@ class ObserverOverride(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertTrue(report["ready"])
         self.assertEqual(report["mode"], "livo")
+        self.assert_livo_output_contract(report, "/dynanav/lio_observer")
         self.assertEqual(report["camera_blackboard"], str(blackboard))
         self.assertEqual(
             report["camera_parameter_service"],
@@ -227,6 +260,93 @@ class ObserverOverride(unittest.TestCase):
         self.assertEqual(native["vio"]["img_point_cov"], 100)
         self.assertEqual(native["vio"]["outlier_threshold"], 100)
         self.assertIs(native["vio"]["exposure_estimate_en"], True)
+        self.assertIs(native["publish"]["post_vio_odometry_en"], True)
+
+    def test_old_lio_core_remains_ready_without_post_vio_output_capability(self):
+        core = self.prefix / "install/ros/lib/libfast_livo2_core.so"
+        core.write_bytes(b"test-only common.allow_lio_only")
+        output = self.data / "experiments/old lio core check"
+        result = self.invoke("--check", "--output-dir", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["ready"])
+        self.assertIs(report["post_vio_output_capability_present"], False)
+        self.assert_lio_output_contract(report, "/dynanav/lio_observer")
+        self.assertFalse(output.exists())
+
+    def test_livo_requires_native_post_vio_output_capability_without_execution(self):
+        capture, _, blackboard, markers = self.livo_fixture()
+        core = self.prefix / "install/ros/lib/libfast_livo2_core.so"
+        core.write_bytes(b"test-only common.allow_lio_only")
+        output = self.data / "experiments/missing post vio capability"
+        result = self.invoke(
+            "--check",
+            "--mode",
+            "livo",
+            "--capture-result",
+            str(capture),
+            "--camera-blackboard",
+            str(blackboard),
+            "--output-dir",
+            str(output),
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["ready"])
+        self.assertIs(report["post_vio_output_capability_present"], False)
+        self.assertFalse(output.exists())
+        self.assertTrue(all(not marker.exists() for marker in markers))
+
+    def test_livo_launch_remaps_final_outputs_and_records_availability_contract(self):
+        capture, _, blackboard, _ = self.livo_fixture()
+        # Both launched executables are fakes. The Python shim replaces only the
+        # service readiness probe, so this test never imports rclpy or runs ROS.
+        blackboard.write_text("#!/bin/sh\nexit 0\n")
+        runner = self.prefix / "install/ros/lib/fast_livo2_ros/fastlivo_mapping"
+        runner.write_text(
+            "#!/usr/bin/python3\n"
+            "import json, os, pathlib, sys\n"
+            "(pathlib.Path(os.environ['DEMO_RUN_DIR'])/'mock_argv.json').write_text(json.dumps(sys.argv[1:]))\n"
+        )
+        python_shim = self.directory / "mock tools/python3"
+        python_shim.write_text(
+            "#!/usr/bin/python3\n"
+            "import json, os, pathlib, sys\n"
+            "if len(sys.argv) > 2 and sys.argv[1] == '-' and sys.argv[2].endswith('/camera_parameter_ready.json'):\n"
+            "    pathlib.Path(sys.argv[2]).write_text(json.dumps({'test_only': 'fake camera service readiness'}))\n"
+            "else:\n"
+            "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+        )
+        python_shim.chmod(0o755)
+        namespace = "/dynanav/post_vio_test"
+        output = self.data / "experiments/fake post vio run"
+        result = self.invoke(
+            "--mode",
+            "livo",
+            "--observer-namespace",
+            namespace,
+            "--capture-result",
+            str(capture),
+            "--camera-blackboard",
+            str(blackboard),
+            "--output-dir",
+            str(output),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((output / "launch.json").read_text())
+        preflight = json.loads((output / "preflight.json").read_text())
+        for report in (receipt, preflight):
+            self.assert_livo_output_contract(report, namespace)
+        command = receipt["command"]
+        self.assertEqual(
+            command[1:], json.loads((output / "mock_argv.json").read_text())
+        )
+        for topic in ("post_vio_odometry", "post_vio_odometry_status"):
+            self.assertIn(f"/{topic}:={namespace}/{topic}", command)
+        self.assertEqual(
+            json.loads((output / "camera_parameter_ready.json").read_text()),
+            {"test_only": "fake camera service readiness"},
+        )
 
     def test_lio_custom_namespace_isolates_all_outputs_and_keeps_sensor_inputs(self):
         namespace = "/dynanav/isolated_lio_2"
@@ -277,6 +397,8 @@ class ObserverOverride(unittest.TestCase):
         )
         self.assertEqual(receipt["clock_input"], "/clock")
         self.assertIs(receipt["ground_truth_input"], False)
+        self.assert_lio_output_contract(receipt, namespace)
+        self.assert_lio_output_contract(preflight, namespace)
 
     def test_livo_check_parameter_service_follows_custom_namespace_without_execution(
         self,
@@ -301,6 +423,7 @@ class ObserverOverride(unittest.TestCase):
         report = json.loads(result.stdout)
         self.assertTrue(report["ready"])
         self.assertEqual(report["observer_namespace"], namespace)
+        self.assert_livo_output_contract(report, namespace)
         self.assertEqual(
             report["camera_parameter_service"],
             namespace + "/parameter_blackboard/get_parameters",

@@ -120,6 +120,9 @@ class LIVMapper {
         const std::vector<PointToPlane> &ptpl_list);
     void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr
                               &pmavros_pose_publisherubOdomAftMapped);
+    // Opt-in pose-only final state after processFrame; neither this topic nor
+    // its same-stamp status claims that every frame retained a visual update.
+    void publish_post_vio_odometry(bool visual_update_applied);
     void publish_mavros(
         const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr &mavros_pose_publisher);
     void publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr &pubPath);
@@ -192,6 +195,9 @@ class LIVMapper {
     bool lidar_pushed = false, imu_en, gravity_est_en, flg_reset = false, ba_bg_est_en = true;
     bool dense_map_en = false;
     bool publish_base_tf = false;
+    bool post_vio_odometry_en = false;
+    bool post_vio_has_published_stamp = false;
+    int64_t post_vio_last_published_stamp_ns = 0;
     int img_en = 1, imu_int_frame = 3;
     bool allow_lio_only = false;
     uint64_t lio_sparse_cloud_drops = 0;
@@ -263,6 +269,8 @@ class LIVMapper {
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudEffect;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubOdomAftMapped;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubPostVioOdometry;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pubPostVioOdometryStatus;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudDyn;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudDynRmed;

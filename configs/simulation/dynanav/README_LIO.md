@@ -7,8 +7,9 @@ It does not consume GT pose or send motion commands. Its outputs are remapped
 under `/dynanav/lio_observer/`. The default GT diagnostic controller does not use
 these estimates; explicit `run_dynanav_experiment.py --slam-reference ...`
 consumes this observer's measured poses for the repeat-spawn route experiment.
-The verified mode-specific results and outstanding same-input comparison are in the
-[experiment report](../../../docs/experiments/dynanav-20261109.md).
+The completed same-capture observer comparison and current closed-loop status are in the
+[continuation report](../../../docs/experiments/dynanav-20261109-continuation.md);
+the [earlier report](../../../docs/experiments/dynanav-20261109.md) preserves prior failures and partial comparisons.
 
 `fastlivo_lio.yaml` selects the existing native `ONLY_LIO` estimator with the
 explicit `common.allow_lio_only: true` opt-in and `common.img_en: 0`. The native
@@ -49,7 +50,7 @@ SIGUSR1 stop.
 An explicit `--binary-prefix` selects a directory containing `install/ros`.
 `--dependency-prefix` selects a ROS install prefix containing `lib` and `share`.
 The defaults under `PROJECT_DATA_ROOT/embodied-navigation/build_cache` are the
-separate `dynanav_lio_lifetime_20261109T043801Z` build and the existing public-dependency
+separate `dynanav_post_vio_20261109T052245Z` build and the existing public-dependency
 prefix `native_validation_20261108T124116Z/project/install/ros`. These paths are
 build-cache selections, not imports from an old navigation checkout. The
 pre-opt-in native-validation runner/core remain untouched: their SHA256 values
@@ -175,129 +176,48 @@ LIVO launcher regression has eleven passing cases (eight mode cases plus
 three namespace cases). The independent new-core
 native lifecycle result below is separate from these selected visual frames.
 
-## Same-input comparison and raw RGB evidence
+## Live final post-VIO pose output
 
-Older full-route bags omitted raw RGB. Their lossy, text-overlay MP4 cannot be
-relabelled as original 10 Hz images. The first
-[dual-stair LIVO run](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs)
-completed the GT physical route at 235.415 s and retained full native VIO logs,
-but its recorder exited with SQLite database locked after a count query was
-made against the live writer. The bag stops near 67.6 s: 675 cloud/CameraInfo messages and 644 RGB
-messages. It is preserved as incomplete evidence, not a complete common-input
-comparison dataset.
+[0005-explicit-post-vio-pose-output.patch](../../../third_party/fast_livo2/patches/0005-explicit-post-vio-pose-output.patch) adds an explicit native `publish.post_vio_odometry_en` opt-in. The LIVO configuration enables it; ONLY_LIO and upstream defaults remain disabled. The launcher checks the new capability marker and maps pose/status topics inside the selected namespace. `aft_mapped_to_init` remains the pre-VIO topic.
 
-The completed live VIO stream can still be scored as a standalone estimator
-run: [scores.json](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs/single-source-vio-scoring/scores.json)
-and [trajectory figure](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs/single-source-vio-scoring/trajectory.png)
-report 185 exact native-reference pairs spanning 5.215000153–234.315002441 s.
-One initial SE3 is used only for scoring: RMSE 0.079707 m, maximum 0.160615 m,
-last matched error 0.152466 m. No GT was supplied to the estimator; GT drove
-the robot route, so this is not visually controlled navigation. It is also
-not a same-input mode comparison because the bag is incomplete.
+Each valid final image state is published at most once on `/post_vio_odometry` and paired `/post_vio_odometry_status`, with the original image stamp, configured map/child frames and `visual_update_applied`. A valid frame with no retained visual correction still has a final pose and status false; duplicate, backward, nonfinite or LIO-stage samples are rejected. Publication does not modify estimator arithmetic. Pose/twist covariance and twist are unavailable: diagonal 1e12 and explicit status flags mark this, and zero twist is a placeholder. Consumers must not infer rest from that placeholder; the experiment uses a pose window and actual SDK gyro.
 
-Sparse snapshots prove 123 retained `livo` updates and one `lio_vio_skipped`.
-The 2,075 raw image headers and 2,037 post-VIO processed states are different
-counts; processed does not prove a retained correction. Diagnostic writer
-attempted=written=114,250, dropped=0 and I/O failure=false establish logging
-integrity for emitted records, not processing of every published camera frame.
-The last matched error is not an extrapolated final parking-time error.
+The completed paired run's [live integrity audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-no-timer-paired-full-20261109T052700Z/post-vio-live-audit/live-post-vio-integrity.json) matches all 2,196 pose/status records to post-processFrame diagnostics, with position difference 0, correct stamps/frames and status counts 2,195 true/1 false. Writer/bridge recorded drops are 0. This validates the live output contract, not route control. The old offline derived Odometry bag remains a different product.
 
-The first replacement
-[paired run](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-dual-stairs-paired)
-feeds the same capture to both modes in domain 104, with the same new lifetime
-core. `--observer-namespace` isolates outputs:
+The current default [build identity](/media/hyh001/新加卷/6.project_data/embodied-navigation/build_cache/dynanav_post_vio_20261109T052245Z/build-identity.json) and [CTest result](/media/hyh001/新加卷/6.project_data/embodied-navigation/build_cache/dynanav_post_vio_20261109T052245Z/test-result.txt) record 2/2 native fixtures passing in 0.51 s. Core SHA256 is `d1ed90f137c1deb5949740bf2b11b9ae84406ca2492aa2151f397e9198c94e62`; runner SHA256 is `23eeac2abbc1531689e0317a8a3edf9f066294e6504fd62017225b9aaab88edd`. Both modes' actual `--check` have passed. See [native fixtures](../../../tests/native/dynanav_lio/README.md) for rebuilding the tests.
 
-| Mode | Namespace | Custom TF output |
+The new measured three-goal `livo_post_vio` reference is pose-only and repeat-spawn, with no global registration. The actual domain-110 closed-loop run used `/dynanav/livo_navigation/post_vio_odometry`; it completed two corners but ended in third-stage `route_low_progress_stall` at source268.714996338 s, with `arrived=false`. The continuation report links the final result and keeps the physical/control diagnosis pending. `--slam-reference`, `--odometry-topic`, `--slam-capture-remaining-m` and `--slam-capture-distance-m` select this route experiment; GT still supplies policy proprioception/physical guards/scoring, and never the route pose. The first run used 0.05/0.10 m capture bounds. New optional `--slam-final-capture-remaining-m` / `--slam-final-capture-distance-m` default to inherited bounds; an actual new run keeps intermediate 0.05/0.10 m and changes only the final goal to 0.15/0.20 m. Its controller reports arrival at source249.214996338 s and native parking samples end at254.415 s; all four supervised processes exit 0. The final independent review passes all 13 observed-run checks: three stages, two completed stop/turn transitions, measured final parking and exact controller-input provenance; it also has 2,367 exact pose/status/native correspondences. Its route journal includes 280 stale-sim-odometry zero-command holds (about 5.6 s of policy samples), so an empty legacy `freshness_hold_events` result array does not establish uninterrupted pose freshness. Capture subscribes only to final Odometry, not its status topic: guards use pose/frame/freshness, a pose-speed window and SDK gyro; configured unavailable twist is ignored. Status/covariance are not runtime controller gates, and their consistency is audited offline. Both visual closed-loop routes have no pedestrians; learned masks have not replaced the live oracle. Stall, speed, dwell and z checks remain in force. See the continuation report for repository-based launch commands, both run receipts and the final independent-review evidence. This actual repeat-spawn route completion is separate from earlier observer scores and from general navigation/perception certification.
+
+A separately archived [0005 reverse/forward patch audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/audit/0005-patch-roundtrip/audit.json) verifies the two vendor source hashes against the manifest and the retained `bffa2b6` baseline without editing vendor files.
+
+## Same-capture comparison and raw RGB evidence
+
+The completed [paired full route](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-no-timer-paired-full-20261109T052700Z) uses one GT-controlled capture and the same new core for both observers. The physical route ends at 235.415 s, all supervised processes exit 0, and acquired/published/archived/video RGB counts are all 2,354. This is an observer comparison, not visual navigation feedback.
+
+| Mode | Namespace | Final navigation pose topic |
 | --- | --- | --- |
-| lio | `/dynanav/lio_comparison` | `/dynanav/lio_comparison/tf` |
-| livo | `/dynanav/livo_comparison` | `/dynanav/livo_comparison/tf` |
+| lio | `/dynanav/lio_comparison` | `/dynanav/lio_comparison/aft_mapped_to_init` |
+| livo | `/dynanav/livo_comparison` | `/dynanav/livo_comparison/post_vio_odometry` |
 
-The default remains `/dynanav/lio_observer`; custom namespaces must be absolute,
-non-root ROS names without trailing slash. They change output/TF/service names,
-not shared sensor topics. The LIVO camera parameter service is created inside
-its selected namespace. Give each process its own new output directory and
-snapshot override path. Final paired-prefix ingress, processed coverage, post-VIO scores and resource
-checks are now recorded in the experiment report; simultaneous startup alone
-does not establish identical processed-frame coverage or complete-route A/B.
+Both receive the same 47,080 SDK IMU samples and 2,354 static clouds. Original RGB archive count 2,354, bag RGB count 2,176 and LIVO image ingress 2,234 describe different stages; complete capture does not establish complete DDS delivery. The primary common-exact-keyframe protocol covers 201/236 frames from 5.215000153 to 235.315002441 s. One initial SE3 per source is used only for scoring: ONLY_LIO RMSE/max/last-matched error is 1.919313/2.565622/2.545833 m; post-VIO is 0.083742/0.156613/0.155007 m. The shared ONLY_LIO initial alignment gives post-VIO RMSE 0.074619 m. No GT poses enter the estimators. See the continuation report for protocols, missing frames, snapshots and independent checks.
 
-That paired capture ended in an Isaac SDK SIGSEGV with last persisted native truth near 36.11 s. Both
-observers and the recorder cooperatively exited 0 and retained the prefix;
-RGB archive `capture_completed=false` is not a complete-route receipt. Buffered records/NPZ may extend further, so the precise crash tick is unknown.
-This is separate from the diagnosed VIOManager teardown bug. Heavy PhysX material/face
-warnings do not yet establish a root cause; archive causation, OOM and GPU Xid
-have not been established.
+The default observer namespace remains `/dynanav/lio_observer`; `--observer-namespace` accepts an absolute non-root ROS name without a trailing slash. It isolates output topics, custom TF and the owned camera parameter service, while sensor topics remain shared. Give each process a separate new output directory and snapshot override path.
 
-The single clean-instance
-[supervised retry](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-dual-stairs-paired-retry)
-used domain 105 with the same two modes/new core/WAL/raw archive, but also
-ended in SDK SIGSEGV with last persisted native truth near 62.71 s. Final `supervision.json` records
-capture=1, LIO=0, LIVO launcher=130 from group stop, recorder=0; group-stop 130
-is not evidence of an estimator crash. The supervisor stopped remaining owned
-processes. Further SDK retries have stopped. Only the retained prefixes can
-be compared on common input; full-route paired quality is not established.
-Read-only checks found no OOM or root-USD change, and earlier successful runs
-also had the warning storm; the final warning or raw archive is not an
-established cause. The complete standalone VIO diagnostics can be scored,
-but that earlier incomplete bag cannot establish full common-input A/B.
+Earlier evidence remains in the historical report: the first complete standalone VIO route has a valid 185-KF score but a recorder-lock-truncated bag (675 cloud/CameraInfo, 644 RGB); two subsequent paired captures ended in SDK SIGSEGV with last persisted native truth near 36.11/62.71 s. Their prefix comparisons remain partial and are not replaced by new run identities. Later GDB stress directly observed a traceback-watchdog fault; it does not retroactively supply missing native stacks for those old runs. Removing unconditional periodic Python traceback dumping was followed by an 80 s capture test and the complete paired run above. Native lifecycle failure and SDK traceback failure are separate findings.
 
-The saved common exact-keyframe prefixes were scored with one initial SE3 per
-source at the same first GT anchor. The first 27-KF prefix has ONLY_LIO/VIO
-position RMSE 0.015871/0.015430 m, but VIO maximum error is higher. The retry
-49-KF prefix has RMSE 0.020962/0.021943 m. These incomplete route prefixes do
-not show a consistent visual advantage. Source archives contain 361/627 RGB
-frames, recorder bags 342/587 unique image headers, and VIO callback ingress
-339/599 headers; archive existence does not establish complete DDS delivery.
-See the experiment report for exact common stamps, protocol, missing frames
-and source receipts.
+Capture `--archive-rgb` uses [rgb_archive.py](../../../src/embodied_navigation/simulation/dynanav/rgb_archive.py) to save each pre-overlay renderer RGB sample as ZIP_STORED `rgb8` NPZ with source_ns, frame_index, frame_id and encoding. At 512×512 this is about 0.75 MiB/frame, roughly 1.8 GB per route. Interrupted runs retain `capture_completed=false`. Video is not a source of original RGB.
 
-The standalone completed VIO run also produced a
-[post-VIO static map](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs/post-vio-static-map/receipt.json)
-with 91,449 points from 185 exact keyframes (51 unmatched). Its pose source is
-recorded post-VIO estimates represented in a derived offline Odometry bag,
-not live-published odometry or the failed recorder bag; no GT pose is used for
-mapping. Masks remain simulator oracle. It is a route-observed local
-multi-level map, not complete office coverage or a visual navigation loop.
+[replay_dynanav_rgb.py](../../../scripts/replay_dynanav_rgb.py) reads only the RGB/source metadata whitelist, verifies source files and original order, and publishes due original images on received `/clock`. It does not create time, decode video, load GT arrays or resample. `--source-received-stamps` optionally freezes an exact archived subset; that is a subset experiment, not full source coverage. Its `--check` hashes/validates without importing ROS, and writes only a new receipt:
 
-The finalized resource audit reports paired-active mapper CPU means of
-9.70/14.08% (LIO/LIVO) for the first prefix and 9.56/13.72% for retry; 100% is
-one core. Sampled active-window RSS peaks are about 123/235 and 126/321 MiB.
-These exclude the rest of the stack and do not establish full-route peaks.
-The first monitor missed about 15.27 s of initial activity; the report retains
-its missing-coverage limit rather than reconstructing an unobserved peak.
-
-The derived post-VIO map has also been independently audited: all 2,037
-positions are bit-exact to native records, rotation roundtrip differs by at
-most about 2.07e-14, and 185-keyframe/91,449-point map output is bit-exact
-without reading archived GT transforms. A mutable scratch reader path drifted;
-the exact as-run SHA was recovered from an archived copy, with original
-receipts unchanged. See the report's independent-audit/source-resolution links.
-
-Capture `--archive-rgb` writes every acquired, pre-overlay renderer RGB sample
-with [rgb_archive.py](../../../src/embodied_navigation/simulation/dynanav/rgb_archive.py)
-to `capture/rgb_raw/*.npz`. Each ZIP_STORED file retains rgb8 uint8 pixels,
-source_ns, consecutive frame_index, frame_id and encoding; timestamps match the
-original ROS image header. No video decoding, lossy encoding or resampling is
-used. At 512×512 it is about 0.75 MiB/frame, roughly 1.8 GB for this route.
-Normal completion checks acquired/published/archive/video counts; interrupted
-runs must keep their partial receipt.
-
-The new recorder uses explicit
-[storage-wal.yaml](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-dual-stairs-paired/storage-wal.yaml):
-
-```yaml
-write:
-  pragmas:
-    - journal_mode = WAL
-    - synchronous = NORMAL
-    - busy_timeout = 5000
+```sh
+RGB_ARCHIVE="$PROJECT_DATA_ROOT/embodied-navigation/experiments/dynanav-no-timer-paired-full-20261109T052700Z/capture/rgb_raw"
+python3 scripts/replay_dynanav_rgb.py --archive-dir "$RGB_ARCHIVE" \
+  --receipt "$PROJECT_DATA_ROOT/embodied-navigation/experiments/rgb-check-$(date -u +%Y%m%dT%H%M%SZ).json" --check
 ```
 
-The `write.pragmas` format is documented by
-[ROS 2 Jazzy rosbag2_storage_sqlite3](https://github.com/ros2/rosbag2/blob/jazzy/rosbag2_storage_sqlite3/README.md).
-These values are the recorded experiment settings. No count query is made
-against an active writer; database verification waits for normal recorder
-shutdown. The standalone VIO score above is available; full-route same-input mode
-comparison remains incomplete after both SDK interruptions.
+The adapter also passed a real ROS-only [runtime audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/rgb-replay-runtime-20261109T055456Z/runtime-audit.json): 627 original prefix frames published and independently received, with original headers/layout/pixel SHA verified. Only the finalized bag's clock was played, at wall rate 4 without changing source stamps. All owned processes exited 0; no SDK or native estimator was started. This does not establish full-route estimator replay or closed-loop navigation.
+
+Recorders use explicit SQLite `write.pragmas` with WAL, synchronous NORMAL and busy_timeout 5000, as supported by [ROS 2 Jazzy rosbag2_storage_sqlite3](https://github.com/ros2/rosbag2/blob/jazzy/rosbag2_storage_sqlite3/README.md). These are recorded experiment settings, not permission to inspect an active writer; all bag validation waits for recorder shutdown.
 
 ## Single-variable observer parameters
 
@@ -355,8 +275,8 @@ teardown, including with `rmw_fastrtps_cpp` and `UDPv4`. Earlier successful
 numerical assertions do not establish safe process teardown. Existing run
 receipts retain that core's hash; this source fix was rebuilt in a separate prefix and tested as recorded below.
 
-The new default prefix is
-`build_cache/dynanav_lio_lifetime_20261109T043801Z`. Its
+The then-default lifecycle prefix was
+`build_cache/dynanav_lio_lifetime_20261109T043801Z`. The current post-VIO prefix above includes this fix. Its
 [build identity](/media/hyh001/新加卷/6.project_data/embodied-navigation/build_cache/dynanav_lio_lifetime_20261109T043801Z/build-identity.json)
 and [CTest result](/media/hyh001/新加卷/6.project_data/embodied-navigation/build_cache/dynanav_lio_lifetime_20261109T043801Z/test-result.txt)
 record 1/1 native CTest passing in 0.28 s, covering deterministic poisoned
@@ -369,6 +289,6 @@ was changed to that prefix and its file/hash/dependency `--check` passed.
 The earlier `dynanav_lio_offset_20261109T030656Z` prefix is retained. Historical
 LIO, LIVO smoke and the completed first dual-stair LIVO run keep their own
 old-core hashes. LIVO calls `initializeVIO`, so it does not use the camera-free
-uninitialized-pointer path. Both paired attempts used the same new lifetime core for both modes; they
+uninitialized-pointer path. The two earlier interrupted paired attempts used the same new lifetime core for both modes; they
 must not silently relabel live old-core results as new-core results. The lifecycle pass does not establish
-full-route visual accuracy.
+full-route visual accuracy; that is measured separately in the completed observer comparison above.

@@ -1,0 +1,69 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Metric grid
+      Enabled: true
+      Alpha: 0.18
+      Cell Size: 1
+      Color: 115; 125; 140
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: DynaNav estimated static map
+      Enabled: true
+      Topic:
+        Value: /dynanav/review/static_map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds: true
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.03
+      Size (Pixels): 3
+      Alpha: 1
+      Decay Time: 0
+      Selectable: true
+      Queue Size: 1
+  Enabled: true
+  Global Options:
+    Background Color: 24; 28; 36
+    Fixed Frame: dynanav_lio_map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Distance: 52
+      Pitch: 0.75
+      Yaw: 0.8
+      Focal Point:
+        X: -5.382799752167564
+        Y: -9.964962222226013
+        Z: 3.0179374690461254
+      Near Clip Distance: 0.01
+      Field of View: 0.7853981633974483
+      Invert Z Axis: false
+    Saved: ~
+Window Geometry:
+  Width: 1440
+  Height: 960
