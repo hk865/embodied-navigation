@@ -219,6 +219,28 @@ def main(argv=None):
         default="spawn-crossing",
     )
     parser.add_argument("--pedestrian-speed", type=float)
+    parser.add_argument(
+        "--semantic-provider",
+        choices=("isaac_instance_oracle", "learned_rgb_person"),
+        default="isaac_instance_oracle",
+    )
+    parser.add_argument(
+        "--person-worker",
+        type=Path,
+        help="Existing local worker channel; no model is downloaded",
+    )
+    parser.add_argument(
+        "--pose-launch-receipt",
+        type=Path,
+        help="Actual observer launch receipt for the learned frontend binding",
+    )
+    parser.add_argument("--person-max-interval", type=float, default=0.4)
+    parser.add_argument("--person-min-interval", type=float, default=0.2)
+    parser.add_argument(
+        "--learned-evaluation-oracle",
+        action="store_true",
+        help="Isolated oracle scoring sink; never an algorithm input",
+    )
     args = parser.parse_args(argv)
     profile = make_profile(args.speed, args.duration)
     profile["imu_publish_hz"] = args.imu_hz
@@ -325,6 +347,79 @@ def main(argv=None):
         )
     if args.slam_reference:
         make_slam_controller(profile)
+    if args.semantic_provider == "learned_rgb_person":
+        if (
+            not args.slam_reference
+            or profile.get("slam_pose_source") != "livo_post_vio"
+        ):
+            parser.error(
+                "Online learned mapping requires an explicit post-VIO measured reference"
+            )
+        if args.person_worker is None:
+            parser.error("Online learned mapping requires --person-worker")
+        if not (
+            math.isfinite(args.person_min_interval)
+            and math.isfinite(args.person_max_interval)
+            and 0 < args.person_min_interval <= args.person_max_interval
+        ):
+            parser.error("Person event intervals must be finite and 0 < min <= max")
+        if args.pose_launch_receipt is None or not args.pose_launch_receipt.is_file():
+            parser.error(
+                "Online learned mapping requires an actual --pose-launch-receipt"
+            )
+        launch_path = args.pose_launch_receipt.expanduser().resolve()
+        launch = json.loads(launch_path.read_text())
+        if (
+            launch.get("lidar_input_topic") != "/dynanav/lidar_perception_filtered"
+            or launch.get("navigation_pose_topic") != profile["odometry_topic"]
+            or launch.get("ground_truth_input") is not False
+        ):
+            parser.error(
+                "Observer launch must bind the learned candidate cloud and selected post-VIO output, without GT pose input"
+            )
+        if str(launch.get("ros_domain_id")) != os.environ.get("ROS_DOMAIN_ID", "0"):
+            parser.error("Observer launch receipt belongs to a different ROS domain")
+        profile["pose_launch_receipt"] = str(launch_path)
+        profile["pose_launch_receipt_sha256"] = hashlib.sha256(
+            launch_path.read_bytes()
+        ).hexdigest()
+        channel = args.person_worker.expanduser().resolve()
+        state_path = channel / "state.json"
+        if not state_path.is_file():
+            parser.error(
+                "Person worker state.json is missing; start the explicit local worker first"
+            )
+        worker_state = json.loads(state_path.read_text())
+        expected_model = (
+            "73cbd0190fcbe3ba339921fbce2c3a0b6bb9126c9a133c85e43a2a8e060a109e"
+        )
+        if (
+            worker_state.get("model_sha256") != expected_model
+            or worker_state.get("state") != "ready"
+        ):
+            parser.error(
+                "Person worker must be ready with the explicitly selected model hash"
+            )
+        profile.update(
+            semantic_provider="learned_rgb_person",
+            mapping_pose_source="live_livo_post_vio_exact",
+            person_worker=str(channel),
+            person_model_sha256=expected_model,
+            person_max_interval_s=args.person_max_interval,
+            person_min_interval_s=args.person_min_interval,
+            oracle_evaluation=args.learned_evaluation_oracle,
+            lidar_frontend_topic="/dynanav/lidar_perception_filtered",
+            navigation_scope="measured post-VIO repeat-spawn route with online RGB candidate hold/resume; not general avoidance",
+            model_timing="synchronous local online inference pauses physics; realtime deadline not certified",
+        )
+    elif (
+        args.person_worker is not None
+        or args.pose_launch_receipt is not None
+        or args.learned_evaluation_oracle
+    ):
+        parser.error(
+            "Worker/oracle-evaluation options require --semantic-provider learned_rgb_person"
+        )
     if not math.isfinite(args.rtf) or args.rtf <= 0:
         parser.error("--rtf must be positive and finite")
     data = data_root()
@@ -372,7 +467,29 @@ def main(argv=None):
     sources = [
         "src/embodied_navigation/simulation/dynanav/experiment.py",
         "src/embodied_navigation/simulation/dynanav/capture_go2_rgbd.py",
+        "src/embodied_navigation/simulation/dynanav/capture/__init__.py",
+        "src/embodied_navigation/simulation/dynanav/capture/control.py",
+        "src/embodied_navigation/simulation/dynanav/capture/frames.py",
+        "src/embodied_navigation/simulation/dynanav/capture/mapping.py",
+        "src/embodied_navigation/simulation/dynanav/capture/physics.py",
+        "src/embodied_navigation/simulation/dynanav/capture/policy.py",
+        "src/embodied_navigation/simulation/dynanav/capture/receipts.py",
+        "src/embodied_navigation/simulation/dynanav/capture/ros_interface.py",
+        "src/embodied_navigation/simulation/dynanav/capture/scene.py",
+        "src/embodied_navigation/simulation/dynanav/capture/sensors.py",
+        "src/embodied_navigation/simulation/dynanav/capture/video.py",
         "src/embodied_navigation/simulation/dynanav/oracle_mapping.py",
+        "src/embodied_navigation/simulation/dynanav/learned_mapping.py",
+        "src/embodied_navigation/simulation/dynanav/learned_scoring.py",
+        "src/embodied_navigation/perception/person_worker.py",
+        "src/embodied_navigation/perception/person_tiling.py",
+        "src/embodied_navigation/perception/person_geometry_tracking.py",
+        "src/embodied_navigation/perception/temporal_geometry.py",
+        "src/embodied_navigation/perception/learned_person_mapping.py",
+        "src/embodied_navigation/perception/person_segmentation.py",
+        "scripts/run_dynanav_person_worker.py",
+        "scripts/query_scene_map.py",
+        "src/embodied_navigation/localization_mapping/semantic_mapping/query.py",
         "src/embodied_navigation/simulation/dynanav/rgb_archive.py",
         "src/embodied_navigation/simulation/dynanav/render_diagnostics.py",
         "src/embodied_navigation/simulation/dynanav/pedestrian.py",

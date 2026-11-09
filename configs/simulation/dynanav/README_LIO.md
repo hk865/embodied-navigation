@@ -11,6 +11,66 @@ The completed same-capture observer comparison and current closed-loop status ar
 [continuation report](../../../docs/experiments/dynanav-20261109-continuation.md);
 the [earlier report](../../../docs/experiments/dynanav-20261109.md) preserves prior failures and partial comparisons.
 
+## 目录结构
+
+```text
+configs/simulation/dynanav/
+├── README.md                              # 配置索引与消费点（81 行）
+├── README_LIO.md                          # 本文件：观察器启动、标定契约与实验记录
+├── camera_rgbd.yaml                       # 512×512 pinhole 内参基准（18 行）
+├── fastlivo_lio.yaml                      # ONLY_LIO 模式参数（100 行）
+├── fastlivo_lio_gravity_estimation.yaml   # 单变量 gravity 对照覆盖（6 行）
+├── fastlivo_livo.yaml                     # RGB 辅助 LIVO 模式参数（129 行）
+└── office.yaml                            # 历史场景/资产路径记录，无代码读取（5 行）
+```
+
+## 代码、日志与配置
+
+| 类别 | 位置 | 含义 |
+| --- | --- | --- |
+| 配置 | [`fastlivo_lio.yaml`](fastlivo_lio.yaml) | 本文件默认 `--mode lio` 的参数文件：`img_en: 0`、`allow_lio_only: true`，post-VIO 输出关闭。由 [`scripts/run_dynanav_lio.sh`](../../../scripts/run_dynanav_lio.sh) 按 `fastlivo_${mode}.yaml` 选择并做模式/post-VIO 一致性 preflight。 |
+| 配置 | [`fastlivo_livo.yaml`](fastlivo_livo.yaml) | `--mode livo` 的参数文件：`img_en: 1`、post-VIO 输出开启、`/dynanav/camera`；视觉参数是本轮实验设置，不是精度结论。 |
+| 配置 | [`camera_rgbd.yaml`](camera_rgbd.yaml) | 相机内参基准。livo 分支读取它作为参数服务基线，再用 `--capture-result` 的 `sensor_installation` 覆盖并校验（`camera_parameter_ready.json` + `camera_parameters.log`）。lio 分支不使用该文件。 |
+| 配置 | [`fastlivo_lio_gravity_estimation.yaml`](fastlivo_lio_gravity_estimation.yaml) | 通过 `--parameter-override` 追加的单变量 gravity 对照；base 默认仍为关闭。 |
+| 配置（无读取点） | [`office.yaml`](office.yaml) | 历史路径记录，无代码读取；实际场景/机器人路径硬编码在 `simulation/dynanav/experiment.py` 的 `data_root()` 下。 |
+| 代码 | 本目录无代码 | 读取点是 shell 启动器 `scripts/run_dynanav_lio.sh`、回归测试 [`tests/regression/test_dynanav_lio_launcher.py`](../../../tests/regression/test_dynanav_lio_launcher.py)，以及被观察器消费的 native 二进制（`fastlivo_mapping`/`libfast_livo2_core.so`）。 |
+| 日志/输出 | 外部 `--output-dir`（必须新目录且在 `PROJECT_DATA_ROOT` 内） | 本目录不写日志。运行期产物：`preflight.json`、`launch.json`（含二进制/core/config 实际哈希）、`camera_parameter_ready.json`、`camera_parameters.log`、`runner.log`、native diagnostics、snapshot 的 `bridge_status.json` 等，全部属该次 run 的证据，不入 Git。 |
+
+本文件是**说明文档**而不是配置读取点：没有任何代码解析 `README_LIO.md`，文中哈希/运行号/结论都只是记录。
+
+## 模块内文件耦合
+
+- 依赖方向：README 文档之间单向引用（本文件 ← → 同目录 [`README.md`](README.md)）；四个 YAML 互不 include，按 `--mode` 与 `--parameter-override` 组合，不存在继承链。
+- 隐式契约（字符串级）：本文件引用的 topic 名、`/dynanav/<ns>/...` 命名空间、`kind12/stage1/payload[0]` 诊断键、`final_stage=livo`/`lio_vio_skipped` 快照字段、SHA256 与 run 标识，都必须与 native 代码/launch receipt 一致；改实现不改本文不会报错，但本文会过期。已发生过的例子：`0004`/`0005` patch 改变生命周期与 post-VIO 输出后，旧哈希段落被保留为“历史/旧 core”，而不是被删除。
+
+| 文件 | 行数 | 依赖 | 被谁依赖 | 判断 |
+| --- | ---: | --- | --- | --- |
+| `README_LIO.md` | 354（原文 294 + 本次索引 60） | 同目录 YAML、外部 run 证据、native patch | 人；`tests/native/dynanav_lio/README.md` 与 `configs/simulation/dynanav/README.md` 引用 | 偏重：单文件承载“当前默认 + 历史证据 + 操作手册”三种角色 |
+| 四个 YAML | 6–129 | native ROS 参数契约 | 启动器/参数服务 | 清楚，见同目录 `README.md` 的耦合表 |
+
+结论：耦合**清楚**（无代码环、无隐藏继承），但文档与实现之间是弱校验的字符串契约；风险在于原文 294 行里的历史哈希/run 标识会随重建过期，需要“当前默认”和“历史记录”分层阅读。
+
+## 可读性评估
+
+- 结构：**需改进**（指原文正文）。原文 294 行、56 个自然段、8 个 H2（`RGB-assisted LIVO startup`、`Camera and sensor contract`、`Actual visual updates and post-VIO scoring`、`Live final post-VIO pose output`、`Same-capture comparison and raw RGB evidence`、`Single-variable observer parameters`、`Instantaneous point time correction`、`Camera-free object lifetime`），但原文没有目录（本次只加了文档索引与耦合说明，未重排正文），“当前默认”的信息散落在第 14–65 行与各历史段落之间；最长段落 16 行。
+- 内容：**可接受**。命令、标定公式、拒绝条件、边界（“hash/CPU checks do not certify a physical route”）都写得很具体；缺点是同一主题（core 哈希、prefix）在多处重复，且 6 处 SHA256 段落需要读者自己判断哪一处是当前默认（正文已用 “current default / retained as historical” 区分，但没有汇总表）。
+- 语言：英文长文与本目录其它中文 README 混用；这不影响正确性，但同一目录风格不统一。
+
+这是**文档组织问题**，不是代码结构问题；没有发现虚构表述或未标注的推测。
+
+## 重构建议
+
+| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
+| --- | --- | --- | --- | --- |
+| P2 | 文首加目录（8 个 H2 链接）+ 一段“当前默认 vs 历史对比”导航 | 294 行线性叙述，新读者无法先拿到当前结论 | 无（只加索引段） | 人工从目录跳到各节；原有事实段落不改 |
+| P2 | 增加“构建身份/哈希汇总表”：current default / retained historical 两列，列出 prefix、core/runner SHA256、CTest 结果 | 7 处 SHA256 分散，重建后极易引用错 | 无（纯文档；数字须从 build-identity.json/test-result.txt 复核） | 与 `build_cache/.../build-identity.json`、`test-result.txt` 逐项对照 |
+| P2 | 把“实验设置 ≠ 精度验收”的边界句统一成固定句式（如每节末尾 `Boundary:` 行） | 当前边界散落在段落中，易被摘要时丢掉 | 无 | 抽查 8 节是否都有边界句 |
+| P3 | 统一本目录文档语言（或在文首声明“本文件保留英文原文，索引见中文 README.md”） | 同目录中英混杂 | 无 | 人工阅读 |
+
+没有 P0/P1：本文件不参与运行，错误只会误导读者；已有 `--check` 与 preflight 失败保护运行路径，不需要结构性改造。本轮只写建议、不改代码；任何哈希表更新都应以构建产物重新核对后再写。
+
+## 观察器说明与实验记录（原文保留）
+
 `fastlivo_lio.yaml` selects the existing native `ONLY_LIO` estimator with the
 explicit `common.allow_lio_only: true` opt-in and `common.img_en: 0`. The native
 default remains the original IMU+RGB V19 path. In opt-in mode no camera service,

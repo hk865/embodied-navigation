@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Measured-pose SCAN execution with freshness watchdog and LiDAR stop/resume.
 
+This module owns the live navigation state machine: ``Navigation.control()``
+runs every control cycle and gates/replaces the SCAN trajectory with the
+idle/running/succeeded/failed/stopped states and the drive/pre_turn/align/settle
+heading phases. The default native launch reaches it through
+``ros_node.TeacherNavigation`` and ``pid_navigation.PIDNavigation``.
+
 The node never sets a simulator pose, never subscribes to ground truth and never
 drives directly to an unchecked waypoint when SCAN has not produced a trajectory.
 """

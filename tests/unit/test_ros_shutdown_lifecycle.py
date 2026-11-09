@@ -12,7 +12,9 @@ from embodied_navigation.common.shutdown import ShutdownRequested, ShutdownSigna
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = [
     ROOT / "src/embodied_navigation/perception/sensors/sensor_gate.py",
-    ROOT / "src/embodied_navigation/navigation/pid_navigation.py",
+    # The controller process entrypoint moved out of the former monolith; the
+    # rclpy lifecycle assertions now read the module that owns them.
+    ROOT / "src/embodied_navigation/navigation/pid_entrypoint.py",
 ]
 
 

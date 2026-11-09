@@ -24,6 +24,13 @@ TRANSITIONS = {
 class MissionTerrainProvider(SwitchingTerrainProvider):
     def __init__(self, run, scope, map_class, observation):
         copied = copy.deepcopy(scope)
+        # Historical manifest names kept for the original scenario. They are not
+        # in this checkout (tests/terrain_targets/ is absent, and only
+        # configs/scenarios/terrain_targets/lower12.json exists). In
+        # policy/worker.py, ``mission46_required`` alone selects this class;
+        # ``terrain_layer_switch`` without it selects the generic
+        # SwitchingTerrainProvider. Neither switch is enabled by the default
+        # profile.
         copied["profile"]["terrain_layer_switch"] = dict(
             initial_manifest="tests/terrain_targets/lower12.json",
             alternate_manifest="tests/terrain_targets/upper23.json",

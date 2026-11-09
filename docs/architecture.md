@@ -10,9 +10,26 @@
 1. start.py调用launch/main.py。prepare.py从configs准备本次运行，demo.launch.py只装配进程和配置。
 2. simulation负责世界、物理、传感器生命周期。perception/sensors将相机、LiDAR、IMU输入交给localization_mapping/frontend；third_party/fast_livo2提供实际SLAM实现。
 3. localization_mapping/backend执行注册与图优化，feedback_state.py在已接受的SLAM回调处附带生产者和时间信息。它不把仿真真值重标为SLAM。
-4. planning的参考路线、SCAN和PCT给出路径；navigation/pid_navigation.py管理既有任务，navigation/task.py实现从原多航点桥提取的等待、跟随、到点稳定、转向、完成与失败状态。building_navigation.py只允许显式SLAM模式。
+4. planning的参考路线、SCAN和PCT给出路径；navigation/pid_navigation.py是现役 controller 入口（节点类 `IntegratedNavigation`；准入/路由/控制职责已拆到同目录 `pid_ingress.py`/`pid_admission*.py`/`pid_route.py`/`pid_control.py`，进程入口 `pid_entrypoint.py`），**默认主路径的任务状态机在 navigation/base_node.py 的 `Navigation.control()`**（idle/running/succeeded/failed/stopped 与 drive/pre_turn/align/settle 相位）。navigation/task.py 是**独立 `relative-slam-navigation` 入口**的任务状态机，不在 demo.launch.py 中；navigation/mission/state_machine.py 在本检出中没有实例化点，默认 mission 角色是 mission/mission_runtime.py。building_navigation.py只允许显式SLAM模式。
 5. control/tracking和control/relative_pid.py计算跟踪命令，control/parking执行停车相关控制律。navigation判断何时触发及何时完成停车，robot/unitree负责策略、关节契约和执行桥。没有在launch中实现任务状态机。
-6. evaluation保存离线指标；simulation/dynanav只负责DynaNav场景接入和RGB-D capture。视觉策略训练另属于RL_for_unitree，不与导航部署混放。
+6. evaluation保存离线指标；simulation/dynanav负责 DynaNav/Isaac 场景接入、真实 Go2 RGB-D capture，以及该实验路径的 oracle/learned 建图、实测位姿路线控制和动态行人模块，不是只做 capture。视觉策略训练另属于RL_for_unitree，不与导航部署混放。
+
+## 四条执行路径
+
+仓库有四条入口互不相通的执行路径，共享代码但不共享进程图和 ROS 话题；不能靠同时启动把它们接起来。
+
+| 路径 | 入口 | 进程/数据面 | 说明 |
+| --- | --- | --- | --- |
+| A. Native 主路径 | `start.py` → `launch/main.py` → `launch/launch/demo.launch.py` | ROS `/demo/*` + run 目录 JSON + `TEACHER_SOCKET` | 15 个受管进程，默认 SLAM 导航 |
+| B. Building（SLAM-only） | `launch/building.py` | 自管 `Popen`，`/building/*`，数据卷 `runs/` | 只接受 `--mode slam` |
+| C. RoboGauge benchmark | `navigation/robogauge/benchmark.py` | 自管 `Popen`，45D 观测 + 专用 actuator | 45D 不是 Student exact45 的裁剪 |
+| D. DynaNav/Isaac 实验 | `scripts/run_dynanav_experiment.py` + `scripts/run_dynanav_lio.sh` + `scripts/run_dynanav_person_worker.py` | `/dynanav/*`，外部数据卷 `experiments/` | 手工三终端；可选统一入口 `scripts/run_dynanav_online_person.py`（只监督三进程顺序与收尾，不替代手工命令，也不做验收） |
+
+## 默认主路径的任务状态机
+
+- 现役状态机是 `navigation/base_node.py` 的 `Navigation.control()`，由 `navigation/ros_node.py`（`TeacherNavigation`）包装、`navigation/pid_navigation.py`（`PIDNavigation` 由 `pid_*` mixins 组合，入口 `pid_entrypoint.py`）装配；`control/launch/components.py` 以 `controller` 角色启动 `embodied_navigation.navigation.pid_navigation`。
+- 停车与航向相位在 `control/parking/transition_gate.py`；`base_node` 里创建的同名 `HeadingGate` 会在 `ros_node` 初始化时被替换成它，日志里的 `alignment_phase` 因此可能来自两者之一。
+- **不要**从 `navigation/task.py`（独立 relative-SLAM 入口）或 `navigation/mission/state_machine.py`（本检出未实例化）推断默认行为。
 
 ## 安全门禁是实际调用，不只是约定
 

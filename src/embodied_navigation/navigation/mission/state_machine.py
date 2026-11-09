@@ -1,4 +1,10 @@
-"""Mission transitions independent of ROS transport and simulation timing."""
+"""Mission transitions independent of ROS transport and simulation timing.
+
+Not instantiated in this checkout: the only subclass is ``ContinuousMission``
+(``continuous_route.py``), which has no construction site, and
+``continuous_route_contract.enabled`` is ``false``. The live ``mission`` process
+is ``mission_runtime.py``. Do not read this module as the default behaviour.
+"""
 
 from dataclasses import dataclass, field
 import math

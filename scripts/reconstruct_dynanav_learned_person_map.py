@@ -28,6 +28,9 @@ from embodied_navigation.perception.learned_person_mapping import (
     load_geometry,
     pose_dependency_provenance,
 )
+from embodied_navigation.localization_mapping.semantic_mapping import (
+    query as learned_scene_query,
+)
 from embodied_navigation.perception.person_segmentation import periodic_indices
 from embodied_navigation.project import data_root
 
@@ -380,7 +383,7 @@ def main(argv=None):
         "learned_reconstruction_pose_io",
         ROOT / "scripts/reconstruct_dynanav_slam_map.py",
     )
-    query = load_script("learned_scene_query", ROOT / "scripts/query_scene_map.py")
+    query = learned_scene_query
     index, databases, pose_counts = read_exact_poses(args, reconstruction)
     launch = args.pose_launch_receipt
     if launch is None:
@@ -427,6 +430,8 @@ def main(argv=None):
                     / "src/embodied_navigation/localization_mapping/semantic_mapping/core.py",
                     ROOT / "scripts/reconstruct_dynanav_slam_map.py",
                     ROOT / "scripts/query_scene_map.py",
+                    ROOT
+                    / "src/embodied_navigation/localization_mapping/semantic_mapping/query.py",
                 ]
             ],
         }

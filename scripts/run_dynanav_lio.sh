@@ -7,13 +7,16 @@ usage() {
 Usage: run_dynanav_lio.sh --output-dir NEW_DIRECTORY [--binary-prefix PREFIX] [--parameter-override FILE]
        run_dynanav_lio.sh --mode livo --capture-result RESULT_JSON --output-dir NEW_DIRECTORY
        run_dynanav_lio.sh --check [--mode lio|livo] [--capture-result RESULT_JSON]
-       Optional: --observer-namespace /dynanav/lio_comparison
+       Optional: --observer-namespace /dynanav/lio_observer   # default
+       Optional: --lidar-topic /dynanav/lidar_perception_filtered
 
 PREFIX contains install/ros. PROJECT_DATA_ROOT can supply the verified, fixed
 build-cache default. --parameter-override appends a second ROS parameter file
 for estimation experiments; observer input/mode selectors stay fixed.
 --observer-namespace defaults to /dynanav/lio_observer. Explicit other namespaces
-isolate every native output, including /tf. Absolute sensor input topics stay fixed.
+isolate every native output, including /tf. --lidar-topic explicitly selects the
+legacy oracle-static cloud or online learned-filtered temporary candidates.
+Other absolute sensor inputs and estimation modes stay fixed.
 --mode defaults to lio. livo additionally starts its own parameter_blackboard
 in the observer namespace and reads only sensor_installation calibration from
 --capture-result. It enables actual /dynanav/camera input; visual updates still
@@ -31,12 +34,13 @@ output_dir=""
 parameter_override=""
 mode=lio
 observer_namespace=/dynanav/lio_observer
+lidar_topic=/dynanav/lidar_static
 capture_result=""
 camera_blackboard=/opt/ros/jazzy/lib/demo_nodes_cpp/parameter_blackboard
 check_only=false
 while (($#)); do
     case "$1" in
-        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--mode|--capture-result|--camera-blackboard|--observer-namespace)
+        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--mode|--capture-result|--camera-blackboard|--observer-namespace|--lidar-topic)
             (($# >= 2)) || { printf 'Missing value for %s\n' "$1" >&2; exit 2; }
             case "$1" in
                 --binary-prefix) binary_prefix=$2 ;;
@@ -45,6 +49,7 @@ while (($#)); do
                 --parameter-override) parameter_override=$2 ;;
                 --mode) mode=$2 ;;
                 --observer-namespace) observer_namespace=$2 ;;
+                --lidar-topic) lidar_topic=$2 ;;
                 --capture-result) capture_result=$2 ;;
                 --camera-blackboard) camera_blackboard=$2 ;;
             esac
@@ -55,6 +60,7 @@ while (($#)); do
     esac
 done
 [[ $observer_namespace =~ ^(/[a-zA-Z_][a-zA-Z0-9_]*)+$ ]] || { printf 'Observer namespace must be an absolute non-root ROS namespace without trailing slash.\n' >&2; exit 2; }
+[[ $lidar_topic == /dynanav/lidar_static || $lidar_topic == /dynanav/lidar_perception_filtered ]] || { printf 'Unsupported explicit lidar input topic.\n' >&2; exit 2; }
 [[ $mode == lio || $mode == livo ]] || { printf 'Mode must be lio or livo.\n' >&2; exit 2; }
 if [[ $mode == livo ]]; then
     [[ -n $capture_result && -r $capture_result ]] || { printf 'LIVO requires readable --capture-result calibration.\n' >&2; exit 2; }
@@ -97,7 +103,7 @@ export AMENT_PREFIX_PATH="$install_prefix:$dependency_prefix${AMENT_PREFIX_PATH:
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-91}
 
 preflight_status=0
-preflight_json=$(python3 - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" <<'PY'
+preflight_json=$(python3 - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" "$lidar_topic" <<'PY'
 import hashlib
 import json
 import os
@@ -113,6 +119,7 @@ mode = sys.argv[7]
 capture_result = Path(sys.argv[8]) if sys.argv[8] else None
 blackboard = Path(sys.argv[9])
 observer_namespace = sys.argv[10]
+lidar_input_topic = sys.argv[11]
 base_parameters = yaml.safe_load(parameters.read_text())["/**"]["ros__parameters"]
 post_vio_enabled = base_parameters.get("publish", {}).get("post_vio_odometry_en", False)
 if type(post_vio_enabled) is not bool or post_vio_enabled != (mode == "livo"):
@@ -212,6 +219,8 @@ receipt = {
     "scope": "File/hash/dependency inspection only; no ROS node or estimator executed",
     "mode": mode,
     "observer_namespace": observer_namespace,
+    "lidar_input_topic": lidar_input_topic,
+    "lidar_input_scope": "oracle-static input" if lidar_input_topic.endswith("/lidar_static") else "learned-person filtered temporary LIO candidates; background is not certified static",
     "tf_output_topic": "/tf" if observer_namespace == "/dynanav/lio_observer" else observer_namespace + "/tf",
     "post_vio_odometry_enabled": post_vio_enabled,
     "post_vio_output_capability_present": post_vio_capability,
@@ -292,6 +301,9 @@ for topic in cloud_registered_full cloud_registered visualization_marker cloud_v
              dyn_obj_removed dyn_obj_dbg_hist mavros/vision_pose/pose rgb_img LIVO2/imu_propagate planes; do
     command+=(-r "/$topic:=$observer_namespace/$topic")
 done
+if [[ $lidar_topic != /dynanav/lidar_static ]]; then
+    command+=(-r "/dynanav/lidar_static:=$lidar_topic")
+fi
 if [[ $mode == livo ]]; then
     command+=(-r "/post_vio_odometry:=$observer_namespace/post_vio_odometry"
               -r "/post_vio_odometry_status:=$observer_namespace/post_vio_odometry_status")
@@ -326,7 +338,9 @@ receipt = {
     "parameter_override": ({"path": str(override),
                              "sha256": hashlib.sha256(override.read_bytes()).hexdigest()}
                             if override is not None else None),
-    "sensor_inputs": ["/dynanav/lidar_static", "/dynanav/imu"] + (["/dynanav/camera"] if mode == "livo" else []),
+    "lidar_input_topic": preflight["lidar_input_topic"],
+    "lidar_input_scope": preflight["lidar_input_scope"],
+    "sensor_inputs": [preflight["lidar_input_topic"], "/dynanav/imu"] + (["/dynanav/camera"] if mode == "livo" else []),
     "clock_input": "/clock", "ground_truth_input": False,
     "navigation_command_output": False,
     "mode": "explicit_opt_in_ONLY_LIO" if mode == "lio" else "explicit_RGB_assisted_LIVO",
@@ -352,6 +366,7 @@ receipt = {
 (output / "launch.json").write_text(json.dumps(receipt, indent=2) + "\n")
 PY
 printf 'Starting %s observer; log: %s/runner.log\n' "$mode" "$output_dir" >&2
+
 if [[ $mode == lio ]]; then
     exec "${command[@]}" >"$output_dir/runner.log" 2>&1
 fi
@@ -360,21 +375,48 @@ fi
 blackboard_pid=""
 mapper_pid=""
 cleanup_owned_children() {
-    trap - EXIT INT TERM
+    local status=$?
+    trap - EXIT
+    # Further cancellation must not abort cleanup or the terminal receipt.
+    trap '' INT TERM
     for child in "$mapper_pid" "$blackboard_pid"; do
         [[ -n $child ]] || continue
-        if kill -0 "$child" 2>/dev/null; then
-            kill -TERM "$child" 2>/dev/null || true
-        fi
+        kill -TERM "$child" 2>/dev/null || true
+    done
+    local deadline=$((SECONDS + 5))
+    while (( SECONDS < deadline )); do
+        local alive=false
+        for child in "$mapper_pid" "$blackboard_pid"; do
+            [[ -n $child ]] || continue
+            if kill -0 "$child" 2>/dev/null; then alive=true; fi
+        done
+        $alive || break
+        sleep 0.1
     done
     for child in "$mapper_pid" "$blackboard_pid"; do
         [[ -n $child ]] || continue
+        kill -KILL "$child" 2>/dev/null || true
         wait "$child" 2>/dev/null || true
     done
+    python3 - "$output_dir" "$status" "$mapper_pid" "$blackboard_pid" <<'PYRECEIPT'
+import json
+from pathlib import Path
+import sys
+output = Path(sys.argv[1])
+receipt = {"state": "stopped", "exit_code": int(sys.argv[2]),
+           "mapper_pid": int(sys.argv[3]) if sys.argv[3] else None,
+           "blackboard_pid": int(sys.argv[4]) if sys.argv[4] else None}
+(output / "ready.json").unlink(missing_ok=True)
+temporary = output / "shutdown.json.tmp"
+temporary.write_text(json.dumps(receipt, indent=2) + "\n")
+temporary.replace(output / "shutdown.json")
+PYRECEIPT
+    exit "$status"
 }
 trap cleanup_owned_children EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+if [[ $mode == livo ]]; then
 "${blackboard_command[@]}" >"$output_dir/camera_parameters.log" 2>&1 &
 blackboard_pid=$!
 printf 'Waiting up to 10s for owned camera parameter service.\n' >&2
@@ -415,10 +457,68 @@ finally:
     node.destroy_node()
     rclpy.shutdown()
 PY
-printf 'Camera parameters verified; starting actual RGB-assisted mapper.\n' >&2
+kill -0 "$blackboard_pid" 2>/dev/null || { printf 'Owned camera parameter server exited.\n' >&2; exit 1; }
+fi
+printf 'Starting mapper and verifying sensor subscriptions.\n' >&2
 "${command[@]}" >"$output_dir/runner.log" 2>&1 &
 mapper_pid=$!
+# A provenance receipt is deliberately written before startup. Only this
+# atomic handshake, after the owned mapper exposes its input subscriptions,
+# allows the supervisor to start capture. No sensor frames are needed here.
+python3 - "$output_dir" "$preflight_json" "$mapper_pid" "$blackboard_pid" <<'PYREADY'
+import json
+import os
+from pathlib import Path
+import sys
+import time
+import rclpy
+from rclpy.node import NodeNameNonExistentError
+
+output = Path(sys.argv[1])
+preflight = json.loads(sys.argv[2])
+pids = [int(pid) for pid in sys.argv[3:] if pid]
+namespace = preflight["observer_namespace"]
+name = "dynanav_" + preflight["mode"] + "_observer"
+expected = {preflight["lidar_input_topic"], "/dynanav/imu"}
+if preflight["mode"] == "livo":
+    expected.add("/dynanav/camera")
+rclpy.init(args=[])
+node = rclpy.create_node("dynanav_observer_readiness_check")
+try:
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        for pid in pids:
+            os.kill(pid, 0)
+            # kill(0) also succeeds for a child waiting to be reaped.
+            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            if stat[0] == "Z":
+                raise RuntimeError("owned observer process exited: " + str(pid))
+        try:
+            subscriptions = {topic for topic, _ in node.get_subscriber_names_and_types_by_node(name, namespace)}
+        except NodeNameNonExistentError:
+            subscriptions = set()
+        if expected <= subscriptions:
+            receipt = {"state": "ready", "mapper_pid": pids[0],
+                       "blackboard_pid": pids[1] if len(pids) > 1 else None,
+                       "verified_sensor_subscriptions": sorted(expected),
+                       "scope": "input subscriptions available; estimator not initialized"}
+            temporary = output / "ready.json.tmp"
+            temporary.write_text(json.dumps(receipt, indent=2) + "\n")
+            temporary.replace(output / "ready.json")
+            break
+        rclpy.spin_once(node, timeout_sec=0.1)
+    else:
+        raise RuntimeError("mapper input subscriptions not ready within 10s")
+finally:
+    node.destroy_node()
+    rclpy.shutdown()
+PYREADY
 status=0
-wait "$mapper_pid" || status=$?
-mapper_pid=""
+if [[ -n $blackboard_pid ]]; then
+    # Either owned process dying invalidates the observer, including exit 0.
+    wait -n "$mapper_pid" "$blackboard_pid" || status=$?
+else
+    wait "$mapper_pid" || status=$?
+fi
+((status != 0)) || status=1
 exit "$status"

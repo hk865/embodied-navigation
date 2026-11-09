@@ -10,6 +10,11 @@ both are used by the ROS adapter (``navigation/relative_slam_node.py``).
 ``update`` consumes one measured observation and ``step`` returns
 ``(command3, diagnostic_dict)``. Phase names, failure strings and evidence keys
 are written into the recorded run output.
+
+Scope: this state machine serves only the independent ``relative-slam-navigation``
+console entry. The default native launch (``demo.launch.py``) runs
+``navigation/base_node.py`` ``Navigation.control()`` instead, so changing this
+module does not change default navigation behaviour.
 """
 
 from dataclasses import dataclass, field

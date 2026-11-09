@@ -299,9 +299,14 @@ class ObserverOverride(unittest.TestCase):
 
     def test_livo_launch_remaps_final_outputs_and_records_availability_contract(self):
         capture, _, blackboard, _ = self.livo_fixture()
-        # Both launched executables are fakes. The Python shim replaces only the
-        # service readiness probe, so this test never imports rclpy or runs ROS.
-        blackboard.write_text("#!/bin/sh\nexit 0\n")
+        # Fake the service and graph probes for argv/provenance isolation.
+        # Lifecycle behavior itself has fault-injection tests in the supervisor
+        # suite. The owned blackboard stays alive until launcher cleanup.
+        blackboard.write_text(
+            "#!/usr/bin/python3\nimport signal,sys,time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+            "time.sleep(60)\n"
+        )
         runner = self.prefix / "install/ros/lib/fast_livo2_ros/fastlivo_mapping"
         runner.write_text(
             "#!/usr/bin/python3\n"
@@ -314,6 +319,8 @@ class ObserverOverride(unittest.TestCase):
             "import json, os, pathlib, sys\n"
             "if len(sys.argv) > 2 and sys.argv[1] == '-' and sys.argv[2].endswith('/camera_parameter_ready.json'):\n"
             "    pathlib.Path(sys.argv[2]).write_text(json.dumps({'test_only': 'fake camera service readiness'}))\n"
+            "elif len(sys.argv) == 6 and sys.argv[1] == '-' and sys.argv[3].startswith('{'):\n"
+            "    (pathlib.Path(sys.argv[2])/'ready.json').write_text(json.dumps({'state': 'ready', 'test_only': True}))\n"
             "else:\n"
             "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
         )
@@ -332,7 +339,12 @@ class ObserverOverride(unittest.TestCase):
             "--output-dir",
             str(output),
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
+        # An estimator exiting independently (even with 0) is not a healthy
+        # observer. Provenance still must describe the exact attempted launch.
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        terminal = json.loads((output / "shutdown.json").read_text())
+        self.assertEqual(terminal["exit_code"], result.returncode)
+        self.assertFalse((output / "ready.json").exists())
         receipt = json.loads((output / "launch.json").read_text())
         preflight = json.loads((output / "preflight.json").read_text())
         for report in (receipt, preflight):

@@ -1,6 +1,6 @@
 """Opt-in portable worker for the C++ owned-keyframe spool (no ROS required).
 
-Run with PYTHONPATH=src python -m localization.backend.run --help. Heavy Python
+Run with PYTHONPATH=src python -m embodied_navigation.localization_mapping.backend.run --help. Heavy Python
 registration is a backend reference implementation, not a C++ latency claim.
 """
 

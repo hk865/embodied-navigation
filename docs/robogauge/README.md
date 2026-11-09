@@ -2,6 +2,76 @@
 
 The required source is in this repository, not imported or linked from a training project or old experiment directory. This is a simulation deployment, not a real-robot controller. RL training stays outside this project.
 
+本目录是 RoboGauge 部署与历史证据的**说明入口**：README 讲部署/数据/构建/历史结果与边界，同目录 JSON/许可证文件是证据快照；它不参与运行时，也没有代码读取这里的 JSON。
+
+## 目录结构
+
+```text
+docs/robogauge/
+├── README.md                              # 本文件：部署说明、历史结果与边界（160 行）
+├── BUILDING_SOURCE.json                   # Building 资产仓库/提交/许可记录（15 行）
+├── BUILDING_UPSTREAM_PCT_GPL_2.0          # PCT 上游 GPL-2.0 文本（339 行）
+├── BUILDING_UPSTREAM_PCT_NOTICE           # PCT 上游 NOTICE（27 行）
+├── BUILDING_UPSTREAM_UNITREE_BSD          # Unitree BSD 许可文本（28 行）
+├── PORT_VALIDATION.json                   # 迁移验证：源文件/哈希/CPU 回归（30 行）
+├── UPSTREAM_GO2_RL_LAB_LICENSE.txt        # 模型档案随附许可与下游声明（262 行）
+├── cpu_validation.json                    # CPU 策略 fixture 实测结果（29 行）
+├── historical_execution_recheck.json      # 历史 run 的同刻命令/力矩复算（37 行）
+├── isaac_closure_audit.json               # Isaac 源闭包审计：已移植/未移植（275 行）
+└── source_manifest.json                   # 迁移源文件哈希与来源映射（175 行）
+```
+
+## 代码、日志与配置
+
+本目录没有代码，也没有运行日志；按“报告 / 证据 / 配置”三类理解：
+
+| 类别 | 位置 | 含义 |
+| --- | --- | --- |
+| 报告 | [`README.md`](README.md) | 部署边界、权重与数据位置、原生 actuator 构建、历史结果、来源与权利、benchmark 入口与共享安全门禁。 |
+| 证据（迁移验证） | [`PORT_VALIDATION.json`](PORT_VALIDATION.json)、[`source_manifest.json`](source_manifest.json) | `PORT_VALIDATION`：39 个可移植源文件、19 个源归档哈希复核、0 符号链接、0 个人绝对路径、系统 CPU 回归 26 项（25 通过/1 skip），以及 `real_model_cpu_fixture`。`source_manifest`：源归档标识、逐文件 SHA256、上游模型仓库/修订与“`training_commit_verified=false`”的记录。 |
+| 证据（运行/数值） | [`cpu_validation.json`](cpu_validation.json)、[`historical_execution_recheck.json`](historical_execution_recheck.json)、[`isaac_closure_audit.json`](isaac_closure_audit.json) | CPU fixture：`passed=true`、`torch 2.7.1+cpu`、30 帧、`sequential_action_max_error=0.0`、`latency_ms_p50≈0.2595`。历史复算：turn/stairs 两次 run 的同刻 policy/physics 帧匹配与零命令/力矩 delta。Isaac 闭包：`executed=false`，列出已移植纯组件与未移植 live runner。 |
+| 证据（许可/资产） | [`BUILDING_SOURCE.json`](BUILDING_SOURCE.json) + 3 份 `BUILDING_UPSTREAM_*`、[`UPSTREAM_GO2_RL_LAB_LICENSE.txt`](UPSTREAM_GO2_RL_LAB_LICENSE.txt) | Building 资产来源（RoboNav legbot_3D_Nav、PCT 的 mesh/pcd/tomogram 路径与许可）、上游 PCT/Unitree 许可文本、模型档案实际随附的 MIT+下游声明。README 明确“保留文件不等于获得再分发权”。 |
+| 配置（指向仓库真实文件） | `configs/robogauge/` | 本目录**不是**配置源。真正被代码读取的是 [configs/robogauge](../../configs/robogauge/)：`world.py` 读 `routes/<case>.json`、`deployment_profile.json`、`world.sdf.in`，并复制 `terrain_targets.json`→`terrain_target_manifest.json`/`sensor_*`；`contract.json` 是归档副本，权威常量在 [`robot/unitree/robogauge/contract.py`](../../src/embodied_navigation/robot/unitree/robogauge/contract.py)，无 Python 读取者。 |
+| 日志/输出 | 外部 `PROJECT_DATA_ROOT`/run 目录 | 本目录不写日志。benchmark 运行产物与历史 run 证据在外部数据卷；`historical_execution_recheck.json`/`cpu_validation.json` 是对那些证据的**离线复算记录**，不是实时日志。 |
+| 代码读取点 | 无 | `grep -rn "docs/robogauge" src scripts tests` 无代码读取；本目录只被源码 README 以链接方式引用（[robot/unitree/robogauge](../../src/embodied_navigation/robot/unitree/robogauge/README.md)、[simulation/gazebo/robogauge/motor_src](../../src/embodied_navigation/simulation/gazebo/robogauge/motor_src/README.md)、[navigation/robogauge](../../src/embodied_navigation/navigation/robogauge/README.md) 等）。 |
+
+## 模块内文件耦合
+
+- 依赖方向：`README.md → 10 个证据/许可文件` 是索引关系，JSON 之间无 import、无生成脚本依赖。证据链是单向的：`source_manifest.json`（源哈希）→ `PORT_VALIDATION.json`（迁移核验）→ `cpu_validation.json`/`historical_execution_recheck.json`（数值/历史复算）→ `isaac_closure_audit.json`（未移植边界）。
+- 与仓库代码的耦合是**文档声明级**：README 中的模型 SHA256 `bde5210a…`、`configs/robogauge/world.sdf.in` 的 current SHA256 `e5e4bba1…`、`source_manifest.json` 的 `records`/字段都必须与磁盘一致；本轮已用 `sha256sum configs/robogauge/world.sdf.in` 复核 `e5e4bba1…` 与 README 相同（2026-11-09）。这类哈希没有自动校验，重建后可能过期。
+- 隐式契约：README 的“历史结果”来自归档 run，不是本检出执行的；`PORT_VALIDATION.json` 的 `system_cpu_regression.tests=26` 与 README 提到的 `tests/regression/test_native_safety_integration.py` 是不同层面的检查，不能互相替代。
+
+| 文件 | 行数 | 依赖 | 被谁依赖 | 判断 |
+| --- | ---: | --- | --- | --- |
+| `README.md` | 84 | 10 个同目录证据/许可文件 | 人；3 个源码 README 链接 | 偏重：一份文件承载部署、历史、来源、入口、安全门禁五类信息 |
+| `PORT_VALIDATION.json` | 30 | 源归档/本机 CPU | 本 README | 清楚：字段即结论 |
+| `cpu_validation.json` | 29 | CPU Torch + 模型 | 本 README | 清楚：一次 fixture 实测 |
+| `historical_execution_recheck.json` | 37 | 历史 run 日志 | 本 README | 清楚：只覆盖两次历史 run |
+| `isaac_closure_audit.json` | 275 | Isaac 源码闭包 | 本 README | 可接受：长但机器可读 |
+| `source_manifest.json` | 175 | 源归档 | 本 README | 清楚：provenance 记录 |
+| `BUILDING_SOURCE.json` + 3 许可文本 + 模型许可 | 15/339/27/28/262 | 上游仓库/档案 | 本 README | 清楚：原样保留的许可证据 |
+
+结论：**没有代码依赖环**；耦合是文档 ↔ 证据快照的弱耦合，结构清楚。风险点是 README 同时承担“当前部署说明”和“历史结果记录”两种角色，且哈希/数字没有与证据 JSON 的自动对照。
+
+## 可读性评估
+
+- `README.md`：**可接受**。84 行、7 个 H2（Functional ownership / Data and weights / Native Gazebo actuator build / Historical results versus this port / Provenance and rights / Portable benchmark entry / Shared active simulation safety），结构清楚，且明确区分“历史归档测量”与“本次迁移”。缺口：段落偏长（多段 8–12 行）、数字密集，且没有指向同目录 JSON 证据的链接——读者要自己猜 `PORT_VALIDATION.json`/`cpu_validation.json` 对应哪段结论。
+- 证据 JSON：**可接受**。字段名自解释（`passed`、`tests`、`skipped`、`skip_reason`、`model_sha256`、`training_commit_verified`），适合机器复核；缺点是文件间没有统一 schema/索引，人工阅读需逐个打开。
+- 许可文件：**良好**。原样保留上游文本，README 明确“不新增许可、不等于再分发权”。
+
+没有发现魔法数滥用：历史 N=1 结果、阈值与延迟都标注了来源/局限（“not a claim”/“not reliability statistics”）。
+
+## 重构建议
+
+| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
+| --- | --- | --- | --- | --- |
+| P2 | 在 README 每节末尾加“证据：`PORT_VALIDATION.json` / `cpu_validation.json` …”链接 | 同目录 10 个证据文件目前没有任何入口链接，读者只能靠猜 | 无（纯文档） | 逐条点开链接确认文件存在 |
+| P2 | 把“当前可运行边界”（CPU fixture、Gazebo actuator、未移植 Isaac runner）汇总成一张三列表：已验证 / 未验证 / 历史归档 | 现在三者在不同段落，容易被摘要成“已支持 Isaac” | 无 | 人工对照 `isaac_closure_audit.json` 的 `executed=false` 与 `not_ported_live_components` |
+| P2 | 在 README 与 `PORT_VALIDATION.json` 之间加一份“哈希/计数对照表”（模型 SHA、world.sdf.in SHA、39/19/26 项计数） | 文档数字与 JSON 数值靠人眼同步 | 低：只加表；数字须从 JSON/`sha256sum` 重新取 | 用 `sha256sum` 与 JSON 逐项比对 |
+| P3 | README 用英文而相邻的 `docs/dependencies/README.md` 用中文；若保持英文，文首加一句“本页保留英文原文，索引/边界以中文页面为准” | 同 docs 目录语言风格不一 | 无 | 人工阅读 |
+
+没有 P0/P1：本目录不参与运行，最坏后果是读者高估部署完成度；已有 `--check`/`--prepare-only`/`--run` 分层和 `executed=false` 证据，不需要结构调整。
+
 ## Functional ownership
 
 - `robot/unitree/robogauge`: model hash verification, named joint mapping, 45D observation, CPU TorchScript inference, Go2HV numerical contract and replay fixture.
@@ -9,7 +79,7 @@ The required source is in this repository, not imported or linked from a trainin
 - `navigation/robogauge`: fail-closed SLAM command admission and bounded Building benchmark orchestration.
 - `configs/robogauge`: readable policy and benchmark contracts.
 
-`configs/robogauge/contract.json` records the frozen scales, ordering, history, motor and timing assumptions. The policy consumes body angular velocity, projected gravity, body commands, joints and last unscaled action. It does not consume COM linear velocity, height scans or camera input. Privileged Gazebo pose/clearance remains diagnostic and safety evidence. No COM velocity PID is inserted. Gazebo keeps the archived command slew and immediate zero-command behavior; Isaac used direct commands and is not silently assigned the Gazebo slew.
+`robot/unitree/robogauge/contract.py` holds the frozen scales, ordering, history, motor and timing assumptions as code constants; `configs/robogauge/contract.json` is a readable archival copy with **no Python reader** (do not treat it as the authority, and keep the two in sync if either changes). The policy consumes body angular velocity, projected gravity, body commands, joints and last unscaled action. It does not consume COM linear velocity, height scans or camera input. Privileged Gazebo pose/clearance remains diagnostic and safety evidence. No COM velocity PID is inserted. Gazebo keeps the archived command slew and immediate zero-command behavior; Isaac used direct commands and is not silently assigned the Gazebo slew.
 
 ## Data and weights
 
@@ -82,3 +152,9 @@ Both active native backends now call `control/safety/simulation_gate.py`: the or
 The control gate owns the original fall/clearance decisions and fault latch. Policy faults precede native actuator faults, which precede the physical fall/clearance reason. The existing 1.5 s / 2 s grace times, .8 / 1.1 rad tilt thresholds, .15 / .10 m clearance thresholds and four-second persistent-fall window are unchanged. Existing faults remain latched even if a terrain query throws. Invalid provenance or nonfinite safety measurements fail closed. The original joint targets, observation dimensions, ordinary parking logic and native C++ protection remain in place.
 
 CPU fixtures in `tests/regression/test_native_safety_integration.py` execute both loops with their real observation builders and a fake socket peer. They check that the shared gate is actually called every frame, target outputs agree for the same actor action, fault damping precedes termination at the original grace boundary, mismatched clocks stop the exchange, and a policy fault survives a later terrain exception. This does not claim a new simulator run or real-hardware support.
+
+## 限制
+
+- 本目录是报告与证据，不是验收；历史 N=1 结果、CPU fixture 通过、原生 actuator 能编译都不等于 Isaac/Gazebo 整栈可运行。
+- 权重不在 Git；`PROJECT_DATA_ROOT` 未配置或模型 SHA 不匹配时加载会被拒绝，不能把“缺权重”当成代码缺陷。
+- 证据 JSON 是 2026-11-08/09 的快照，不随代码自动刷新；引用哈希/数字前应重新核对磁盘与 JSON。
