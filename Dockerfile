@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1
 # Full native Gazebo application image. Isaac Sim remains a separately licensed runtime.
+# Stage 1 (native_environment): ROS Jazzy base plus Gazebo Harmonic, build tools and
+# a CPU-only PyTorch venv used by the Actor policy worker.
 ARG ROS_IMAGE=ros:jazzy-ros-base
 FROM ${ROS_IMAGE} AS native_environment
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -34,6 +36,8 @@ RUN python3 -m venv --system-site-packages /opt/navigation-venv \
  && /opt/navigation-venv/bin/pip install --no-cache-dir torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
 ENV NAVIGATION_ACTOR_PYTHON=/opt/navigation-venv/bin/python3 PYTHONPATH=/workspace/navigation/src
 
+# Stage 2 (native_builder): build vendored and project native libraries; copy
+# install/ to runtime, which still inherits the base stage build tools.
 FROM native_environment AS native_builder
 COPY third_party /workspace/navigation/third_party
 COPY docker /workspace/navigation/docker
@@ -49,6 +53,8 @@ COPY src/embodied_navigation/simulation/gazebo/robogauge/motor_src /workspace/na
 RUN source /opt/ros/jazzy/setup.bash \
  && CMAKE_PREFIX_PATH="/workspace/navigation/install/dds:${CMAKE_PREFIX_PATH:-}" python3 docker/build_owned_native.py --jobs "${BUILD_JOBS}" --execute
 
+# Stage 3 (native_runtime): build install/ + project sources; the layer build also
+# runs the unit and regression test suites, then runs as unprivileged uid 1000.
 FROM native_environment AS native_runtime
 COPY --from=native_builder /workspace/navigation/install /workspace/navigation/install
 COPY docker/native_entrypoint.sh /workspace/navigation/docker/native_entrypoint.sh

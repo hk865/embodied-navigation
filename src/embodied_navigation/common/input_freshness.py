@@ -20,9 +20,11 @@ def enabled(profile):
     raise ``ValueError``.  The return value is always ``False``: normal navigation
     never enables the relaxation.
     """
-    option = profile.get('r73_minimal_diagnostic_baseline')
-    if option not in (None, {'enabled': False}):
-        raise ValueError('Diagnostic source relaxation belongs to experiments, not normal navigation')
+    option = profile.get("r73_minimal_diagnostic_baseline")
+    if option not in (None, {"enabled": False}):
+        raise ValueError(
+            "Diagnostic source relaxation belongs to experiments, not normal navigation"
+        )
     return False
 
 

@@ -1,1 +1,1 @@
-"""Portable RoboGauge simulation deployment components."""
+"""Go2 joint contract, policy observation mapping and verified actor runtime."""

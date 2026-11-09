@@ -11,6 +11,7 @@ both are used by the ROS adapter (``navigation/relative_slam_node.py``).
 ``(command3, diagnostic_dict)``. Phase names, failure strings and evidence keys
 are written into the recorded run output.
 """
+
 from dataclasses import dataclass, field
 import numpy as np
 from ..control.relative_pid import follow_segment, wrap_angle
@@ -27,6 +28,7 @@ class Observation:
     points in the same route frame. ``sensor_points_finite`` records whether
     the raw cloud had all-finite coordinates.
     """
+
     time_s: float
     received_wall_s: float
     body: np.ndarray
@@ -46,6 +48,7 @@ class TaskConfig:
     tolerance/settle time (metres/seconds) and the in-place turn tolerance/
     settle time (radians/seconds).
     """
+
     motion_start_s: float = 7.0
     motion_end_s: float = 270.0
     waypoint_tolerance_m: float = 0.22
@@ -75,8 +78,7 @@ class NavigationTask:
         # Every segment must be covered by measured support points; the 301
         # samples are only a certified-support check, not a planner.
         if not all(
-            certify_points(np.linspace(a, b, 301))
-            for a, b in zip(self.route[:-1], self.route[1:])
+            certify_points(np.linspace(a, b, 301)) for a, b in zip(self.route[:-1], self.route[1:])
         ):
             raise ValueError("Route lacks measured support")
         self.certify_points = certify_points
@@ -159,11 +161,7 @@ class NavigationTask:
             # Pose-window span is the diagonal of the XY extent, a "robot is not
             # moving" proxy; with fewer than 4 samples the neutral value 1.0 m
             # keeps the settle/turn still-pose gates from passing.
-            span = (
-                float(np.linalg.norm(np.ptp(window, axis=0)))
-                if len(window) >= 4
-                else 1.0
-            )
+            span = float(np.linalg.norm(np.ptp(window, axis=0))) if len(window) >= 4 else 1.0
             if self.failure:
                 reason = self.failure
             elif self.arrived:
@@ -174,10 +172,7 @@ class NavigationTask:
                 reason = "outside_motion_window"
                 if time_s >= self.config.motion_end_s:
                     self.failure = "motion_time_budget_exhausted"
-            elif (
-                time_s - latest.time_s > 0.25
-                or wall_s - latest.received_wall_s > 0.5
-            ):
+            elif time_s - latest.time_s > 0.25 or wall_s - latest.received_wall_s > 0.5:
                 # Freshness: 0.25 s of source time or 0.5 s of receive wall time
                 # holds the command; a hold longer than 1.0 s is terminal.
                 reason = "freshness_hold"
@@ -190,12 +185,14 @@ class NavigationTask:
                 if self.phase == "go" and distance <= self.config.waypoint_tolerance_m:
                     self.phase = "settling"
                     self.settle_since = None
-                    self.events.append({
-                        "time": time_s,
-                        "event": "waypoint_stop_requested",
-                        "stage": self.stage,
-                        "distance_m": distance,
-                    })
+                    self.events.append(
+                        {
+                            "time": time_s,
+                            "event": "waypoint_stop_requested",
+                            "stage": self.stage,
+                            "distance_m": distance,
+                        }
+                    )
                 if self.phase == "settling":
                     reason = "waypoint_settling"
                     # Moving farther than .40 m from the goal is treated as a failed
@@ -208,22 +205,26 @@ class NavigationTask:
                         if self.settle_since is None:
                             self.settle_since = time_s
                         if time_s - self.settle_since >= self.config.waypoint_settle_s:
-                            self.stages.append({
-                                "stage": self.stage,
-                                "from": self.route[self.stage].tolist(),
-                                "to": goal.tolist(),
-                                "start_time": self.stage_start_time,
-                                "completed_time": time_s,
-                                "estimated_error_m": distance,
-                                "estimated_body": body.tolist(),
-                                "relative_distance_at_completion_m": self.relative_distance,
-                                "completed": True,
-                            })
-                            self.events.append({
-                                "time": time_s,
-                                "event": "waypoint_completed",
-                                "stage": self.stage,
-                            })
+                            self.stages.append(
+                                {
+                                    "stage": self.stage,
+                                    "from": self.route[self.stage].tolist(),
+                                    "to": goal.tolist(),
+                                    "start_time": self.stage_start_time,
+                                    "completed_time": time_s,
+                                    "estimated_error_m": distance,
+                                    "estimated_body": body.tolist(),
+                                    "relative_distance_at_completion_m": self.relative_distance,
+                                    "completed": True,
+                                }
+                            )
+                            self.events.append(
+                                {
+                                    "time": time_s,
+                                    "event": "waypoint_completed",
+                                    "stage": self.stage,
+                                }
+                            )
                             self.stage += 1
                             self.settle_since = None
                             if self.stage >= len(self.route) - 1:
@@ -234,9 +235,7 @@ class NavigationTask:
                                 # Bearing of the next leg in the XY plane:
                                 # arctan2(dy, dx) of (next_waypoint - body).
                                 heading = float(
-                                    np.arctan2(
-                                        *(self.route[self.stage + 1] - body[:2])[::-1]
-                                    )
+                                    np.arctan2(*(self.route[self.stage + 1] - body[:2])[::-1])
                                 )
                                 delta = wrap_angle(heading - yaw)
                                 # 3.0 rad is close to pi: for an almost backward
@@ -248,13 +247,15 @@ class NavigationTask:
                                 self.turn_since = None
                                 self.phase = "turning"
                                 self.stage_start_time = time_s
-                                self.events.append({
-                                    "time": time_s,
-                                    "event": "turn_started",
-                                    "stage": self.stage,
-                                    "yaw_unwrapped_start": yaw,
-                                    "target_yaw_unwrapped": self.turn_target,
-                                })
+                                self.events.append(
+                                    {
+                                        "time": time_s,
+                                        "event": "turn_started",
+                                        "stage": self.stage,
+                                        "yaw_unwrapped_start": yaw,
+                                        "target_yaw_unwrapped": self.turn_target,
+                                    }
+                                )
                     else:
                         self.settle_since = None
                 elif self.phase == "turning":
@@ -270,12 +271,14 @@ class NavigationTask:
                         if time_s - self.turn_since >= self.config.turn_settle_s:
                             self.phase = "go"
                             self.turn_since = None
-                            self.events.append({
-                                "time": time_s,
-                                "event": "turn_completed",
-                                "stage": self.stage,
-                                "yaw_error_rad": error,
-                            })
+                            self.events.append(
+                                {
+                                    "time": time_s,
+                                    "event": "turn_completed",
+                                    "stage": self.stage,
+                                    "yaw_error_rad": error,
+                                }
+                            )
                     else:
                         self.turn_since = None
                 elif self.phase == "go":
@@ -290,9 +293,7 @@ class NavigationTask:
                     reason = "relative_SLAM_multistage_PID"
                 # For every fresh, in-window phase handled in this block, the
                 # existing collision/support gates follow the phase logic.
-                sweep, braking = braking_sweep(
-                    body[:2], rotation[:2, :2], cmd, velocity[:2]
-                )
+                sweep, braking = braking_sweep(body[:2], rotation[:2, :2], cmd, velocity[:2])
                 if not self.certify_points(sweep):
                     cmd[:] = 0
                     reason = "nominal_map_collision_or_support_hold"

@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Build helper for the standalone Livox driver package (not used by the
+# embodied-navigation workspace, which builds the driver through its own
+# workspace scripts). Usage: ./build.sh ROS1 | ROS2 | humble | jazzy
+#   ROS1            -> catkin_make -DROS_EDITION=ROS1
+#   ROS2/humble/jazzy -> colcon build --cmake-args -DROS_EDITION=ROS2 -DDISTRO_ROS=<distro>
+# The script swaps package_ROS1.xml/package_ROS2.xml into package.xml and, for
+# ROS2, copies launch_ROS2/ to launch/, then removes that copied launch/ directory.
+
 readonly VERSION_ROS1="ROS1"
 readonly VERSION_ROS2="ROS2"
 readonly VERSION_HUMBLE="humble"
@@ -30,6 +38,8 @@ fi
 echo "ROS version is: "$ROS_VERSION
 
 # clear `build/` folder.
+# The driver is expected to live in <ros_ws>/src/livox_ros_driver2, so ../../ is
+# the workspace root that catkin_make/colcon will (re)build.
 # TODO: Do not clear these folders, if the last build is based on the same ROS version.
 rm -rf ../../build/
 rm -rf ../../devel/

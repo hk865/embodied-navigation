@@ -31,28 +31,20 @@
 
 using std::vector;
 
-namespace scan_planner
-{
+namespace scan_planner {
 
-  class SCANReplanFSM
-  {
+class SCANReplanFSM {
 
   private:
     /* ---------- flag ---------- */
-    enum FSM_EXEC_STATE
-    {
-      INIT,
-      WAIT_TARGET,
-      GEN_NEW_TRAJ,
-      REPLAN_TRAJ,
-      EXEC_TRAJ,
-      EMERGENCY_STOP
-    };
-    enum NAVI_MODE
-    {
-      MANUAL_TARGET = 1,
-      PRESET_TARGET = 2,
-      REFERENCE_PATH = 3,
+    // Typical flow: INIT -> WAIT_TARGET -> GEN_NEW_TRAJ -> EXEC_TRAJ.
+    // REPLAN_TRAJ also handles progress/target updates and collision replanning;
+    // EMERGENCY_STOP requests the existing emergency-stop trajectory.
+    enum FSM_EXEC_STATE { INIT, WAIT_TARGET, GEN_NEW_TRAJ, REPLAN_TRAJ, EXEC_TRAJ, EMERGENCY_STOP };
+    enum NAVI_MODE {
+        MANUAL_TARGET = 1,   // goal published from RViz
+        PRESET_TARGET = 2,   // preset_waypoints_ from parameters
+        REFERENCE_PATH = 3,  // external reference path/protocol (mode 3)
     };
 
     /* planning utils */
@@ -62,11 +54,11 @@ namespace scan_planner
 
     /* parameters */
     int navi_mode_; // 1 manual select, 2 hard code
-    double no_replan_thresh_, replan_thresh_;
+    double no_replan_thresh_, replan_thresh_; // distance thresholds [m]
     std::vector<Eigen::Vector3d> preset_waypoints_;
     int waypoint_num_;
-    double planning_horizon_;
-    double emergency_time_;
+    double planning_horizon_; // local planning look-ahead distance [m]
+    double emergency_time_;   // emergency-stop time-to-collision threshold [s]
     double rviz_goal_height_;
     double self_inflation_z_up_, self_inflation_z_down_;
     double self_double_cylinder_radius_, self_double_cylinder_offset_;
@@ -149,12 +141,13 @@ namespace scan_planner
     void r74DisableObservation(const char *reason) noexcept;
     std::string r74ObservationScope();
     void r74ObserveTargetFailure();
-    void r74ObserveString(const char *topic, const std::string &data, bool priority=false);
-    void r74MaybePublishObservation(bool immediate=false);
+    void r74ObserveString(const char *topic, const std::string &data, bool priority = false);
+    void r74MaybePublishObservation(bool immediate = false);
 
     /* helper functions */
-    bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj, const std::string &origin); // front-end and back-end method
-    bool callEmergencyStop(Eigen::Vector3d stop_pos);                          // front-end and back-end method
+    bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj,
+                           const std::string &origin); // front-end and back-end method
+    bool callEmergencyStop(Eigen::Vector3d stop_pos);  // front-end and back-end method
     bool planFromCurrentTraj();
     void setStartStateFromOdomOrCurrentTraj();
 
@@ -174,7 +167,8 @@ namespace scan_planner
     double getOdomYaw() const;
     double estimateYawFromSegment(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;
     void updateLocalTrajTimeFreeze();
-    void publishTrajectoryMetadata(const scan_planner_msgs::msg::Bspline &trajectory, bool emergency_stop = false);
+    void publishTrajectoryMetadata(const scan_planner_msgs::msg::Bspline &trajectory,
+                                   bool emergency_stop = false);
     void publishRouteDefinition();
     void publishReferenceAttempt(bool plan_success, const std::string &reason = "optimizer_return");
     bool mode3ReferenceUsable() const;
@@ -194,17 +188,13 @@ namespace scan_planner
     bool checkCollision();
 
   public:
-    SCANReplanFSM(/* args */)
-    {
-    }
-    ~SCANReplanFSM()
-    {
-    }
+    SCANReplanFSM(/* args */) {}
+    ~SCANReplanFSM() {}
 
     void init(rclcpp::Node *node);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  };
+};
 
 } // namespace scan_planner
 

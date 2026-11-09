@@ -14,7 +14,7 @@ import os
 import sys
 
 ROOT = _project_root()
-CONFIG = ROOT / 'configs/launch/navigation.json'
+CONFIG = ROOT / "configs/launch/navigation.json"
 
 
 def expand(value):
@@ -30,7 +30,7 @@ def expand(value):
     if isinstance(value, list):
         return [expand(v) for v in value]
     if isinstance(value, str):
-        return value.replace('${PROJECT_ROOT}', str(ROOT))
+        return value.replace("${PROJECT_ROOT}", str(ROOT))
     return value
 
 
@@ -53,23 +53,23 @@ def read():
     """
     entry = json.loads(CONFIG.read_text())
     if not isinstance(entry, dict):
-        raise ValueError('Navigation configuration must be an object')
+        raise ValueError("Navigation configuration must be an object")
 
     value = {}
-    for relative in entry.get('modules', []):
+    for relative in entry.get("modules", []):
         source = (ROOT / relative).resolve()
         if not source.is_relative_to(ROOT):
-            raise ValueError('Module configuration escapes project')
+            raise ValueError("Module configuration escapes project")
         part = json.loads(source.read_text())
         # Check the type first so a non-object module cannot raise TypeError from
         # the set intersection.  At this point only earlier modules contributed
         # keys, so this rejects cross-module duplicates; entry-level keys are
         # overlaid after the loop and are therefore not part of this check.
         if not isinstance(part, dict) or value.keys() & part.keys():
-            raise ValueError('Module configuration contains duplicate top-level settings')
+            raise ValueError("Module configuration contains duplicate top-level settings")
         value.update(part)
 
-    value.update({k: v for k, v in entry.items() if k != 'modules'})
+    value.update({k: v for k, v in entry.items() if k != "modules"})
     return expand(value)
 
 
@@ -83,8 +83,8 @@ def path(name):
     value is ``expanduser()``-expanded: absolute paths are resolved directly,
     relative ones are anchored at ``ROOT`` and then resolved.
     """
-    setting = read()['runtime_paths'][name]
-    if name == 'actor_python' and setting == 'auto':
-        return Path(os.environ.get('NAVIGATION_ACTOR_PYTHON', sys.executable)).absolute()
+    setting = read()["runtime_paths"][name]
+    if name == "actor_python" and setting == "auto":
+        return Path(os.environ.get("NAVIGATION_ACTOR_PYTHON", sys.executable)).absolute()
     value = Path(setting).expanduser()
     return value.resolve() if value.is_absolute() else (ROOT / value).resolve()

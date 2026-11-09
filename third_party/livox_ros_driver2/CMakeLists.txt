@@ -1,3 +1,7 @@
+# One CMakeLists for both ROS editions: configure with -DROS_EDITION=ROS1 to
+# build the catkin package below, or -DROS_EDITION=ROS2 for the ament package.
+# The ROS1 branch defines BUILDING_ROS1 and the ROS2 branch BUILDING_ROS2; that
+# macro selects the matching DriverNode class in src/driver_node.h.
 # judge which cmake codes to use 
 if(ROS_EDITION STREQUAL "ROS1")
 
@@ -91,6 +95,8 @@ if(ROS_EDITION STREQUAL "ROS1")
   set(CMAKE_CXX_EXTENSIONS OFF)
 
   ## make sure the livox_lidar_sdk_static library is installed
+  # ROS1 links the static SDK; /usr/local/lib supplements normal CMake searches.
+  # A custom library can also be selected with -DLIVOX_LIDAR_SDK_LIBRARY=<path>.
   find_library(LIVOX_LIDAR_SDK_LIBRARY  liblivox_lidar_sdk_static.a    /usr/local/lib)
 
   ## PCL library
@@ -282,6 +288,8 @@ else(ROS_EDITION STREQUAL "ROS2")
   target_include_directories(${PROJECT_NAME} PRIVATE ${LIVOX_LIDAR_SDK_INCLUDE_DIR})
 
   # get include directories of custom msg headers
+  # Humble/Jazzy expose the generated typesupport through a target property;
+  # older distros still use the <pkg>__rosidl_typesupport_cpp library name.
   if(DISTRO_ROS STREQUAL "humble" OR DISTRO_ROS STREQUAL "jazzy")
     rosidl_get_typesupport_target(cpp_typesupport_target
     ${LIVOX_INTERFACES} "rosidl_typesupport_cpp")
@@ -312,6 +320,9 @@ else(ROS_EDITION STREQUAL "ROS2")
     ${APR_LIBRARIES}
   )
 
+  # Register the driver both as a shared library and as a component node
+  # (livox_ros::DriverNode); this is what launch files load as executable
+  # livox_ros_driver2_node.
   rclcpp_components_register_node(${PROJECT_NAME}
     PLUGIN "livox_ros::DriverNode"
     EXECUTABLE ${PROJECT_NAME}_node

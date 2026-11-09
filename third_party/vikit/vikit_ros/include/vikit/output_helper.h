@@ -25,78 +25,44 @@ namespace output_helper {
 using namespace std;
 using namespace Eigen;
 
-void
-publishTfTransform      (const Sophus::SE3<double>& T, const rclcpp::Time& stamp,
-                         const string& frame_id, const string& child_frame_id,
-                         tf2_ros::TransformBroadcaster& br);
+// Marker helpers below publish visualization_msgs::msg::Marker messages.
+// `action` is a visualization_msgs::msg::Marker action constant (ADD=0,
+// MODIFY=0, DELETE=2, DELETEALL=3); `marker_scale` is the marker extent in
+// metres; a zero lifetime means the marker stays until explicitly deleted.
 
-void
-publishPointMarker      (const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                         const Vector3d& pos,
-                         const string& ns,
-                         const rclcpp::Time& timestamp,
-                         int id,
-                         int action,
-                         double marker_scale,
-                         const Vector3d& color,
-                         rclcpp::Duration lifetime = rclcpp::Duration(0,0));
+void publishTfTransform(const Sophus::SE3<double> &T, const rclcpp::Time &stamp,
+                        const string &frame_id, const string &child_frame_id,
+                        tf2_ros::TransformBroadcaster &br);
 
-void
-publishLineMarker       (const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                         const Vector3d& start,
-                         const Vector3d& end,
-                         const string& ns,
-                         const rclcpp::Time& timestamp,
-                         int id,
-                         int action,
-                         double marker_scale,
-                         const Vector3d& color,
-                         rclcpp::Duration lifetime = rclcpp::Duration(0,0));
+void publishPointMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
+                        const Vector3d &pos, const string &ns, const rclcpp::Time &timestamp,
+                        int id, int action, double marker_scale, const Vector3d &color,
+                        rclcpp::Duration lifetime = rclcpp::Duration(0, 0));
 
-void
-publishArrowMarker      (const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                         const Vector3d& pos,
-                         const Vector3d& dir,
-                         double scale,
-                         const string& ns,
-                         const rclcpp::Time& timestamp,
-                         int id,
-                         int action,
-                         double marker_scale,
-                         const Vector3d& color);
+void publishLineMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
+                       const Vector3d &start, const Vector3d &end, const string &ns,
+                       const rclcpp::Time &timestamp, int id, int action, double marker_scale,
+                       const Vector3d &color, rclcpp::Duration lifetime = rclcpp::Duration(0, 0));
 
-void
-publishHexacopterMarker (const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                         const string& frame_id,
-                         const string& ns,
-                         const rclcpp::Time& timestamp,
-                         int id,
-                         int action,
-                         double marker_scale,
-                         const Vector3d& color);
+void publishArrowMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
+                        const Vector3d &pos, const Vector3d &dir, double scale, const string &ns,
+                        const rclcpp::Time &timestamp, int id, int action, double marker_scale,
+                        const Vector3d &color);
 
-void
-publishCameraMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                    const string& frame_id,
-                    const string& ns,
-                    const rclcpp::Time& timestamp,
-                    int id,
-                    double marker_scale,
-                    const Vector3d& color);
-void
-publishFrameMarker      (const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
-                        const Matrix3d& rot,
-                        const Vector3d& pos,
-                        const string& ns,
-                        const rclcpp::Time& timestamp,
-                        int id,
-                        int action,
-                        double marker_scale,
-                        rclcpp::Duration lifetime = rclcpp::Duration(0,0));
+void publishHexacopterMarker(
+    const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub, const string &frame_id,
+    const string &ns, const rclcpp::Time &timestamp, int id, int action, double marker_scale,
+    const Vector3d &color);
 
+void publishCameraMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
+                         const string &frame_id, const string &ns, const rclcpp::Time &timestamp,
+                         int id, double marker_scale, const Vector3d &color);
+void publishFrameMarker(const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub,
+                        const Matrix3d &rot, const Vector3d &pos, const string &ns,
+                        const rclcpp::Time &timestamp, int id, int action, double marker_scale,
+                        rclcpp::Duration lifetime = rclcpp::Duration(0, 0));
 
 } // namespace output_helper
 } // namespace vk
-
 
 #endif /* VIKIT_OUTPUT_HELPER_H_ */

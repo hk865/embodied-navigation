@@ -1,4 +1,6 @@
 <sdf version="1.9">
+  <!-- RoboGauge world template: substitute ${ASSET_ROOT} and
+       ${ROBOGAUGE_ACTUATOR} before parsing; not runnable as-is. -->
   <world name="truth_navigation_isolation">
     <physics name="physics" type="ignored">
       <max_step_size>.005</max_step_size>
@@ -24,6 +26,7 @@
       <specular>0.1 0.1 0.1 1</specular>
       <direction>-0.3 -0.3 -1</direction>
     </light>
+    <!-- Teacher overview camera: wide 20 Hz RGB view used only for evidence frames. -->
     <model name="teacher_overview_camera">
       <static>true</static>
       <pose>-8.5 8.5 2.2 0 .25 -.55</pose>
@@ -49,6 +52,7 @@
         </sensor>
       </link>
     </model>
+    <!-- Go2 actor: original mass/inertia/COM, LiDAR + IMU + body camera. -->
     <model name="go2">
       <link name="base_link">
         <inertial>
@@ -1513,6 +1517,7 @@
         <joint_name>lh_lower_leg_joint</joint_name>
       </plugin>
     </model>
+    <!-- Building: the frozen project mesh with its static collision geometry. -->
     <model name="Building">
       <link name="link_0">
         <inertial>
@@ -1602,6 +1607,7 @@
       <static>true</static>
       <allow_auto_disable>1</allow_auto_disable>
     </model>
+    <!-- Static ground plane under the building, with collision and visual geometry. -->
     <model name="ground_plane">
       <static>true</static>
       <link name="link">
@@ -1635,6 +1641,7 @@
         </visual>
       </link>
     </model>
+    <!-- Stair-entrance camera: fixed view used to record the climb/descent evidence. -->
     <model name="stair_entrance_camera">
       <static>true</static>
       <pose>-5.2633744 7.8 1.4 0 .18 -1.5707963267948966</pose>

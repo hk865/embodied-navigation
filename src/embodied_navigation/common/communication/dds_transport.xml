@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Isolated local DDS graph for one run: loopback-only UDPv4 plus shared memory,
+     builtin transports disabled. Children apply this profile via
+     FASTRTPS_DEFAULT_PROFILES_FILE so runs cannot see each other. -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <transport_descriptors>

@@ -10,6 +10,7 @@ propagates unchanged.  There are no hot-path clocks, records, logging or I/O.
 Install before first spin. Snapshot after the spinner stops. Restore only after
 shutdown clears the cached generator; live restoration/reuse is unsupported.
 """
+
 from __future__ import annotations
 
 import ast
@@ -24,7 +25,7 @@ import types
 
 EMPTY_RETRY_INTERVAL = 8
 SLEEP_SECONDS = 0.0001
-_ATTRIBUTE = '_r91_empty_retry_yield'
+_ATTRIBUTE = "_r91_empty_retry_yield"
 _MISSING = object()
 
 
@@ -39,14 +40,17 @@ def _compile(original, *, ready):
         loops = [node for node in function.body if isinstance(node, ast.While)]
         assert len(loops) == 1
         loop = loops[0]
-        assert ast.unparse(loop.test) == 'not yielded_work and (not self._is_shutdown) and (not condition())'
+        assert (
+            ast.unparse(loop.test)
+            == "not yielded_work and (not self._is_shutdown) and (not condition())"
+        )
         # This final original node is after ExitStack and all ready-entity scans.
         timeout_check = loop.body[-1]
         assert isinstance(timeout_check, ast.If)
-        assert ast.unparse(timeout_check.body[0]) == 'raise TimeoutException()'
-        assert 'timeout_nsec == 0' in ast.unparse(timeout_check.test)
-        function.body[1:1] = _statements('_r91_state = self._r91_empty_retry_yield')
-        loop.body += _statements('''
+        assert ast.unparse(timeout_check.body[0]) == "raise TimeoutException()"
+        assert "timeout_nsec == 0" in ast.unparse(timeout_check.test)
+        function.body[1:1] = _statements("_r91_state = self._r91_empty_retry_yield")
+        loop.body += _statements("""
 if _r91_state._active and not yielded_work and not self._is_shutdown:
     if _r91_get_ident() == _r91_state.owner_ident:
         _r91_state._empty_streak += 1
@@ -54,37 +58,53 @@ if _r91_state._active and not yielded_work and not self._is_shutdown:
             _r91_state._empty_streak = 0
             _r91_sleep(0.0001)
             _r91_state.yield_count += 1
-''')
+""")
     else:
-        assert ast.unparse(function.body[0]) == 'self._enter_spin()'
+        assert ast.unparse(function.body[0]) == "self._enter_spin()"
         assert len(function.body) == 2 and isinstance(function.body[1], ast.Try)
         scope = function.body[1]
-        assert len(scope.body) == 1 and ast.unparse(scope.body[0]) == 'self._spin_once_impl(timeout_sec)'
-        assert len(scope.finalbody) == 1 and ast.unparse(scope.finalbody[0]) == 'self._exit_spin()'
+        assert (
+            len(scope.body) == 1
+            and ast.unparse(scope.body[0]) == "self._spin_once_impl(timeout_sec)"
+        )
+        assert len(scope.finalbody) == 1 and ast.unparse(scope.finalbody[0]) == "self._exit_spin()"
         # Keep _enter_spin outside try: a rejected nested/concurrent entry cannot
         # clear the active caller's scope. No state changes precede its success.
-        scope.body[0:0] = _statements('''
+        scope.body[0:0] = _statements("""
 self._r91_empty_retry_yield._active = timeout_sec is None and _r91_get_ident() == self._r91_empty_retry_yield.owner_ident
 self._r91_empty_retry_yield._empty_streak = 0
-''')
-        scope.finalbody[0:0] = _statements('''
+""")
+        scope.finalbody[0:0] = _statements("""
 self._r91_empty_retry_yield._active = False
 self._r91_empty_retry_yield._empty_streak = 0
-''')
+""")
     ast.fix_missing_locations(tree)
     namespace = dict(original.__globals__)
     namespace.update(_r91_get_ident=threading.get_ident, _r91_sleep=time.sleep)
-    exec(compile(tree, original.__code__.co_filename + ':r91_empty_retry_yield', 'exec'), namespace)
+    exec(compile(tree, original.__code__.co_filename + ":r91_empty_retry_yield", "exec"), namespace)
     source = ast.unparse(tree)
     return namespace[original.__name__], {
-        'source': source, 'sha256': hashlib.sha256(source.encode()).hexdigest()}
+        "source": source,
+        "sha256": hashlib.sha256(source.encode()).hexdigest(),
+    }
 
 
 class Candidate:
     """Fixed state and one cumulative intervention count; no event history."""
-    __slots__ = ('enabled', 'owner_ident', 'owner_tid', 'yield_count', '_active',
-                 '_empty_streak', 'source', 'transformed', 'executor',
-                 '_originals', 'restored')
+
+    __slots__ = (
+        "enabled",
+        "owner_ident",
+        "owner_tid",
+        "yield_count",
+        "_active",
+        "_empty_streak",
+        "source",
+        "transformed",
+        "executor",
+        "_originals",
+        "restored",
+    )
 
     def __init__(self, enabled):
         self.enabled = enabled
@@ -101,19 +121,27 @@ class Candidate:
 
     def snapshot(self):
         if self.executor is not None and self.executor.is_spinning:
-            raise RuntimeError('snapshot requires stopped spinner')
-        return dict(schema='r91_empty_retry_yield/v1', enabled=self.enabled,
-                    empty_retry_interval=EMPTY_RETRY_INTERVAL,
-                    sleep_seconds=SLEEP_SECONDS, yield_count=self.yield_count,
-                    yield_count_definition='successful returns from the injected sleep requesting 100 us; not kernel wakes or dispatched callbacks',
-                    owner_tid=self.owner_tid, source=self.source,
-                    transformed=self.transformed, restored=self.restored)
+            raise RuntimeError("snapshot requires stopped spinner")
+        return dict(
+            schema="r91_empty_retry_yield/v1",
+            enabled=self.enabled,
+            empty_retry_interval=EMPTY_RETRY_INTERVAL,
+            sleep_seconds=SLEEP_SECONDS,
+            yield_count=self.yield_count,
+            yield_count_definition="successful returns from the injected sleep requesting 100 us; not kernel wakes or dispatched callbacks",
+            owner_tid=self.owner_tid,
+            source=self.source,
+            transformed=self.transformed,
+            restored=self.restored,
+        )
 
     def restore(self):
         if self.executor is None or self.restored:
             return
         if not self.executor._is_shutdown or self.executor._cb_iter is not None:
-            raise RuntimeError('restore requires shutdown and cleared generator; live reuse unsupported')
+            raise RuntimeError(
+                "restore requires shutdown and cleared generator; live reuse unsupported"
+            )
         for name, previous in self._originals.items():
             if previous is _MISSING:
                 delattr(self.executor, name)
@@ -127,19 +155,21 @@ def install(executor, enabled=False):
     candidate = Candidate(enabled)
     if not enabled:
         return candidate
-    if executor.is_spinning or getattr(executor, '_cb_iter', None) is not None:
-        raise RuntimeError('install before first spin on a stopped executor')
+    if executor.is_spinning or getattr(executor, "_cb_iter", None) is not None:
+        raise RuntimeError("install before first spin on a stopped executor")
     if hasattr(executor, _ATTRIBUTE):
-        raise RuntimeError('candidate already installed')
-    originals = {name: getattr(executor, name).__func__
-                 for name in ('_wait_for_ready_callbacks', 'spin_once')}
-    path = Path(inspect.getfile(originals['_wait_for_ready_callbacks']))
+        raise RuntimeError("candidate already installed")
+    originals = {
+        name: getattr(executor, name).__func__
+        for name in ("_wait_for_ready_callbacks", "spin_once")
+    }
+    path = Path(inspect.getfile(originals["_wait_for_ready_callbacks"]))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if any(Path(inspect.getfile(f)) != path for f in originals.values()):
-        raise RuntimeError('unsupported installed executor implementation')
+        raise RuntimeError("unsupported installed executor implementation")
     replacements = {}
     for name, function in originals.items():
-        replacement, audit = _compile(function, ready=name == '_wait_for_ready_callbacks')
+        replacement, audit = _compile(function, ready=name == "_wait_for_ready_callbacks")
         replacements[name] = replacement
         candidate.transformed[name] = audit
     candidate.source = dict(path=str(path), sha256=digest)

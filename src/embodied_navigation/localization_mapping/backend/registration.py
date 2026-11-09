@@ -6,6 +6,7 @@ RANSAC/PCA only propose transforms. Independent holdout geometry, overlap,
 point-to-plane observability, and competing poses decide whether to accept.
 An unobservable or ambiguous scene returns UNKNOWN rather than a best guess.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,8 +16,14 @@ import time
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .geometry import (bounded_sample, checked_transform, pose_distance,
-                       rigid_fit, transform_points, voxel_sample)
+from .geometry import (
+    bounded_sample,
+    checked_transform,
+    pose_distance,
+    rigid_fit,
+    transform_points,
+    voxel_sample,
+)
 
 
 @dataclass(frozen=True)
@@ -76,7 +83,9 @@ def _shape(points):
     eigen = np.linalg.eigvalsh(centered.T @ centered / len(points))
     scale = max(float(eigen.sum()), 1e-12)
     radial = np.linalg.norm(centered, axis=1)
-    return np.r_[eigen / scale, np.quantile(radial, [0.25, 0.5, 0.75]) / max(np.quantile(radial, 0.9), 1e-8)]
+    return np.r_[
+        eigen / scale, np.quantile(radial, [0.25, 0.5, 0.75]) / max(np.quantile(radial, 0.9), 1e-8)
+    ]
 
 
 def _pca_hypotheses(source, target):
@@ -96,7 +105,9 @@ def _pca_hypotheses(source, target):
 def _score(source, tree, t, distance):
     d, _ = tree.query(transform_points(source, t), k=1, workers=1)
     valid = d < distance
-    return float(np.mean(valid)), float(np.sqrt(np.mean(d[valid] ** 2))) if valid.any() else float("inf")
+    return float(np.mean(valid)), float(np.sqrt(np.mean(d[valid] ** 2))) if valid.any() else float(
+        "inf"
+    )
 
 
 def _coarse_hypotheses(source, target, descriptor_source, descriptor_target, config, seed):
@@ -121,7 +132,9 @@ def _coarse_hypotheses(source, target, descriptor_source, descriptor_target, con
 
     for t in _pca_hypotheses(source, target):
         retain(t)
-    ids = np.linspace(0, len(source) - 1, min(len(source), config.max_feature_points), dtype=np.int64)
+    ids = np.linspace(
+        0, len(source) - 1, min(len(source), config.max_feature_points), dtype=np.int64
+    )
     sd = descriptor_source[ids]
     distances, matches = cKDTree(descriptor_target).query(sd, k=3, workers=1)
     # Include non-ratio matches as low-confidence proposals; geometry will reject.
@@ -150,7 +163,7 @@ def _coarse_hypotheses(source, target, descriptor_source, descriptor_target, con
 
 
 def _refine(source, target, initial, config, tree=None):
-    tree = cKDTree(target)if tree is None else tree
+    tree = cKDTree(target) if tree is None else tree
     t = initial.copy()
     previous = float("inf")
     for _ in range(config.icp_iterations):
@@ -180,7 +193,7 @@ def _observability(moved, target, ids, tree=None):
     eigen = np.linalg.eigvalsh(np.cov(moved.T))
     spatial = float(eigen[0] / max(eigen[-1], 1e-12))
     k = min(15, len(target))
-    _, neighborhoods = (cKDTree(target)if tree is None else tree).query(matched, k=k, workers=1)
+    _, neighborhoods = (cKDTree(target) if tree is None else tree).query(matched, k=k, workers=1)
     groups = target[neighborhoods]
     centered = groups - groups.mean(axis=1, keepdims=True)
     covariance = np.einsum("nki,nkj->nij", centered, centered)
@@ -189,7 +202,7 @@ def _observability(moved, target, ids, tree=None):
     # Center and normalize rotational lever arms so the ratio is not an origin
     # distance artifact and rotations/metres do not silently change with map size.
     centered_points = moved - moved.mean(axis=0)
-    scale = max(float(np.sqrt(np.mean(np.sum(centered_points ** 2, axis=1)))), 0.1)
+    scale = max(float(np.sqrt(np.mean(np.sum(centered_points**2, axis=1)))), 0.1)
     jacobian = np.column_stack((np.cross(centered_points / scale, normals), normals))
     values = np.linalg.eigvalsh(jacobian.T @ jacobian / len(jacobian))
     return float(max(0, values[0]) / max(values[-1], 1e-12)), spatial
@@ -200,26 +213,52 @@ class Relocalizer:
         self.map = map
         self.config = config or RegistrationConfig()
         c = self.config
-        if (c.max_scan_points < max(80, c.min_inliers * 2) or c.max_candidates < 1
-                or c.ransac_iterations < 0 or c.icp_iterations < 1
-                or c.max_feature_points < 3 or c.descriptor_neighbors < 3 or c.min_inliers < 20):
+        if (
+            c.max_scan_points < max(80, c.min_inliers * 2)
+            or c.max_candidates < 1
+            or c.ransac_iterations < 0
+            or c.icp_iterations < 1
+            or c.max_feature_points < 3
+            or c.descriptor_neighbors < 3
+            or c.min_inliers < 20
+        ):
             raise ValueError("invalid registration budget")
-        if (not 0 < c.min_fitness <= 1 or c.correspondence_distance <= 0 or c.max_rmse <= 0
-                or c.coarse_distance < c.correspondence_distance or c.voxel_size < 0
-                or c.min_observability <= 0 or c.min_spatial_eigenratio <= 0
-                or c.distinct_translation <= 0 or c.distinct_rotation <= 0):
+        if (
+            not 0 < c.min_fitness <= 1
+            or c.correspondence_distance <= 0
+            or c.max_rmse <= 0
+            or c.coarse_distance < c.correspondence_distance
+            or c.voxel_size < 0
+            or c.min_observability <= 0
+            or c.min_spatial_eigenratio <= 0
+            or c.distinct_translation <= 0
+            or c.distinct_rotation <= 0
+        ):
             raise ValueError("invalid geometric acceptance limits")
         # Offline/worker-owned cached descriptors, never frontend work.
-        self._blocks = [(b, _local_distances(b.points, c.descriptor_neighbors), _shape(b.points))
-                        for b in map.blocks]
+        self._blocks = [
+            (b, _local_distances(b.points, c.descriptor_neighbors), _shape(b.points))
+            for b in map.blocks
+        ]
 
     def localize(self, scan_lidar, T_prior=None):
         started = time.monotonic()
         c = self.config
 
-        def result(accepted, reason, t=None, fit=0.0, rmse=float("inf"), observable=0.0, diagnostics=None):
-            return RegistrationResult(accepted, reason, t, fit, rmse, observable,
-                                      time.monotonic() - started, len(candidates), diagnostics or {})
+        def result(
+            accepted, reason, t=None, fit=0.0, rmse=float("inf"), observable=0.0, diagnostics=None
+        ):
+            return RegistrationResult(
+                accepted,
+                reason,
+                t,
+                fit,
+                rmse,
+                observable,
+                time.monotonic() - started,
+                len(candidates),
+                diagnostics or {},
+            )
 
         candidates = []
         raw = np.asarray(scan_lidar, dtype=np.float64)
@@ -240,14 +279,20 @@ class Relocalizer:
         descriptor = _local_distances(scan, c.descriptor_neighbors)[fitting]
         shape = _shape(fit_points)
         ranked = sorted(self._blocks, key=lambda b: np.linalg.norm(shape - b[2]))
-        candidates = ranked[:c.max_candidates]
+        candidates = ranked[: c.max_candidates]
         prior = None if T_prior is None else checked_transform(T_prior)
         verified = []
         best_failed = None
         tested_hypotheses = 0
         for block, target_descriptor, _ in candidates:
-            hypotheses = _coarse_hypotheses(fit_points, block.points, descriptor, target_descriptor,
-                                            c, c.random_seed + block.index)
+            hypotheses = _coarse_hypotheses(
+                fit_points,
+                block.points,
+                descriptor,
+                target_descriptor,
+                c,
+                c.random_seed + block.index,
+            )
             if prior is not None:
                 hypotheses.append((0, 0, prior))
             for _, _, initial in hypotheses:
@@ -257,47 +302,85 @@ class Relocalizer:
                 distance, ids = cKDTree(block.points).query(moved, k=1, workers=1)
                 valid = distance < c.correspondence_distance
                 fitness = float(np.mean(valid))
-                rmse = float(np.sqrt(np.mean(distance[valid] ** 2))) if valid.any() else float("inf")
+                rmse = (
+                    float(np.sqrt(np.mean(distance[valid] ** 2))) if valid.any() else float("inf")
+                )
                 inliers = int(np.sum(valid))
-                diagnostic = dict(block=block.index, holdout_inliers=inliers, holdout_count=len(verify))
+                diagnostic = dict(
+                    block=block.index, holdout_inliers=inliers, holdout_count=len(verify)
+                )
                 record = (fitness, rmse, t, 0.0, diagnostic)
                 if best_failed is None or (fitness, -rmse) > (best_failed[0], -best_failed[1]):
                     best_failed = record
-                if fitness < c.min_fitness or rmse > c.max_rmse or inliers < max(20, c.min_inliers // 4):
+                if (
+                    fitness < c.min_fitness
+                    or rmse > c.max_rmse
+                    or inliers < max(20, c.min_inliers // 4)
+                ):
                     continue
                 observable, spatial_ratio = _observability(moved[valid], block.points, ids[valid])
                 diagnostic.update(spatial_eigenratio=spatial_ratio, observability=observable)
                 if observable < c.min_observability or spatial_ratio < c.min_spatial_eigenratio:
                     continue
                 record = (fitness, rmse, t, observable, diagnostic)
-                duplicate = next((i for i, old in enumerate(verified)
-                                  if pose_distance(t, old[2])[0] < c.distinct_translation
-                                  and pose_distance(t, old[2])[1] < c.distinct_rotation), None)
+                duplicate = next(
+                    (
+                        i
+                        for i, old in enumerate(verified)
+                        if pose_distance(t, old[2])[0] < c.distinct_translation
+                        and pose_distance(t, old[2])[1] < c.distinct_rotation
+                    ),
+                    None,
+                )
                 if duplicate is None:
                     verified.append(record)
                 elif (fitness, -rmse) > (verified[duplicate][0], -verified[duplicate][1]):
                     verified[duplicate] = record
-        common = dict(tested_hypotheses=tested_hypotheses, available_blocks=len(self._blocks),
-                      searched_blocks=len(candidates), bounded_search=len(candidates) < len(self._blocks),
-                      algorithm="local_distance_ransac_pca_trimmed_icp_holdout")
+        common = dict(
+            tested_hypotheses=tested_hypotheses,
+            available_blocks=len(self._blocks),
+            searched_blocks=len(candidates),
+            bounded_search=len(candidates) < len(self._blocks),
+            algorithm="local_distance_ransac_pca_trimmed_icp_holdout",
+        )
         if not verified:
             if best_failed is None:
                 return result(False, "no_geometric_candidate", diagnostics=common)
-            return result(False, "geometry_rejected", fit=best_failed[0], rmse=best_failed[1],
-                          diagnostics={**common, **best_failed[4]})
+            return result(
+                False,
+                "geometry_rejected",
+                fit=best_failed[0],
+                rmse=best_failed[1],
+                diagnostics={**common, **best_failed[4]},
+            )
         verified.sort(key=lambda v: (-v[0], v[1]))
         best = verified[0]
         common.update(best[4])
         common["verified_distinct_poses"] = len(verified)
-        if any(other[0] >= best[0] - c.ambiguity_fitness_margin
-               and other[1] <= best[1] + c.ambiguity_rmse_margin for other in verified[1:]):
-            return result(False, "ambiguous_geometry", fit=best[0], rmse=best[1],
-                          observable=best[3], diagnostics=common)
+        if any(
+            other[0] >= best[0] - c.ambiguity_fitness_margin
+            and other[1] <= best[1] + c.ambiguity_rmse_margin
+            for other in verified[1:]
+        ):
+            return result(
+                False,
+                "ambiguous_geometry",
+                fit=best[0],
+                rmse=best[1],
+                observable=best[3],
+                diagnostics=common,
+            )
         # A bounded retrieval pass may fail to discover a repetitive distant
         # place. Do not claim global uniqueness when blocks were left unsearched.
         if len(candidates) < len(self._blocks):
-            return result(False, "global_search_budget_exhausted", fit=best[0], rmse=best[1],
-                          observable=best[3], diagnostics=common)
+            return result(
+                False,
+                "global_search_budget_exhausted",
+                fit=best[0],
+                rmse=best[1],
+                observable=best[3],
+                diagnostics=common,
+            )
         t = best[2].copy()
         t.setflags(write=False)
         return result(True, "geometrically_verified", t, best[0], best[1], best[3], common)
@@ -316,17 +399,19 @@ def surface_normals(points, tree, neighbors=12):
         _, ids = tree.query(points[start:stop], k=k, workers=1)
         groups = points[ids]
         centered = groups - groups.mean(axis=1, keepdims=True)
-        covariance = np.einsum('nki,nkj->nij', centered, centered) / k
+        covariance = np.einsum("nki,nkj->nij", centered, centered) / k
         eigen, vectors = np.linalg.eigh(covariance)
         normals[start:stop] = vectors[:, :, 0]
-        planar[start:stop] = ((eigen[:, 1] - eigen[:, 0]) / np.maximum(eigen[:, 2], 1e-12) > .12)
+        planar[start:stop] = (eigen[:, 1] - eigen[:, 0]) / np.maximum(eigen[:, 2], 1e-12) > 0.12
     return normals, planar
 
 
-def refine_planes(source, target, tree, normals, planar, initial, iterations=12,
-                  correspondence_distance=.30):
+def refine_planes(
+    source, target, tree, normals, planar, initial, iterations=12, correspondence_distance=0.30
+):
     """Robust point-to-plane SE3 refinement, strictly on the asynchronous worker."""
     from scipy.spatial.transform import Rotation
+
     t = np.array(initial, copy=True)
     for _ in range(iterations):
         moved = transform_points(source, t)
@@ -335,8 +420,8 @@ def refine_planes(source, target, tree, normals, planar, initial, iterations=12,
         if valid.sum() < 60:
             break
         p, q, n = moved[valid], target[ids[valid]], normals[ids[valid]]
-        residual = np.einsum('ij,ij->i', p - q, n)
-        weights = np.minimum(1., .04 / np.maximum(np.abs(residual), 1e-8))
+        residual = np.einsum("ij,ij->i", p - q, n)
+        weights = np.minimum(1.0, 0.04 / np.maximum(np.abs(residual), 1e-8))
         center = p.mean(axis=0)
         jacobian = np.column_stack((n, np.cross(p - center, n)))
         weighted = jacobian * np.sqrt(weights[:, None])
@@ -344,8 +429,11 @@ def refine_planes(source, target, tree, normals, planar, initial, iterations=12,
         if rank < 6 or not np.isfinite(solution).all():
             break
         translation, rotation = solution[:3], solution[3:]
-        scale = min(1., .15 / max(np.linalg.norm(translation), 1e-12),
-                    .06 / max(np.linalg.norm(rotation), 1e-12))
+        scale = min(
+            1.0,
+            0.15 / max(np.linalg.norm(translation), 1e-12),
+            0.06 / max(np.linalg.norm(rotation), 1e-12),
+        )
         delta = np.eye(4)
         delta[:3, :3] = Rotation.from_rotvec(rotation * scale).as_matrix()
         delta[:3, 3] = translation * scale + center - delta[:3, :3] @ center

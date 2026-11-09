@@ -1,3 +1,6 @@
+# Building navigation pinhole camera calibration (ROS parameter file).
+# The 640x480 image is half-scaled (scale 0.5); fx/fy are equal, principal point
+# is the image center, and d0..d3 are zero, i.e. no lens distortion is modelled.
 /**:
   ros__parameters:
     cam_model: Pinhole

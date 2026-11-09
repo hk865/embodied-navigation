@@ -43,6 +43,12 @@ class Homography
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+  // Two ways to fill H_c2_from_c1: from a known plane (calcFromPlaneParams) or
+  // from 2D-2D correspondences (calcFromMatches, cv::findHomography + RANSAC).
+  // decompose() then yields Faugeras-Lustman's candidate motions and
+  // findBestDecomposition() picks the physically valid one by scoring inliers.
+  // `thresh` is a pixel reprojection threshold; error_multiplier2 converts
+  // normalized-plane residuals to pixels before comparing against it.
   Homography            (const vector<Vector2d, aligned_allocator<Vector2d> >& _fts1,
                          const vector<Vector2d, aligned_allocator<Vector2d> >& _fts2,
                          double _error_multiplier2,

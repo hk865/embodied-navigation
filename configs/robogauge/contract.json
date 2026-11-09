@@ -14,99 +14,47 @@
     "order": [
       {
         "name": "body_angular_velocity",
-        "slice": [
-          0,
-          3
-        ],
+        "slice": [0, 3],
         "scale": 0.25
       },
       {
         "name": "body_projected_gravity",
-        "slice": [
-          3,
-          6
-        ],
+        "slice": [3, 6],
         "scale": 1.0
       },
       {
         "name": "body_velocity_command",
-        "slice": [
-          6,
-          9
-        ],
-        "scale": [
-          0.5,
-          1.0,
-          1.0
-        ]
+        "slice": [6, 9],
+        "scale": [0.5, 1.0, 1.0]
       },
       {
         "name": "joint_position_minus_default",
-        "slice": [
-          9,
-          21
-        ],
+        "slice": [9, 21],
         "scale": 1.0
       },
       {
         "name": "joint_velocity",
-        "slice": [
-          21,
-          33
-        ],
+        "slice": [21, 33],
         "scale": 0.05
       },
       {
         "name": "previous_unscaled_action",
-        "slice": [
-          33,
-          45
-        ],
+        "slice": [33, 45],
         "scale": 1.0
       }
     ],
     "terrain_input": false,
     "COM_linear_velocity_input": false
   },
-  "policy_joint_order": [
-    "FL",
-    "FR",
-    "RL",
-    "RR"
-  ],
-  "native_joint_order": [
-    "FR",
-    "FL",
-    "RR",
-    "RL"
-  ],
-  "joint_types": [
-    "hip",
-    "thigh",
-    "calf"
-  ],
-  "policy_default_joint_positions": [
-    0.1,
-    0.8,
-    -1.5,
-    -0.1,
-    0.8,
-    -1.5,
-    0.1,
-    1.0,
-    -1.5,
-    -0.1,
-    1.0,
-    -1.5
-  ],
+  "policy_joint_order": ["FL", "FR", "RL", "RR"],
+  "native_joint_order": ["FR", "FL", "RR", "RL"],
+  "joint_types": ["hip", "thigh", "calf"],
+  "policy_default_joint_positions": [0.1, 0.8, -1.5, -0.1, 0.8, -1.5, 0.1, 1.0, -1.5, -0.1, 1.0, -1.5],
   "action_clip": 100.0,
   "action_scale": 0.25,
   "control_hz": 50,
   "physics_hz": 200,
-  "PD": [
-    25.0,
-    0.5
-  ],
+  "PD": [25.0, 0.5],
   "motor": {
     "driving_Nm": 20.2,
     "braking_Nm": 23.4,
@@ -116,24 +64,10 @@
   "COM_velocity_PID": false,
   "full_training_physics_equivalence": false,
   "gazebo_command_guard": {
-    "absolute_limits": [
-      0.6,
-      0.2,
-      0.3
-    ],
-    "simulation_age_range_s": [
-      -0.05,
-      0.3
-    ],
-    "wall_age_range_s": [
-      0,
-      0.3
-    ]
+    "absolute_limits": [0.6, 0.2, 0.3],
+    "simulation_age_range_s": [-0.05, 0.3],
+    "wall_age_range_s": [0, 0.3]
   },
-  "gazebo_velocity_slew_per_s": [
-    0.6,
-    0.6,
-    0.8
-  ],
+  "gazebo_velocity_slew_per_s": [0.6, 0.6, 0.8],
   "zero_command_immediate": true
 }

@@ -1,3 +1,6 @@
+# Small runtime helper library used by the metadata/body async-writer probes.
+# It links the pinned rmw_fastrtps_shared_cpp/fastrtps so it can read and parse
+# the process's actual DataWriter QoS without changing any publish call.
 cmake_minimum_required(VERSION 3.16)
 project(navigation_writer_qos LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)

@@ -27,34 +27,62 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/backend/snapshot_bridge.hpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/backend/snapshot_bridge.hpp",
-      "bytes": 6157,
+      "bytes": 7488,
       "source_sha256": "64f6977fc9c976dded192da55d72d98e730a8a7e50b6204208ccd178445fde32",
-      "vendored_sha256": "64f6977fc9c976dded192da55d72d98e730a8a7e50b6204208ccd178445fde32",
-      "modified": false
+      "vendored_sha256": "a189c2b418a15dbee4e19edd86b16d5b03d37f89f515c313c70d1c8b477ee6d7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "64f6977fc9c976dded192da55d72d98e730a8a7e50b6204208ccd178445fde32",
+        "baseline_bytes": 6157,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h",
-      "bytes": 3169,
+      "bytes": 3801,
       "source_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
-      "vendored_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
-      "modified": false
+      "vendored_sha256": "d25a8f19ecad0ba0e602088504ae4046f3ce392763260f8c9abdeb17460436bb",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
+        "baseline_bytes": 3169,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
-      "bytes": 11377,
+      "bytes": 12596,
       "source_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
-      "vendored_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
-      "modified": false
+      "vendored_sha256": "07a3cb6eebcedebbb33e9938ac3d2db4e33b246ea1d6077195c9d1d265c0e7ec",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
+        "baseline_bytes": 11377,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/boundary_timing.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/boundary_timing.h",
-      "bytes": 7374,
+      "bytes": 9075,
       "source_sha256": "07818ae0c13899312ca1558818983dbff0d991e7bc9ff3350dba95479160bb84",
-      "vendored_sha256": "07818ae0c13899312ca1558818983dbff0d991e7bc9ff3350dba95479160bb84",
-      "modified": false
+      "vendored_sha256": "307f42a1a476c1b283d2e410c4e12c0c5925bcf0902fa373e4006ed261cfb084",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "07818ae0c13899312ca1558818983dbff0d991e7bc9ff3350dba95479160bb84",
+        "baseline_bytes": 7374,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/common_lib.h",
@@ -67,114 +95,212 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/diagnostics.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/diagnostics.h",
-      "bytes": 6685,
+      "bytes": 8847,
       "source_sha256": "a5e56d67dff5eede8a68b891e63ffd71a0fcd0f699715a67a3ec51fa9a65adb9",
-      "vendored_sha256": "a5e56d67dff5eede8a68b891e63ffd71a0fcd0f699715a67a3ec51fa9a65adb9",
-      "modified": false
+      "vendored_sha256": "9a613ba83543ed383bda860362047a1ded9851a503444daf42afd399deef4f7b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a5e56d67dff5eede8a68b891e63ffd71a0fcd0f699715a67a3ec51fa9a65adb9",
+        "baseline_bytes": 6685,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/feature.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/feature.h",
-      "bytes": 2050,
+      "bytes": 2075,
       "source_sha256": "27eaea6a52e4d0edc9aa04a770a5f436eb129b4c4fbfc7bf9812c5fd3f644799",
-      "vendored_sha256": "27eaea6a52e4d0edc9aa04a770a5f436eb129b4c4fbfc7bf9812c5fd3f644799",
-      "modified": false
+      "vendored_sha256": "451ca3fd4d598bd01c4fb228a47013da0d7aef63046db044741d15c61d7b4475",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "27eaea6a52e4d0edc9aa04a770a5f436eb129b4c4fbfc7bf9812c5fd3f644799",
+        "baseline_bytes": 2050,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/frame.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/frame.h",
-      "bytes": 3160,
+      "bytes": 3216,
       "source_sha256": "91a7ff427c0fb1e12220d4e60ac0ea9ed0785c1ae73c8da98c14ebe2f9782fa6",
-      "vendored_sha256": "91a7ff427c0fb1e12220d4e60ac0ea9ed0785c1ae73c8da98c14ebe2f9782fa6",
-      "modified": false
+      "vendored_sha256": "6f676b653091a596b2f88781210ef721cf2f495adfd85615e310e508b7b84a2d",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "91a7ff427c0fb1e12220d4e60ac0ea9ed0785c1ae73c8da98c14ebe2f9782fa6",
+        "baseline_bytes": 3160,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/identity_ros.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/identity_ros.h",
-      "bytes": 4823,
+      "bytes": 5513,
       "source_sha256": "f89cd71b6068d83c57086f0a06e869fcf266f299d1a351ffaa8dba4d908dc23b",
-      "vendored_sha256": "f89cd71b6068d83c57086f0a06e869fcf266f299d1a351ffaa8dba4d908dc23b",
-      "modified": false
+      "vendored_sha256": "5d323f669756c694112122682b32af42ce3fa99b2db8ec9388d295298883dfdf",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "f89cd71b6068d83c57086f0a06e869fcf266f299d1a351ffaa8dba4d908dc23b",
+        "baseline_bytes": 4823,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/ordered_ingress.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/ordered_ingress.h",
-      "bytes": 4915,
+      "bytes": 6988,
       "source_sha256": "4b40fa46a440b5423b799710139663819a540f6383aa8cba53c35538a8ccc735",
-      "vendored_sha256": "4b40fa46a440b5423b799710139663819a540f6383aa8cba53c35538a8ccc735",
-      "modified": false
+      "vendored_sha256": "028f05d1be960802a83c0f9de01d1907cf164c8f351034d7ab78aa7a82781959",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4b40fa46a440b5423b799710139663819a540f6383aa8cba53c35538a8ccc735",
+        "baseline_bytes": 4915,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/point_identity.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/point_identity.h",
-      "bytes": 1785,
+      "bytes": 2128,
       "source_sha256": "7838220a67b89e2698f4650f0a172aafa633a94bbee8f61db57bc88a9365b0e9",
-      "vendored_sha256": "7838220a67b89e2698f4650f0a172aafa633a94bbee8f61db57bc88a9365b0e9",
-      "modified": false
+      "vendored_sha256": "d7f13aaacdf2be013614e560b873bc312729597f988d3f92a2e8ef390b28a630",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "7838220a67b89e2698f4650f0a172aafa633a94bbee8f61db57bc88a9365b0e9",
+        "baseline_bytes": 1785,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
-      "bytes": 5897,
+      "bytes": 7196,
       "source_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
-      "vendored_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
-      "modified": false
+      "vendored_sha256": "64d372c6a66eff1f79ff2587f4aaef2d74fe868832ab22cefd4fffc7a0a1ed90",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
+        "baseline_bytes": 5897,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/run_log_directory.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/run_log_directory.h",
-      "bytes": 1037,
+      "bytes": 1340,
       "source_sha256": "5a18d8a934403b22ccf7db3c98d83af7b061710c8aec53fea6897081fde94703",
-      "vendored_sha256": "5a18d8a934403b22ccf7db3c98d83af7b061710c8aec53fea6897081fde94703",
-      "modified": false
+      "vendored_sha256": "e9c51fd7120d76836df3654e0d13abe70d319cf29112dd615272c13c792342c4",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5a18d8a934403b22ccf7db3c98d83af7b061710c8aec53fea6897081fde94703",
+        "baseline_bytes": 1037,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/stationary_imu_initialization.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/stationary_imu_initialization.h",
-      "bytes": 3408,
+      "bytes": 4441,
       "source_sha256": "39a7cda11924068cc463b0eba1ae89da9c923c7ef8668393dfee5adf0730fbb9",
-      "vendored_sha256": "39a7cda11924068cc463b0eba1ae89da9c923c7ef8668393dfee5adf0730fbb9",
-      "modified": false
+      "vendored_sha256": "11cfb30c5e781a8de22eea47bffed7b1318c114b9dd2ab56c418ba1d2a6ba090",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "39a7cda11924068cc463b0eba1ae89da9c923c7ef8668393dfee5adf0730fbb9",
+        "baseline_bytes": 3408,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/surface_support_diagnostics.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/surface_support_diagnostics.h",
-      "bytes": 6234,
+      "bytes": 7958,
       "source_sha256": "cc749f1155d0b0555eca6bf4ca15eeb5ab584a6e9575737f8414f0f5bc457a8c",
-      "vendored_sha256": "cc749f1155d0b0555eca6bf4ca15eeb5ab584a6e9575737f8414f0f5bc457a8c",
-      "modified": false
+      "vendored_sha256": "62f143dcec987c3b607f69b89f41c0f941863cc1e44ca91de6eddcf0c2b9c819",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "cc749f1155d0b0555eca6bf4ca15eeb5ab584a6e9575737f8414f0f5bc457a8c",
+        "baseline_bytes": 6234,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/surface_validity.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/surface_validity.h",
-      "bytes": 2873,
+      "bytes": 3497,
       "source_sha256": "9f9a1d4105b82390e9cad926e84304155274e1d82022f41a5304716799e2d404",
-      "vendored_sha256": "9f9a1d4105b82390e9cad926e84304155274e1d82022f41a5304716799e2d404",
-      "modified": false
+      "vendored_sha256": "ca660153d4020770b8af77fb3cb591d85213203bfa579cfce6e42f7a5ee3abf4",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "9f9a1d4105b82390e9cad926e84304155274e1d82022f41a5304716799e2d404",
+        "baseline_bytes": 2873,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/vio.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/vio.h",
-      "bytes": 6770,
+      "bytes": 7317,
       "source_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
-      "vendored_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
-      "modified": false
+      "vendored_sha256": "a1b1f18ae9a5f5ba0100dffd3ce4c97816145e81d07f908c045b76ffccc45099",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
+        "baseline_bytes": 6770,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/visual_point.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/visual_point.h",
-      "bytes": 1739,
+      "bytes": 2179,
       "source_sha256": "c528be4967454ff79f6aac0c5322d62b19ec34c7e8c248b49981d1b3a7f1888d",
-      "vendored_sha256": "c528be4967454ff79f6aac0c5322d62b19ec34c7e8c248b49981d1b3a7f1888d",
-      "modified": false
+      "vendored_sha256": "0b23b57bffbbc02c3670648662acca3872c50150f41d96d9caa9c4fe91ebd96c",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c528be4967454ff79f6aac0c5322d62b19ec34c7e8c248b49981d1b3a7f1888d",
+        "baseline_bytes": 1739,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/voxel_map.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/voxel_map.h",
-      "bytes": 8565,
+      "bytes": 10031,
       "source_sha256": "4cb580cf4ef14073a916adf7beffc42268b0301030890fcac808c4165d1a63f6",
-      "vendored_sha256": "4cb580cf4ef14073a916adf7beffc42268b0301030890fcac808c4165d1a63f6",
-      "modified": false
+      "vendored_sha256": "ef69b7ff356fc167501d10447a04047335df346eca3fb3cd93fd79780cbaa0c0",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4cb580cf4ef14073a916adf7beffc42268b0301030890fcac808c4165d1a63f6",
+        "baseline_bytes": 8565,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/livox_ros_driver/CustomMsg.h",
@@ -195,42 +321,77 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/runner.hpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/runner.hpp",
-      "bytes": 512,
+      "bytes": 511,
       "source_sha256": "6c9056c3565a397594f8c8354786b3e0147e8f2251279a129de1c707ee2a8027",
-      "vendored_sha256": "6c9056c3565a397594f8c8354786b3e0147e8f2251279a129de1c707ee2a8027",
-      "modified": false
+      "vendored_sha256": "acf7b1248702bfd1c73fe8b59aff5e2bcb5663d0b425cfc2eb975567d363c619",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "6c9056c3565a397594f8c8354786b3e0147e8f2251279a129de1c707ee2a8027",
+        "baseline_bytes": 512,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/color.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/color.h",
-      "bytes": 1125,
+      "bytes": 1383,
       "source_sha256": "a8dca85646b18e26432f453993cf2da8de8e6b6e3184228b9fb92651c4a8f2ef",
-      "vendored_sha256": "a8dca85646b18e26432f453993cf2da8de8e6b6e3184228b9fb92651c4a8f2ef",
-      "modified": false
+      "vendored_sha256": "2d1a8c3a2ee301f77e1658f581da64411a480ae9a7e7d75a4873fb1f5b35f14c",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a8dca85646b18e26432f453993cf2da8de8e6b6e3184228b9fb92651c4a8f2ef",
+        "baseline_bytes": 1125,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/so3_math.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/so3_math.h",
-      "bytes": 2526,
+      "bytes": 2678,
       "source_sha256": "fa815b3bc8dc157a2ab8d692b0dd604b369680a7e711fef666f4e12d4ab33c37",
-      "vendored_sha256": "fa815b3bc8dc157a2ab8d692b0dd604b369680a7e711fef666f4e12d4ab33c37",
-      "modified": false
+      "vendored_sha256": "176cc03f43c7fc9a135833cf4d1b765d06cfca73643e3691fe7a098f14f88b12",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "fa815b3bc8dc157a2ab8d692b0dd604b369680a7e711fef666f4e12d4ab33c37",
+        "baseline_bytes": 2526,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/types.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/types.h",
-      "bytes": 1488,
+      "bytes": 1502,
       "source_sha256": "ade63d344d8d4cdec2dd8ec0fd6ea7930cb007c9c41ba83500bc7ea79d874d45",
-      "vendored_sha256": "ade63d344d8d4cdec2dd8ec0fd6ea7930cb007c9c41ba83500bc7ea79d874d45",
-      "modified": false
+      "vendored_sha256": "fc1666ad008a5f0b2e7ceffd8de90eff42352bad10eb58104bf7b9a022184b08",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ade63d344d8d4cdec2dd8ec0fd6ea7930cb007c9c41ba83500bc7ea79d874d45",
+        "baseline_bytes": 1488,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/utils/utils.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/utils/utils.h",
-      "bytes": 2507,
+      "bytes": 2607,
       "source_sha256": "4f7b2cf832ee0c75c0e009695d97053b74a959f3caca2b26358160f03b75ca61",
-      "vendored_sha256": "4f7b2cf832ee0c75c0e009695d97053b74a959f3caca2b26358160f03b75ca61",
-      "modified": false
+      "vendored_sha256": "1cee358b73d14ed38a26497d8da347a5a27ee3eb13d0f867d1f8ada0c4e23728",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4f7b2cf832ee0c75c0e009695d97053b74a959f3caca2b26358160f03b75ca61",
+        "baseline_bytes": 2507,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/package.xml",
@@ -243,93 +404,170 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/src/IMU_Processing.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/IMU_Processing.cpp",
-      "bytes": 27082,
+      "bytes": 27590,
       "source_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
-      "vendored_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
-      "modified": false
+      "vendored_sha256": "7af5caa2054d5b7fe8d84a3b8c2aab6324e3c7d7618bd7d7a3e80d58eda2fb7a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
+        "baseline_bytes": 27082,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/LIVMapper.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp",
-      "bytes": 108192,
+      "bytes": 125156,
       "source_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
-      "vendored_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
-      "modified": false
+      "vendored_sha256": "054c0c49179bb556d1edf88f00a3e73511b03ad8849b0736d16d0a1340cf57be",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
+        "baseline_bytes": 108192,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/backend/snapshot_bridge.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/backend/snapshot_bridge.cpp",
-      "bytes": 8932,
+      "bytes": 10834,
       "source_sha256": "56818024ab33069e35ad206f1881d04a5001533267a9527f5ff0cdebb72169fc",
-      "vendored_sha256": "56818024ab33069e35ad206f1881d04a5001533267a9527f5ff0cdebb72169fc",
-      "modified": false
+      "vendored_sha256": "c3fb221222cfbd5489970bb299449ae275a93c862ee7dadb6030250236f3adda",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "56818024ab33069e35ad206f1881d04a5001533267a9527f5ff0cdebb72169fc",
+        "baseline_bytes": 8932,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/frame.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/frame.cpp",
-      "bytes": 1644,
+      "bytes": 2167,
       "source_sha256": "d45bb8ab1edf065089515940d0c7d6ff2c08fe460143778f62f09547e63f489a",
-      "vendored_sha256": "d45bb8ab1edf065089515940d0c7d6ff2c08fe460143778f62f09547e63f489a",
-      "modified": false
+      "vendored_sha256": "a5e58f84d17326d5436762876dfa49ea62512437d657c27b56f9345d23207ff2",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "d45bb8ab1edf065089515940d0c7d6ff2c08fe460143778f62f09547e63f489a",
+        "baseline_bytes": 1644,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/identity_cpu_check.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/identity_cpu_check.cpp",
-      "bytes": 4045,
+      "bytes": 5913,
       "source_sha256": "5ca708376e665b11154daf8c370e9b6a4f2fea3866a28983b03d3a4c4551c6c4",
-      "vendored_sha256": "5ca708376e665b11154daf8c370e9b6a4f2fea3866a28983b03d3a4c4551c6c4",
-      "modified": false
+      "vendored_sha256": "56f61821f71fcb877a4d74d0f885cfca0407695ef1b4371be0f9db4d05e87325",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5ca708376e665b11154daf8c370e9b6a4f2fea3866a28983b03d3a4c4551c6c4",
+        "baseline_bytes": 4045,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/preprocess.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/preprocess.cpp",
-      "bytes": 34651,
+      "bytes": 41208,
       "source_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
-      "vendored_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
-      "modified": false
+      "vendored_sha256": "13b488b1656b1d95331b8978d243a72cb04ffac4614ccdbc5de959ddcb3f9bae",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
+        "baseline_bytes": 34651,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/runner.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/runner.cpp",
-      "bytes": 844,
+      "bytes": 1240,
       "source_sha256": "a021276b5d18a09c7da6d245c80934970c3559bf56815b7e2b9a0b5017e6a6f9",
-      "vendored_sha256": "a021276b5d18a09c7da6d245c80934970c3559bf56815b7e2b9a0b5017e6a6f9",
-      "modified": false
+      "vendored_sha256": "9df1af9de520951a158085b474638fc0b5296e46137f695a17634ee50c914e1b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a021276b5d18a09c7da6d245c80934970c3559bf56815b7e2b9a0b5017e6a6f9",
+        "baseline_bytes": 844,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/utils.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/utils.cpp",
-      "bytes": 658,
+      "bytes": 798,
       "source_sha256": "3e0aeaccaf94d7a5e44af952027ddda88f8e3787580b942af5b2db66ff0705d3",
-      "vendored_sha256": "3e0aeaccaf94d7a5e44af952027ddda88f8e3787580b942af5b2db66ff0705d3",
-      "modified": false
+      "vendored_sha256": "4d94b8d36b5f652ac7884adac1a84b32c188ce267a2d4b0f71388c3e9e0f0123",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "3e0aeaccaf94d7a5e44af952027ddda88f8e3787580b942af5b2db66ff0705d3",
+        "baseline_bytes": 658,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/vio.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/vio.cpp",
-      "bytes": 82986,
+      "bytes": 98364,
       "source_sha256": "1ecf2cd169bf8a5809dba7a866c7b2cea7e064601b4bde80775436eb587c53cd",
-      "vendored_sha256": "0cb11f148394ecfaa4a97d1366cd9b735deeebbe772489bf190642ad40b524e3",
+      "vendored_sha256": "f394b29397a5d3eff16515d0bddc5afb39850d19bbee1680576fbb4f8f4307a3",
       "modified": true,
       "change": "Apply recorded isolated VIO floor repair; exact bytes match recovered patched source.",
       "patch": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
-      "patched_source": "recovered isaac_rgbd_slam_interface/isolated_vio_floor_fix/vio.cpp"
+      "patched_source": "recovered isaac_rgbd_slam_interface/isolated_vio_floor_fix/vio.cpp",
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "0cb11f148394ecfaa4a97d1366cd9b735deeebbe772489bf190642ad40b524e3",
+        "baseline_bytes": 82986,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/visual_point.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/visual_point.cpp",
-      "bytes": 2858,
+      "bytes": 3663,
       "source_sha256": "d067e2b05445835cbbb4c8a159519bf4a01a271b96d06cc3a32419092b3fcc6e",
-      "vendored_sha256": "d067e2b05445835cbbb4c8a159519bf4a01a271b96d06cc3a32419092b3fcc6e",
-      "modified": false
+      "vendored_sha256": "cf229f7ab43108d856d58b1e029ee1fbc5b722a66b871a79436b131716c51a30",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "d067e2b05445835cbbb4c8a159519bf4a01a271b96d06cc3a32419092b3fcc6e",
+        "baseline_bytes": 2858,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/voxel_map.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/voxel_map.cpp",
-      "bytes": 54705,
+      "bytes": 66603,
       "source_sha256": "efcc7271d2d33354d67b8063d457c2563cc532b7a7a7e6b98ec9b720b290e99e",
-      "vendored_sha256": "efcc7271d2d33354d67b8063d457c2563cc532b7a7a7e6b98ec9b720b290e99e",
-      "modified": false
+      "vendored_sha256": "d982ad52efaafa215cbbd34a0d16c3ac4557dd3e022fee67b3ea14fc4484a089",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "efcc7271d2d33354d67b8063d457c2563cc532b7a7a7e6b98ec9b720b290e99e",
+        "baseline_bytes": 54705,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/tests/README_backend.zh-CN.md",
@@ -382,10 +620,17 @@
     {
       "source": "src/localization/frontend/fast_livo2_ros/config/camera_pinhole.yaml",
       "destination": "third_party/fast_livo2/fast_livo2_ros/config/camera_pinhole.yaml",
-      "bytes": 277,
+      "bytes": 584,
       "source_sha256": "cd58242cf93b5f8408428387291bb91425420be8f7bf2c75ceb1efe1770b442c",
-      "vendored_sha256": "cd58242cf93b5f8408428387291bb91425420be8f7bf2c75ceb1efe1770b442c",
-      "modified": false
+      "vendored_sha256": "e52c6f083669e6cd4a861671eeb9fc89f4039bc846be3d957eaf593eeed9a11a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "cd58242cf93b5f8408428387291bb91425420be8f7bf2c75ceb1efe1770b442c",
+        "baseline_bytes": 277,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_ros/launch/__init__.py",
@@ -398,10 +643,17 @@
     {
       "source": "src/localization/frontend/fast_livo2_ros/launch/mapping_aviz.launch.py",
       "destination": "third_party/fast_livo2/fast_livo2_ros/launch/mapping_aviz.launch.py",
-      "bytes": 3845,
+      "bytes": 4272,
       "source_sha256": "1978aa994cc1dd99b2eae45228749cbeca7b13401a3e9e4f7906759cbf089b6a",
-      "vendored_sha256": "1978aa994cc1dd99b2eae45228749cbeca7b13401a3e9e4f7906759cbf089b6a",
-      "modified": false
+      "vendored_sha256": "149c0c578940fa6ff45d820db43804f98ff102455c545fe798dac125d2746dac",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "1978aa994cc1dd99b2eae45228749cbeca7b13401a3e9e4f7906759cbf089b6a",
+        "baseline_bytes": 3845,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_ros/package.xml",
@@ -438,18 +690,32 @@
     {
       "source": "src/localization/frontend/fast_livo2_ros/scripts/decompress_images.py",
       "destination": "third_party/fast_livo2/fast_livo2_ros/scripts/decompress_images.py",
-      "bytes": 1234,
+      "bytes": 1269,
       "source_sha256": "375d6b107a33de4049535c89761d1a9fc2d836a411a7444f943cd14c5d039a93",
-      "vendored_sha256": "375d6b107a33de4049535c89761d1a9fc2d836a411a7444f943cd14c5d039a93",
-      "modified": false
+      "vendored_sha256": "10933e80e66b646506e445f1c4dbcfd909cf1b5ce749d8d715eac2f81aae72ba",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "375d6b107a33de4049535c89761d1a9fc2d836a411a7444f943cd14c5d039a93",
+        "baseline_bytes": 1234,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_ros/src/main.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_ros/src/main.cpp",
-      "bytes": 1327,
+      "bytes": 1730,
       "source_sha256": "d6d26316357fcf3f0d438af7f63b884d91919ab5a3eee099408f8081b45e898d",
-      "vendored_sha256": "d6d26316357fcf3f0d438af7f63b884d91919ab5a3eee099408f8081b45e898d",
-      "modified": false
+      "vendored_sha256": "dc8f347aad6153cede0249a2b80e84f9f6c75cb46fea14dfb4c19c236814d326",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "d6d26316357fcf3f0d438af7f63b884d91919ab5a3eee099408f8081b45e898d",
+        "baseline_bytes": 1327,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/CMakeLists.txt",
@@ -478,26 +744,47 @@
     {
       "source": "src/planning/scan/plan_manage/config/controllers.yaml",
       "destination": "third_party/scan/plan_manage/config/controllers.yaml",
-      "bytes": 1013,
+      "bytes": 2209,
       "source_sha256": "7139eefb804179589583ccd6dcc900aad50d47a45c5134ef7997e1aeaac4b0e8",
-      "vendored_sha256": "7139eefb804179589583ccd6dcc900aad50d47a45c5134ef7997e1aeaac4b0e8",
-      "modified": false
+      "vendored_sha256": "d1b05d5d2523a1e8a1707bcade1de10da17928f64b27ff2bf9bc96e1f17f9bc3",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "7139eefb804179589583ccd6dcc900aad50d47a45c5134ef7997e1aeaac4b0e8",
+        "baseline_bytes": 1013,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/config/keypoints.example.yaml",
       "destination": "third_party/scan/plan_manage/config/keypoints.example.yaml",
-      "bytes": 109,
+      "bytes": 268,
       "source_sha256": "e681f321f2f336081f2d443d6a576f6300ccf63f86b3692fb82f55a7df02b6ca",
-      "vendored_sha256": "e681f321f2f336081f2d443d6a576f6300ccf63f86b3692fb82f55a7df02b6ca",
-      "modified": false
+      "vendored_sha256": "8e9738679fb3507db9479f486986977ed2ff7ac6cc3c1cadafb33decc3557810",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e681f321f2f336081f2d443d6a576f6300ccf63f86b3692fb82f55a7df02b6ca",
+        "baseline_bytes": 109,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/config/planner.yaml",
       "destination": "third_party/scan/plan_manage/config/planner.yaml",
-      "bytes": 2009,
+      "bytes": 3051,
       "source_sha256": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a",
-      "vendored_sha256": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a",
-      "modified": false
+      "vendored_sha256": "3b50525f546c7506434446fcfb7adba6a414b8e36cb15fd4cf08414e3236ce4b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "f6a3e8ee0edd6663b2d4d3ee822bfc48cae41af2d36fe625641fe8f3fc3acf8a",
+        "baseline_bytes": 2009,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/config/simulator.yaml",
@@ -510,42 +797,77 @@
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/fresh_child_odometry_ack.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/fresh_child_odometry_ack.h",
-      "bytes": 2234,
+      "bytes": 3016,
       "source_sha256": "f70f82b1a3299e5e3f9824083b82efb7adda0b830f9ac530b3a8f616623c6240",
-      "vendored_sha256": "f70f82b1a3299e5e3f9824083b82efb7adda0b830f9ac530b3a8f616623c6240",
-      "modified": false
+      "vendored_sha256": "dcec6c882502028ecb5e9a507a6053376042d0e29cdeb0ce621bcc61c8e63fbd",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "f70f82b1a3299e5e3f9824083b82efb7adda0b830f9ac530b3a8f616623c6240",
+        "baseline_bytes": 2234,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/fresh_reference_protocol.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/fresh_reference_protocol.h",
-      "bytes": 10318,
+      "bytes": 12311,
       "source_sha256": "a0985b70db3b4ca0cf93aea8e9ede61fa682ed234630de34451daed60962e8dd",
-      "vendored_sha256": "a0985b70db3b4ca0cf93aea8e9ede61fa682ed234630de34451daed60962e8dd",
-      "modified": false
+      "vendored_sha256": "096cd24bb7d90c12b47f2e3f4837a319818da8a7fe15bd320ca9e8eb1825a769",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a0985b70db3b4ca0cf93aea8e9ede61fa682ed234630de34451daed60962e8dd",
+        "baseline_bytes": 10318,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/measured_start_state.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/measured_start_state.h",
-      "bytes": 1178,
+      "bytes": 1724,
       "source_sha256": "a7e33a7ec8b783c0b2fc7295313a3a054018c506b746ff5fc0343dd7799df20b",
-      "vendored_sha256": "a7e33a7ec8b783c0b2fc7295313a3a054018c506b746ff5fc0343dd7799df20b",
-      "modified": false
+      "vendored_sha256": "d5051bdf1c8f290cb7e58f8de5da3674ba5c982ac31ded1ede17e54df4cfc17f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a7e33a7ec8b783c0b2fc7295313a3a054018c506b746ff5fc0343dd7799df20b",
+        "baseline_bytes": 1178,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/plan_container.hpp",
       "destination": "third_party/scan/plan_manage/include/plan_manage/plan_container.hpp",
-      "bytes": 7252,
+      "bytes": 7752,
       "source_sha256": "c5c37fdd776a09b846ec04034329c2781b07f3ad4feeab095084115b179bf2d4",
-      "vendored_sha256": "c5c37fdd776a09b846ec04034329c2781b07f3ad4feeab095084115b179bf2d4",
-      "modified": false
+      "vendored_sha256": "9a276c7200160a7ecff8a02353749a1d6ee588ec45f314067351f710f9858240",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c5c37fdd776a09b846ec04034329c2781b07f3ad4feeab095084115b179bf2d4",
+        "baseline_bytes": 7252,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/planner_manager.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/planner_manager.h",
-      "bytes": 2590,
+      "bytes": 3288,
       "source_sha256": "b1f04257653c84757b0a2ce8cc05c6fb5f42ba09ee523a7cc16c400e4a1a7a31",
-      "vendored_sha256": "b1f04257653c84757b0a2ce8cc05c6fb5f42ba09ee523a7cc16c400e4a1a7a31",
-      "modified": false
+      "vendored_sha256": "b5b8a0f29874154a811f966cf17c805d382c8450feeb9caa59b376a4f70094bb",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b1f04257653c84757b0a2ce8cc05c6fb5f42ba09ee523a7cc16c400e4a1a7a31",
+        "baseline_bytes": 2590,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/r107_transport_probe.h",
@@ -558,26 +880,47 @@
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/r74_protocol_observation.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/r74_protocol_observation.h",
-      "bytes": 4839,
+      "bytes": 5781,
       "source_sha256": "5e0b41510d485599f339d20ac4b5579483cfe65c238be87e13e5151f64550b4a",
-      "vendored_sha256": "5e0b41510d485599f339d20ac4b5579483cfe65c238be87e13e5151f64550b4a",
-      "modified": false
+      "vendored_sha256": "4def1199d77607ecedf9f7faa33282220f9d632e717a38aff391955251eabb65",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5e0b41510d485599f339d20ac4b5579483cfe65c238be87e13e5151f64550b4a",
+        "baseline_bytes": 4839,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/reference_progress.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/reference_progress.h",
-      "bytes": 3045,
+      "bytes": 4363,
       "source_sha256": "01f627ef1ab0ddad61504f5f915dde2e105f4d871b78b807e35a6090014c5bd0",
-      "vendored_sha256": "01f627ef1ab0ddad61504f5f915dde2e105f4d871b78b807e35a6090014c5bd0",
-      "modified": false
+      "vendored_sha256": "e72597567ce10a2c0711b671b871f28bf5778ac5fe1a6b90b4d957e55f69d88f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "01f627ef1ab0ddad61504f5f915dde2e105f4d871b78b807e35a6090014c5bd0",
+        "baseline_bytes": 3045,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/include/plan_manage/scan_replan_fsm.h",
       "destination": "third_party/scan/plan_manage/include/plan_manage/scan_replan_fsm.h",
-      "bytes": 8531,
+      "bytes": 8967,
       "source_sha256": "be814475a6d31023baff3193dfd4f0d32cdbb6b242c5571acc5af0d911bc1352",
-      "vendored_sha256": "be814475a6d31023baff3193dfd4f0d32cdbb6b242c5571acc5af0d911bc1352",
-      "modified": false
+      "vendored_sha256": "4b4d6a65969dfc4a1edf277aed64f87368af2554842066082b658bdf8c1a4fb3",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "be814475a6d31023baff3193dfd4f0d32cdbb6b242c5571acc5af0d911bc1352",
+        "baseline_bytes": 8531,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/launch/__init__.py",
@@ -598,10 +941,17 @@
     {
       "source": "src/planning/scan/plan_manage/launch/run.launch.py",
       "destination": "third_party/scan/plan_manage/launch/run.launch.py",
-      "bytes": 8695,
+      "bytes": 8900,
       "source_sha256": "b22b7dd3f1500897fcb56f81c5cde77de6c623bd52a7565bb94409c17d65bf72",
-      "vendored_sha256": "b22b7dd3f1500897fcb56f81c5cde77de6c623bd52a7565bb94409c17d65bf72",
-      "modified": false
+      "vendored_sha256": "21438d8612bae4a4e4e67a4fbc4a26ce5138c90cf54daad1af6134f43ff84087",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b22b7dd3f1500897fcb56f81c5cde77de6c623bd52a7565bb94409c17d65bf72",
+        "baseline_bytes": 8695,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/launch/rviz.launch.py",
@@ -638,66 +988,122 @@
     {
       "source": "src/planning/scan/plan_manage/scripts/keypoint_recorder.py",
       "destination": "third_party/scan/plan_manage/scripts/keypoint_recorder.py",
-      "bytes": 5131,
+      "bytes": 5287,
       "source_sha256": "e2ba7f3cd0d5eb77bfb5062bd8d7d926304f4b3565c30cd4f1592dfc46bd6114",
-      "vendored_sha256": "e2ba7f3cd0d5eb77bfb5062bd8d7d926304f4b3565c30cd4f1592dfc46bd6114",
-      "modified": false
+      "vendored_sha256": "55840d642a37063f705b7af1474ad9cf2f74c6db4186aaafe8fc2f365d04938a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e2ba7f3cd0d5eb77bfb5062bd8d7d926304f4b3565c30cd4f1592dfc46bd6114",
+        "baseline_bytes": 5131,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/closed_loop_controller.cpp",
       "destination": "third_party/scan/plan_manage/src/closed_loop_controller.cpp",
-      "bytes": 7211,
+      "bytes": 8695,
       "source_sha256": "1bc1124a643b912ca8a56a66c3e7fe63088cd21fb9ec7f7ef82eb393fe0d0dd0",
-      "vendored_sha256": "1bc1124a643b912ca8a56a66c3e7fe63088cd21fb9ec7f7ef82eb393fe0d0dd0",
-      "modified": false
+      "vendored_sha256": "424613e7a576e7cdfc7e2e10699f8c5f3a1074b449eec4be01d3298c5bbc6448",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "1bc1124a643b912ca8a56a66c3e7fe63088cd21fb9ec7f7ef82eb393fe0d0dd0",
+        "baseline_bytes": 7211,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/go2_gait_publisher.cpp",
       "destination": "third_party/scan/plan_manage/src/go2_gait_publisher.cpp",
-      "bytes": 5648,
+      "bytes": 6988,
       "source_sha256": "9f90cb9bf0a5d9aa156a0e6cfe6af3ccc8ff550ea694703a157dbd3b39408b12",
-      "vendored_sha256": "9f90cb9bf0a5d9aa156a0e6cfe6af3ccc8ff550ea694703a157dbd3b39408b12",
-      "modified": false
+      "vendored_sha256": "bbf2a011ea76731baf2f91b596f66d7ccac9d70d85c8b15df7f4025dcd79fcf6",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "9f90cb9bf0a5d9aa156a0e6cfe6af3ccc8ff550ea694703a157dbd3b39408b12",
+        "baseline_bytes": 5648,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/go2_kinematic_sim.cpp",
       "destination": "third_party/scan/plan_manage/src/go2_kinematic_sim.cpp",
-      "bytes": 4865,
+      "bytes": 5660,
       "source_sha256": "c01c8eee657124f2c5ba5547a781b43c3ea10915e1a0dd4d3a47b9f8ed6cffc8",
-      "vendored_sha256": "c01c8eee657124f2c5ba5547a781b43c3ea10915e1a0dd4d3a47b9f8ed6cffc8",
-      "modified": false
+      "vendored_sha256": "3f4c2cab2c9cdb3429e2a3f7792585f431aa5934d935299c1cedaa973aa20e34",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c01c8eee657124f2c5ba5547a781b43c3ea10915e1a0dd4d3a47b9f8ed6cffc8",
+        "baseline_bytes": 4865,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/open_loop_controller.cpp",
       "destination": "third_party/scan/plan_manage/src/open_loop_controller.cpp",
-      "bytes": 5655,
+      "bytes": 6577,
       "source_sha256": "686695e53036eec110a750b076172c3c99b8437390b8a0a43a2751c1fef215ba",
-      "vendored_sha256": "686695e53036eec110a750b076172c3c99b8437390b8a0a43a2751c1fef215ba",
-      "modified": false
+      "vendored_sha256": "089a06cd1ef9382b35e576ba40851334faff78ad81881872de986e22b11b349e",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "686695e53036eec110a750b076172c3c99b8437390b8a0a43a2751c1fef215ba",
+        "baseline_bytes": 5655,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/planner_manager.cpp",
       "destination": "third_party/scan/plan_manage/src/planner_manager.cpp",
-      "bytes": 21746,
+      "bytes": 23961,
       "source_sha256": "539363cd2d07b64f96973224d3b2bd402f3bd53e163941c63d4a26bad741526f",
-      "vendored_sha256": "539363cd2d07b64f96973224d3b2bd402f3bd53e163941c63d4a26bad741526f",
-      "modified": false
+      "vendored_sha256": "5cdbb16805e518e8e4c70f4f5f4960a55bc0c0a32975d3c282722cb59c0b64d5",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "539363cd2d07b64f96973224d3b2bd402f3bd53e163941c63d4a26bad741526f",
+        "baseline_bytes": 21746,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/scan_planner_node.cpp",
       "destination": "third_party/scan/plan_manage/src/scan_planner_node.cpp",
-      "bytes": 646,
+      "bytes": 686,
       "source_sha256": "2040950cf8e72e6037543185b89a92fa9f416b05976131730d7ae05236bc2f08",
-      "vendored_sha256": "2040950cf8e72e6037543185b89a92fa9f416b05976131730d7ae05236bc2f08",
-      "modified": false
+      "vendored_sha256": "c795ad8d6697e36077825c894b14c23a9de597b53a3bc1bb0ac7953dd60c5ee3",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2040950cf8e72e6037543185b89a92fa9f416b05976131730d7ae05236bc2f08",
+        "baseline_bytes": 646,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/src/scan_replan_fsm.cpp",
       "destination": "third_party/scan/plan_manage/src/scan_replan_fsm.cpp",
-      "bytes": 74343,
+      "bytes": 79568,
       "source_sha256": "e46eba67d3f052666d4f03216abe4e9e5c1e6b0e9200837652019c4ebccebb8b",
-      "vendored_sha256": "e46eba67d3f052666d4f03216abe4e9e5c1e6b0e9200837652019c4ebccebb8b",
-      "modified": false
+      "vendored_sha256": "36aabaae5598274097c699a75fe840957171dcb421796dcfcc1414ae60e04991",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e46eba67d3f052666d4f03216abe4e9e5c1e6b0e9200837652019c4ebccebb8b",
+        "baseline_bytes": 74343,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_manage/test/__init__.py",
@@ -742,18 +1148,32 @@
     {
       "source": "src/planning/scan/plan_env/include/plan_env/grid_map.h",
       "destination": "third_party/scan/plan_env/include/plan_env/grid_map.h",
-      "bytes": 16052,
+      "bytes": 17282,
       "source_sha256": "0d7d6f27917d9fe5985d73df63185a28eb52e886df661f4d5f23af13d322b577",
-      "vendored_sha256": "0d7d6f27917d9fe5985d73df63185a28eb52e886df661f4d5f23af13d322b577",
-      "modified": false
+      "vendored_sha256": "624b3bf754f57b4e5edf0b45b6309323d5059ab46bcde0ca561ea8a694c78a45",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "0d7d6f27917d9fe5985d73df63185a28eb52e886df661f4d5f23af13d322b577",
+        "baseline_bytes": 16052,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/include/plan_env/raycast.h",
       "destination": "third_party/scan/plan_env/include/plan_env/raycast.h",
-      "bytes": 1424,
+      "bytes": 2334,
       "source_sha256": "b5f0399c457cb10ab24e249468e2a7ccfd4d97f8b55cd9aa20b1002e50762b14",
-      "vendored_sha256": "b5f0399c457cb10ab24e249468e2a7ccfd4d97f8b55cd9aa20b1002e50762b14",
-      "modified": false
+      "vendored_sha256": "8db3fc419d919ab78f791c105c7185bef04fc6060cb31f4e73eb931c48449e48",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b5f0399c457cb10ab24e249468e2a7ccfd4d97f8b55cd9aa20b1002e50762b14",
+        "baseline_bytes": 1424,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/package.xml",
@@ -766,42 +1186,77 @@
     {
       "source": "src/planning/scan/plan_env/src/grid_map.cpp",
       "destination": "third_party/scan/plan_env/src/grid_map.cpp",
-      "bytes": 40516,
+      "bytes": 44674,
       "source_sha256": "83264ae48e53fd849756b66b2b24df9966632cf8cf9fa5b47505bfd0fad036fa",
-      "vendored_sha256": "83264ae48e53fd849756b66b2b24df9966632cf8cf9fa5b47505bfd0fad036fa",
-      "modified": false
+      "vendored_sha256": "439ff8d31dc72ebc08f33922df9b4cbd30e847045f14afde1ddb635f047f73b4",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "83264ae48e53fd849756b66b2b24df9966632cf8cf9fa5b47505bfd0fad036fa",
+        "baseline_bytes": 40516,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/src/raycast.cpp",
       "destination": "third_party/scan/plan_env/src/raycast.cpp",
-      "bytes": 10988,
+      "bytes": 12274,
       "source_sha256": "715c670a9fdcf086f8e85096e201e34e56ed5c7f6f906dc88b1523e04defe03c",
-      "vendored_sha256": "715c670a9fdcf086f8e85096e201e34e56ed5c7f6f906dc88b1523e04defe03c",
-      "modified": false
+      "vendored_sha256": "7ebd86084fe8f36499762dda493f15bc178822f6e277f4b5d01262a48e54d6a7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "715c670a9fdcf086f8e85096e201e34e56ed5c7f6f906dc88b1523e04defe03c",
+        "baseline_bytes": 10988,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/test/original_grid_map.cpp",
       "destination": "third_party/scan/plan_env/test/original_grid_map.cpp",
-      "bytes": 38530,
+      "bytes": 42107,
       "source_sha256": "144abf7c40f6e6a29a38eff61643f3232f145cdcaca7876cde2ba2c7354e58c1",
-      "vendored_sha256": "144abf7c40f6e6a29a38eff61643f3232f145cdcaca7876cde2ba2c7354e58c1",
-      "modified": false
+      "vendored_sha256": "8515c5fc8dba23f3ade394133f99b4cfe9b2f71a40ef5eb058359a8d235b7bd7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "144abf7c40f6e6a29a38eff61643f3232f145cdcaca7876cde2ba2c7354e58c1",
+        "baseline_bytes": 38530,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/test/original_raycast.cpp",
       "destination": "third_party/scan/plan_env/test/original_raycast.cpp",
-      "bytes": 10491,
+      "bytes": 11732,
       "source_sha256": "d7cd0a81c3264fe8aa0920b796cf5dd86241b35aa74c15890af5a5c10f270a40",
-      "vendored_sha256": "d7cd0a81c3264fe8aa0920b796cf5dd86241b35aa74c15890af5a5c10f270a40",
-      "modified": false
+      "vendored_sha256": "31bf023434b2d1d30066b380e9b89a13182dee22d10f89e6c1baf70c322cd8ee",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "d7cd0a81c3264fe8aa0920b796cf5dd86241b35aa74c15890af5a5c10f270a40",
+        "baseline_bytes": 10491,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/plan_env/test/raycast_regression.cpp",
       "destination": "third_party/scan/plan_env/test/raycast_regression.cpp",
-      "bytes": 7535,
+      "bytes": 9471,
       "source_sha256": "1c32f60035c2ae2465ada1a3e1b27e192bbbac14e20a70efc866b1d0f5592dff",
-      "vendored_sha256": "1c32f60035c2ae2465ada1a3e1b27e192bbbac14e20a70efc866b1d0f5592dff",
-      "modified": false
+      "vendored_sha256": "3abd8a4104673b5b9bd5167cd9c1f5a4097b19a8d2505f94d8b52255467313ef",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "1c32f60035c2ae2465ada1a3e1b27e192bbbac14e20a70efc866b1d0f5592dff",
+        "baseline_bytes": 7535,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/path_searching/CMakeLists.txt",
@@ -822,10 +1277,17 @@
     {
       "source": "src/planning/scan/path_searching/include/path_searching/dyn_a_star.h",
       "destination": "third_party/scan/path_searching/include/path_searching/dyn_a_star.h",
-      "bytes": 3175,
+      "bytes": 4387,
       "source_sha256": "4e4df749a5bad3dd2dfe464a5f0917360c5da9d70ca9da83231deee112ab86c2",
-      "vendored_sha256": "4e4df749a5bad3dd2dfe464a5f0917360c5da9d70ca9da83231deee112ab86c2",
-      "modified": false
+      "vendored_sha256": "4c215b4d7ba147d2c3942036ca20239c63669c9c46a118f4ca06e5a504c0b26d",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4e4df749a5bad3dd2dfe464a5f0917360c5da9d70ca9da83231deee112ab86c2",
+        "baseline_bytes": 3175,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/path_searching/package.xml",
@@ -838,10 +1300,17 @@
     {
       "source": "src/planning/scan/path_searching/src/dyn_a_star.cpp",
       "destination": "third_party/scan/path_searching/src/dyn_a_star.cpp",
-      "bytes": 10810,
+      "bytes": 11470,
       "source_sha256": "ba2bc44485c7506de56857f3e7a93cf94d5616f43573d4f53eb1fbd001aa758f",
-      "vendored_sha256": "ba2bc44485c7506de56857f3e7a93cf94d5616f43573d4f53eb1fbd001aa758f",
-      "modified": false
+      "vendored_sha256": "691dae3625867b6a0c2fc061950b3edd870818128167d6efc551054237708030",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ba2bc44485c7506de56857f3e7a93cf94d5616f43573d4f53eb1fbd001aa758f",
+        "baseline_bytes": 10810,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/CMakeLists.txt",
@@ -862,34 +1331,62 @@
     {
       "source": "src/planning/scan/bspline_opt/include/bspline_opt/bspline_optimizer.h",
       "destination": "third_party/scan/bspline_opt/include/bspline_opt/bspline_optimizer.h",
-      "bytes": 6369,
+      "bytes": 6558,
       "source_sha256": "ddd2c2e812b2dd59bb32f383c093246ebe12a9a667ae93d448ef5d1e4b9ef926",
-      "vendored_sha256": "ddd2c2e812b2dd59bb32f383c093246ebe12a9a667ae93d448ef5d1e4b9ef926",
-      "modified": false
+      "vendored_sha256": "7fa26db71a9a7b6917cb37508042dc56a15f75c38106a5e51d26a740ee1998b8",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ddd2c2e812b2dd59bb32f383c093246ebe12a9a667ae93d448ef5d1e4b9ef926",
+        "baseline_bytes": 6369,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/include/bspline_opt/gradient_descent_optimizer.h",
       "destination": "third_party/scan/bspline_opt/include/bspline_opt/gradient_descent_optimizer.h",
-      "bytes": 1289,
+      "bytes": 1939,
       "source_sha256": "1b02e713ac1112ea0a365f84e23af262822a1d76fe9cef3e8740b073d906abca",
-      "vendored_sha256": "1b02e713ac1112ea0a365f84e23af262822a1d76fe9cef3e8740b073d906abca",
-      "modified": false
+      "vendored_sha256": "ec2be6003e832718a547bee08f5e82dad975453dbfa129ce0a138484d857f430",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "1b02e713ac1112ea0a365f84e23af262822a1d76fe9cef3e8740b073d906abca",
+        "baseline_bytes": 1289,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/include/bspline_opt/lbfgs.hpp",
       "destination": "third_party/scan/bspline_opt/include/bspline_opt/lbfgs.hpp",
-      "bytes": 54747,
+      "bytes": 50701,
       "source_sha256": "39174dfe750b142f448fe8ac637976edc8a1bcf6a6ab8a56930e6543cfdf6b07",
-      "vendored_sha256": "39174dfe750b142f448fe8ac637976edc8a1bcf6a6ab8a56930e6543cfdf6b07",
-      "modified": false
+      "vendored_sha256": "fe370fe111a100fa94d6298e451c1a9a0d65671c758f29f356c6aad7760665d4",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "39174dfe750b142f448fe8ac637976edc8a1bcf6a6ab8a56930e6543cfdf6b07",
+        "baseline_bytes": 54747,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/include/bspline_opt/uniform_bspline.h",
       "destination": "third_party/scan/bspline_opt/include/bspline_opt/uniform_bspline.h",
-      "bytes": 2952,
+      "bytes": 2919,
       "source_sha256": "5ab1b400f4b0b36c62d3661091e753bd4a238ddf90dbdd8f3b25b5d21c387a28",
-      "vendored_sha256": "5ab1b400f4b0b36c62d3661091e753bd4a238ddf90dbdd8f3b25b5d21c387a28",
-      "modified": false
+      "vendored_sha256": "46039836c05fe166e2c857c7e36d3a056ad5bf7cf9ac3a39a5a1ed1155bb8709",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5ab1b400f4b0b36c62d3661091e753bd4a238ddf90dbdd8f3b25b5d21c387a28",
+        "baseline_bytes": 2952,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/package.xml",
@@ -902,42 +1399,77 @@
     {
       "source": "src/planning/scan/bspline_opt/src/bspline_optimizer.cpp",
       "destination": "third_party/scan/bspline_opt/src/bspline_optimizer.cpp",
-      "bytes": 43788,
+      "bytes": 48381,
       "source_sha256": "9744424bd58841213230e95b252706360b1d4db10eaf30e7f6bf34a857a87568",
-      "vendored_sha256": "9744424bd58841213230e95b252706360b1d4db10eaf30e7f6bf34a857a87568",
-      "modified": false
+      "vendored_sha256": "68a96d7f962282b02fc4bef24e7aa355d440755a58be4a354d808e95ef1475b0",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "9744424bd58841213230e95b252706360b1d4db10eaf30e7f6bf34a857a87568",
+        "baseline_bytes": 43788,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/src/gradient_descent_optimizer.cpp",
       "destination": "third_party/scan/bspline_opt/src/gradient_descent_optimizer.cpp",
-      "bytes": 3166,
+      "bytes": 3451,
       "source_sha256": "4dca3811be57cf3f819a0d3601d6a6024c304f5b9852e4079bf3334706f133c7",
-      "vendored_sha256": "4dca3811be57cf3f819a0d3601d6a6024c304f5b9852e4079bf3334706f133c7",
-      "modified": false
+      "vendored_sha256": "364ad61d256272bd807e05bf6b0d8562d65d846624a25e5a72668ef253bf0014",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4dca3811be57cf3f819a0d3601d6a6024c304f5b9852e4079bf3334706f133c7",
+        "baseline_bytes": 3166,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/src/uniform_bspline.cpp",
       "destination": "third_party/scan/bspline_opt/src/uniform_bspline.cpp",
-      "bytes": 10184,
+      "bytes": 10591,
       "source_sha256": "e91c5a429155738389602dc4c50301ea65f8f134809406545779c1bf0c1d7a8b",
-      "vendored_sha256": "e91c5a429155738389602dc4c50301ea65f8f134809406545779c1bf0c1d7a8b",
-      "modified": false
+      "vendored_sha256": "3ef77b82d756b2fa452ccb31ef21d0d0d3eca82bd761b0333d80c7331395b6bc",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e91c5a429155738389602dc4c50301ea65f8f134809406545779c1bf0c1d7a8b",
+        "baseline_bytes": 10184,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/bspline_opt/test/test_uniform_bspline.cpp",
       "destination": "third_party/scan/bspline_opt/test/test_uniform_bspline.cpp",
-      "bytes": 980,
+      "bytes": 1022,
       "source_sha256": "acf9fa94285c426ca04c2b5c21b77e926d0a635915f75373a1d99371690e730e",
-      "vendored_sha256": "acf9fa94285c426ca04c2b5c21b77e926d0a635915f75373a1d99371690e730e",
-      "modified": false
+      "vendored_sha256": "d46b572fe5b747a8c3164050373a77fe08d2d6fc168a62f9a01e5567323dceb9",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "acf9fa94285c426ca04c2b5c21b77e926d0a635915f75373a1d99371690e730e",
+        "baseline_bytes": 980,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/traj_utils/CMakeLists.txt",
       "destination": "third_party/scan/traj_utils/CMakeLists.txt",
-      "bytes": 1051,
+      "bytes": 1500,
       "source_sha256": "5e2f21bb681b22ebc1e9b03c78df1b39a53d585ca436219abbab510434b77bb6",
-      "vendored_sha256": "5e2f21bb681b22ebc1e9b03c78df1b39a53d585ca436219abbab510434b77bb6",
-      "modified": false
+      "vendored_sha256": "2e3b1b882ff509afcf8885bfcb1ce5f3b41d58422e0b9645e6dc58238da4c378",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5e2f21bb681b22ebc1e9b03c78df1b39a53d585ca436219abbab510434b77bb6",
+        "baseline_bytes": 1051,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/traj_utils/README.md",
@@ -950,18 +1482,32 @@
     {
       "source": "src/planning/scan/traj_utils/include/traj_utils/planning_visualization.h",
       "destination": "third_party/scan/traj_utils/include/traj_utils/planning_visualization.h",
-      "bytes": 2765,
+      "bytes": 3164,
       "source_sha256": "c7d0bb617163f7931fce28346963a5cc5ab0f383aa00ebb360c2f8319bc5a4c1",
-      "vendored_sha256": "c7d0bb617163f7931fce28346963a5cc5ab0f383aa00ebb360c2f8319bc5a4c1",
-      "modified": false
+      "vendored_sha256": "af0c476797e04103f3d844100fe5ecb29f8dac1484c51b00739445c6254d2524",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c7d0bb617163f7931fce28346963a5cc5ab0f383aa00ebb360c2f8319bc5a4c1",
+        "baseline_bytes": 2765,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/traj_utils/include/traj_utils/polynomial_traj.h",
       "destination": "third_party/scan/traj_utils/include/traj_utils/polynomial_traj.h",
-      "bytes": 8581,
+      "bytes": 9819,
       "source_sha256": "7ce335eea4abc5afb9f02fb3d1f5e926f57dc90e2a0b9005ad11ab13836f1060",
-      "vendored_sha256": "7ce335eea4abc5afb9f02fb3d1f5e926f57dc90e2a0b9005ad11ab13836f1060",
-      "modified": false
+      "vendored_sha256": "21a5f3697f3e47da3d98e3c35c03a766d028e52148647e58efab50e1d0c55d25",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "7ce335eea4abc5afb9f02fb3d1f5e926f57dc90e2a0b9005ad11ab13836f1060",
+        "baseline_bytes": 8581,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/traj_utils/package.xml",
@@ -974,18 +1520,32 @@
     {
       "source": "src/planning/scan/traj_utils/src/planning_visualization.cpp",
       "destination": "third_party/scan/traj_utils/src/planning_visualization.cpp",
-      "bytes": 11290,
+      "bytes": 11842,
       "source_sha256": "938924191bfe46dbfadd83df45d118f0fc7fc54c080ecf9bf310fc7b1ba71541",
-      "vendored_sha256": "938924191bfe46dbfadd83df45d118f0fc7fc54c080ecf9bf310fc7b1ba71541",
-      "modified": false
+      "vendored_sha256": "efccdc09dc54cf9838841454b3f45ccdfe395c689cffcdeda19d42ed3d0a099c",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "938924191bfe46dbfadd83df45d118f0fc7fc54c080ecf9bf310fc7b1ba71541",
+        "baseline_bytes": 11290,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/scan/traj_utils/src/polynomial_traj.cpp",
       "destination": "third_party/scan/traj_utils/src/polynomial_traj.cpp",
-      "bytes": 7728,
+      "bytes": 8938,
       "source_sha256": "608005c392dbfa46315cfa3f6e5f3b9db5bc3a10cb3f9ac539c3321505acdb18",
-      "vendored_sha256": "608005c392dbfa46315cfa3f6e5f3b9db5bc3a10cb3f9ac539c3321505acdb18",
-      "modified": false
+      "vendored_sha256": "6a5c294cfccc8a1de723098e35def46fa3ba9be5c84111f211525f757dbc0063",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "608005c392dbfa46315cfa3f6e5f3b9db5bc3a10cb3f9ac539c3321505acdb18",
+        "baseline_bytes": 7728,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/scan_planner_msgs/CMakeLists.txt",
@@ -998,10 +1558,17 @@
     {
       "source": "src/sdk/scan_planner_msgs/msg/Bspline.idl",
       "destination": "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
-      "bytes": 550,
+      "bytes": 1436,
       "source_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
-      "vendored_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
-      "modified": false
+      "vendored_sha256": "0fef041dfe996e9e1afb3cb6b85ffe70379cd271bd1674d7625dc915a67d5984",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
+        "baseline_bytes": 550,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/scan_planner_msgs/msg/Bspline.json",
@@ -1022,10 +1589,17 @@
     {
       "source": "src/sdk/scan_planner_msgs/msg/DataDisp.idl",
       "destination": "third_party/scan/scan_planner_msgs/msg/DataDisp.idl",
-      "bytes": 398,
+      "bytes": 1545,
       "source_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
-      "vendored_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
-      "modified": false
+      "vendored_sha256": "a01293ba83eddc49aaaea82c4aa4d13e3ab2b44a5fd8dc744c050993c5f50d5b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
+        "baseline_bytes": 398,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/scan_planner_msgs/msg/DataDisp.json",
@@ -1054,10 +1628,17 @@
     {
       "source": "src/sdk/vikit_common/CMakeLists.txt",
       "destination": "third_party/vikit/vikit_common/CMakeLists.txt",
-      "bytes": 2490,
+      "bytes": 2788,
       "source_sha256": "83e3fb0f17a2e17a535db53cccb32b5bad3bf5e570f110c561fe6cd2f1cb1509",
-      "vendored_sha256": "83e3fb0f17a2e17a535db53cccb32b5bad3bf5e570f110c561fe6cd2f1cb1509",
-      "modified": false
+      "vendored_sha256": "5b7da7765b6d9490218594418e940efdc0bbeb48884f6940fc2bceabcd10e18b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "83e3fb0f17a2e17a535db53cccb32b5bad3bf5e570f110c561fe6cd2f1cb1509",
+        "baseline_bytes": 2490,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/CMakeModules/FindEigen.cmake",
@@ -1078,10 +1659,17 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/abstract_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/abstract_camera.h",
-      "bytes": 2000,
+      "bytes": 2109,
       "source_sha256": "ecfe3f35bece1e25884cba598807da4215048feca856325663f27736db3c2f07",
-      "vendored_sha256": "ecfe3f35bece1e25884cba598807da4215048feca856325663f27736db3c2f07",
-      "modified": false
+      "vendored_sha256": "fcf98c35dedf0359fd5c057968e16f97fd1f27f8214298f73bcfa3b239e95d9c",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ecfe3f35bece1e25884cba598807da4215048feca856325663f27736db3c2f07",
+        "baseline_bytes": 2000,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/aligned_mem.h",
@@ -1094,10 +1682,17 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/atan_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/atan_camera.h",
-      "bytes": 2333,
+      "bytes": 2302,
       "source_sha256": "e8177a2efc11f2440257e232ea2f0b4ee590fba20349367a81ea81a2fd21df7a",
-      "vendored_sha256": "e8177a2efc11f2440257e232ea2f0b4ee590fba20349367a81ea81a2fd21df7a",
-      "modified": false
+      "vendored_sha256": "37bb11c47559cbfc549270f198c731d8d0779cd916f05ed24d2d63a268dc3d00",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e8177a2efc11f2440257e232ea2f0b4ee590fba20349367a81ea81a2fd21df7a",
+        "baseline_bytes": 2333,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/blender_utils.h",
@@ -1110,10 +1705,17 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/equidistant_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/equidistant_camera.h",
-      "bytes": 3840,
+      "bytes": 4528,
       "source_sha256": "fc1e265bbaddfb641f81e9faa0551babb373eb9b758744eb36e481082ee635b4",
-      "vendored_sha256": "fc1e265bbaddfb641f81e9faa0551babb373eb9b758744eb36e481082ee635b4",
-      "modified": false
+      "vendored_sha256": "6d7a60bf410ad2a27cb6f3e8776a18181fa8f1c89e0bdf9a6499c66383f4f611",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "fc1e265bbaddfb641f81e9faa0551babb373eb9b758744eb36e481082ee635b4",
+        "baseline_bytes": 3840,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/file_reader.h",
@@ -1126,26 +1728,47 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/file_reader_types.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/file_reader_types.h",
-      "bytes": 2418,
+      "bytes": 2661,
       "source_sha256": "bf15b33a08d9b9dc57296b2b4bf702433db96511ea54cd522a7f224064e8d57b",
-      "vendored_sha256": "bf15b33a08d9b9dc57296b2b4bf702433db96511ea54cd522a7f224064e8d57b",
-      "modified": false
+      "vendored_sha256": "50f39fed6e8a16c8ba80732e1d58d9a9da838bdec7d737b57f1d779c95b44d61",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "bf15b33a08d9b9dc57296b2b4bf702433db96511ea54cd522a7f224064e8d57b",
+        "baseline_bytes": 2418,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/homography.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/homography.h",
-      "bytes": 1980,
+      "bytes": 2437,
       "source_sha256": "34fc060c9fe28cb07b1937ca98a86e59b67abe081efd81e76f79f28679dff9ec",
-      "vendored_sha256": "34fc060c9fe28cb07b1937ca98a86e59b67abe081efd81e76f79f28679dff9ec",
-      "modified": false
+      "vendored_sha256": "30b2d8fe056867fd01e08aba15ebbb7e7c086445282f55f655d4bcd9481d345f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "34fc060c9fe28cb07b1937ca98a86e59b67abe081efd81e76f79f28679dff9ec",
+        "baseline_bytes": 1980,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/img_align.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/img_align.h",
-      "bytes": 4677,
+      "bytes": 3958,
       "source_sha256": "ef96a140facbba762c7622f5fe5c1621e1b944d27daacb9b2435f0e7255de17b",
-      "vendored_sha256": "ef96a140facbba762c7622f5fe5c1621e1b944d27daacb9b2435f0e7255de17b",
-      "modified": false
+      "vendored_sha256": "8f6fcbe4642acc7f356f295dfaf3685b2ad88fa801f0dd94090996e4ac1f094e",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ef96a140facbba762c7622f5fe5c1621e1b944d27daacb9b2435f0e7255de17b",
+        "baseline_bytes": 4677,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/math_utils.h",
@@ -1158,58 +1781,107 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/nlls_solver.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/nlls_solver.h",
-      "bytes": 5188,
+      "bytes": 5062,
       "source_sha256": "c96b54177b8b131c28a1733d1c6e1619f4608921307b1500cde2ea88569963da",
-      "vendored_sha256": "c96b54177b8b131c28a1733d1c6e1619f4608921307b1500cde2ea88569963da",
-      "modified": false
+      "vendored_sha256": "37a0a85e3b15c85413b4bd78e04b25562b4e65b4b2f2bcba8acb88bd89dcea81",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c96b54177b8b131c28a1733d1c6e1619f4608921307b1500cde2ea88569963da",
+        "baseline_bytes": 5188,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/nlls_solver_impl.hpp",
       "destination": "third_party/vikit/vikit_common/include/vikit/nlls_solver_impl.hpp",
-      "bytes": 7946,
+      "bytes": 8915,
       "source_sha256": "04c0d1adf6004058e2ed1bfa0b9473a2e08867ba97bd3f360043ca42ebb20f2e",
-      "vendored_sha256": "04c0d1adf6004058e2ed1bfa0b9473a2e08867ba97bd3f360043ca42ebb20f2e",
-      "modified": false
+      "vendored_sha256": "4d8eba5ec598adb30a555bdf5915850f189c45a4557fd2db70f2ff6da79c9756",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "04c0d1adf6004058e2ed1bfa0b9473a2e08867ba97bd3f360043ca42ebb20f2e",
+        "baseline_bytes": 7946,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/omni_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/omni_camera.h",
-      "bytes": 1927,
+      "bytes": 2308,
       "source_sha256": "cefbfb60ed09ed8aca02868c90bda01c2915a2a14efc6f6882144e99139e0984",
-      "vendored_sha256": "cefbfb60ed09ed8aca02868c90bda01c2915a2a14efc6f6882144e99139e0984",
-      "modified": false
+      "vendored_sha256": "085c2a97189e4c31515acef41a8e84e7a87555082fb09c0247f0637ca5c9fea2",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "cefbfb60ed09ed8aca02868c90bda01c2915a2a14efc6f6882144e99139e0984",
+        "baseline_bytes": 1927,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/patch_score.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/patch_score.h",
-      "bytes": 8454,
+      "bytes": 9920,
       "source_sha256": "e5a5273b3e72851c06738ee09e92b92e41d4b1d464d7b98b5364d37834e347bf",
-      "vendored_sha256": "e5a5273b3e72851c06738ee09e92b92e41d4b1d464d7b98b5364d37834e347bf",
-      "modified": false
+      "vendored_sha256": "1767ba91910918c587c62f38a688a629f834dfa8465661db6a29ba8fab067005",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e5a5273b3e72851c06738ee09e92b92e41d4b1d464d7b98b5364d37834e347bf",
+        "baseline_bytes": 8454,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/performance_monitor.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/performance_monitor.h",
-      "bytes": 1241,
+      "bytes": 1195,
       "source_sha256": "938422e337cc3d60311f29b30094b735f984a302e432f2b8ff855643e0f0bfcf",
-      "vendored_sha256": "938422e337cc3d60311f29b30094b735f984a302e432f2b8ff855643e0f0bfcf",
-      "modified": false
+      "vendored_sha256": "69c8f4b717d1ce7a3bfc161a02863abc595d3edd4c625cdd166b20956aa4ffc7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "938422e337cc3d60311f29b30094b735f984a302e432f2b8ff855643e0f0bfcf",
+        "baseline_bytes": 1241,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/pinhole_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/pinhole_camera.h",
-      "bytes": 2233,
+      "bytes": 2632,
       "source_sha256": "9a12133411fee6cb0475a296974c9505d6c5474faffadf302b37d8baa60d22f2",
-      "vendored_sha256": "9a12133411fee6cb0475a296974c9505d6c5474faffadf302b37d8baa60d22f2",
-      "modified": false
+      "vendored_sha256": "29bee773c60992f9343c00612f9da51989fe29682b0250181052acf3cb874df9",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "9a12133411fee6cb0475a296974c9505d6c5474faffadf302b37d8baa60d22f2",
+        "baseline_bytes": 2233,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/polynomial_camera.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/polynomial_camera.h",
-      "bytes": 4334,
+      "bytes": 5370,
       "source_sha256": "eb7e4983f5c2bc2b5ca7a11f77095139e8a115b1283d395a13fc0f1e73cb6077",
-      "vendored_sha256": "eb7e4983f5c2bc2b5ca7a11f77095139e8a115b1283d395a13fc0f1e73cb6077",
-      "modified": false
+      "vendored_sha256": "5db3df3f33f920410f45a31b4caa05a7f2eaee9df1fe24db5076e1280869a115",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "eb7e4983f5c2bc2b5ca7a11f77095139e8a115b1283d395a13fc0f1e73cb6077",
+        "baseline_bytes": 4334,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/ringbuffer.h",
@@ -1222,34 +1894,62 @@
     {
       "source": "src/sdk/vikit_common/include/vikit/robust_cost.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/robust_cost.h",
-      "bytes": 4256,
+      "bytes": 4604,
       "source_sha256": "a3fba95865bf375b61d5c43c230d3a1a2875d75b7aea6f7ab9a143b562a2bb71",
-      "vendored_sha256": "a3fba95865bf375b61d5c43c230d3a1a2875d75b7aea6f7ab9a143b562a2bb71",
-      "modified": false
+      "vendored_sha256": "930444110fd33b05eb3bfc6e525a18e0802c69d77b31031678715128e3197980",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a3fba95865bf375b61d5c43c230d3a1a2875d75b7aea6f7ab9a143b562a2bb71",
+        "baseline_bytes": 4256,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/sample.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/sample.h",
-      "bytes": 1027,
+      "bytes": 1059,
       "source_sha256": "8811171bf10eb43c45df2a5cdaf073cf58a1b27ca5a1532ffb41ef0eef942441",
-      "vendored_sha256": "8811171bf10eb43c45df2a5cdaf073cf58a1b27ca5a1532ffb41ef0eef942441",
-      "modified": false
+      "vendored_sha256": "61d849b6ba3fffb8a7f968ed0970a2106c0e6989c05bd37f07903ef0686fa989",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "8811171bf10eb43c45df2a5cdaf073cf58a1b27ca5a1532ffb41ef0eef942441",
+        "baseline_bytes": 1027,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/timer.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/timer.h",
-      "bytes": 1267,
+      "bytes": 1332,
       "source_sha256": "af3d62462ae241c3c011fca0acd0eb53bed583000dbbb127528807fe7d59cb0e",
-      "vendored_sha256": "af3d62462ae241c3c011fca0acd0eb53bed583000dbbb127528807fe7d59cb0e",
-      "modified": false
+      "vendored_sha256": "d02e4959e7689a0b368a79524611495c9b7680505246a30717fc41db34f53fd7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "af3d62462ae241c3c011fca0acd0eb53bed583000dbbb127528807fe7d59cb0e",
+        "baseline_bytes": 1267,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/user_input_thread.h",
       "destination": "third_party/vikit/vikit_common/include/vikit/user_input_thread.h",
-      "bytes": 1172,
+      "bytes": 1222,
       "source_sha256": "35e6af2e5ccaa549406f2eda96442a602662ab6f8456f4dc78dcbd8160d51f93",
-      "vendored_sha256": "35e6af2e5ccaa549406f2eda96442a602662ab6f8456f4dc78dcbd8160d51f93",
-      "modified": false
+      "vendored_sha256": "b1c9053a6a4c374f99ce9718326021ac2128c66b9a87e6fb3c3c262d37370326",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "35e6af2e5ccaa549406f2eda96442a602662ab6f8456f4dc78dcbd8160d51f93",
+        "baseline_bytes": 1172,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/include/vikit/vision.h",
@@ -1270,18 +1970,32 @@
     {
       "source": "src/sdk/vikit_common/src/atan_camera.cpp",
       "destination": "third_party/vikit/vikit_common/src/atan_camera.cpp",
-      "bytes": 1717,
+      "bytes": 1685,
       "source_sha256": "ec4425bfacd367574ae8a88e22ddb344df5748d248addb857b91d2be0e37c8cb",
-      "vendored_sha256": "ec4425bfacd367574ae8a88e22ddb344df5748d248addb857b91d2be0e37c8cb",
-      "modified": false
+      "vendored_sha256": "ca579be360a7a29bebb5875debb8aee5780e171ba519db0b7b1a2358f710bf61",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ec4425bfacd367574ae8a88e22ddb344df5748d248addb857b91d2be0e37c8cb",
+        "baseline_bytes": 1717,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/equidistant_camera.cpp",
       "destination": "third_party/vikit/vikit_common/src/equidistant_camera.cpp",
-      "bytes": 2460,
+      "bytes": 2980,
       "source_sha256": "ca1a7a83fabd63a70ba1c4a9e101c66b93db909937c7d012de5d7fbc06a8163a",
-      "vendored_sha256": "ca1a7a83fabd63a70ba1c4a9e101c66b93db909937c7d012de5d7fbc06a8163a",
-      "modified": false
+      "vendored_sha256": "79f579e4657e7b3c48c472c87565c75cd270a4513c52374ce98d4f6b3fdbf1f7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ca1a7a83fabd63a70ba1c4a9e101c66b93db909937c7d012de5d7fbc06a8163a",
+        "baseline_bytes": 2460,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/homography.cpp",
@@ -1294,66 +2008,122 @@
     {
       "source": "src/sdk/vikit_common/src/img_align.cpp",
       "destination": "third_party/vikit/vikit_common/src/img_align.cpp",
-      "bytes": 12595,
+      "bytes": 13496,
       "source_sha256": "55b6ea6bc34d46f1e2b5482ccc952b10cd655ba9cc5809225271b57aed677d58",
-      "vendored_sha256": "55b6ea6bc34d46f1e2b5482ccc952b10cd655ba9cc5809225271b57aed677d58",
-      "modified": false
+      "vendored_sha256": "dd894aeedb6892d1eea04adc54556fe86832eff7631387c23cc9f603a74f1a5f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "55b6ea6bc34d46f1e2b5482ccc952b10cd655ba9cc5809225271b57aed677d58",
+        "baseline_bytes": 12595,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/math_utils.cpp",
       "destination": "third_party/vikit/vikit_common/src/math_utils.cpp",
-      "bytes": 5537,
+      "bytes": 6195,
       "source_sha256": "348f9c25992e2879bd83b900912065525a9a203447d4c2165e596308aecc78cf",
-      "vendored_sha256": "348f9c25992e2879bd83b900912065525a9a203447d4c2165e596308aecc78cf",
-      "modified": false
+      "vendored_sha256": "fe5f9b89a348e7c72a2183d07449ff5a1028fd0fcd5a3148bc9612a7a1552657",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "348f9c25992e2879bd83b900912065525a9a203447d4c2165e596308aecc78cf",
+        "baseline_bytes": 5537,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/omni_camera.cpp",
       "destination": "third_party/vikit/vikit_common/src/omni_camera.cpp",
-      "bytes": 5080,
+      "bytes": 5749,
       "source_sha256": "fda861a0d4bed32f7c7edaeac9325cdc2ebaebd6f42f977b5b2facfab105c835",
-      "vendored_sha256": "fda861a0d4bed32f7c7edaeac9325cdc2ebaebd6f42f977b5b2facfab105c835",
-      "modified": false
+      "vendored_sha256": "7c1747c0cc7aa4cb6c5d2d3a7836afc170ecd717b49ebeb877cc9c4563bff002",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "fda861a0d4bed32f7c7edaeac9325cdc2ebaebd6f42f977b5b2facfab105c835",
+        "baseline_bytes": 5080,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/performance_monitor.cpp",
       "destination": "third_party/vikit/vikit_common/src/performance_monitor.cpp",
-      "bytes": 3468,
+      "bytes": 4131,
       "source_sha256": "9c92a84e58b110b3d0c8a22e15f22ca779a35500297abad7e3c0e4d063a6485b",
-      "vendored_sha256": "9c92a84e58b110b3d0c8a22e15f22ca779a35500297abad7e3c0e4d063a6485b",
-      "modified": false
+      "vendored_sha256": "e9693d3a8b7ce9dfac36ff06b5b39a564fd52656eb85e8c28037b5142d8f0a5a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "9c92a84e58b110b3d0c8a22e15f22ca779a35500297abad7e3c0e4d063a6485b",
+        "baseline_bytes": 3468,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/pinhole_camera.cpp",
       "destination": "third_party/vikit/vikit_common/src/pinhole_camera.cpp",
-      "bytes": 2880,
+      "bytes": 3219,
       "source_sha256": "df3fbf1147a6369ec9a8b0071b3407ff08a4b44d1e0aead9d5fe9182c82ef9d9",
-      "vendored_sha256": "df3fbf1147a6369ec9a8b0071b3407ff08a4b44d1e0aead9d5fe9182c82ef9d9",
-      "modified": false
+      "vendored_sha256": "531769c63be5f503b7746dd43508a0cadb708580482aca509d5624c5ad67bb1f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "df3fbf1147a6369ec9a8b0071b3407ff08a4b44d1e0aead9d5fe9182c82ef9d9",
+        "baseline_bytes": 2880,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/polynomial_camera.cpp",
       "destination": "third_party/vikit/vikit_common/src/polynomial_camera.cpp",
-      "bytes": 3821,
+      "bytes": 4687,
       "source_sha256": "c2e3b30ac021a9eac6d3a8d06186799b5b0dff161419fc6a8a9ac022a0755aee",
-      "vendored_sha256": "c2e3b30ac021a9eac6d3a8d06186799b5b0dff161419fc6a8a9ac022a0755aee",
-      "modified": false
+      "vendored_sha256": "f538d25ec541b149f3d4788753d1c9d212fb985de712bd2b8d1d44cce9eb26b0",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c2e3b30ac021a9eac6d3a8d06186799b5b0dff161419fc6a8a9ac022a0755aee",
+        "baseline_bytes": 3821,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/robust_cost.cpp",
       "destination": "third_party/vikit/vikit_common/src/robust_cost.cpp",
-      "bytes": 3748,
+      "bytes": 4121,
       "source_sha256": "6d6efd847b11abc00cc69049b409ba825f94119721ac28ebaad3f429216e13bc",
-      "vendored_sha256": "6d6efd847b11abc00cc69049b409ba825f94119721ac28ebaad3f429216e13bc",
-      "modified": false
+      "vendored_sha256": "40bc0b62abaf39530a92d5c888efc507556d2626d0f536fe07646d221d81fd4f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "6d6efd847b11abc00cc69049b409ba825f94119721ac28ebaad3f429216e13bc",
+        "baseline_bytes": 3748,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/user_input_thread.cpp",
       "destination": "third_party/vikit/vikit_common/src/user_input_thread.cpp",
-      "bytes": 1579,
+      "bytes": 1687,
       "source_sha256": "af8f69e58915eaa95362f2e6f01d990426b54c52dec66354f812f2f194c761a5",
-      "vendored_sha256": "af8f69e58915eaa95362f2e6f01d990426b54c52dec66354f812f2f194c761a5",
-      "modified": false
+      "vendored_sha256": "874cb31089fb6cba23aa5d711492f6f1d867713fb921ad8bc7e02a6cedba8368",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "af8f69e58915eaa95362f2e6f01d990426b54c52dec66354f812f2f194c761a5",
+        "baseline_bytes": 1579,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_common/src/vision.cpp",
@@ -1374,26 +2144,47 @@
     {
       "source": "src/sdk/vikit_ros/include/vikit/camera_loader.h",
       "destination": "third_party/vikit/vikit_ros/include/vikit/camera_loader.h",
-      "bytes": 840,
+      "bytes": 1426,
       "source_sha256": "25be2cc54e4bcb6e9e0ed422e0410ccc0c195ebeb1e887deee925c7690fe20e8",
-      "vendored_sha256": "25be2cc54e4bcb6e9e0ed422e0410ccc0c195ebeb1e887deee925c7690fe20e8",
-      "modified": false
+      "vendored_sha256": "abadc598b953d54ecc4554accbe1a949ff47f3b84cdd538d54a06b02d5e3a880",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "25be2cc54e4bcb6e9e0ed422e0410ccc0c195ebeb1e887deee925c7690fe20e8",
+        "baseline_bytes": 840,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_ros/include/vikit/output_helper.h",
       "destination": "third_party/vikit/vikit_ros/include/vikit/output_helper.h",
-      "bytes": 3657,
+      "bytes": 3135,
       "source_sha256": "ea2d922ccf6d93dcf641bf26939aac020f389bc833f77929d63cad09e15afc7c",
-      "vendored_sha256": "ea2d922ccf6d93dcf641bf26939aac020f389bc833f77929d63cad09e15afc7c",
-      "modified": false
+      "vendored_sha256": "34c745a02e487e83941904ba9421fc3f4cfea8d3c2e71b75d7fa87acbbd666f0",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ea2d922ccf6d93dcf641bf26939aac020f389bc833f77929d63cad09e15afc7c",
+        "baseline_bytes": 3657,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_ros/include/vikit/params_helper.h",
       "destination": "third_party/vikit/vikit_ros/include/vikit/params_helper.h",
-      "bytes": 4686,
+      "bytes": 4854,
       "source_sha256": "accf572771937022e2312ce1100461774f945c48bb943f8c93015330fc158db6",
-      "vendored_sha256": "accf572771937022e2312ce1100461774f945c48bb943f8c93015330fc158db6",
-      "modified": false
+      "vendored_sha256": "993186a11522e0eeb056cebf415fec2becb647dd8500eaf1949abd90a5be3f2f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "accf572771937022e2312ce1100461774f945c48bb943f8c93015330fc158db6",
+        "baseline_bytes": 4686,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_ros/package.xml",
@@ -1406,18 +2197,32 @@
     {
       "source": "src/sdk/vikit_ros/src/camera_loader.cpp",
       "destination": "third_party/vikit/vikit_ros/src/camera_loader.cpp",
-      "bytes": 6060,
+      "bytes": 6952,
       "source_sha256": "ad4794d9985120e31085c766aeef002f60b534d955d035183390947b4d7166f3",
-      "vendored_sha256": "ad4794d9985120e31085c766aeef002f60b534d955d035183390947b4d7166f3",
-      "modified": false
+      "vendored_sha256": "554207f527dd7d20f901bf484b2148b9acbe79bf2721be7fa6352a6170b4039a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ad4794d9985120e31085c766aeef002f60b534d955d035183390947b4d7166f3",
+        "baseline_bytes": 6060,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/vikit_ros/src/output_helper.cpp",
       "destination": "third_party/vikit/vikit_ros/src/output_helper.cpp",
-      "bytes": 13256,
+      "bytes": 13300,
       "source_sha256": "aea5d3b31d6f3540a569a42844ab5cb2a8d67b1220dea54d365ec8c498f032cd",
-      "vendored_sha256": "aea5d3b31d6f3540a569a42844ab5cb2a8d67b1220dea54d365ec8c498f032cd",
-      "modified": false
+      "vendored_sha256": "4fe939c1d94b8cb4d7fe83375df36d609b335f8139ebbd6f53bff4ec88582dea",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "aea5d3b31d6f3540a569a42844ab5cb2a8d67b1220dea54d365ec8c498f032cd",
+        "baseline_bytes": 13256,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/.gitignore",
@@ -1439,10 +2244,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/cursorstreamwrapper.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/cursorstreamwrapper.h",
-      "bytes": 2230,
+      "bytes": 2396,
       "source_sha256": "de1a52b674c998a7581f9cb69c9310757f825595c3fef985d5d153f7ac1b6aaf",
-      "vendored_sha256": "de1a52b674c998a7581f9cb69c9310757f825595c3fef985d5d153f7ac1b6aaf",
-      "modified": false
+      "vendored_sha256": "adc4422b9e1b4f9942ba3684e1b534251fed5d915833fe69c3451ee38a132b56",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "de1a52b674c998a7581f9cb69c9310757f825595c3fef985d5d153f7ac1b6aaf",
+        "baseline_bytes": 2230,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/document.h",
@@ -1471,18 +2283,32 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/error/en.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/error/en.h",
-      "bytes": 3739,
+      "bytes": 3839,
       "source_sha256": "484dcd32c0b35b7a81561740fad970402c0ffcec44311381a2fb265cfe5e273c",
-      "vendored_sha256": "484dcd32c0b35b7a81561740fad970402c0ffcec44311381a2fb265cfe5e273c",
-      "modified": false
+      "vendored_sha256": "f4788e38df54d29b22d132d13fdbebe3ec5f43248e1f7d962f323af40df0bdad",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "484dcd32c0b35b7a81561740fad970402c0ffcec44311381a2fb265cfe5e273c",
+        "baseline_bytes": 3739,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/error/error.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/error/error.h",
-      "bytes": 6472,
+      "bytes": 6617,
       "source_sha256": "aa9b40b61754b227248b4b092331dbd5721ef6565d962e4c225c6c1e7974817e",
-      "vendored_sha256": "aa9b40b61754b227248b4b092331dbd5721ef6565d962e4c225c6c1e7974817e",
-      "modified": false
+      "vendored_sha256": "4e7fb6e6d6c52f6d7b0c627f13299baf061d22a8be845539cd9313ba0ec2e5dc",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "aa9b40b61754b227248b4b092331dbd5721ef6565d962e4c225c6c1e7974817e",
+        "baseline_bytes": 6472,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/filereadstream.h",
@@ -1503,10 +2329,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/fwd.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/fwd.h",
-      "bytes": 4120,
+      "bytes": 4062,
       "source_sha256": "2a0e024b8b6b87d1d3f50d1d0dd4656124c161fea88406265d097d613498854e",
-      "vendored_sha256": "2a0e024b8b6b87d1d3f50d1d0dd4656124c161fea88406265d097d613498854e",
-      "modified": false
+      "vendored_sha256": "90ebf5c41eca172ba77eface5a80ae41220671e7cd5e8e8efdbf25988bf8d816",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2a0e024b8b6b87d1d3f50d1d0dd4656124c161fea88406265d097d613498854e",
+        "baseline_bytes": 4120,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/biginteger.h",
@@ -1607,10 +2440,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/internal/swap.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/internal/swap.h",
-      "bytes": 1421,
+      "bytes": 1500,
       "source_sha256": "48ecb57c3b2ca955ad3cccdfff03835be495a56c9c5da07ab9c02f488b7d7fe1",
-      "vendored_sha256": "48ecb57c3b2ca955ad3cccdfff03835be495a56c9c5da07ab9c02f488b7d7fe1",
-      "modified": false
+      "vendored_sha256": "4e30513657aefe5277f3fa610cd17f54a57e8ec14ae21486ed2ef2b24324d68d",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "48ecb57c3b2ca955ad3cccdfff03835be495a56c9c5da07ab9c02f488b7d7fe1",
+        "baseline_bytes": 1421,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/istreamwrapper.h",
@@ -1631,10 +2471,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/memorybuffer.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/memorybuffer.h",
-      "bytes": 2573,
+      "bytes": 2858,
       "source_sha256": "cf661606aa41bee3466cee20174bc7454210e8aabac929b1d8e9e189fef601ab",
-      "vendored_sha256": "cf661606aa41bee3466cee20174bc7454210e8aabac929b1d8e9e189fef601ab",
-      "modified": false
+      "vendored_sha256": "eb7f0c28825e667fdb2ef446e6f7c092b68384aff7476b1c3abf16f5a50aaca2",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "cf661606aa41bee3466cee20174bc7454210e8aabac929b1d8e9e189fef601ab",
+        "baseline_bytes": 2573,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/memorystream.h",
@@ -1647,10 +2494,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/msinttypes/inttypes.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/msinttypes/inttypes.h",
-      "bytes": 7824,
+      "bytes": 7830,
       "source_sha256": "92f53d3ba0cdebaeb20a52893f89d0c29aae5111a3a8bb555eabdd8c96e3244f",
-      "vendored_sha256": "92f53d3ba0cdebaeb20a52893f89d0c29aae5111a3a8bb555eabdd8c96e3244f",
-      "modified": false
+      "vendored_sha256": "34ac60092347f10babced75e49e96e0b6d18552b36148b908b05ac1c8a5dbf75",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "92f53d3ba0cdebaeb20a52893f89d0c29aae5111a3a8bb555eabdd8c96e3244f",
+        "baseline_bytes": 7824,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/msinttypes/stdint.h",
@@ -1719,10 +2573,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/stringbuffer.h",
       "destination": "third_party/livox_ros_driver2/3rdparty/rapidjson/stringbuffer.h",
-      "bytes": 3984,
+      "bytes": 4023,
       "source_sha256": "8434f52ca786bf876b3d3d693ce8e2d399325ddf891e0437becd41ed590806e9",
-      "vendored_sha256": "8434f52ca786bf876b3d3d693ce8e2d399325ddf891e0437becd41ed590806e9",
-      "modified": false
+      "vendored_sha256": "478bb000859fc3546d85a2ad1bef8f2f6b2e9953dfabd19c257ad2542bcd046e",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "8434f52ca786bf876b3d3d693ce8e2d399325ddf891e0437becd41ed590806e9",
+        "baseline_bytes": 3984,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/3rdparty/rapidjson/writer.h",
@@ -1743,10 +2604,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/CMakeLists.txt",
       "destination": "third_party/livox_ros_driver2/CMakeLists.txt",
-      "bytes": 10967,
+      "bytes": 11761,
       "source_sha256": "a8d5929f29ddaef782db21132590506ec36dc554d35f2735be64e5a2efc19643",
-      "vendored_sha256": "a8d5929f29ddaef782db21132590506ec36dc554d35f2735be64e5a2efc19643",
-      "modified": false
+      "vendored_sha256": "877ba40e87cfdc853c4b4fbcc159e991c01a9f25acbaee2623a55cf96a6d9939",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a8d5929f29ddaef782db21132590506ec36dc554d35f2735be64e5a2efc19643",
+        "baseline_bytes": 10967,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/LICENSE.txt",
@@ -1775,10 +2643,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/build.sh",
       "destination": "third_party/livox_ros_driver2/build.sh",
-      "bytes": 1763,
+      "bytes": 2429,
       "source_sha256": "05ffb76f017e796ff5230b53ad4e8e2bcd52e43ce2215e03c4ee78a44cb46b7a",
-      "vendored_sha256": "05ffb76f017e796ff5230b53ad4e8e2bcd52e43ce2215e03c4ee78a44cb46b7a",
-      "modified": false
+      "vendored_sha256": "2fb6f72d152ca90b233168eee09869eaa215be77f7e86cf2e9b8866a00b6304f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "05ffb76f017e796ff5230b53ad4e8e2bcd52e43ce2215e03c4ee78a44cb46b7a",
+        "baseline_bytes": 1763,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/cmake/version.cmake",
@@ -1815,10 +2690,17 @@
     {
       "source": "src/sdk/livox_ros_driver2/config/display_point_cloud_ROS1.rviz",
       "destination": "third_party/livox_ros_driver2/config/display_point_cloud_ROS1.rviz",
-      "bytes": 5650,
+      "bytes": 5891,
       "source_sha256": "89d934b783d9f0386dbaef7cbbf0ea3f4ee0c87c57b313178d822cec93320caf",
-      "vendored_sha256": "89d934b783d9f0386dbaef7cbbf0ea3f4ee0c87c57b313178d822cec93320caf",
-      "modified": false
+      "vendored_sha256": "15b56e672840d46ec9f120b86158fcf3ded2d586a850fe0e4648866baa9e2a04",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "89d934b783d9f0386dbaef7cbbf0ea3f4ee0c87c57b313178d822cec93320caf",
+        "baseline_bytes": 5650,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/config/display_point_cloud_ROS2.rviz",
@@ -1839,66 +2721,122 @@
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
-      "bytes": 1743,
+      "bytes": 3272,
       "source_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
-      "vendored_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
-      "modified": false
+      "vendored_sha256": "c2286adf949f245c88de33ed92f6245af3194debba7475eaac37b29af2030f97",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
+        "baseline_bytes": 1743,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
-      "bytes": 1744,
+      "bytes": 3281,
       "source_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
-      "vendored_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
-      "modified": false
+      "vendored_sha256": "3adbbb71afed30733a59903ccdd09f97a818f298b5e2d6a2a92d6e9ff516a8f3",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
+        "baseline_bytes": 1744,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
-      "bytes": 1745,
+      "bytes": 3341,
       "source_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
-      "vendored_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
-      "modified": false
+      "vendored_sha256": "92f92c8095aff162e4be116f411d4d6c131e9d874bc75382d4a836866454394f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
+        "baseline_bytes": 1745,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
-      "bytes": 1754,
+      "bytes": 3296,
       "source_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
-      "vendored_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
-      "modified": false
+      "vendored_sha256": "dc9409a354f1af98f47faa09875cca7f98c76754435e0f8501c4cb22198ead6b",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
+        "baseline_bytes": 1754,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
-      "bytes": 1930,
+      "bytes": 3499,
       "source_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
-      "vendored_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
-      "modified": false
+      "vendored_sha256": "515dec690b09f257ef4c443c78a65ee972df6703191417a55995123b2f35be05",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
+        "baseline_bytes": 1930,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
-      "bytes": 1933,
+      "bytes": 3508,
       "source_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
-      "vendored_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
-      "modified": false
+      "vendored_sha256": "24722510c644377d632bb36839d9cc78bc2c308fa76e1f7bf6c3f9b2f683734e",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
+        "baseline_bytes": 1933,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
-      "bytes": 1934,
+      "bytes": 3568,
       "source_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
-      "vendored_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
-      "modified": false
+      "vendored_sha256": "dca8b5474c6c84ae7920c43c308c2dc751860fcdd5531b1b113ae20265ea7eb2",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
+        "baseline_bytes": 1934,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
       "destination": "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
-      "bytes": 1943,
+      "bytes": 3523,
       "source_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
-      "vendored_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
-      "modified": false
+      "vendored_sha256": "63df18a8d45993fe1f7456b833df7f0a3181a2980bac54da4daae9a10aad4b24",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
+        "baseline_bytes": 1943,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/__init__.py",
@@ -1911,58 +2849,107 @@
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_HAP_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_HAP_launch.py",
-      "bytes": 1968,
+      "bytes": 2554,
       "source_sha256": "bb58699d0b6d344f579f5b2991db54561621ddb395e6ade8c94425c563cd9ef6",
-      "vendored_sha256": "bb58699d0b6d344f579f5b2991db54561621ddb395e6ade8c94425c563cd9ef6",
-      "modified": false
+      "vendored_sha256": "eeac7ed8080d852cebd6a7a7a76a6a8ae569f22b23c12ced531e1c7da1ea0c73",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "bb58699d0b6d344f579f5b2991db54561621ddb395e6ade8c94425c563cd9ef6",
+        "baseline_bytes": 1968,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_MID360_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_MID360_launch.py",
-      "bytes": 1902,
+      "bytes": 2240,
       "source_sha256": "11b0618d2a9a0def7f6e1a6831646d261674014344496fa1497fea67d6c0e826",
-      "vendored_sha256": "11b0618d2a9a0def7f6e1a6831646d261674014344496fa1497fea67d6c0e826",
-      "modified": false
+      "vendored_sha256": "6b165b18404087137ee3872fe3e5bfc1ec20c6c0f372fde25e953a6f6fe67ed3",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "11b0618d2a9a0def7f6e1a6831646d261674014344496fa1497fea67d6c0e826",
+        "baseline_bytes": 1902,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/msg_MID360s_launch.py",
-      "bytes": 1903,
+      "bytes": 2030,
       "source_sha256": "29d48e9e2dd2b21352e4ecff9c0a7db2a18994fe688dc68f361b3b70b33ee05a",
-      "vendored_sha256": "29d48e9e2dd2b21352e4ecff9c0a7db2a18994fe688dc68f361b3b70b33ee05a",
-      "modified": false
+      "vendored_sha256": "c405e1f2f4f277e7f3af7397a209fd8115fddff3a5f383f93eaf02f393216c7e",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "29d48e9e2dd2b21352e4ecff9c0a7db2a18994fe688dc68f361b3b70b33ee05a",
+        "baseline_bytes": 1903,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_HAP_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_HAP_launch.py",
-      "bytes": 2186,
+      "bytes": 2697,
       "source_sha256": "da07dc3d0402cccffe3e068108066fede37ed71ef47c191541158665d67b478f",
-      "vendored_sha256": "da07dc3d0402cccffe3e068108066fede37ed71ef47c191541158665d67b478f",
-      "modified": false
+      "vendored_sha256": "76a4c8334b2f6101d0f3b3b2d06bca15b748ab20ec43814ab7c42e105e6ccf3a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "da07dc3d0402cccffe3e068108066fede37ed71ef47c191541158665d67b478f",
+        "baseline_bytes": 2186,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_MID360_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360_launch.py",
-      "bytes": 2189,
+      "bytes": 2296,
       "source_sha256": "8331565b4c8fe1a80ec77d518b4bb2fcbe40ea8bf60a20de691d9c61417b678e",
-      "vendored_sha256": "8331565b4c8fe1a80ec77d518b4bb2fcbe40ea8bf60a20de691d9c61417b678e",
-      "modified": false
+      "vendored_sha256": "ad73dda912ab88b80f1017502a3bb6b00f19da4138c8044afcc89fd303192a74",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "8331565b4c8fe1a80ec77d518b4bb2fcbe40ea8bf60a20de691d9c61417b678e",
+        "baseline_bytes": 2189,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_MID360s_launch.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_MID360s_launch.py",
-      "bytes": 2190,
+      "bytes": 2808,
       "source_sha256": "5660e8982e12c003bac4880b6804b27a611e2c6fda999ebc454e173282e9614b",
-      "vendored_sha256": "5660e8982e12c003bac4880b6804b27a611e2c6fda999ebc454e173282e9614b",
-      "modified": false
+      "vendored_sha256": "b71bbbd77dc344158850785d950460d335051c7b8741622c1f47382f015f6001",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5660e8982e12c003bac4880b6804b27a611e2c6fda999ebc454e173282e9614b",
+        "baseline_bytes": 2190,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/launch_ROS2/rviz_mixed.py",
       "destination": "third_party/livox_ros_driver2/launch_ROS2/rviz_mixed.py",
-      "bytes": 2199,
+      "bytes": 2214,
       "source_sha256": "decc75ab24173f20455c849c0cbe6cb3931d33d4901f39b52c105d381405b8d0",
-      "vendored_sha256": "decc75ab24173f20455c849c0cbe6cb3931d33d4901f39b52c105d381405b8d0",
-      "modified": false
+      "vendored_sha256": "f00f03cd822d29d7b38fc01cb91ca1eed3c64ca85e32819ba879fbad3769fb16",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "decc75ab24173f20455c849c0cbe6cb3931d33d4901f39b52c105d381405b8d0",
+        "baseline_bytes": 2199,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/msg/CustomMsg.msg",
@@ -2007,146 +2994,272 @@
     {
       "source": "src/sdk/livox_ros_driver2/src/call_back/lidar_common_callback.cpp",
       "destination": "third_party/livox_ros_driver2/src/call_back/lidar_common_callback.cpp",
-      "bytes": 2276,
+      "bytes": 2342,
       "source_sha256": "8f37b7dda4236edbcb4a87cfa6a016e4105ca1e0b8e0e99f2446953636412196",
-      "vendored_sha256": "8f37b7dda4236edbcb4a87cfa6a016e4105ca1e0b8e0e99f2446953636412196",
-      "modified": false
+      "vendored_sha256": "def16765a6e82650abd5dd2d9550e979f84875fece97df2e945aa2b8208a45fb",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "8f37b7dda4236edbcb4a87cfa6a016e4105ca1e0b8e0e99f2446953636412196",
+        "baseline_bytes": 2276,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/call_back/lidar_common_callback.h",
       "destination": "third_party/livox_ros_driver2/src/call_back/lidar_common_callback.h",
-      "bytes": 1575,
+      "bytes": 1579,
       "source_sha256": "e0fd66f13ad20b0426b9b5384abee61c8b2b85ace2e9904c470da9fd7c0cc366",
-      "vendored_sha256": "e0fd66f13ad20b0426b9b5384abee61c8b2b85ace2e9904c470da9fd7c0cc366",
-      "modified": false
+      "vendored_sha256": "a2b9189517aee3f8f4923a5255d99187820e9ce15cb9299ccd6cb1b2b006010f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "e0fd66f13ad20b0426b9b5384abee61c8b2b85ace2e9904c470da9fd7c0cc366",
+        "baseline_bytes": 1575,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/call_back/livox_lidar_callback.cpp",
       "destination": "third_party/livox_ros_driver2/src/call_back/livox_lidar_callback.cpp",
-      "bytes": 15386,
+      "bytes": 16385,
       "source_sha256": "4ea8189ca228f5f5730b07006f7472b46b28bfd942795b865455117c89b980c0",
-      "vendored_sha256": "4ea8189ca228f5f5730b07006f7472b46b28bfd942795b865455117c89b980c0",
-      "modified": false
+      "vendored_sha256": "eda9eafa654d239bceaf983f9b6ae12cc76b821f81d35fb6d89803dd8937dff4",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "4ea8189ca228f5f5730b07006f7472b46b28bfd942795b865455117c89b980c0",
+        "baseline_bytes": 15386,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/call_back/livox_lidar_callback.h",
       "destination": "third_party/livox_ros_driver2/src/call_back/livox_lidar_callback.h",
-      "bytes": 3238,
+      "bytes": 3202,
       "source_sha256": "8b491e57ee77c0b020458338f5bf9a5b8776c0d875c96654531e622e92159c45",
-      "vendored_sha256": "8b491e57ee77c0b020458338f5bf9a5b8776c0d875c96654531e622e92159c45",
-      "modified": false
+      "vendored_sha256": "15b53390e15956ec49e81c45752504611ea101d763bb36957c7bfe35859caa02",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "8b491e57ee77c0b020458338f5bf9a5b8776c0d875c96654531e622e92159c45",
+        "baseline_bytes": 3238,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/cache_index.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/cache_index.cpp",
-      "bytes": 3858,
+      "bytes": 4211,
       "source_sha256": "dca25f47674f530249e94c0ac8ac368d122910ca66336bd1bee65a06d2f01667",
-      "vendored_sha256": "dca25f47674f530249e94c0ac8ac368d122910ca66336bd1bee65a06d2f01667",
-      "modified": false
+      "vendored_sha256": "aa570e5430b0c3ca34eddfd585a49afb368fadc21727dbdc5a8ae870d8b1c02d",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "dca25f47674f530249e94c0ac8ac368d122910ca66336bd1bee65a06d2f01667",
+        "baseline_bytes": 3858,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/cache_index.h",
       "destination": "third_party/livox_ros_driver2/src/comm/cache_index.h",
-      "bytes": 2055,
+      "bytes": 2185,
       "source_sha256": "65c635bd6903564bc1e0547113a6aff52e592c16295ed23264b5726317327c01",
-      "vendored_sha256": "65c635bd6903564bc1e0547113a6aff52e592c16295ed23264b5726317327c01",
-      "modified": false
+      "vendored_sha256": "0666822a7f691f06169aa1dfc2f1c4d7f6e7c4cf2f2c91ea19152fc1f61b9c35",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "65c635bd6903564bc1e0547113a6aff52e592c16295ed23264b5726317327c01",
+        "baseline_bytes": 2055,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/comm.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/comm.cpp",
-      "bytes": 2209,
+      "bytes": 2684,
       "source_sha256": "73e6b7469337528ffb60b0f670bedc3c01dfcd7d8a048e72e8f04bd5d839f126",
-      "vendored_sha256": "73e6b7469337528ffb60b0f670bedc3c01dfcd7d8a048e72e8f04bd5d839f126",
-      "modified": false
+      "vendored_sha256": "d60cace42738532169e0ca76528b15e76743bb931568f9cc9df6677d218271cb",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "73e6b7469337528ffb60b0f670bedc3c01dfcd7d8a048e72e8f04bd5d839f126",
+        "baseline_bytes": 2209,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/comm.h",
       "destination": "third_party/livox_ros_driver2/src/comm/comm.h",
-      "bytes": 8580,
+      "bytes": 8811,
       "source_sha256": "72c639ba1d6eaf7c355050672c865c7615cea3619abee628683d98920fb31fa4",
-      "vendored_sha256": "72c639ba1d6eaf7c355050672c865c7615cea3619abee628683d98920fb31fa4",
-      "modified": false
+      "vendored_sha256": "76fea19e6344a272f43fee1b065526855f46ef11ef8643d2bdf7bb7e35a2cf5f",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "72c639ba1d6eaf7c355050672c865c7615cea3619abee628683d98920fb31fa4",
+        "baseline_bytes": 8580,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/ldq.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/ldq.cpp",
-      "bytes": 4682,
+      "bytes": 5123,
       "source_sha256": "b5a11f2b4b658e4fc2c53dc261a7401e09516a6276e9b1a9c7568a4ee6d86a3f",
-      "vendored_sha256": "b5a11f2b4b658e4fc2c53dc261a7401e09516a6276e9b1a9c7568a4ee6d86a3f",
-      "modified": false
+      "vendored_sha256": "c18164815a68695bd79449ed2e9a7684a07cbae5776ff79d9f0a765b11ec4115",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b5a11f2b4b658e4fc2c53dc261a7401e09516a6276e9b1a9c7568a4ee6d86a3f",
+        "baseline_bytes": 4682,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/ldq.h",
       "destination": "third_party/livox_ros_driver2/src/comm/ldq.h",
-      "bytes": 2330,
+      "bytes": 2491,
       "source_sha256": "01ccf8d13f84475cb126dea1f15546a59ce9398968360e6484da5832729aa077",
-      "vendored_sha256": "01ccf8d13f84475cb126dea1f15546a59ce9398968360e6484da5832729aa077",
-      "modified": false
+      "vendored_sha256": "bd3aa6afee20908f7308e2719ca51bd68cd541f5385957b775ac2afc7644824c",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "01ccf8d13f84475cb126dea1f15546a59ce9398968360e6484da5832729aa077",
+        "baseline_bytes": 2330,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/lidar_imu_data_queue.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/lidar_imu_data_queue.cpp",
-      "bytes": 2248,
+      "bytes": 2306,
       "source_sha256": "7f9ecbdad433653233b2701dbd06dd4f7f523d0e972cc5cb4bf0aca2ed7494b5",
-      "vendored_sha256": "7f9ecbdad433653233b2701dbd06dd4f7f523d0e972cc5cb4bf0aca2ed7494b5",
-      "modified": false
+      "vendored_sha256": "a4e5502afec7013bbd5dd75a2f85b962dd6ca1527f892f2fbef5bf88bcceb554",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "7f9ecbdad433653233b2701dbd06dd4f7f523d0e972cc5cb4bf0aca2ed7494b5",
+        "baseline_bytes": 2248,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/lidar_imu_data_queue.h",
       "destination": "third_party/livox_ros_driver2/src/comm/lidar_imu_data_queue.h",
-      "bytes": 2632,
+      "bytes": 2999,
       "source_sha256": "cc8ae6d425cf6fb173b59072e5310f7b984e776a9d8277c8e9e0ef9d9dc58998",
-      "vendored_sha256": "cc8ae6d425cf6fb173b59072e5310f7b984e776a9d8277c8e9e0ef9d9dc58998",
-      "modified": false
+      "vendored_sha256": "b8bda893fa9907f75eed9da09d47429b76faa014ad0f152d4d23b79fc8b3f1e1",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "cc8ae6d425cf6fb173b59072e5310f7b984e776a9d8277c8e9e0ef9d9dc58998",
+        "baseline_bytes": 2632,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/pub_handler.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/pub_handler.cpp",
-      "bytes": 16204,
+      "bytes": 17829,
       "source_sha256": "b98444be352bf6ed7b59ff7393bd488ddfc9825fb0357f67f0e6b49a48cbe9ae",
-      "vendored_sha256": "b98444be352bf6ed7b59ff7393bd488ddfc9825fb0357f67f0e6b49a48cbe9ae",
-      "modified": false
+      "vendored_sha256": "e648691678a5140cd63cef1e67baf2daec513d2f4784bc91013047acdbd53607",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "b98444be352bf6ed7b59ff7393bd488ddfc9825fb0357f67f0e6b49a48cbe9ae",
+        "baseline_bytes": 16204,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/pub_handler.h",
       "destination": "third_party/livox_ros_driver2/src/comm/pub_handler.h",
-      "bytes": 4436,
+      "bytes": 4941,
       "source_sha256": "dbf0633c2117026936b72bdb825a62cb8dfb831b845a05e985cf12c51cd30e07",
-      "vendored_sha256": "dbf0633c2117026936b72bdb825a62cb8dfb831b845a05e985cf12c51cd30e07",
-      "modified": false
+      "vendored_sha256": "29e7845d2c4b5f86639badbe69ecad26662845795016facd3e4b9ef85c977757",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "dbf0633c2117026936b72bdb825a62cb8dfb831b845a05e985cf12c51cd30e07",
+        "baseline_bytes": 4436,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/semaphore.cpp",
       "destination": "third_party/livox_ros_driver2/src/comm/semaphore.cpp",
-      "bytes": 1470,
+      "bytes": 1482,
       "source_sha256": "7ea77d2b2b9f5aca1aa1c4f239d427398699b504a25b5bcd1667545650a0c587",
-      "vendored_sha256": "7ea77d2b2b9f5aca1aa1c4f239d427398699b504a25b5bcd1667545650a0c587",
-      "modified": false
+      "vendored_sha256": "9a80fbb2d9e5def7b9cc3c60a01219fc0d489afeacda0c7c65e7fb81ca1d00aa",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "7ea77d2b2b9f5aca1aa1c4f239d427398699b504a25b5bcd1667545650a0c587",
+        "baseline_bytes": 1470,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/comm/semaphore.h",
       "destination": "third_party/livox_ros_driver2/src/comm/semaphore.h",
-      "bytes": 1623,
+      "bytes": 1763,
       "source_sha256": "a07dedf139d6a1f85d572b23f4a69b1f0574577366b2ecd759f06da4995eadcb",
-      "vendored_sha256": "a07dedf139d6a1f85d572b23f4a69b1f0574577366b2ecd759f06da4995eadcb",
-      "modified": false
+      "vendored_sha256": "a33e67ed009feac27c1ee04e1a815534f0614fce01a9b3f41a90e2bbab879908",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a07dedf139d6a1f85d572b23f4a69b1f0574577366b2ecd759f06da4995eadcb",
+        "baseline_bytes": 1623,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/driver_node.cpp",
       "destination": "third_party/livox_ros_driver2/src/driver_node.cpp",
-      "bytes": 1485,
+      "bytes": 1486,
       "source_sha256": "2367146dbf888b8eb6ac661792c3858ae7c2f8bb3136888fbbaee7593f1c1a1c",
-      "vendored_sha256": "2367146dbf888b8eb6ac661792c3858ae7c2f8bb3136888fbbaee7593f1c1a1c",
-      "modified": false
+      "vendored_sha256": "dcc2cb50c225bfc0765c9f75b9dde496e4757f88987fe4da6f701467715ac4f7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2367146dbf888b8eb6ac661792c3858ae7c2f8bb3136888fbbaee7593f1c1a1c",
+        "baseline_bytes": 1485,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/driver_node.h",
       "destination": "third_party/livox_ros_driver2/src/driver_node.h",
-      "bytes": 2482,
+      "bytes": 2832,
       "source_sha256": "503851a1fe806c633377f891479b8b434e89a0ac4070db80d9e3b8fc36070a6a",
-      "vendored_sha256": "503851a1fe806c633377f891479b8b434e89a0ac4070db80d9e3b8fc36070a6a",
-      "modified": false
+      "vendored_sha256": "caf3b15224253ed33d096a37900c061f73511cf83e522091d3c53cb9986789f9",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "503851a1fe806c633377f891479b8b434e89a0ac4070db80d9e3b8fc36070a6a",
+        "baseline_bytes": 2482,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/include/livox_ros_driver2.h",
@@ -2183,98 +3296,182 @@
     {
       "source": "src/sdk/livox_ros_driver2/src/lddc.cpp",
       "destination": "third_party/livox_ros_driver2/src/lddc.cpp",
-      "bytes": 22762,
+      "bytes": 24303,
       "source_sha256": "37dcc252a743fafe14c7ee5341d8827f1a5298ec910502b201bd0feb3476c71e",
-      "vendored_sha256": "37dcc252a743fafe14c7ee5341d8827f1a5298ec910502b201bd0feb3476c71e",
-      "modified": false
+      "vendored_sha256": "5383aa450516370e8ec9968b15d220d4faf3d0a7c4f47271ab31cd5be27b39ea",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "37dcc252a743fafe14c7ee5341d8827f1a5298ec910502b201bd0feb3476c71e",
+        "baseline_bytes": 22762,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/lddc.h",
       "destination": "third_party/livox_ros_driver2/src/lddc.h",
-      "bytes": 5868,
+      "bytes": 6310,
       "source_sha256": "31a78f172caf82f3b2938c9e2c296cd582da228d0043c17849f7a9b20788d4ea",
-      "vendored_sha256": "31a78f172caf82f3b2938c9e2c296cd582da228d0043c17849f7a9b20788d4ea",
-      "modified": false
+      "vendored_sha256": "df0a5b10016ef8055bef916f3ffd654a99417bc52ff3fd4cede8bc2100312403",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "31a78f172caf82f3b2938c9e2c296cd582da228d0043c17849f7a9b20788d4ea",
+        "baseline_bytes": 5868,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/lds.cpp",
       "destination": "third_party/livox_ros_driver2/src/lds.cpp",
-      "bytes": 5950,
+      "bytes": 6533,
       "source_sha256": "a53c0f737a61282c523a00bbdc5a76bfbb7ed5616fc5bbb4265bc64ca0853efe",
-      "vendored_sha256": "a53c0f737a61282c523a00bbdc5a76bfbb7ed5616fc5bbb4265bc64ca0853efe",
-      "modified": false
+      "vendored_sha256": "90e84e508c99dfa35284db0fea7d7902634df24c01e857e0daf8e1a47f0d6018",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "a53c0f737a61282c523a00bbdc5a76bfbb7ed5616fc5bbb4265bc64ca0853efe",
+        "baseline_bytes": 5950,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/lds.h",
       "destination": "third_party/livox_ros_driver2/src/lds.h",
-      "bytes": 2689,
+      "bytes": 2833,
       "source_sha256": "090334fb09e5b9a946042af06abe46d0f5a098b9978527b42ac1d0b7ce022b63",
-      "vendored_sha256": "090334fb09e5b9a946042af06abe46d0f5a098b9978527b42ac1d0b7ce022b63",
-      "modified": false
+      "vendored_sha256": "1a439d86557802b1b93e802b51b7fa813f3fa6782087a65fb6564db7aa02cce6",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "090334fb09e5b9a946042af06abe46d0f5a098b9978527b42ac1d0b7ce022b63",
+        "baseline_bytes": 2689,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/lds_lidar.cpp",
       "destination": "third_party/livox_ros_driver2/src/lds_lidar.cpp",
-      "bytes": 6520,
+      "bytes": 6826,
       "source_sha256": "637cac3ab27239717bb434ac35210551a98d17b08153e7205eb733da84a1153d",
-      "vendored_sha256": "637cac3ab27239717bb434ac35210551a98d17b08153e7205eb733da84a1153d",
-      "modified": false
+      "vendored_sha256": "957b54831a6e415967872459b30668dbaa4a0b7379c90db394b050c85e265d44",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "637cac3ab27239717bb434ac35210551a98d17b08153e7205eb733da84a1153d",
+        "baseline_bytes": 6520,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/lds_lidar.h",
       "destination": "third_party/livox_ros_driver2/src/lds_lidar.h",
-      "bytes": 2705,
+      "bytes": 3077,
       "source_sha256": "2a36a2f0c890ce7a4692a8e546a8dca5b1c8815766788f1ad95dc89a3d943822",
-      "vendored_sha256": "2a36a2f0c890ce7a4692a8e546a8dca5b1c8815766788f1ad95dc89a3d943822",
-      "modified": false
+      "vendored_sha256": "74e5d25ed46994eb81c3d60dd3e3ec61bc1ee53334121fcd31cb47aed86854d7",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2a36a2f0c890ce7a4692a8e546a8dca5b1c8815766788f1ad95dc89a3d943822",
+        "baseline_bytes": 2705,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/livox_ros_driver2.cpp",
       "destination": "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp",
-      "bytes": 7899,
+      "bytes": 8577,
       "source_sha256": "5be8fe1854e345660e78cf4f1c600eb87bb34ead54ef50b16033fba0cecdd621",
-      "vendored_sha256": "5be8fe1854e345660e78cf4f1c600eb87bb34ead54ef50b16033fba0cecdd621",
-      "modified": false
+      "vendored_sha256": "cb097049ca9783319e36d8881ca1e7ca925ea6f5f48404b23621e5f5af2781c9",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "5be8fe1854e345660e78cf4f1c600eb87bb34ead54ef50b16033fba0cecdd621",
+        "baseline_bytes": 7899,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.cpp",
       "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.cpp",
-      "bytes": 2381,
+      "bytes": 2468,
       "source_sha256": "f893a7397f05e81826d6097233ae6a90d3428f921ceb04d9f957427f4bcf7e5e",
-      "vendored_sha256": "f893a7397f05e81826d6097233ae6a90d3428f921ceb04d9f957427f4bcf7e5e",
-      "modified": false
+      "vendored_sha256": "65120871997d47cf6c757e8f126650bce76c93603e2e94a16690f3cfb35d9210",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "f893a7397f05e81826d6097233ae6a90d3428f921ceb04d9f957427f4bcf7e5e",
+        "baseline_bytes": 2381,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.h",
       "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_cfg_file.h",
-      "bytes": 1721,
+      "bytes": 2064,
       "source_sha256": "c0512f0ddb732861ec152e93d7d6477dd620865b4a92c385379d013286506998",
-      "vendored_sha256": "c0512f0ddb732861ec152e93d7d6477dd620865b4a92c385379d013286506998",
-      "modified": false
+      "vendored_sha256": "eff89cdcb57d005751afbd6d51e81909f978534e0f620ebe3f661b77f2f4fbb5",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "c0512f0ddb732861ec152e93d7d6477dd620865b4a92c385379d013286506998",
+        "baseline_bytes": 1721,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.cpp",
       "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.cpp",
-      "bytes": 5293,
+      "bytes": 5748,
       "source_sha256": "ce7cc5df5f7e09768a2d256f0d1cae30ae9c6214d821be95036311cef08912ed",
-      "vendored_sha256": "ce7cc5df5f7e09768a2d256f0d1cae30ae9c6214d821be95036311cef08912ed",
-      "modified": false
+      "vendored_sha256": "ded47e7dff01def462c5e3cafe7f0faac040254e064ac57f8a79a657d029cfdb",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "ce7cc5df5f7e09768a2d256f0d1cae30ae9c6214d821be95036311cef08912ed",
+        "baseline_bytes": 5293,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/sdk/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.h",
       "destination": "third_party/livox_ros_driver2/src/parse_cfg_file/parse_livox_lidar_cfg.h",
-      "bytes": 2018,
+      "bytes": 2030,
       "source_sha256": "1d5b9f606deedb7c78e1a6d0c3c10d62a886fcc2aac1ac42e1a4a1ae6a9b6d49",
-      "vendored_sha256": "1d5b9f606deedb7c78e1a6d0c3c10d62a886fcc2aac1ac42e1a4a1ae6a9b6d49",
-      "modified": false
+      "vendored_sha256": "2e66f2f940f93965355cf75630880bdc43c846ac47342de414982a51a9b03c0a",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "1d5b9f606deedb7c78e1a6d0c3c10d62a886fcc2aac1ac42e1a4a1ae6a9b6d49",
+        "baseline_bytes": 2018,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/pct/pct_cli.cpp",
       "destination": "third_party/pct/pct_cli.cpp",
-      "bytes": 993,
+      "bytes": 1618,
       "source_sha256": "36f187f94a8b9defac72c2ddf119902469fb873a116b8bf1e7e761d4d967a02d",
-      "vendored_sha256": "36f187f94a8b9defac72c2ddf119902469fb873a116b8bf1e7e761d4d967a02d",
-      "modified": false
+      "vendored_sha256": "8acef4f2900ad571da69f38c720b340b61812d2cde663242e8e47bea2af10b76",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "36f187f94a8b9defac72c2ddf119902469fb873a116b8bf1e7e761d4d967a02d",
+        "baseline_bytes": 993,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/pct/native/a_star/a_star_search.cc",
@@ -2287,18 +3484,32 @@
     {
       "source": "src/planning/pct/native/a_star/a_star_search.h",
       "destination": "third_party/pct/native/a_star/a_star_search.h",
-      "bytes": 3165,
+      "bytes": 3324,
       "source_sha256": "2b1a24f63d17e3b75017d14a9bcb6c7dd313a2d8b744d70efa45d6b9e9a19a18",
-      "vendored_sha256": "2b1a24f63d17e3b75017d14a9bcb6c7dd313a2d8b744d70efa45d6b9e9a19a18",
-      "modified": false
+      "vendored_sha256": "0922d5ca50e2c4cfe47c6955acc910f07a46043d06a065c25fa93f7d296cc279",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "2b1a24f63d17e3b75017d14a9bcb6c7dd313a2d8b744d70efa45d6b9e9a19a18",
+        "baseline_bytes": 3165,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/pct/native/common/data_types.h",
       "destination": "third_party/pct/native/common/data_types.h",
-      "bytes": 994,
+      "bytes": 1332,
       "source_sha256": "3a740c4e50c71b2a343509e5ef22de41dc9ad2fbd6132b38ee5d17f3102204dc",
-      "vendored_sha256": "3a740c4e50c71b2a343509e5ef22de41dc9ad2fbd6132b38ee5d17f3102204dc",
-      "modified": false
+      "vendored_sha256": "e24ec81e02171bb09591122227f7b77f6193efb6047cc7c8822f30b4c1f98d58",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "3a740c4e50c71b2a343509e5ef22de41dc9ad2fbd6132b38ee5d17f3102204dc",
+        "baseline_bytes": 994,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "src/planning/pct/LICENSE",
@@ -2391,18 +3602,32 @@
     {
       "source": "build_support/private_dds/build_private_dds.py",
       "destination": "docker/private_dds/build_private_dds.py",
-      "bytes": 6619,
+      "bytes": 7474,
       "source_sha256": "678187ecccb00050a59cee5820ea241cca632dfcca1d36fa758b3813c68df47f",
-      "vendored_sha256": "678187ecccb00050a59cee5820ea241cca632dfcca1d36fa758b3813c68df47f",
-      "modified": false
+      "vendored_sha256": "51dc548edef6fb0df9ac7c3fe6b89da4ab8f32bd3964727f72a1c85b5d07ad60",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "678187ecccb00050a59cee5820ea241cca632dfcca1d36fa758b3813c68df47f",
+        "baseline_bytes": 6619,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "build_support/private_dds/common.py",
       "destination": "docker/private_dds/common.py",
-      "bytes": 2958,
+      "bytes": 3944,
       "source_sha256": "3a33a3de6e40c168dd6338af62fdf4af3d76436eb097d94df06ce7179433fff3",
-      "vendored_sha256": "3a33a3de6e40c168dd6338af62fdf4af3d76436eb097d94df06ce7179433fff3",
-      "modified": false
+      "vendored_sha256": "515ff709cd2662d56ef5dc291fbe1447e81c1ad1b76da21caace6c583a0531a8",
+      "modified": true,
+      "local_readability_revision": {
+        "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+        "baseline_vendored_sha256": "3a33a3de6e40c168dd6338af62fdf4af3d76436eb097d94df06ce7179433fff3",
+        "baseline_bytes": 2958,
+        "reason": "Local readability edits; see separate equivalence/verification evidence",
+        "equivalence_verified_by_this_hash_tool": false
+      }
     },
     {
       "source": "LICENSES/FAST_LIVO2_GPL_2.0.txt",

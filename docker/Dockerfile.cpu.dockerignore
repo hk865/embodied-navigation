@@ -1,3 +1,5 @@
+# Allowlist-only build context for the CPU image: everything is excluded first,
+# then only the sources/configuration needed by the CPU test stage are re-included.
 **
 !src/
 !src/**

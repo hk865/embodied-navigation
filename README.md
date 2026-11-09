@@ -4,7 +4,7 @@
 
 ## 系统结构
 
-各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，共 46 个模块 README。可读性整理及独立复核结果见 [本轮验证记录](docs/review/readability-verification.md)，校验和阈值的源码审计见 [审计明细](docs/review/validation-and-threshold-audit.md)。
+各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，共 46 个模块 README。全量 589 个代码/配置目标的可读性报告见 [全量可读性总入口](docs/review/full-readability/README.md)（DSH 全量实现，Codex 独立事实复核，DSH 串行合入）。此前的 [本轮验证记录](docs/review/readability-verification.md)、[审计明细](docs/review/validation-and-threshold-audit.md) 与 46 个模块 README 索引保留为历史记录。
 
 - src/embodied_navigation/simulation：Gazebo/Isaac 场景与物理生命周期。simulation/dynanav 负责 DynaNav 场景中的真实 Go2 RGB-D capture，不承载整个导航系统。
 - perception：深度反投影、自身点过滤、传感流适配。

@@ -25,74 +25,82 @@ which is included as part of this source code package.
 extern const bool time_list(PointType &x, PointType &y);
 
 /// *************IMU Process and undistortion
-class ImuProcess
-{
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+// Accumulates IMU measurements between LiDAR scans, initializes gravity/bias
+// (optionally through stationary detection), and propagates state for deskew.
+// cov_* are configured covariance coefficients used with dt*dt in propagation.
+// MAX_INI_COUNT controls initialization samples. Integration times are seconds;
+// point curvature stores offset milliseconds, converted by /1000 for deskew.
+class ImuProcess {
+  public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  ImuProcess();
-  ~ImuProcess();
+    ImuProcess();
+    ~ImuProcess();
 
-  void Reset();
-  void Reset(double start_timestamp, const sensor_msgs::msg::Imu::ConstSharedPtr &lastimu);
-  void set_extrinsic(const V3D &transl, const M3D &rot);
-  void set_extrinsic(const V3D &transl);
-  void set_extrinsic(const MD(4, 4) & T);
-  void set_gyr_cov_scale(const V3D &scaler);
-  void set_acc_cov_scale(const V3D &scaler);
-  void set_gyr_bias_cov(const V3D &b_g);
-  void set_acc_bias_cov(const V3D &b_a);
-  void set_inv_expo_cov(const double &inv_expo);
-  void set_imu_init_frame_num(const int &num);
-  void configure_stationary_initialization(bool enabled, const StationaryImuInitialization::Limits &limits);
-  void disable_imu();
-  void disable_gravity_est();
-  void disable_bias_est();
-  void disable_exposure_est();
-  void Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, PointCloudXYZI::Ptr cur_pcl_un_);
-  void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
+    void Reset();
+    void Reset(double start_timestamp, const sensor_msgs::msg::Imu::ConstSharedPtr &lastimu);
+    void set_extrinsic(const V3D &transl, const M3D &rot);
+    void set_extrinsic(const V3D &transl);
+    void set_extrinsic(const MD(4, 4) & T);
+    void set_gyr_cov_scale(const V3D &scaler);
+    void set_acc_cov_scale(const V3D &scaler);
+    void set_gyr_bias_cov(const V3D &b_g);
+    void set_acc_bias_cov(const V3D &b_a);
+    void set_inv_expo_cov(const double &inv_expo);
+    void set_imu_init_frame_num(const int &num);
+    void configure_stationary_initialization(bool enabled,
+                                             const StationaryImuInitialization::Limits &limits);
+    void disable_imu();
+    void disable_gravity_est();
+    void disable_bias_est();
+    void disable_exposure_est();
+    void Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat,
+                  PointCloudXYZI::Ptr cur_pcl_un_);
+    void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout,
+                      PointCloudXYZI &pcl_out);
 
-  ofstream fout_imu;
-  double IMU_mean_acc_norm;
-  V3D unbiased_gyr;
+    ofstream fout_imu;
+    double IMU_mean_acc_norm;
+    V3D unbiased_gyr;
 
-  V3D cov_acc;
-  V3D cov_gyr;
-  V3D cov_bias_gyr;
-  V3D cov_bias_acc;
-  double cov_inv_expo;
-  double first_lidar_time;
-  bool imu_time_init = false;
-  bool imu_need_init = true;
-  M3D Eye3d;
-  V3D Zero3d;
-  // Type zero is the instantaneous standard PointCloud2 handler. Timed
-  // spinning/Livox sensors retain their existing partition and deskew rules.
-  int lidar_type = 1;
-  const std::filesystem::path log_directory = fastlivo_diagnostics::directory();
+    V3D cov_acc;
+    V3D cov_gyr;
+    V3D cov_bias_gyr;
+    V3D cov_bias_acc;
+    double cov_inv_expo;
+    double first_lidar_time;
+    bool imu_time_init = false;
+    bool imu_need_init = true;
+    M3D Eye3d;
+    V3D Zero3d;
+    // Type zero is the instantaneous standard PointCloud2 handler. Timed
+    // spinning/Livox sensors retain their existing partition and deskew rules.
+    int lidar_type = 1;
+    const std::filesystem::path log_directory = fastlivo_diagnostics::directory();
 
-private:
-  void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
-  void Forward_without_imu(LidarMeasureGroup &meas, StatesGroup &state_inout, PointCloudXYZI &pcl_out);
-  PointCloudXYZI pcl_wait_proc;
-  sensor_msgs::msg::Imu::ConstSharedPtr last_imu;
-  vector<Pose6D> IMUpose;
-  M3D Lid_rot_to_IMU;
-  V3D Lid_offset_to_IMU;
-  V3D mean_acc;
-  V3D mean_gyr;
-  V3D angvel_last;
-  V3D acc_s_last;
-  double last_prop_end_time;
-  double time_last_scan;
-  int init_iter_num = 1, MAX_INI_COUNT = 20;
-  bool b_first_frame = true;
-  bool imu_en = true;
-  bool gravity_est_en = true;
-  bool ba_bg_est_en = true;
-  bool exposure_estimate_en = true;
-  bool stationary_initialization_en = false;
-  StationaryImuInitialization stationary_initialization;
+  private:
+    void IMU_init(const MeasureGroup &meas, StatesGroup &state, int &N);
+    void Forward_without_imu(LidarMeasureGroup &meas, StatesGroup &state_inout,
+                             PointCloudXYZI &pcl_out);
+    PointCloudXYZI pcl_wait_proc;
+    sensor_msgs::msg::Imu::ConstSharedPtr last_imu;
+    vector<Pose6D> IMUpose;
+    M3D Lid_rot_to_IMU;
+    V3D Lid_offset_to_IMU;
+    V3D mean_acc;
+    V3D mean_gyr;
+    V3D angvel_last;
+    V3D acc_s_last;
+    double last_prop_end_time;
+    double time_last_scan;
+    int init_iter_num = 1, MAX_INI_COUNT = 20;
+    bool b_first_frame = true;
+    bool imu_en = true;
+    bool gravity_est_en = true;
+    bool ba_bg_est_en = true;
+    bool exposure_estimate_en = true;
+    bool stationary_initialization_en = false;
+    StationaryImuInitialization stationary_initialization;
 };
 typedef std::shared_ptr<ImuProcess> ImuProcessPtr;
 #endif

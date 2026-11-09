@@ -3,6 +3,7 @@
 Validation belongs at the backend boundary, never on the frontend point loop.
 There are no fingerprints, source-version bindings, or whole-cloud checksums.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -22,6 +23,7 @@ def checked_transform(value) -> np.ndarray:
 
 
 def inverse(t) -> np.ndarray:
+    """Inverse of a homogeneous transform (rotation transpose, no re-validation)."""
     t = np.asarray(t, dtype=np.float64)
     out = np.eye(4)
     out[:3, :3] = t[:3, :3].T
@@ -30,15 +32,19 @@ def inverse(t) -> np.ndarray:
 
 
 def transform_points(points, t) -> np.ndarray:
+    """Apply a 4x4 transform to an (N,3) array, returning points in its target frame."""
     p = np.asarray(points)
     t = np.asarray(t)
     return p @ t[:3, :3].T + t[:3, 3]
 
 
 def pose_distance(a, b) -> tuple[float, float]:
+    """Return (translation_m, rotation_rad) between two 4x4 poses."""
     a, b = np.asarray(a), np.asarray(b)
-    return (float(np.linalg.norm(a[:3, 3] - b[:3, 3])),
-            float(Rotation.from_matrix(a[:3, :3] @ b[:3, :3].T).magnitude()))
+    return (
+        float(np.linalg.norm(a[:3, 3] - b[:3, 3])),
+        float(Rotation.from_matrix(a[:3, :3] @ b[:3, :3].T).magnitude()),
+    )
 
 
 def rigid_fit(source, target) -> np.ndarray:

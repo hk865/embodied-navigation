@@ -7,12 +7,10 @@
 
 using namespace std;
 
-namespace scan_planner
-{
-  // An implementation of non-uniform B-spline with different dimensions
-  // It also represents uniform B-spline which is a special case of non-uniform
-  class UniformBspline
-  {
+namespace scan_planner {
+// An implementation of non-uniform B-spline with different dimensions
+// It also represents uniform B-spline which is a special case of non-uniform
+class UniformBspline {
   private:
     // control points for B-spline with different dimensions.
     // Each row represents one single control point
@@ -26,7 +24,8 @@ namespace scan_planner
 
     Eigen::MatrixXd getDerivativeControlPoints();
 
-    double limit_vel_, limit_acc_, feasibility_tolerance_; // physical limits and feasibility tolerance
+    double limit_vel_, limit_acc_,
+        feasibility_tolerance_; // physical limits and feasibility tolerance
 
   public:
     UniformBspline() {}
@@ -48,8 +47,10 @@ namespace scan_planner
 
     // compute position / derivative
 
-    Eigen::VectorXd evaluateDeBoor(const double &u) const;                                               // use u \in [up, u_mp]
-    inline Eigen::VectorXd evaluateDeBoorT(const double &t) const { return evaluateDeBoor(t + u_(p_)); } // use t \in [0, duration]
+    Eigen::VectorXd evaluateDeBoor(const double &u) const; // use u \in [up, u_mp]
+    inline Eigen::VectorXd evaluateDeBoorT(const double &t) const {
+        return evaluateDeBoor(t + u_(p_));
+    } // use t \in [0, duration]
     UniformBspline getDerivative();
 
     // 3D B-spline interpolation of points in point_set, with boundary vel&acc
@@ -75,6 +76,6 @@ namespace scan_planner
     void getMeanAndMaxAcc(double &mean_a, double &max_a);
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  };
+};
 } // namespace scan_planner
 #endif

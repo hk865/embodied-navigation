@@ -73,7 +73,9 @@ def _setup(context):
             executable="scan_planner_node",
             name="scan_planner_node",
             output="screen",
-            parameters=[planner_yaml] + ([keypoints_file] if keypoints_file else []) + [planner_overrides],
+            parameters=[planner_yaml]
+            + ([keypoints_file] if keypoints_file else [])
+            + [planner_overrides],
             remappings=[
                 ("body_pose", body_pose),
                 ("sensor_pose", sensor_pose),
@@ -94,8 +96,11 @@ def _setup(context):
                 common,
                 {
                     "robot_description": Command(
-                        ["xacro ", os.path.join(go2_share, "xacro", "robot.xacro"),
-                         " use_gazebo:=false"]
+                        [
+                            "xacro ",
+                            os.path.join(go2_share, "xacro", "robot.xacro"),
+                            " use_gazebo:=false",
+                        ]
                     )
                 },
             ],
@@ -109,11 +114,15 @@ def _setup(context):
                 executable="open_loop_controller",
                 name="open_loop_controller",
                 output="screen",
-                parameters=[controllers_yaml, common, {
-                    "init_x": float(LaunchConfiguration("init_x").perform(context)),
-                    "init_y": float(LaunchConfiguration("init_y").perform(context)),
-                    "init_z": float(LaunchConfiguration("init_z").perform(context)),
-                }],
+                parameters=[
+                    controllers_yaml,
+                    common,
+                    {
+                        "init_x": float(LaunchConfiguration("init_x").perform(context)),
+                        "init_y": float(LaunchConfiguration("init_y").perform(context)),
+                        "init_z": float(LaunchConfiguration("init_z").perform(context)),
+                    },
+                ],
                 remappings=[
                     ("planning/bspline", "/planning/bspline"),
                     ("body_pose", body_pose),

@@ -35,6 +35,23 @@ namespace teacher_sim {
 using A12 = std::array<double, 12>;
 using Clock = std::chrono::steady_clock;
 
+// Wire contract with the policy process, native little-endian float64:
+// request  = 64 x float64, response = 16 x float64.
+//   request[0]       simulation time [s]
+//   request[1..3]    base position world [m]
+//   request[4..7]    base orientation quaternion w,x,y,z (world)
+//   request[8..10]   base COM linear velocity in body axes [m/s]
+//   request[11..13]  base angular velocity in body axes [rad/s]
+//   request[14..25]  twelve measured joint positions [rad]
+//   request[26..37]  twelve measured joint velocities [rad/s]
+//   request[38..49]  twelve joint torques actually commanded last step [Nm]
+//   request[50..54]  contact counts: base, FR, FL, RR, RL
+//   request[55]      policy iteration index (iteration-1)
+//   request[56]      latched fault code (0 = none)
+// response[0..11]    twelve joint-angle targets [rad]
+// response[12]       inference requested fault damping (0/1)
+// response[13]       inference requested termination (0/1)
+
 static std::string Quote(const std::string &s) {
   std::string out = "\"";
   for (unsigned char c : s) {
@@ -163,6 +180,7 @@ class TeacherActuator final : public gz::sim::System,
     const double time = std::chrono::duration<double>(info.simTime).count();
     const double dt = std::chrono::duration<double>(info.dt).count();
     if (!ownershipChecked) {
+      // Check configured plugins: one Teacher actuator, no recognized competing writer.
       ownershipChecked = true;
       if (!CheckOwnership(ecm)) {
         Latch(8, "multiple_joint_actuator_plugins", time);
@@ -205,6 +223,7 @@ class TeacherActuator final : public gz::sim::System,
       }
     }
     gz::math::Vector3d originBody, comBody, omegaBody;
+    // Assemble the fixed request64 frame described at the top of this file.
     std::array<double, 64> request{};
     request[0] = time;
     if (pose && originVelocity && comVelocity && angularVelocity) {
@@ -382,6 +401,7 @@ class TeacherActuator final : public gz::sim::System,
       ::close(fd); fd = -1; return;
     }
     const double duration = std::chrono::duration<double>(Clock::now()-started).count();
+    // Reject partial/corrupt frames instead of guessing joint targets.
     bool valid = true;
     for (double value : response) valid = valid && std::isfinite(value);
     for (size_t i = 0; i < 12; ++i) valid = valid && std::abs(response[i]) <= targetAbsBound;

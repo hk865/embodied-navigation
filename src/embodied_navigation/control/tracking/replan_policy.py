@@ -14,13 +14,13 @@ def low_command_is_exhausted_path(*, cascade_mode, exhausted, has_geometric_prog
     protected modes never justify replacing an active route from command zero.
     """
     if type(exhausted) is not bool or type(has_geometric_progress) is not bool:
-        raise ValueError('Actual checked path exhaustion/progress booleans required')
-    if cascade_mode not in ('drive', 'path_end_hold'):
+        raise ValueError("Actual checked path exhaustion/progress booleans required")
+    if cascade_mode not in ("drive", "path_end_hold"):
         return False
     # The unchanged cascade emits this mode only after the measured projection
     # has <.05m checked arc remaining and the endpoint is not the mission goal.
     # Its existing geometric stop threshold must not wait for a different
     # legacy steering endpoint threshold before asking for the next path.
-    if cascade_mode == 'path_end_hold':
+    if cascade_mode == "path_end_hold":
         return True
     return exhausted or not has_geometric_progress

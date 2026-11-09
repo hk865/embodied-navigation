@@ -19,75 +19,65 @@ namespace vk {
 using namespace std;
 using namespace Eigen;
 
+// Pinhole camera with optional OpenCV radial/tangential distortion (d_[0..4] in
+// the same order as cv::projectPoints: k1,k2,p1,p2,k3). The constructor
+// precomputes the pixel maps used by undistortImage().
 class PinholeCamera : public AbstractCamera {
 
-private:
-  const double fx_, fy_;
-  const double cx_, cy_;
-  bool distortion_;             //!< is it pure pinhole model or has it radial distortion?
-  double d_[5];                 //!< distortion parameters, see http://docs.opencv.org/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
-  cv::Mat cvK_, cvD_;
-  cv::Mat undist_map1_, undist_map2_;
-  bool use_optimization_;
-  Matrix3d K_;
-  Matrix3d K_inv_;
+  private:
+    const double fx_, fy_;
+    const double cx_, cy_;
+    bool distortion_; //!< is it pure pinhole model or has it radial distortion?
+    double d_
+        [5]; //!< distortion parameters, see http://docs.opencv.org/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
+    cv::Mat cvK_, cvD_;
+    cv::Mat undist_map1_, undist_map2_;
+    bool use_optimization_;
+    Matrix3d K_;
+    Matrix3d K_inv_;
 
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+  public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  PinholeCamera(double width, double height, double scale,
-                double fx, double fy, double cx, double cy,
-                double d0=0.0, double d1=0.0, double d2=0.0, double d3=0.0, double d4=0.0);
+    PinholeCamera(double width, double height, double scale, double fx, double fy, double cx,
+                  double cy, double d0 = 0.0, double d1 = 0.0, double d2 = 0.0, double d3 = 0.0,
+                  double d4 = 0.0);
 
-  ~PinholeCamera();
+    ~PinholeCamera();
 
-  void
-  initUnistortionMap();
+    // Unimplemented declaration; the constructor already prepares the remap tables.
+    // undistortImage() does not require a separate initialization call.
+    void initUnistortionMap();
 
-  virtual Vector3d
-  cam2world(const double& x, const double& y) const;
+    virtual Vector3d cam2world(const double &x, const double &y) const;
 
-  virtual Vector3d
-  cam2world(const Vector2d& px) const;
+    virtual Vector3d cam2world(const Vector2d &px) const;
 
-  virtual Vector2d
-  world2cam(const Vector3d& xyz_c) const;
+    virtual Vector2d world2cam(const Vector3d &xyz_c) const;
 
-  virtual Vector2d
-  world2cam(const Vector2d& uv) const;
+    virtual Vector2d world2cam(const Vector2d &uv) const;
 
-  const Vector2d focal_length() const
-  {
-    return Vector2d(fx_, fy_);
-  }
+    const Vector2d focal_length() const { return Vector2d(fx_, fy_); }
 
-  virtual double errorMultiplier2() const
-  {
-    return fabs(fx_);
-  }
+    virtual double errorMultiplier2() const { return fabs(fx_); }
 
-  virtual double errorMultiplier() const
-  {
-    return fabs(4.0*fx_*fy_);
-  }
+    virtual double errorMultiplier() const { return fabs(4.0 * fx_ * fy_); }
 
-  inline const Matrix3d& K() const { return K_; };
-  inline const Matrix3d& K_inv() const { return K_inv_; };
-  virtual double fx() const { return fx_; };
-  virtual double fy() const { return fy_; };
-  virtual double cx() const { return cx_; };
-  virtual double cy() const { return cy_; };
-  inline double d0() const { return d_[0]; };
-  inline double d1() const { return d_[1]; };
-  inline double d2() const { return d_[2]; };
-  inline double d3() const { return d_[3]; };
-  inline double d4() const { return d_[4]; };
+    inline const Matrix3d &K() const { return K_; };
+    inline const Matrix3d &K_inv() const { return K_inv_; };
+    virtual double fx() const { return fx_; };
+    virtual double fy() const { return fy_; };
+    virtual double cx() const { return cx_; };
+    virtual double cy() const { return cy_; };
+    inline double d0() const { return d_[0]; };
+    inline double d1() const { return d_[1]; };
+    inline double d2() const { return d_[2]; };
+    inline double d3() const { return d_[3]; };
+    inline double d4() const { return d_[4]; };
 
-  void undistortImage(const cv::Mat& raw, cv::Mat& rectified);
-
+    void undistortImage(const cv::Mat &raw, cv::Mat &rectified);
 };
 
 } // end namespace vk
-
 
 #endif /* PINHOLE_CAMERA_H_ */

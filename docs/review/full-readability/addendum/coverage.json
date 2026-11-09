@@ -1,0 +1,1524 @@
+{
+  "schema": "full_readability_addendum_coverage/v1",
+  "generated_at_utc": "2026-11-08T20:31:56Z",
+  "baseline_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
+  "workspace": "/home/hyh001/projects/1.Project/embodied-navigation",
+  "scope_addendum": "/home/hyh001/Documents/Codex/2026-11-08/task-3/dsh-full-readability-20261109/scope-addendum.json",
+  "scope": {
+    "entries_total": 14,
+    "kinds": {
+      "configuration": 8,
+      "interface_definition": 2,
+      "source_patch": 4
+    },
+    "paths_unique": true,
+    "all_reviewed": true,
+    "pending": 0,
+    "missing": 0,
+    "duplicates": 0,
+    "restored_after_independent_review": true
+  },
+  "write_scope": {
+    "allowed_by_instruction": [
+      "the eight third_party/livox_ros_driver2/launch_ROS1 *.launch files",
+      "the two third_party/scan/scan_planner_msgs/msg/*.idl files",
+      "docs/review/full-readability/addendum/coverage.json",
+      "docs/review/full-readability/addendum/findings.md",
+      "docs/review/full-readability/addendum/summary.md"
+    ],
+    "written_content_files": [
+      "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+      "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
+      "third_party/scan/scan_planner_msgs/msg/DataDisp.idl"
+    ],
+    "written_report_files": [
+      "docs/review/full-readability/addendum/coverage.json",
+      "docs/review/full-readability/addendum/findings.md",
+      "docs/review/full-readability/addendum/summary.md"
+    ],
+    "patch_files_modified": [],
+    "unrelated_concurrent_changes": "The worktree shows changes from the two concurrent main DSH tasks (project/vendor). They are outside this task's write set, were not written by it, are not treated as scope violations and were not reverted."
+  },
+  "totals": {
+    "reviewed": 14,
+    "changed": 10,
+    "locked_exact": 4,
+    "already_clear": 0,
+    "pending": 0
+  },
+  "checks_summary": {
+    "problems_total": 0,
+    "entries_verified_against_disk": 14,
+    "scope_owned_files_all_changed": true,
+    "patch_files_touched": [],
+    "validation_script": "scratch/validate_restore.py",
+    "validation_evidence": "scratch/validation-restore.json",
+    "coverage_disk_consistent": true
+  },
+  "limitations": [
+    "No ROS/roslaunch, simulation or robot runtime was executed (out of authorized scope), so launch equivalence is proven on parsed XML structure and text, not by starting nodes.",
+    "No IDL compiler (idlc/omniidl/fastddsgen) is installed; interface equality is token-level, not a compile.",
+    "The two .idl files are rosidl-generated artifacts; their generation source is the sibling .msg file, which is outside this task's write scope.",
+    "Fast DDS target sources are not vendored (archives are fetched at build from SOURCES.json pins), so the three fastdds patches are not re-applied locally; their material identity is checked; target-tree application was not rerun.",
+    "Unchanged patch bytes do not establish applicability to an independently reformatted target tree; that would need separate validation.",
+    "DataDisp.idl: the earlier comment checkpoint could not be recovered. This report records a newly authored comment postimage over the unchanged baseline interface and a new final sha; it does not claim the old sha.",
+    "docs/dependencies/vendored-source-manifest.json has 10 destination fingerprints invalidated by this addendum; concurrent tasks may invalidate others; refreshing it is deliberately out of this task's write scope (see findings.md follow-ups)."
+  ],
+  "entries": [
+    {
+      "path": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
+      "baseline_sha256": "61a255fedfd55337fbd8c3c6078cc33b48480026042d88d090b88f92e15828dc",
+      "final_sha256": "61a255fedfd55337fbd8c3c6078cc33b48480026042d88d090b88f92e15828dc",
+      "kind": "source_patch",
+      "action": "locked_exact",
+      "readability_work": "Source layer, locked byte-exact and intentionally not modified. Reviewed every hunk and recorded algorithm/behaviour, applicable baseline, test coverage and provenance so the artifact is explainable without editing it (editing would risk the patch's applicability and its recorded identity).",
+      "read_evidence": {
+        "hunks": 4,
+        "added_lines": 6,
+        "removed_lines": 6,
+        "added_symbols": [],
+        "added_tests": [],
+        "behavior_explained": "The four sites have two different legacy formulas. Hunks 1 and 4 store the quotient in float loc_xyz, decrement negative values, then convert to int64_t (truncation toward zero). For exactly representable examples, x=-1.5 gives int(-2.5)=-2, equal to floor(-1.5), but x=-2 gives -3 instead of floor(-2)=-2. Thus this formula is not floor(x)-1 for every negative quotient; floating-point rounding near boundaries also needs care. Hunks 2 and 3 instead use int loc_xyz already assigned floor(x), then subtract one extra unit for negative x, yielding floor(x)-1. The patch makes the former sites use floor and removes the latter extra decrements, unifying insertion/retrieval keys. Potential key mismatches follow from the differing formulas; no runtime missed/duplicated-update rate was measured.",
+        "hunk_locations": "4 hunks: vio.cpp insertPointIntoVoxelMap (line ~255), point-map update (~435), sub-feature sampling (~563), plane-map update (~1154)",
+        "applicable_baseline": "The vendored fast_livo2 snapshot at baseline commit 5e7982e; the patch is already applied there. HEAD blob of third_party/fast_livo2/fast_livo2_core/src/vio.cpp matches every hunk post-image line exactly. docs/dependencies/vendored-source-manifest.json records vio.cpp vendored_sha256 0cb11f14... != source_sha256 1ecf2cd1..., modified=true, `patch` = this file, patched_source recovered isolated fix.",
+        "provenance": "docs/dependencies/vendored-source-manifest.json record whose destination is third_party/fast_livo2/fast_livo2_core/src/vio.cpp; source_sha256 and already-patched vendored_sha256 are distinct",
+        "locked_evidence": {
+          "baseline_sha256": "61a255fedfd55337fbd8c3c6078cc33b48480026042d88d090b88f92e15828dc",
+          "final_sha256": "61a255fedfd55337fbd8c3c6078cc33b48480026042d88d090b88f92e15828dc",
+          "byte_identical": true,
+          "git_worktree_status": "unmodified"
+        }
+      },
+      "checks_and_thresholds": {
+        "byte_identity": "sha256(final) == addendum baseline sha256 and byte count equal; threshold 0 bytes different",
+        "diff_structure": "every @@ hunk header old/new line counts equal the hunk body; threshold 0 mismatches",
+        "post_image": "exact post-image line match against the HEAD blob of third_party/fast_livo2/fast_livo2_core/src/vio.cpp",
+        "sources_json": "Not applicable: this VIO floor patch is not a FastDDS SOURCES.json patch entry",
+        "not_applicable_here": "Patch artifact bytes are unchanged. This does not prove applicability to a concurrently reformatted target tree; that requires separate validation."
+      },
+      "validation": {
+        "result": "pass",
+        "method": "sha256/byte identity + unified-diff hunk structure + post-image comparison against immutable baseline5e; FastDDS SOURCES.json not applicable",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "post_image_ok": true,
+        "sources_json_sha_match": null,
+        "checks_passed": [
+          "byte-identical to addendum baseline sha256",
+          "hunk line counts consistent",
+          "worktree clean for this path"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1627,
+      "bytes_final": 1627,
+      "final_bytes": 1627,
+      "final_lines": 42
+    },
+    {
+      "path": "third_party/fastdds/heartbeat_2_14_6.patch",
+      "baseline_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+      "final_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+      "kind": "source_patch",
+      "action": "locked_exact",
+      "readability_work": "Source layer, locked byte-exact and intentionally not modified. Reviewed every hunk and recorded algorithm/behaviour, applicable baseline, test coverage and provenance so the artifact is explainable without editing it (editing would risk the patch's applicability and its recorded identity).",
+      "read_evidence": {
+        "hunks": 2,
+        "added_lines": 11,
+        "removed_lines": 5,
+        "added_symbols": [
+          "sleep_for"
+        ],
+        "added_tests": [],
+        "behavior_explained": "Two hunks in Fast DDS 2.14.6 src/cpp/rtps/transport/shared_mem/SharedMemGlobal.hpp implement the two-sided SHM health handshake. Listener side: keep the closed/data fast paths, then call empty_cv.timed_wait(lock, timeout) without a predicate so a health-check notify that carries no data still refreshes the listener heartbeat, and re-check closed/head afterwards. Checker side (healthy_check failure path): empty_cv.notify_all() to ask idle listeners for fresh liveness evidence, then sleep 1 ms instead of the full port_wait_timeout_ms. Data/close fast paths, the total health timeout (healthy_check_timeout_ms = 1000), reliable QoS and the SHM+UDP topology are unchanged.",
+        "hunk_locations": "2 hunks: listener wait loop (~line 593) and checker retry sleep (~line 891)",
+        "applicable_baseline": "Fast DDS 2.14.6 upstream commit f052f239538ebc0df56835fdb57f7628628010bc as pinned in third_party/fastdds/SOURCES.json; applied first in the documented order in third_party/fastdds/README.md. Backport of eProsima/Fast-DDS PR #6559 (reviewed PR head 2184ef9d...) for issue #6535; SOURCES.json records status 'open; not merged' as of 2026-10-25, so this is a local private backport, not an upstream release. Both peers must use the selected private build.",
+        "provenance": "third_party/fastdds/SOURCES.json backport + third_party/fastdds/README.md",
+        "locked_evidence": {
+          "baseline_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+          "final_sha256": "208b57309844544a384f1cd839e383097ce30224d5501f5e9c445adf23e4144d",
+          "byte_identical": true,
+          "git_worktree_status": "unmodified"
+        }
+      },
+      "checks_and_thresholds": {
+        "byte_identity": "sha256(final) == addendum baseline sha256 and byte count equal; threshold 0 bytes different",
+        "diff_structure": "every @@ hunk header old/new line counts equal the hunk body; threshold 0 mismatches",
+        "post_image": "target sources are not vendored (archives fetched at build), so hunk application is not re-run locally",
+        "sources_json": "sha256 equals third_party/fastdds/SOURCES.json backport.patch_sha256 entry",
+        "not_applicable_here": "Patch artifact bytes are unchanged. This does not prove applicability to a concurrently reformatted target tree; that requires separate validation."
+      },
+      "validation": {
+        "result": "pass",
+        "method": "sha256/byte identity + unified-diff hunk structure + SOURCES.json material hash comparison; target-tree application/post-image not run",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "post_image_ok": null,
+        "sources_json_sha_match": true,
+        "checks_passed": [
+          "byte-identical to addendum baseline sha256",
+          "hunk line counts consistent",
+          "worktree clean for this path"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1564,
+      "bytes_final": 1564,
+      "final_bytes": 1564,
+      "final_lines": 32
+    },
+    {
+      "path": "third_party/fastdds/heartbeat_2_14_6_tests.patch",
+      "baseline_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+      "final_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+      "kind": "source_patch",
+      "action": "locked_exact",
+      "readability_work": "Source layer, locked byte-exact and intentionally not modified. Reviewed every hunk and recorded algorithm/behaviour, applicable baseline, test coverage and provenance so the artifact is explainable without editing it (editing would risk the patch's applicability and its recorded identity).",
+      "read_evidence": {
+        "hunks": 3,
+        "added_lines": 206,
+        "removed_lines": 0,
+        "added_symbols": [
+          "prepare_idle_health_check",
+          "lock",
+          "wait_pop_legacy",
+          "get_system_time",
+          "milliseconds",
+          "open_port",
+          "if",
+          "thread",
+          "prepare",
+          "now",
+          "sleep_for",
+          "while"
+        ],
+        "added_tests": [
+          "reviewed_heartbeat_cold_open_one_checker",
+          "reviewed_heartbeat_cold_open_eight_checkers",
+          "reviewed_heartbeat_legacy_listener_negative_control",
+          "reviewed_heartbeat_stopped_listener_keeps_total_timeout",
+          "reviewed_heartbeat_normal_data_and_close"
+        ],
+        "behavior_explained": "Test-only regression coverage for the handshake. Adds MockPortSharedMemGlobal::prepare_idle_health_check (forces last_verified_counter == counter so the watchdog precondition is reproducible) and wait_pop_legacy (exact pre-backport predicate behaviour, used as a negative control), then five TEST_F cases in SharedMemTests.cpp: cold open with 1 and 8 concurrent checkers, the legacy-listener negative control, stopped-listener total-timeout preservation, and normal data plus close. Tests use fresh write handles to bypass the transport opened_ports_ cache.",
+        "hunk_locations": "3 hunks over test/unittest/transport/mock/SharedMemGlobalMock.hpp and test/unittest/transport/SharedMemTests.cpp",
+        "applicable_baseline": "Applied second, after heartbeat_2_14_6.patch, to the same pinned Fast DDS 2.14.6 test tree. Test-side only: it does not change production DSO behaviour. The patch itself states it is reviewed local backport coverage, not a merged-upstream claim.",
+        "provenance": "third_party/fastdds/README.md ordering + SOURCES.json test_patches list",
+        "locked_evidence": {
+          "baseline_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+          "final_sha256": "6b6d4ca937a062118e0a1e09f339bc81673a89fd6602b3fb74ade02fd00c9159",
+          "byte_identical": true,
+          "git_worktree_status": "unmodified"
+        }
+      },
+      "checks_and_thresholds": {
+        "byte_identity": "sha256(final) == addendum baseline sha256 and byte count equal; threshold 0 bytes different",
+        "diff_structure": "every @@ hunk header old/new line counts equal the hunk body; threshold 0 mismatches",
+        "post_image": "target sources are not vendored (archives fetched at build), so hunk application is not re-run locally",
+        "sources_json": "sha256 equals third_party/fastdds/SOURCES.json backport.patch_sha256 entry",
+        "not_applicable_here": "Patch artifact bytes are unchanged. This does not prove applicability to a concurrently reformatted target tree; that requires separate validation."
+      },
+      "validation": {
+        "result": "pass",
+        "method": "sha256/byte identity + unified-diff hunk structure + SOURCES.json material hash comparison; target-tree application/post-image not run",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "post_image_ok": null,
+        "sources_json_sha_match": true,
+        "checks_passed": [
+          "byte-identical to addendum baseline sha256",
+          "hunk line counts consistent",
+          "worktree clean for this path"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 9092,
+      "bytes_final": 9092,
+      "final_bytes": 9092,
+      "final_lines": 228
+    },
+    {
+      "path": "third_party/fastdds/heartbeat_fixture_r2.patch",
+      "baseline_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+      "final_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+      "kind": "source_patch",
+      "action": "locked_exact",
+      "readability_work": "Source layer, locked byte-exact and intentionally not modified. Reviewed every hunk and recorded algorithm/behaviour, applicable baseline, test coverage and provenance so the artifact is explainable without editing it (editing would risk the patch's applicability and its recorded identity).",
+      "read_evidence": {
+        "hunks": 6,
+        "added_lines": 45,
+        "removed_lines": 8,
+        "added_symbols": [
+          "now",
+          "same_live_node",
+          "lock",
+          "catch",
+          "errors"
+        ],
+        "added_tests": [],
+        "behavior_explained": "Test-only fixture hardening, applied third. prepare_idle_health_check now also requires node->is_port_ok and resets last_listeners_status_check_time_ms under empty_cv_mutex, mirroring the real WatchTask so the background watchdog cannot declare a live listener dead from counter equality alone. Adds same_live_node (UUID identity + is_opened_for_reading + num_listeners == 1) so a recreated port handle cannot pass as the original. Carries first_error out of the listener thread, reports per-checker errors, and switches fatal lifecycle expectations from EXPECT to ASSERT so a regenerated port 0 stops the round instead of being re-prepared.",
+        "hunk_locations": "6 hunks: SharedMemGlobalMock.hpp (fixture + same_live_node) and SharedMemTests.cpp (error propagation, identity assertion, ASSERT lifecycle)",
+        "applicable_baseline": "Applied last on top of heartbeat_2_14_6.patch and heartbeat_2_14_6_tests.patch for Fast DDS 2.14.6. Test-only.",
+        "provenance": "third_party/fastdds/README.md item 3 + SOURCES.json",
+        "locked_evidence": {
+          "baseline_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+          "final_sha256": "7ccb36fa02dcff4501567d93ac4e5541ff59386769bc7961f5848da7b0f4a8d6",
+          "byte_identical": true,
+          "git_worktree_status": "unmodified"
+        }
+      },
+      "checks_and_thresholds": {
+        "byte_identity": "sha256(final) == addendum baseline sha256 and byte count equal; threshold 0 bytes different",
+        "diff_structure": "every @@ hunk header old/new line counts equal the hunk body; threshold 0 mismatches",
+        "post_image": "target sources are not vendored (archives fetched at build), so hunk application is not re-run locally",
+        "sources_json": "sha256 equals third_party/fastdds/SOURCES.json backport.patch_sha256 entry",
+        "not_applicable_here": "Patch artifact bytes are unchanged. This does not prove applicability to a concurrently reformatted target tree; that requires separate validation."
+      },
+      "validation": {
+        "result": "pass",
+        "method": "sha256/byte identity + unified-diff hunk structure + SOURCES.json material hash comparison; target-tree application/post-image not run",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "post_image_ok": null,
+        "sources_json_sha_match": true,
+        "checks_passed": [
+          "byte-identical to addendum baseline sha256",
+          "hunk line counts consistent",
+          "worktree clean for this path"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 5782,
+      "bytes_final": 5782,
+      "final_bytes": 5782,
+      "final_lines": 115
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+      "baseline_sha256": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
+      "final_sha256": "c2286adf949f245c88de33ed92f6245af3194debba7475eaac37b29af2030f97",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, msg profile for HAP",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "1",
+          "rviz_enable": "false",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/HAP_config.json"
+        },
+        "rviz_group_present": false,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream msg profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"1\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/HAP_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "c2286adf949f245c88de33ed92f6245af3194debba7475eaac37b29af2030f97"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 56,
+        "lines_removed": 33,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (28)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1743,
+      "bytes_final": 3272,
+      "final_bytes": 3272,
+      "final_lines": 63
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+      "baseline_sha256": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
+      "final_sha256": "3adbbb71afed30733a59903ccdd09f97a818f298b5e2d6a2a92d6e9ff516a8f3",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, msg profile for MID360",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "1",
+          "rviz_enable": "false",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/MID360_config.json"
+        },
+        "rviz_group_present": false,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream msg profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"1\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/MID360_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "3adbbb71afed30733a59903ccdd09f97a818f298b5e2d6a2a92d6e9ff516a8f3"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 56,
+        "lines_removed": 33,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (28)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1744,
+      "bytes_final": 3281,
+      "final_bytes": 3281,
+      "final_lines": 63
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+      "baseline_sha256": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
+      "final_sha256": "92f92c8095aff162e4be116f411d4d6c131e9d874bc75382d4a836866454394f",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, msg profile for MID360s",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "1",
+          "rviz_enable": "false",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/MID360s_config.json"
+        },
+        "rviz_group_present": false,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream msg profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"1\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/MID360s_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "92f92c8095aff162e4be116f411d4d6c131e9d874bc75382d4a836866454394f"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 57,
+        "lines_removed": 33,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (28)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1745,
+      "bytes_final": 3341,
+      "final_bytes": 3341,
+      "final_lines": 64
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+      "baseline_sha256": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
+      "final_sha256": "dc9409a354f1af98f47faa09875cca7f98c76754435e0f8501c4cb22198ead6b",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, msg profile for HAP + MID360",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "1",
+          "rviz_enable": "false",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/mixed_HAP_MID360_config.json"
+        },
+        "rviz_group_present": false,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream msg profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"1\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/mixed_HAP_MID360_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "dc9409a354f1af98f47faa09875cca7f98c76754435e0f8501c4cb22198ead6b"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 56,
+        "lines_removed": 33,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (28)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1754,
+      "bytes_final": 3296,
+      "final_bytes": 3296,
+      "final_lines": 63
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+      "baseline_sha256": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
+      "final_sha256": "515dec690b09f257ef4c443c78a65ee972df6703191417a55995123b2f35be05",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, rviz profile for HAP",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "livox_rviz pkg=rviz type=rviz",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rviz_enable)",
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "0",
+          "rviz_enable": "true",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/HAP_config.json"
+        },
+        "rviz_group_present": true,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream rviz profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"0\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/HAP_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "515dec690b09f257ef4c443c78a65ee972df6703191417a55995123b2f35be05"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 60,
+        "lines_removed": 37,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (30)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1930,
+      "bytes_final": 3499,
+      "final_bytes": 3499,
+      "final_lines": 68
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+      "baseline_sha256": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
+      "final_sha256": "24722510c644377d632bb36839d9cc78bc2c308fa76e1f7bf6c3f9b2f683734e",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, rviz profile for MID360",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "livox_rviz pkg=rviz type=rviz",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rviz_enable)",
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "0",
+          "rviz_enable": "true",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/MID360_config.json"
+        },
+        "rviz_group_present": true,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream rviz profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"0\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/MID360_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "24722510c644377d632bb36839d9cc78bc2c308fa76e1f7bf6c3f9b2f683734e"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 60,
+        "lines_removed": 37,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (30)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1933,
+      "bytes_final": 3508,
+      "final_bytes": 3508,
+      "final_lines": 68
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+      "baseline_sha256": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
+      "final_sha256": "dca8b5474c6c84ae7920c43c308c2dc751860fcdd5531b1b113ae20265ea7eb2",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, rviz profile for MID360s",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "livox_rviz pkg=rviz type=rviz",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rviz_enable)",
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "0",
+          "rviz_enable": "true",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/MID360s_config.json"
+        },
+        "rviz_group_present": true,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream rviz profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"0\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/MID360s_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "dca8b5474c6c84ae7920c43c308c2dc751860fcdd5531b1b113ae20265ea7eb2"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 61,
+        "lines_removed": 37,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (30)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1934,
+      "bytes_final": 3568,
+      "final_bytes": 3568,
+      "final_lines": 69
+    },
+    {
+      "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+      "baseline_sha256": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
+      "final_sha256": "63df18a8d45993fe1f7456b833df7f0a3181a2980bac54da4daae9a10aad4b24",
+      "kind": "configuration",
+      "action": "changed",
+      "readability_work": "Added a purpose header naming the LiDAR model, the msg/rviz profile and the selected user_config_path; documented all 13 launch arguments and the 11 ROS parameters (including the output_type -> output_data_type rename and the compatibility-only cmdline_* keys); labelled the driver node, the optional rviz group and the optional rosbag group; normalised indentation (tabs/mixed spaces -> 2 spaces) and removed trailing whitespace. No tag, attribute, value, child order, condition or startup behaviour was changed.",
+      "read_evidence": {
+        "kind_detail": "ROS1 roslaunch XML, rviz profile for HAP + MID360",
+        "declared_args": [
+          "lvx_file_path",
+          "bd_list",
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_type",
+          "rviz_enable",
+          "rosbag_enable",
+          "cmdline_arg",
+          "msg_frame_id",
+          "lidar_bag",
+          "imu_bag"
+        ],
+        "arg_meaning": {
+          "lvx_file_path": "forwarded to cmdline_file_path; not read by this driver snapshot",
+          "bd_list": "forwarded to cmdline_str and node args; not read by this snapshot",
+          "xfer_format": "0 PointCloud2 / 1 Livox CustomMsg / 2 PCL PointXYZI",
+          "multi_topic": "0 one shared topic / 1 one topic per LiDAR",
+          "data_src": "0 raw LiDAR; the driver rejects any other value",
+          "publish_freq": "Hz, driver clamps to [0.5, 100.0]",
+          "output_type": "exported as output_data_type; 0 ROS publishing / 1 legacy driver-bag branch, but this entry point never opens a bag, so 1 does not record data",
+          "rviz_enable": "gates the rviz group in rviz_* profiles; unused in msg_*",
+          "rosbag_enable": "starts record -a in a group",
+          "cmdline_arg": "passed as the node args string",
+          "msg_frame_id": "exported as frame_id",
+          "lidar_bag": "flag is read, but legacy bag writes additionally require nonnull bag_; this entry point leaves bag_ null",
+          "imu_bag": "flag is read, but legacy bag writes require nonnull bag_; use rosbag_enable for the separate record node"
+        },
+        "ros_params": [
+          "xfer_format",
+          "multi_topic",
+          "data_src",
+          "publish_freq",
+          "output_data_type",
+          "cmdline_str",
+          "cmdline_file_path",
+          "user_config_path",
+          "frame_id",
+          "enable_lidar_bag",
+          "enable_imu_bag"
+        ],
+        "nodes": [
+          "livox_lidar_publisher2 pkg=livox_ros_driver2 type=livox_ros_driver2_node",
+          "livox_rviz pkg=rviz type=rviz",
+          "record pkg=rosbag type=record"
+        ],
+        "group_conditions": [
+          "$(arg rviz_enable)",
+          "$(arg rosbag_enable)"
+        ],
+        "key_defaults": {
+          "xfer_format": "0",
+          "rviz_enable": "true",
+          "data_src": "0",
+          "publish_freq": "10.0",
+          "user_config_path": "$(find livox_ros_driver2)/config/mixed_HAP_MID360_config.json"
+        },
+        "rviz_group_present": true,
+        "source_excerpt": "  <!-- Overridable arguments; defaults match the upstream rviz profile.\n       publish_freq is Hz and the driver clamps it to [0.5, 100.0]. -->\n  <arg name=\"xfer_format\" default=\"0\"/>",
+        "driver_symbols_consulted": [
+          "third_party/livox_ros_driver2/src/livox_ros_driver2.cpp: getParam(\"xfer_format\"...\"enable_imu_bag\") and publish_freq clamp [0.5,100.0]",
+          "third_party/livox_ros_driver2/src/comm/comm.h: kSourceRawLidar = 0, kSourceRawHub = 1",
+          "third_party/livox_ros_driver2/src/lddc.h: kPointCloud2Msg=0, kLivoxCustomMsg=1, kOutputToRos=0, kOutputToRosBagFile=1",
+          "third_party/livox_ros_driver2/msg/CustomMsg.msg (msg profile payload)",
+          "third_party/livox_ros_driver2/config/mixed_HAP_MID360_config.json exists",
+          "lddc.cpp ctor initializes bag_=nullptr; all bag writes require nonnull bag_; CreateBagFile has no call in this entry point"
+        ],
+        "xml_tree_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "63df18a8d45993fe1f7456b833df7f0a3181a2980bac54da4daae9a10aad4b24"
+      },
+      "checks_and_thresholds": {
+        "xml_wellformed": "xmllint --noout returncode == 0",
+        "semantic_tree": "exact equality of (tag, ordered attributes, children) against HEAD blob; threshold 0 differences",
+        "content_lines": "comment-stripped stripped-line multiset equality against HEAD; threshold 0 differences",
+        "arg_references": "every $(arg NAME) resolves to a declared <arg>; threshold 0 unresolved",
+        "arg_name_uniqueness": "13 <arg> names unique",
+        "element_counts": "13 args / 11 params / 2 nodes and 1 group (msg) or 3 nodes and 2 groups (rviz), equal to baseline",
+        "no_runtime_execution": "no roslaunch/ROS run performed (out of authorized scope)",
+        "bag_branch_qualification": "comment states that legacy output_type=1 never opens a driver bag in this entry point; present in all 8 launch files"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "python ElementTree canonical compare (tag, ordered attributes, stripped text, child order) + xmllint + comment-strip content-line multiset + $(arg) resolution; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 60,
+        "lines_removed": 37,
+        "checks_passed": [
+          "XML tree identical to baseline blob",
+          "xmllint rc=0",
+          "content lines equal modulo comments",
+          "all $(arg) references resolved",
+          "element count equal to baseline (30)",
+          "corrected bag-branch qualification comment present"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 1943,
+      "bytes_final": 3523,
+      "final_bytes": 3523,
+      "final_lines": 68
+    },
+    {
+      "path": "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
+      "baseline_sha256": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
+      "final_sha256": "0fef041dfe996e9e1afb3cb6b85ffe70379cd271bd1674d7625dc915a67d5984",
+      "kind": "interface_definition",
+      "action": "changed",
+      "readability_work": "Added a header note that this IDL is generated from scan_planner_msgs/msg/Bspline.msg and that field order/types are the ROS 2 wire contract, then per-field comments explaining order (B-spline degree, producer emits 3), traj_id, start_time, knots (length = control points + order + 1, see UniformBspline::setUniformBspline), pos_pts (3-D control points), and that yaw_pts/yaw_dt are declared but not populated by the vendored producer. Comments only; zero token changes.",
+      "read_evidence": {
+        "struct": "Bspline",
+        "fields_in_order": [
+          [
+            "int32",
+            "order"
+          ],
+          [
+            "int64",
+            "traj_id"
+          ],
+          [
+            "builtin_interfaces::msg::Time",
+            "start_time"
+          ],
+          [
+            "sequence<double>",
+            "knots"
+          ],
+          [
+            "sequence<geometry_msgs::msg::Point>",
+            "pos_pts"
+          ],
+          [
+            "sequence<double>",
+            "yaw_pts"
+          ],
+          [
+            "double",
+            "yaw_dt"
+          ]
+        ],
+        "token_count_unchanged": 59,
+        "comment_lines_final": 16,
+        "source_excerpt": "      // Knot vector of the position spline. Its length is\n      // control points + order + 1 (see UniformBspline::setUniformBspline).\n      sequence<double> knots;",
+        "producer_symbols": [
+          "third_party/scan/plan_manage/src/scan_replan_fsm.cpp: bspline.order = 3; bspline.traj_id = info->traj_id_; bspline.pos_pts/knots filled from position_traj_",
+          "third_party/scan/plan_manage/src/closed_loop_controller.cpp: rejects empty pos_pts/knots or order <= 0; UniformBspline(points, msg->order, 0.1); traj_id_ = msg->traj_id",
+          "third_party/scan/bspline_opt/src/uniform_bspline.cpp: m_ = n_ + p_ + 1, u_ sized m_ + 1",
+          "third_party/scan/scan_planner_msgs/msg/Bspline.msg is the generation source"
+        ],
+        "note": "generated artifact: regenerating from the .msg would drop these comments; hypothetical yaw-spline semantics are not established by this snapshot",
+        "token_stream_equal_to_baseline": true,
+        "restored_from_review_candidate_sha256": "0fef041dfe996e9e1afb3cb6b85ffe70379cd271bd1674d7625dc915a67d5984",
+        "postimage_status": "restored byte-exact from the independently reviewed candidate"
+      },
+      "checks_and_thresholds": {
+        "token_stream": "non-comment, non-whitespace IDL token sequence equality against HEAD; threshold 0 token differences",
+        "field_contract": "struct member (type, name) order list equality; threshold 0 differences",
+        "comment_safety": "no token added/removed; only // comment lines inserted",
+        "idl_compile": "not executed: no idlc/omniidl/fastddsgen available, so this is a token-identity proof rather than a codegen/compile proof"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "comment-aware IDL tokenizer + struct field extractor; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 13,
+        "lines_removed": 0,
+        "checks_passed": [
+          "non-comment token stream identical (59 tokens)",
+          "field order/types identical to baseline",
+          "comments only; zero token changes"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 550,
+      "bytes_final": 1436,
+      "final_bytes": 1436,
+      "final_lines": 39
+    },
+    {
+      "path": "third_party/scan/scan_planner_msgs/msg/DataDisp.idl",
+      "baseline_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
+      "final_sha256": "a01293ba83eddc49aaaea82c4aa4d13e3ab2b44a5fd8dc744c050993c5f50d5b",
+      "kind": "interface_definition",
+      "action": "changed",
+      "readability_work": "Added a header note that this IDL is generated from scan_planner_msgs/msg/DataDisp.msg and that the field order/types are the ROS 2 wire contract, then producer-scoped comments: the vendored scan_replan_fsm producer sets only header.stamp on planning/data_display and never assigns a..e, so those five doubles keep their 0.0 defaults with no definition in this snapshot. The comments also state that the interface itself does not name or reserve the fields, so another publisher may assign them. This is a newly authored comment postimage over the unchanged baseline interface: it does not reproduce the earlier, unrecovered comment checkpoint. Comments only; zero token changes.",
+      "read_evidence": {
+        "struct": "DataDisp",
+        "fields_in_order": [
+          [
+            "std_msgs::msg::Header",
+            "header"
+          ],
+          [
+            "double",
+            "a"
+          ],
+          [
+            "double",
+            "b"
+          ],
+          [
+            "double",
+            "c"
+          ],
+          [
+            "double",
+            "d"
+          ],
+          [
+            "double",
+            "e"
+          ]
+        ],
+        "token_count_unchanged": 40,
+        "comment_lines_final": 20,
+        "source_excerpt": "      // Standard header. The vendored producer sets only its stamp, to the\n      // publish time, before publishing on planning/data_display.\n      std_msgs::msg::Header header;",
+        "producer_symbols": [
+          "third_party/scan/plan_manage/src/scan_replan_fsm.cpp sets only data_disp_.header.stamp before publishing on planning/data_display",
+          "third_party/scan/plan_manage/src/scan_replan_fsm.cpp:231 create_publisher<DataDisp>(\"planning/data_display\", 100)",
+          "no assignment to data_disp_.a..e in the vendored producer",
+          "third_party/scan/scan_planner_msgs/msg/DataDisp.msg is the generation source"
+        ],
+        "note": "generated artifact: regenerating from the .msg would drop these comments; a..e are unassigned by this producer, not reserved by the interface",
+        "token_stream_equal_to_baseline": true,
+        "postimage_status": "new comment postimage authored from the unchanged baseline interface; the earlier comment checkpoint was not recovered and this final sha does not claim to reproduce it"
+      },
+      "checks_and_thresholds": {
+        "token_stream": "non-comment, non-whitespace IDL token sequence equality against HEAD; threshold 0 token differences",
+        "field_contract": "struct member (type, name) order list equality; threshold 0 differences",
+        "comment_safety": "no token added/removed; only // comment lines inserted",
+        "idl_compile": "not executed: no idlc/omniidl/fastddsgen available, so this is a token-identity proof rather than a codegen/compile proof"
+      },
+      "validation": {
+        "result": "pass",
+        "method": "comment-aware IDL tokenizer + struct field extractor; run by scratch/validate_restore.py",
+        "evidence": "scratch/validation-restore.json -> results[path]",
+        "lines_added": 17,
+        "lines_removed": 0,
+        "checks_passed": [
+          "non-comment token stream identical (40 tokens)",
+          "field order/types identical to baseline",
+          "comments only; zero token changes"
+        ],
+        "revalidated_after_serial_restore": true
+      },
+      "bytes_baseline": 398,
+      "bytes_final": 1545,
+      "final_bytes": 1545,
+      "final_lines": 40
+    }
+  ],
+  "independent_fact_review": {
+    "reviewer": "Codex",
+    "reviewed_at_utc": "2026-11-08T20:22:58.559724+00:00",
+    "source_report_preimage_sha256": "1b74fdb702376c3f60a9a169d19ab7d31bd465cfa12d52bab94c5a1f76169435",
+    "corrected_topics": [
+      "floor arithmetic",
+      "scope count",
+      "patch applicability",
+      "ROS1 bag branch",
+      "IDL yaw precision",
+      "manifest membership",
+      "timing advice"
+    ],
+    "source_comment_candidates_required": [
+      "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+      "third_party/scan/scan_planner_msgs/msg/Bspline.idl"
+    ],
+    "structural_checks": [
+      {
+        "path": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
+        "bytes_equal_baseline": true,
+        "unified_hunks_checked": 4
+      },
+      {
+        "path": "third_party/fastdds/heartbeat_2_14_6.patch",
+        "bytes_equal_baseline": true,
+        "unified_hunks_checked": 2
+      },
+      {
+        "path": "third_party/fastdds/heartbeat_2_14_6_tests.patch",
+        "bytes_equal_baseline": true,
+        "unified_hunks_checked": 3
+      },
+      {
+        "path": "third_party/fastdds/heartbeat_fixture_r2.patch",
+        "bytes_equal_baseline": true,
+        "unified_hunks_checked": 6
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+        "corrected_candidate_xml_equals_baseline": true,
+        "xmllint_nonet_noout_exit": 0
+      },
+      {
+        "path": "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
+        "corrected_candidate_idl_tokens_equal_baseline": true,
+        "tokens": 59
+      },
+      {
+        "path": "third_party/scan/scan_planner_msgs/msg/DataDisp.idl",
+        "post_restore_status": "redocumented from the unchanged baseline interface; new comment postimage with a new final sha256; the earlier comment checkpoint was not recovered and is not claimed",
+        "token_stream_equal_baseline": true,
+        "tokens": 40,
+        "final_sha256": "a01293ba83eddc49aaaea82c4aa4d13e3ab2b44a5fd8dc744c050993c5f50d5b"
+      }
+    ],
+    "scope_other_tasks": 575,
+    "scope_addendum": 14,
+    "scope_total": 589,
+    "status": "independent_fact_review_applied_and_serially_restored",
+    "concurrent_revert_observed_without_attribution": true,
+    "actual_repo_modified": true,
+    "applied_at_utc": "2026-11-08T20:31:56Z",
+    "datadisp_new_final_sha256": "a01293ba83eddc49aaaea82c4aa4d13e3ab2b44a5fd8dc744c050993c5f50d5b",
+    "note": "All corrected topics are kept in this receipt. Nine reviewed source candidates were restored byte-exact; DataDisp was re-authored from the baseline interface with a new final sha; the four original patch artifacts remain byte-identical."
+  },
+  "report_version": "post_independent_fact_review_serial_restore_v1",
+  "serial_restoration": {
+    "restored_at_utc": "2026-11-08T20:31:56Z",
+    "trigger": "A concurrent vendor task had restored these 10 files to baseline; the restore was performed serially after both main tasks completed.",
+    "pre_restore_state_check": "all 10 content files were at the scope-addendum baseline sha256 before writing; no unknown concurrent edit was overwritten",
+    "restored_from_independent_review_candidates": [
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch",
+        "candidate_sha256": "c2286adf949f245c88de33ed92f6245af3194debba7475eaac37b29af2030f97"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch",
+        "candidate_sha256": "3adbbb71afed30733a59903ccdd09f97a818f298b5e2d6a2a92d6e9ff516a8f3"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch",
+        "candidate_sha256": "92f92c8095aff162e4be116f411d4d6c131e9d874bc75382d4a836866454394f"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch",
+        "candidate_sha256": "dc9409a354f1af98f47faa09875cca7f98c76754435e0f8501c4cb22198ead6b"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch",
+        "candidate_sha256": "515dec690b09f257ef4c443c78a65ee972df6703191417a55995123b2f35be05"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch",
+        "candidate_sha256": "24722510c644377d632bb36839d9cc78bc2c308fa76e1f7bf6c3f9b2f683734e"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch",
+        "candidate_sha256": "dca8b5474c6c84ae7920c43c308c2dc751860fcdd5531b1b113ae20265ea7eb2"
+      },
+      {
+        "path": "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch",
+        "candidate_sha256": "63df18a8d45993fe1f7456b833df7f0a3181a2980bac54da4daae9a10aad4b24"
+      },
+      {
+        "path": "third_party/scan/scan_planner_msgs/msg/Bspline.idl",
+        "candidate_sha256": "0fef041dfe996e9e1afb3cb6b85ffe70379cd271bd1674d7625dc915a67d5984"
+      }
+    ],
+    "datadisp_redocumented": {
+      "path": "third_party/scan/scan_planner_msgs/msg/DataDisp.idl",
+      "baseline_sha256": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e",
+      "final_sha256": "a01293ba83eddc49aaaea82c4aa4d13e3ab2b44a5fd8dc744c050993c5f50d5b",
+      "old_postimage_recovered": false,
+      "treatment": "new accurate comments over the unchanged baseline interface; new final sha, no claim of reproducing the unrecovered old checkpoint"
+    },
+    "patches": "all four .patch files remained byte-identical to the addendum baseline and were not touched",
+    "other_task_files": "no vendor/project file was restored, reverted or rewritten by this task",
+    "baseline_shas_preserved": true,
+    "pre_restore_sha256": {
+      "third_party/livox_ros_driver2/launch_ROS1/msg_HAP.launch": "2bb9adeab763da7a414fe756fa0569e41ab4795722817ad950a39450f97813ef",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360.launch": "b4a86ae5e58d354e454140fe6e3b0032193826f764ed8da9f6d1519ba99f60dd",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_MID360s.launch": "623d0aac93ff6bb54688fb132f441248b33d7331376df30ebb77e736023da850",
+      "third_party/livox_ros_driver2/launch_ROS1/msg_mixed.launch": "77c8f7eed8d2702211f52db053f792f2b5906123e8ab647a913313bb015c6ab8",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_HAP.launch": "be4b09a282eb005128933ec802d0658d273ebe5b91dc65d0413a78c603ee3f78",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360.launch": "03a622737d58ac346261ad5bf87df109d3c339184c1baeee11ba8371396f6578",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_MID360s.launch": "0786538975f8cb314680f747d3ddacd4d093093e944d94b1d9f10a67bccb2b95",
+      "third_party/livox_ros_driver2/launch_ROS1/rviz_mixed.launch": "bb9830540646897bb52e4abd76947232a751b27f0f9ec7c4fedc953bb4fbcb79",
+      "third_party/scan/scan_planner_msgs/msg/Bspline.idl": "470fbc58062b48b37225fd86e8dba61c450fb9755139234d84c384768082c61d",
+      "third_party/scan/scan_planner_msgs/msg/DataDisp.idl": "93cc21404dd9b557e9af8a52c65a4368d6bd6ab2a28d069dfb00bec311c4074e"
+    },
+    "pre_restore_equals_baseline": true
+  },
+  "root_final_validation": {
+    "checked_at_utc": "2026-11-09T01:07:15.657177+00:00",
+    "record": "../verification.json",
+    "source_fingerprints_refreshed": true,
+    "vendor_manifest_sha256": "8a2b759da3a5f35e1f471f6e349036715d674753206eeb864e8e6d6c31825d2b",
+    "vendor_manifest_files_verified": 304,
+    "unit_passed": 54,
+    "regression_passed": 57,
+    "regression_skipped": 5,
+    "pct_compile_and_synthetic_smoke": "passed",
+    "additional_comment_review": "Two shell/CMake comment-only corrections after the 109-candidate DSH integration; execution lines unchanged.",
+    "reference_entries": "Initial DSH read-only review checkpoint; current reference/documentation bookkeeping is recorded separately below."
+  }
+}

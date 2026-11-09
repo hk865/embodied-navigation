@@ -1,3 +1,7 @@
+# FAST-LIVO2 pinhole camera used by the sample dataset: 1280x1024 sensor,
+# images down-scaled by 0.5 before processing. cam_fx/cam_fy/cam_cx/cam_cy are in
+# (scaled) pixels; cam_d0..cam_d3 are the radial-tangential distortion
+# coefficients (OpenCV k1, k2, p1, p2) that PinholeCamera applies in unproject.
 /**:
   ros__parameters:
     cam_model: Pinhole

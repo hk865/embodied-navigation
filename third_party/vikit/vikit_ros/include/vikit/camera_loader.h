@@ -22,9 +22,18 @@
 namespace vk {
 namespace camera_loader {
 
+// Build a camera model from ROS parameters. The single-camera overload reads
+// `cam_model` (Ocam / Pinhole / EquidistantCamera / PolynomialCamera / ATAN) plus
+// the matching intrinsics, preferring the remote (parameter_blackboard)
+// namespace `ns` and falling back to the node's own parameters; an unknown model
+// falls back to a hardcoded 1280x1024 PinholeCamera. The list overload reads
+// `ns/cam_num` cameras from `ns/cam_i` namespaces (model names include
+// FishPoly). The returned AbstractCamera* is heap allocated, owned by the caller.
 /// Load from ROS Namespace
-bool loadFromRosNs(const rclcpp::Node::SharedPtr & nh, const std::string& ns, vk::AbstractCamera*& cam);
-bool loadFromRosNs(const rclcpp::Node::SharedPtr & nh, const std::string& ns, std::vector<vk::AbstractCamera*>& cam_list);
+bool loadFromRosNs(const rclcpp::Node::SharedPtr &nh, const std::string &ns,
+                   vk::AbstractCamera *&cam);
+bool loadFromRosNs(const rclcpp::Node::SharedPtr &nh, const std::string &ns,
+                   std::vector<vk::AbstractCamera *> &cam_list);
 
 } // namespace camera_loader
 } // namespace vk

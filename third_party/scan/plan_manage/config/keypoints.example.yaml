@@ -1,3 +1,5 @@
+# Example waypoint route: navi_mode 2 selects waypoint following and waypoints is
+# a flat [x, y, z] list in metres (two points here: (0,0,0.3) -> (2,0,0.3)).
 scan_planner_node:
   ros__parameters:
     fsm.navi_mode: 2

@@ -1,1 +1,1 @@
-"""Portable RoboGauge simulation deployment components."""
+"""RoboGauge command admission, route tracking and offline execution-evidence audit."""

@@ -34,44 +34,48 @@ namespace livox_ros {
 // Based on the IMU Data Type in Livox communication protocol
 // TODO: add a link to the protocol
 typedef struct {
-  float gyro_x;        /**< Gyroscope X axis, Unit:rad/s */
-  float gyro_y;        /**< Gyroscope Y axis, Unit:rad/s */
-  float gyro_z;        /**< Gyroscope Z axis, Unit:rad/s */
-  float acc_x;         /**< Accelerometer X axis, Unit:g */
-  float acc_y;         /**< Accelerometer Y axis, Unit:g */
-  float acc_z;         /**< Accelerometer Z axis, Unit:g */
+    float gyro_x; /**< Gyroscope X axis, Unit:rad/s */
+    float gyro_y; /**< Gyroscope Y axis, Unit:rad/s */
+    float gyro_z; /**< Gyroscope Z axis, Unit:rad/s */
+    float acc_x;  /**< Accelerometer X axis, Unit:g */
+    float acc_y;  /**< Accelerometer Y axis, Unit:g */
+    float acc_z;  /**< Accelerometer Z axis, Unit:g */
 } RawImuPoint;
 
 typedef struct {
-  uint8_t lidar_type;
-  uint32_t handle;
-  uint8_t slot;
-  // union {
-  //   uint8_t handle;
-  //   uint8_t slot;
-  // };
-  uint64_t time_stamp;
-  float gyro_x;        /**< Gyroscope X axis, Unit:rad/s */
-  float gyro_y;        /**< Gyroscope Y axis, Unit:rad/s */
-  float gyro_z;        /**< Gyroscope Z axis, Unit:rad/s */
-  float acc_x;         /**< Accelerometer X axis, Unit:g */
-  float acc_y;         /**< Accelerometer Y axis, Unit:g */
-  float acc_z;         /**< Accelerometer Z axis, Unit:g */
+    uint8_t lidar_type;
+    uint32_t handle;
+    uint8_t slot;
+    // union {
+    //   uint8_t handle;
+    //   uint8_t slot;
+    // };
+    uint64_t time_stamp;
+    float gyro_x; /**< Gyroscope X axis, Unit:rad/s */
+    float gyro_y; /**< Gyroscope Y axis, Unit:rad/s */
+    float gyro_z; /**< Gyroscope Z axis, Unit:rad/s */
+    float acc_x;  /**< Accelerometer X axis, Unit:g */
+    float acc_y;  /**< Accelerometer Y axis, Unit:g */
+    float acc_z;  /**< Accelerometer Z axis, Unit:g */
 } ImuData;
 
+// Thread-safe FIFO between the Livox SDK callback thread (Push) and the
+// publishing thread (Pop/Empty/Clear). ImuData carries rad/s gyro and g-scaled
+// acceleration plus the raw nanosecond timestamp; no rate limiting is applied.
 class LidarImuDataQueue {
- public:
-  void Push(ImuData* imu_data);
-  bool Pop(ImuData& imu_data);
-  bool Empty();
-  void Clear();
+  public:
+    // Push copies the pointed-to sample; the caller keeps ownership of *imu_data.
+    void Push(ImuData *imu_data);
+    // Pop removes the front sample into imu_data; false when the queue is empty.
+    bool Pop(ImuData &imu_data);
+    bool Empty();
+    void Clear();
 
- private:
-  std::mutex mutex_;
-  std::list<ImuData> imu_data_queue_;
+  private:
+    std::mutex mutex_;
+    std::list<ImuData> imu_data_queue_;
 };
 
 } // namespace
 
 #endif // LIVOX_ROS_DRIVER_LIDAR_IMU_DATA_QUEUE_H_
-

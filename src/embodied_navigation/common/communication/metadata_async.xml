@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Fast DDS profile: publish the localization metadata bundle asynchronously
+     so a slow reader cannot stall the callback that produced the measurement. -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <profiles>
     <publisher profile_name="/demo/navigation/localization_bundle">

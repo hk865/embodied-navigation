@@ -1,7 +1,11 @@
 # Generated from simulation/scenario.json; true RGB projection, no ground truth.
+# Section map: common (topics/flags), debug, extrin_calib (LiDAR/IMU extrinsics,
+# Rcl/Pcl), time_offset, preprocess (point filtering/lidar model), vio (visual
+# iteration), imu (IMU and stationary gravity initialization), lio, local_map,
+# uav, publish, evo, pcd_save, image_save. Values are frozen launch inputs.
 /**:
   ros__parameters:
-    common:
+    common:  # live sensor topics; remapped to project-owned sources by the launcher
       img_topic: /camera/image_color
       lid_topic: /camera_demo/slam/lidar
       imu_topic: /livox/imu

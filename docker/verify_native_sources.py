@@ -4,6 +4,7 @@
 No network, ROS nodes, model loading or GPU operations. Temporary compiler
 outputs stay below docs/dependencies and are removed on completion.
 """
+
 from pathlib import Path
 import argparse
 import ast
@@ -17,12 +18,23 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED = {"fast_livo2_core", "fast_livo2_ros", "vikit_common", "vikit_ros",
-            "livox_ros_driver2", "plan_env", "path_searching", "bspline_opt",
-            "traj_utils", "scan_planner", "scan_planner_msgs"}
+EXPECTED = {
+    "fast_livo2_core",
+    "fast_livo2_ros",
+    "vikit_common",
+    "vikit_ros",
+    "livox_ros_driver2",
+    "plan_env",
+    "path_searching",
+    "bspline_opt",
+    "traj_utils",
+    "scan_planner",
+    "scan_planner_msgs",
+}
 
 
 def command(args):
+    """Run one host command (text, captured) and return stdout; raise on nonzero exit."""
     completed = subprocess.run(list(map(str, args)), text=True, capture_output=True)
     if completed.returncode:
         raise RuntimeError(" ".join(map(str, args)) + "\n" + completed.stdout + completed.stderr)
@@ -30,9 +42,11 @@ def command(args):
 
 
 def main():
+    """Verify vendored sources and optional PCT CPU compile; print the JSON report."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--compile-pct", action="store_true")
     args = parser.parse_args()
+    # 1) Each migration-manifest entry must be regular and match its recorded hash.
     manifest = json.loads((ROOT / "docs/dependencies/vendored-source-manifest.json").read_text())
     for record in manifest["files"]:
         path = ROOT / record["destination"]
@@ -41,6 +55,7 @@ def main():
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual != record["vendored_sha256"]:
             raise ValueError("Vendored source changed: " + str(path))
+    # 2) Check unique package names, nonempty license declarations and the expected set.
     packages = {}
     for path in (ROOT / "third_party").rglob("package.xml"):
         tree = ET.parse(path).getroot()
@@ -57,11 +72,15 @@ def main():
         for path in base.rglob("*.py"):
             ast.parse(path.read_text(), filename=str(path))
             python_count += 1
+    # 3) Check the supported source-path patterns in third-party CMakeLists.
     missing = []
     cmakes = sorted((ROOT / "third_party").rglob("CMakeLists.txt"))
     for path in cmakes:
         text = path.read_text()
-        for relative in re.findall(r"(?<![A-Za-z0-9_./])((?:src|test|msg|scripts)/[A-Za-z0-9_./-]+\.(?:cpp|cc|c|msg|py))", text):
+        for relative in re.findall(
+            r"(?<![A-Za-z0-9_./])((?:src|test|msg|scripts)/[A-Za-z0-9_./-]+\.(?:cpp|cc|c|msg|py))",
+            text,
+        ):
             if not (path.parent / relative).is_file():
                 missing.append(str(path.parent / relative))
         for relative in re.findall(r"\$\{CMAKE_CURRENT_SOURCE_DIR\}(/\.\./[^\s\)\"]+)", text):
@@ -69,29 +88,67 @@ def main():
                 missing.append(str(path.parent) + relative)
     if missing:
         raise ValueError("Missing CMake source references: " + repr(missing))
-    with tempfile.TemporaryDirectory(prefix=".verification_tmp_", dir=ROOT / "docs/dependencies") as temporary:
+    # 4) Parse CMake files as function bodies (no build) and dry-run the VIO patch.
+    with tempfile.TemporaryDirectory(
+        prefix=".verification_tmp_", dir=ROOT / "docs/dependencies"
+    ) as temporary:
         work = Path(temporary)
         # A function body is parsed, not executed. No find_package or builds here.
         for index, path in enumerate(cmakes):
             script = work / ("syntax_" + str(index) + ".cmake")
-            script.write_text("function(source_syntax_only)\n" + path.read_text() + "\nendfunction()\n")
+            script.write_text(
+                "function(source_syntax_only)\n" + path.read_text() + "\nendfunction()\n"
+            )
             command(["cmake", "-P", script])
         patch = ROOT / "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch"
-        command(["patch", "--dry-run", "--reverse", "--batch", "-p1", "-d",
-                 ROOT / "third_party/fast_livo2", "-i", patch])
-        report = dict(manifest_files_verified=len(manifest["files"]), ros_packages=packages,
-                      cmake_files_parsed=len(cmakes), python_files_parsed=python_count,
-                      symlinks=[str(p.relative_to(ROOT)) for p in (ROOT / "third_party").rglob("*") if p.is_symlink()],
-                      vio_patch_reverse_dry_run="passed", pct_compile="not requested",
-                      ros_compile="not run", docker_build="not run", simulation="not run")
+        command(
+            [
+                "patch",
+                "--dry-run",
+                "--reverse",
+                "--batch",
+                "-p1",
+                "-d",
+                ROOT / "third_party/fast_livo2",
+                "-i",
+                patch,
+            ]
+        )
+        report = dict(
+            manifest_files_verified=len(manifest["files"]),
+            ros_packages=packages,
+            cmake_files_parsed=len(cmakes),
+            python_files_parsed=python_count,
+            symlinks=[
+                str(p.relative_to(ROOT))
+                for p in (ROOT / "third_party").rglob("*")
+                if p.is_symlink()
+            ],
+            vio_patch_reverse_dry_run="passed",
+            pct_compile="not requested",
+            ros_compile="not run",
+            docker_build="not run",
+            simulation="not run",
+        )
         if report["symlinks"]:
             raise ValueError("Symlinks found in vendored sources")
         if args.compile_pct:
-            command(["cmake", "-S", ROOT / "third_party/pct", "-B", work / "pct", "-DCMAKE_BUILD_TYPE=Release"])
+            command(
+                [
+                    "cmake",
+                    "-S",
+                    ROOT / "third_party/pct",
+                    "-B",
+                    work / "pct",
+                    "-DCMAKE_BUILD_TYPE=Release",
+                ]
+            )
             command(["cmake", "--build", work / "pct", "--parallel", "2"])
             data = work / "map.bin"
             values = [0.0] * (8 * 8 * 3)
-            data.write_bytes(struct.pack("<iiid", 1, 8, 8, 0.1) + struct.pack("<" + "d" * len(values), *values))
+            data.write_bytes(
+                struct.pack("<iiid", 1, 8, 8, 0.1) + struct.pack("<" + "d" * len(values), *values)
+            )
             query = work / "query.txt"
             query.write_text("0 1 1 0 6 6\n")
             result = work / "path.json"
@@ -100,7 +157,9 @@ def main():
             if not path["found"] or not path["cells_layer_row_col"]:
                 raise ValueError("PCT did not find the bounded free-grid test path")
             report["pct_compile"] = "passed"
-            report["pct_free_grid_smoke"] = dict(found=path["found"], points=len(path["cells_layer_row_col"]))
+            report["pct_free_grid_smoke"] = dict(
+                found=path["found"], points=len(path["cells_layer_row_col"])
+            )
         print(json.dumps(report, indent=2))
 
 

@@ -1,7 +1,10 @@
-lookahead_m: 0.7
-velocity_damping: 0.10
-max_forward_mps: 0.5
-max_lateral_mps: 0.05
-max_yaw_rate_rps: 0.15
-heading_gain: 1.2
-distance_gain: 1.2
+# Relative waypoint tracking: geometric look-ahead plus velocity damping.
+# Values mirror RelativePidConfig defaults; caps are controller command bounds,
+# not measured Student physical limits.
+lookahead_m: 0.7          # forward look-ahead along the waypoint segment
+velocity_damping: 0.10    # coefficient in desired = position_error - damping * velocity
+max_forward_mps: 0.5      # forward speed cap
+max_lateral_mps: 0.05     # lateral speed cap
+max_yaw_rate_rps: 0.15    # yaw-rate cap
+heading_gain: 1.2         # heading error -> yaw-rate gain
+distance_gain: 1.2        # distance to the segment goal -> speed-cap gain
