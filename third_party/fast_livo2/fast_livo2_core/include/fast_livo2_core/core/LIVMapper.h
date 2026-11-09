@@ -193,6 +193,8 @@ class LIVMapper {
     bool dense_map_en = false;
     bool publish_base_tf = false;
     int img_en = 1, imu_int_frame = 3;
+    bool allow_lio_only = false;
+    uint64_t lio_sparse_cloud_drops = 0;
     bool normal_en = true;
     bool exposure_estimate_en = false;
     double exposure_time_init = 0.0;

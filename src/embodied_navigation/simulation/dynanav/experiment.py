@@ -1,0 +1,341 @@
+"""Explicit, reproducible Isaac diagnostics. Native pose is never called SLAM."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import runpy
+import sys
+from pathlib import Path
+
+from embodied_navigation.project import data_root
+
+
+def float32_sensor_time_tolerance(duration_s):
+    """Half a float32 clock ULP at the run horizon plus the existing numeric margin."""
+    if not math.isfinite(duration_s) or duration_s <= 0:
+        raise ValueError("A positive finite sensor clock horizon is required")
+    half_ulp = math.ldexp(1.0, math.frexp(duration_s)[1] - 25)
+    return max(2e-6, half_ulp) + 1e-7
+
+
+def joint_speed_observation(
+    names, velocities, *, nominal_limit=30.0, readback_tolerance=0.0
+):
+    """Report measured speeds; never clamp state, actuator torque or engine limits."""
+    values = tuple(float(value) for value in velocities)
+    if not values or len(values) != len(names):
+        raise ValueError("One measured speed per named joint is required")
+    if (
+        not math.isfinite(nominal_limit)
+        or nominal_limit <= 0
+        or not math.isfinite(readback_tolerance)
+        or readback_tolerance < 0
+    ):
+        raise ValueError(
+            "A positive nominal limit and nonnegative finite tolerance are required"
+        )
+    finite = all(math.isfinite(value) for value in values)
+    index = max(range(len(values)), key=lambda j: abs(values[j])) if finite else None
+    peak = abs(values[index]) if finite else None
+    return {
+        "nominal_limit_radps": nominal_limit,
+        "readback_tolerance_radps": readback_tolerance,
+        "abort_limit_radps": nominal_limit + readback_tolerance,
+        "max_abs_radps": peak,
+        "worst_joint": names[index] if finite else None,
+        "nominal_exceedance_radps": max(0.0, peak - nominal_limit) if finite else None,
+        "within_guard": finite and peak <= nominal_limit + readback_tolerance,
+        "state_or_motor_command_clamped": False,
+    }
+
+
+def make_profile(speed_mps=1.0, duration_s=90.0):
+    """First physical stair flight; speed is a command ceiling, not achieved speed."""
+    if not math.isfinite(speed_mps) or not 0 <= speed_mps <= 1.0:
+        raise ValueError("Diagnostic speed must be finite and within 0..1 m/s")
+    if not math.isfinite(duration_s) or not 8 <= duration_s <= 300:
+        raise ValueError("Diagnostic duration must be finite and within 8..300 s")
+    return {
+        "schema": "dynanav-diagnostic/v1",
+        "policy": "robogauge",
+        "control_mode": "native_pose_diagnostic",
+        "spawn": [-14.53, -7.5, -2.85],
+        "spawn_yaw": math.pi,
+        "waypoints_xyz": [[-22.0, -7.5, -1.1441]],
+        "speed_mps": speed_mps,
+        "motion_end_s": duration_s - 5.0,
+        "duration_s": duration_s,
+        "basement_collision": True,
+        "minimum_base_z_m": -3.15,
+        "maximum_displacement_m": 15.0,
+        "physical_speed_guard_mps": max(0.65, speed_mps + 0.5),
+        "joint_speed_readback_tolerance_radps": 0.001,
+        "body_contact_report_only": True,
+        "camera_yaw_rad": 0.0,
+        "mapping_pose_source": "simulator_native_pose_oracle",
+        "stair_specific_speed_limit": None,
+        "stop_on_stall": True,
+        "stall_window_s": 8.0,
+        "stall_min_progress_m": 0.02,
+        "semantic_interval_ns": 2_000_000_000,
+        "map_keyframe_interval_ns": 1_000_000_000,
+        "semantic_provider": "isaac_instance_oracle",
+        "notes": "Isolated simulation, direct policy command, no COM PID/slew; tilt/motor/clock checks retained. Base contact is report-only in this isolated diagnostic; tilt and motor bounds still abort.",
+    }
+
+
+def make_slam_controller(profile):
+    """Use the same pure controller construction in --check and the live loop."""
+    from embodied_navigation.simulation.dynanav.slam_route import SlamRouteTracker
+
+    return SlamRouteTracker(
+        profile["slam_route_reference"],
+        speed_mps=profile["speed_mps"],
+        motion_end_s=profile["motion_end_s"],
+        repeat_spawn_assumption=profile["repeat_spawn_assumption"],
+        map_registration_enabled=profile["map_registration_enabled"],
+        max_sim_age_s=0.25,
+        max_wall_age_s=0.5,
+        future_tolerance_s=profile["slam_future_tolerance_s"],
+        stop_on_stall=profile.get("stop_on_stall", True),
+        speed_source=profile["slam_speed_source"],
+        pose_speed_window_s=profile["slam_pose_speed_window_s"],
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scene", type=Path)
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Body command ceiling; no stair-specific reduction",
+    )
+    parser.add_argument("--duration", type=float, default=90.0)
+    parser.add_argument("--rtf", type=float, default=1.0)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate assets/profile without starting Isaac",
+    )
+    from embodied_navigation.simulation.dynanav.routes import ROUTE_NAMES, get_route
+
+    parser.add_argument("--route", choices=ROUTE_NAMES, default="first-flight")
+    parser.add_argument("--render-backend", choices=("fabric", "usd"), default="usd")
+    parser.add_argument(
+        "--archive-rgb",
+        action="store_true",
+        help="Archive every raw renderer RGB frame before video overlays (uncompressed NPZ)",
+    )
+    parser.add_argument(
+        "--pedestrian",
+        action="store_true",
+        help="Local skeletal pedestrian with oracle point-cloud hold/resume",
+    )
+    parser.add_argument("--pedestrian-asset", type=Path)
+    parser.add_argument("--pedestrian-walk", type=Path)
+    parser.add_argument(
+        "--pedestrian-path", choices=("one_way", "sine", "linear"), default="one_way"
+    )
+    parser.add_argument("--pedestrian-delay", type=float, default=4.0)
+    parser.add_argument(
+        "--slam-reference",
+        type=Path,
+        help="Previous measured LIO route; repeat-spawn lab assumption, no global registration",
+    )
+    parser.add_argument(
+        "--odometry-topic", default="/dynanav/lio_observer/aft_mapped_to_init"
+    )
+    parser.add_argument(
+        "--imu-hz",
+        type=int,
+        choices=(100, 200),
+        default=200,
+        help="Publish recorded native IMU samples; 100 Hz reproduces legacy decimation",
+    )
+    parser.add_argument(
+        "--pedestrian-scenario",
+        choices=("spawn-crossing", "landing-crossing"),
+        default="spawn-crossing",
+    )
+    parser.add_argument("--pedestrian-speed", type=float)
+    args = parser.parse_args(argv)
+    profile = make_profile(args.speed, args.duration)
+    profile["imu_publish_hz"] = args.imu_hz
+    profile["imu_publish_stride"] = 200 // args.imu_hz
+    profile["imu_orientation_available"] = False
+    profile["render_backend"] = args.render_backend
+    profile["archive_rgb"] = args.archive_rgb
+    route = get_route(args.route)
+    profile["route"] = route["name"]
+    profile["waypoints_xyz"] = route["waypoints_xyz"]
+    profile["collision_config_path"] = route["config_path"]
+    profile["route_geometry_provenance"] = route["provenance"]
+    if args.pedestrian:
+        if not math.isfinite(args.pedestrian_delay) or args.pedestrian_delay < 0:
+            parser.error("--pedestrian-delay must be finite and nonnegative")
+        if args.render_backend != "usd":
+            parser.error(
+                "The live pedestrian diagnostic requires the measured USD render path"
+            )
+        asset = args.pedestrian_asset or Path(
+            "/home/hyh001/isaacsim/extscache/isaacsim.replicator.agent.core-1.6.8+110.1.2/data/test_scenes/test_biped/biped_demo_meters.usd"
+        )
+        walk = args.pedestrian_walk or Path(
+            "/home/hyh001/isaacsim/extscache/omni.anim.retarget.core-110.1.0+110.1.1.lx64.r.cp312.u7f4/data/rigs/Human/assets/walk.skelanim.usd"
+        )
+        if not asset.is_file() or not walk.is_file():
+            parser.error("Local human and compatible walk assets are required")
+        profile["pedestrian"] = {
+            "asset": str(asset.resolve()),
+            "walk": str(walk.resolve()),
+            "asset_sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+            "walk_sha256": hashlib.sha256(walk.read_bytes()).hexdigest(),
+            "start": [-15.25, -9.5, -3.3],
+            "end": [-15.25, -5.5, -3.3],
+            "speed_mps": 0.6,
+            "start_delay_s": args.pedestrian_delay,
+            "path_mode": args.pedestrian_path,
+        }
+        if args.pedestrian_scenario == "landing-crossing":
+            profile["pedestrian"].update(
+                start=[-22.0, -8.7, -1.4906366737798542],
+                end=[-22.0, -6.3, -1.4906366737798542],
+                speed_mps=0.3,
+            )
+        if args.pedestrian_speed is not None:
+            profile["pedestrian"]["speed_mps"] = args.pedestrian_speed
+        profile["pedestrian"]["scenario"] = args.pedestrian_scenario
+        from embodied_navigation.simulation.dynanav.pedestrian import PedestrianPath
+
+        PedestrianPath(
+            profile["pedestrian"]["start"],
+            profile["pedestrian"]["end"],
+            profile["pedestrian"]["speed_mps"],
+            profile["pedestrian"]["path_mode"],
+        )
+        profile["pedestrian_roots"] = ["/World/DynamicPedestrian"]
+        profile["dynamic_hold"] = True
+        profile["navigation_scope"] = (
+            "native_pose_route_with_oracle_dynamic_hold; not SLAM navigation or general avoidance"
+        )
+    if args.slam_reference:
+        from embodied_navigation.simulation.dynanav.slam_route import (
+            load_slam_route_reference,
+        )
+
+        profile["slam_route_reference"] = load_slam_route_reference(args.slam_reference)
+        profile["slam_route_reference_path"] = str(args.slam_reference.resolve())
+        profile["slam_route_reference_sha256"] = hashlib.sha256(
+            args.slam_reference.read_bytes()
+        ).hexdigest()
+        profile["control_mode"] = "slam_pose_diagnostic"
+        profile["odometry_topic"] = args.odometry_topic
+        profile["repeat_spawn_assumption"] = True
+        profile["map_registration_enabled"] = False
+        profile["slam_speed_source"] = "pose_window"
+        profile["slam_pose_speed_window_s"] = 0.5
+        profile["slam_future_tolerance_s"] = float32_sensor_time_tolerance(
+            args.duration
+        )
+        profile["slam_timestamp_precision"] = (
+            "SDK float32 sensor clock; half-ULP horizon bound plus numerical margin"
+        )
+        profile["navigation_scope"] = (
+            "measured LIO route in repeat-spawn lab; no native route-pose input or global localization"
+        )
+    if args.slam_reference:
+        make_slam_controller(profile)
+    if not math.isfinite(args.rtf) or args.rtf <= 0:
+        parser.error("--rtf must be positive and finite")
+    data = data_root()
+    scene = (
+        args.scene
+        or data
+        / "dynanav/documents_codex_20261108/codex/2026-11-05/task-2/full_asset_render/bundle/office.usd"
+    )
+    from embodied_navigation.robot.unitree.robogauge.runtime import (
+        default_model_path,
+        verify_model,
+    )
+
+    verify_model(default_model_path())
+    robot = data / "runtime_assets/robot/go2_description/go2_description.usda"
+    if not scene.is_file() or not robot.is_file():
+        parser.error("Required office scene or robot USD is missing")
+    output = args.output.expanduser().resolve()
+    if not output.is_relative_to(data.resolve()):
+        parser.error(
+            "Write large experiment outputs below PROJECT_DATA_ROOT/embodied-navigation"
+        )
+    if output.exists():
+        parser.error("Output already exists; choose a new experiment directory")
+    if args.check:
+        print(
+            json.dumps(
+                {
+                    "assets_checked": True,
+                    "model_hash_checked": True,
+                    "simulation_started": False,
+                    "controller_config_checked": bool(args.slam_reference),
+                    "profile": profile,
+                },
+                indent=2,
+            )
+        )
+        return 0
+    output.mkdir(parents=True)
+    profile_path = output / "experiment.json"
+    profile_path.write_text(json.dumps(profile, indent=2))
+    from embodied_navigation.project import project_root
+
+    root = project_root()
+    sources = [
+        "src/embodied_navigation/simulation/dynanav/experiment.py",
+        "src/embodied_navigation/simulation/dynanav/capture_go2_rgbd.py",
+        "src/embodied_navigation/simulation/dynanav/oracle_mapping.py",
+        "src/embodied_navigation/simulation/dynanav/rgb_archive.py",
+        "src/embodied_navigation/simulation/dynanav/render_diagnostics.py",
+        "src/embodied_navigation/simulation/dynanav/pedestrian.py",
+        "src/embodied_navigation/simulation/dynanav/dynamic_hold.py",
+        "src/embodied_navigation/simulation/dynanav/session_collision.py",
+        "src/embodied_navigation/simulation/dynanav/routes.py",
+        "src/embodied_navigation/simulation/dynanav/slam_route.py",
+        "configs/simulation/dynanav_basement_to_ground_collision.json",
+        "src/embodied_navigation/localization_mapping/semantic_mapping/core.py",
+        "src/embodied_navigation/localization_mapping/semantic_mapping/scheduler.py",
+        "src/embodied_navigation/perception/depth.py",
+        "src/embodied_navigation/navigation/robogauge/route_tracker.py",
+        "src/embodied_navigation/robot/unitree/robogauge/contract.py",
+        "src/embodied_navigation/robot/unitree/robogauge/runtime.py",
+        "configs/simulation/dynanav_basement_collision.json",
+    ]
+    manifest = {}
+    for relative in sources:
+        content = (root / relative).read_bytes()
+        manifest[relative] = hashlib.sha256(content).hexdigest()
+        target = output / "source_snapshot" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    (output / "source_manifest.json").write_text(json.dumps(manifest, indent=2))
+    os.environ.update(
+        DYNANAV_EXPERIMENT=str(profile_path),
+        PROBE_STEPS=str(round(args.duration / 0.005)),
+        PROBE_RTF=str(args.rtf),
+        NAV_STOP_REQUEST=str(output / "stop_request.json"),
+    )
+    sys.argv = ["capture_go2_rgbd", str(output), str(scene)]
+    runpy.run_module(
+        "embodied_navigation.simulation.dynanav.capture_go2_rgbd", run_name="__main__"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

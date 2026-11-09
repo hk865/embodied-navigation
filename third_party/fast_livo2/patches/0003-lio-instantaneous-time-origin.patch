@@ -1,0 +1,37 @@
+Subject: [PATCH] Rebase ONLY_LIO instantaneous point time to propagation origin
+
+Generic current-end RGB-D points must not be deskewed as previous-frame points.
+Non-generic timing and default LIVO unchanged; raw points retained.
+
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -1580,7 +1580,19 @@
+             meas.lidar_frame_end_time =
+                 meas.lidar_frame_beg_time +
+                 meas.lidar->points.back().curvature / double(1000); // calc lidar scan end time
+-            meas.pcl_proc_cur = meas.lidar;
++            if (p_pre->lidar_type == 0) {
++                // Generic RGB-D points are simultaneous at the current header.
++                // UndistortPcl measures offsets from the previous propagation
++                // end, not from this frame header. Keep the raw cloud owned and
++                // unchanged, and rebase only its working copy to that origin.
++                meas.pcl_proc_cur.reset(new PointCloudXYZI(*meas.lidar));
++                const float header_offset_ms =
++                    (meas.lidar_frame_beg_time - meas.last_lio_update_time) * 1000.0f;
++                for (auto &point : meas.pcl_proc_cur->points)
++                    point.curvature += header_offset_ms;
++            } else {
++                meas.pcl_proc_cur = meas.lidar;
++            }
+             lidar_pushed = true; // flag
+         }
+
+@@ -1592,7 +1604,7 @@
+             return false;
+         }
+
+-        struct MeasureGroup m; // standard method to keep imu message.
++        struct MeasureGroup m{}; // unused VIO fields are deterministic in LIO diagnostics.
+
+         m.imu.clear();
+         m.lio_time = meas.lidar_frame_end_time;

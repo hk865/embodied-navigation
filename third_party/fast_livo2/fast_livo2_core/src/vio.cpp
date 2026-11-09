@@ -17,7 +17,7 @@ which is included as part of this source code package.
 // FASTLIVO_DIAG_END include
 
 using namespace Eigen;
-VIOManager::VIOManager() {
+VIOManager::VIOManager() : visual_submap(nullptr) {
     // downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
 }
 

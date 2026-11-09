@@ -7,7 +7,7 @@
 1. **启动与装配**：仓库根 `start.py` 调用 [launch](launch/README.md) 的 `main.py`，校验配置与依赖、生成单次运行目录，再由 [launch/launch](launch/launch/README.md) 的 `demo.launch.py` 包含定位、规划、控制、仿真四个模块 launch。
 2. **世界与传感器**：[simulation](simulation/README.md) 生成 Gazebo 世界，启动策略 actor、传感器桥与仿真进程，把相机/LiDAR/IMU 数据送入 ROS。仿真原生状态还服务于策略本体观测、COM 速度内环及安全/评测；生产 SLAM 和上层导航位姿不以真值替代。
 3. **传感流适配**：[perception](perception/README.md) 与 [perception/sensors](perception/sensors/README.md) 负责中继、自身回波过滤、采样和传感门禁；跨边界的数据类型定义在顶层 [sensors](sensors/README.md)。
-4. **定位建图**：[localization_mapping](localization_mapping/README.md) 接入 FAST-LIVO2 前端（真实算法在 `third_party/fast_livo2`，本包只是接入与包装），后端负责注册与图优化，并输出带生产者和时间信息的定位反馈。
+4. **定位建图**：[localization_mapping](localization_mapping/README.md) 接入 FAST-LIVO2 前端（真实算法在 `third_party/fast_livo2`，本包只是接入与包装），后端负责注册与图优化，并输出带生产者和时间信息的定位反馈。 [semantic_mapping](localization_mapping/semantic_mapping/README.md) 提供观测分层、对象历史和只读结构化查询，实验接入范围单独记录。
 5. **规划**：[planning](planning/README.md) 提供参考路线、SCAN 调度和 PCT 路线生成（PCT 真实算法在 `third_party/pct`）；admission 负责路径准入与交付。
 6. **任务与跟踪控制**：[navigation](navigation/README.md) 维护任务状态与既有 PID 导航；[control](control/README.md) 计算跟踪/停车命令，并包含仿真安全门禁与定位反馈来源检查。
 7. **机器人执行**：[robot](robot/README.md) 下的 [robot/unitree](robot/unitree/README.md) 负责 Go2 观测、策略推理和执行桥。当前 Student 用 exact45 推理，历史 Teacher 247D 观测保留作诊断；RoboGauge 使用另一套独立 45D 接口，观测与 actuator 契约不能混用。

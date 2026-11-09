@@ -14,6 +14,7 @@
 - [frontend/README.md](frontend/README.md)：FAST-LIVO2 的 ROS 接入资料。
 - [launch/README.md](launch/README.md)：本模块的 ROS 进程装配。
 - [mapping/README.md](mapping/README.md)：运行期观测地图归档。
+- [semantic_mapping/README.md](semantic_mapping/README.md)：纯 CPU 的动静分层、对象 ID、历史与结构化查询；显式保存 SLAM/oracle 来源，目前由 DynaNav 诊断接入，不代表生产语义感知已完成。
 - 顶层节点：[odom_adapter.py](odom_adapter.py) 把 `/aft_mapped_to_init` 的 IMU 状态换算成 body/lidar 里程计与有效 twist；[localization_runtime.py](localization_runtime.py) 做已知场景地图辅助的实时定位与 bundle 发布；[building_runtime.py](building_runtime.py) 是 Building 唯一的校正 owner；[building_sensors.py](building_sensors.py) 过滤 LiDAR 自回波。
 - 支撑模块：`geometry.py`（坐标代数）、`sensor_snapshot.py`（同源时间配对）、`point_provenance.py`（点与 commit 身份校验）、`known_scene_*.py`（场景参考、匹配、输入与保持门）、`relative_odometry.py`、`feedback_state.py`。
 

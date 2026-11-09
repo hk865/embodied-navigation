@@ -91,9 +91,10 @@ LIVMapper::LIVMapper(rclcpp::Node::SharedPtr &node, std::string node_name)
     if (serial_imu_priority && pipeline_mode != "serial")
         throw std::runtime_error("FASTLIVO_SERIAL_IMU_PRIORITY requires serial mode");
     if (p_pre->lidar_type != 0 || use_gps || hilti_en ||
-        this->node->get_parameter("preprocess.hilti_en").as_bool() || !lidar_en || !img_en ||
-        !imu_en)
-        throw std::runtime_error("V19 requires generic cloud, IMU+RGB, GPS off, HILTI off");
+        this->node->get_parameter("preprocess.hilti_en").as_bool() || !lidar_en ||
+        (!img_en && !allow_lio_only) || !imu_en)
+        throw std::runtime_error("V19 requires generic cloud, IMU+RGB, GPS off, HILTI off; "
+                                 "LIO-only additionally requires common.allow_lio_only=true");
     VoxelMapConfig voxel_config;
     loadVoxelConfig(this->node, voxel_config);
 
@@ -130,6 +131,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->declare_parameter<bool>("common.require_complete_imu", false);
     this->node->declare_parameter<bool>("debug.sensor_sync_diagnostics", false);
     this->node->declare_parameter<int>("common.img_en", 1);
+    this->node->declare_parameter<bool>("common.allow_lio_only", false);
     this->node->declare_parameter<int>("common.lidar_en", 1);
     this->node->declare_parameter<std::string>("common.img_topic", "/left_camera/image");
 
@@ -213,6 +215,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->get_parameter("common.require_complete_imu", require_complete_imu);
     this->node->get_parameter("debug.sensor_sync_diagnostics", sensor_sync_diagnostics);
     this->node->get_parameter("common.img_en", img_en);
+    this->node->get_parameter("common.allow_lio_only", allow_lio_only);
     this->node->get_parameter("common.lidar_en", lidar_en);
     this->node->get_parameter("common.img_topic", img_topic);
 
@@ -295,27 +298,29 @@ void LIVMapper::initializeComponents(rclcpp::Node::SharedPtr &node) {
     voxelmap_manager->extT_ << VEC_FROM_ARRAY(extrinT);
     voxelmap_manager->extR_ << MAT_FROM_ARRAY(extrinR);
 
-    if (!vk::camera_loader::loadFromRosNs(this->node, "parameter_blackboard", vio_manager->cam))
-        throw std::runtime_error("Camera model not correctly specified.");
+    if (img_en) {
+        if (!vk::camera_loader::loadFromRosNs(this->node, "parameter_blackboard", vio_manager->cam))
+            throw std::runtime_error("Camera model not correctly specified.");
 
-    vio_manager->grid_size = grid_size;
-    vio_manager->patch_size = patch_size;
-    vio_manager->outlier_threshold = outlier_threshold;
-    vio_manager->setImuToLidarExtrinsic(extT, extR);
-    vio_manager->setLidarToCameraExtrinsic(cameraextrinR, cameraextrinT);
-    vio_manager->state = &_state;
-    vio_manager->state_propagat = &state_propagat;
-    vio_manager->max_iterations = max_iterations;
-    vio_manager->img_point_cov = IMG_POINT_COV;
-    vio_manager->normal_en = normal_en;
-    vio_manager->inverse_composition_en = inverse_composition_en;
-    vio_manager->raycast_en = raycast_en;
-    vio_manager->grid_n_width = grid_n_width;
-    vio_manager->grid_n_height = grid_n_height;
-    vio_manager->patch_pyrimid_level = patch_pyrimid_level;
-    vio_manager->exposure_estimate_en = exposure_estimate_en;
-    vio_manager->colmap_output_en = colmap_output_en;
-    vio_manager->initializeVIO();
+        vio_manager->grid_size = grid_size;
+        vio_manager->patch_size = patch_size;
+        vio_manager->outlier_threshold = outlier_threshold;
+        vio_manager->setImuToLidarExtrinsic(extT, extR);
+        vio_manager->setLidarToCameraExtrinsic(cameraextrinR, cameraextrinT);
+        vio_manager->state = &_state;
+        vio_manager->state_propagat = &state_propagat;
+        vio_manager->max_iterations = max_iterations;
+        vio_manager->img_point_cov = IMG_POINT_COV;
+        vio_manager->normal_en = normal_en;
+        vio_manager->inverse_composition_en = inverse_composition_en;
+        vio_manager->raycast_en = raycast_en;
+        vio_manager->grid_n_width = grid_n_width;
+        vio_manager->grid_n_height = grid_n_height;
+        vio_manager->patch_pyrimid_level = patch_pyrimid_level;
+        vio_manager->exposure_estimate_en = exposure_estimate_en;
+        vio_manager->colmap_output_en = colmap_output_en;
+        vio_manager->initializeVIO();
+    }
 
     p_imu->set_extrinsic(extT, extR);
     p_imu->lidar_type = p_pre->lidar_type;
@@ -439,9 +444,11 @@ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node
             imu_topic, rclcpp::SensorDataQoS().keep_last(512),
             std::bind(&LIVMapper::receive_imu, this, std::placeholders::_1));
     }
-    sub_img = this->node->create_subscription<sensor_msgs::msg::Image>(
-        img_topic, rclcpp::SensorDataQoS().keep_last(4),
-        std::bind(&LIVMapper::receive_image, this, std::placeholders::_1));
+    if (img_en) {
+        sub_img = this->node->create_subscription<sensor_msgs::msg::Image>(
+            img_topic, rclcpp::SensorDataQoS().keep_last(4),
+            std::bind(&LIVMapper::receive_image, this, std::placeholders::_1));
+    }
     if (use_gps) {
         sub_gps = this->node->create_subscription<nav_msgs::msg::Odometry>(
             "/ground_truth/odometry", 10,
@@ -1537,13 +1544,34 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
 
     switch (slam_mode_) {
     case ONLY_LIO: {
+        // An oracle/static mask may legitimately remove every return. Consume
+        // sparse frames explicitly; leaving one at the head blocks all later
+        // sensor evidence. No points or IMU measurements are synthesized.
+        while (!lidar_pushed) {
+            size_t points;
+            double stamp;
+            {
+                std::lock_guard<std::mutex> lock(mtx_buffer);
+                if (lid_raw_data_buffer.empty())
+                    return false;
+                const auto &cloud = lid_raw_data_buffer.front().cloud;
+                if (cloud && cloud->points.size() > 1)
+                    break;
+                points = cloud ? cloud->points.size() : 0;
+                stamp = lid_header_time_buffer.front();
+                lid_raw_data_buffer.pop_front();
+                lid_header_time_buffer.pop_front();
+            }
+            ++lio_sparse_cloud_drops;
+            RCLCPP_WARN(this->node->get_logger(),
+                        "[LIO] dropped sparse cloud stamp=%.9f points=%zu count=%llu",
+                        stamp, points, static_cast<unsigned long long>(lio_sparse_cloud_drops));
+        }
         if (meas.last_lio_update_time < 0.0)
             meas.last_lio_update_time = lid_header_time_buffer.front();
         if (!lidar_pushed) {
             // If not push the lidar into measurement data buffer
             meas.lidar = lid_raw_data_buffer.front().cloud; // push the first lidar topic
-            if (meas.lidar->points.size() <= 1)
-                return false;
 
             meas.lidar_frame_beg_time =
                 lid_header_time_buffer.front(); // generate lidar_frame_beg_time
@@ -1552,7 +1580,19 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             meas.lidar_frame_end_time =
                 meas.lidar_frame_beg_time +
                 meas.lidar->points.back().curvature / double(1000); // calc lidar scan end time
-            meas.pcl_proc_cur = meas.lidar;
+            if (p_pre->lidar_type == 0) {
+                // Generic RGB-D points are simultaneous at the current header.
+                // UndistortPcl measures offsets from the previous propagation
+                // end, not from this frame header. Keep the raw cloud owned and
+                // unchanged, and rebase only its working copy to that origin.
+                meas.pcl_proc_cur.reset(new PointCloudXYZI(*meas.lidar));
+                const float header_offset_ms =
+                    (meas.lidar_frame_beg_time - meas.last_lio_update_time) * 1000.0f;
+                for (auto &point : meas.pcl_proc_cur->points)
+                    point.curvature += header_offset_ms;
+            } else {
+                meas.pcl_proc_cur = meas.lidar;
+            }
             lidar_pushed = true; // flag
         }
 
@@ -1564,7 +1604,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             return false;
         }
 
-        struct MeasureGroup m; // standard method to keep imu message.
+        struct MeasureGroup m{}; // unused VIO fields are deterministic in LIO diagnostics.
 
         m.imu.clear();
         m.lio_time = meas.lidar_frame_end_time;

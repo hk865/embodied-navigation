@@ -1,0 +1,6 @@
+# Single-variable observer experiment; base fastlivo_lio.yaml stays unchanged.
+# Allows the existing estimator to adjust its gravity state; not an accuracy claim.
+/**:
+  ros__parameters:
+    imu:
+      gravity_est_en: true

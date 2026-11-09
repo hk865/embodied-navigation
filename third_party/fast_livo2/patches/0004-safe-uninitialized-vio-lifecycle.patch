@@ -1,0 +1,19 @@
+Subject: [PATCH] Initialize visual submap ownership before opt-in LIO teardown
+
+ONLY_LIO deliberately skips initializeVIO. The VIOManager destructor still
+deletes visual_submap, so the constructor must establish null ownership.
+Normal LIVO initializeVIO continues to allocate the same submap; no estimator
+arithmetic, mode selection, or class layout changes.
+
+--- a/third_party/fast_livo2/fast_livo2_core/src/vio.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/vio.cpp
+@@ -17,7 +17,7 @@
+ // FASTLIVO_DIAG_END include
+
+ using namespace Eigen;
+-VIOManager::VIOManager() {
++VIOManager::VIOManager() : visual_submap(nullptr) {
+     // downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
+ }
+
+# End of patch.

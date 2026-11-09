@@ -4,7 +4,7 @@
 
 ## 系统结构
 
-各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，共 46 个模块 README。全量 589 个代码/配置目标的可读性报告见 [全量可读性总入口](docs/review/full-readability/README.md)（DSH 全量实现，Codex 独立事实复核，DSH 串行合入）。此前的 [本轮验证记录](docs/review/readability-verification.md)、[审计明细](docs/review/validation-and-threshold-audit.md) 与 46 个模块 README 索引保留为历史记录。
+各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，此前整理的 46 个模块 README 及后续模块说明均从该索引进入。此前 589 个代码/配置目标的可读性报告见 [全量可读性总入口](docs/review/full-readability/README.md)（DSH 全量实现，Codex 独立事实复核，DSH 串行合入）。此前的 [本轮验证记录](docs/review/readability-verification.md)、[审计明细](docs/review/validation-and-threshold-audit.md) 与 46 个模块 README 索引保留为历史记录。
 
 - src/embodied_navigation/simulation：Gazebo/Isaac 场景与物理生命周期。simulation/dynanav 负责 DynaNav 场景中的真实 Go2 RGB-D capture，不承载整个导航系统。
 - perception：深度反投影、自身点过滤、传感流适配。
@@ -13,7 +13,7 @@
 - control：单步跟踪/控制律、碰撞与支撑检查、parking停车执行、safety统一仿真门禁和定位反馈来源检查。
 - robot/unitree：Go2 观测、关节顺序、策略推理和执行桥。没有训练流程。
 - navigation：完整任务状态和模块协作。task.py 是从原多航点 bridge 提取的真实跟随/到点稳定/转向/停车/失败状态机；已有PID任务状态位于 pid_navigation.py，Building任务位于 building_navigation.py，任务组件位于 mission/；ROS适配位于 ros_node.py、relative_slam_node.py。
-- evaluation：轨迹长度/误差等离线指标及独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为 SLAM 定位输入或上层导航位姿。
+- evaluation：轨迹长度/误差等离线指标及独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为生产 SLAM 定位输入；显式 DynaNav 真值控制诊断另行记录来源。
 - launch：模块装配、环境、进程生命周期。业务任务状态不放在 launch。
 - configs、scripts、tests、docs：功能配置、少数可发现入口、回归测试和说明。
 
@@ -21,6 +21,8 @@
 
 1. Native Gazebo 系统：start.py 装配已有导航模块。Dockerfile 从公开 ROS Jazzy、Gazebo Harmonic、CPU Torch 2.7.1 构建，必要自建源码均包含，FAST-LIVO2/SCAN/PCT 与补丁也在仓库中。
 2. Isaac / DynaNav：simulation/dynanav/capture_go2_rgbd.py 是已有真实 capture 实现，navigation/relative_slam_node.py 是分离后的任务节点。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 提供明确的帮助、文件检查和显式启动入口，帮助和检查不会启动Isaac。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
+
+本轮 DynaNav 的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测、启动命令和已知阻碍见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
 
 ## 快速检查
 
@@ -41,7 +43,7 @@ Git不包含数据、日志、地图、权重、USD/纹理、图片、视频、b
 
 ## 验证状态与限制
 
-2026-11-09 独立复核、两项启动参数修复及本轮 54 项单元/62 项回归结果见 [独立复核记录](docs/verification/independent-review-2026-11-09.md)。5 项可选 Torch 测试跳过；本轮未重跑仿真。
+2026-11-09 较早阶段的独立复核、两项启动参数修复及当时 54 项单元/62 项回归结果见 [独立复核记录](docs/verification/independent-review-2026-11-09.md)。该阶段 5 项可选 Torch 测试跳过，未重跑仿真。后续 DynaNav 实际运行与最新测试另见上方实验记录。
 
 2026-11-08 历史验证（针对当时的源码快照，不能代替后续修改的运行验证）：
 
@@ -54,7 +56,7 @@ Git不包含数据、日志、地图、权重、USD/纹理、图片、视频、b
 
 可选Building Student入口的资源记录脚本与SCAN配置路径已实际补齐，仅允许SLAM模式；真实prepare-only通过，尚未运行Building分支，详见docs/dependencies/BUILDING-ENTRYPOINT.md。
 
-未验证：完整路线、实机、GPU/训练和完整Isaac端到端。最新Isaac策略实验仍有未移植的会话/碰撞、native64 effort闭环及采集闭包，详见docs/robogauge/isaac_closure_audit.json。当前工程不能声称已完整复现该历史实验。
+仍未验收：生产导航整栈的完整路线、实机、策略训练和完整 Isaac 生产链路。docs/robogauge/isaac_closure_audit.json 记录较早的策略闭包审计；本轮 DynaNav 已补齐显式会话碰撞、RoboGauge 执行与采集诊断，并分别记录真值控制路线、首段 LIO 动态闭环和视觉旁路定位证据，不能据此声称生产链路已完整复现。
 
 原测试3个停车样例缺少当前要求的pose_producer字段，在原工程也失败。本仓库更新fixture并纠正一处原源码要求真值标志为true的冲突：现在只接受显式非真值且生产者与时钟有效的SLAM反馈，没有放松阈值。运行源码和来源契约另见docs/architecture.md。
 

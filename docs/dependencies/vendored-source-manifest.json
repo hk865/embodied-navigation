@@ -57,9 +57,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
-      "bytes": 12596,
+      "bytes": 12670,
       "source_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
-      "vendored_sha256": "07a3cb6eebcedebbb33e9938ac3d2db4e33b246ea1d6077195c9d1d265c0e7ec",
+      "vendored_sha256": "58a9881a6f62e8a4df2e552e03a96342abf91021ea7452722dee679a3b6686e0",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -67,6 +67,15 @@
         "baseline_bytes": 11377,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "local_functional_revision": {
+        "date_utc": "2026-11-09",
+        "baseline_git_commit": "5e32eb9db643f4a3d9f6418be9c9a14b25074d2f",
+        "baseline_vendored_sha256": "07a3cb6eebcedebbb33e9938ac3d2db4e33b246ea1d6077195c9d1d265c0e7ec",
+        "reason": "Explicit default-false common.allow_lio_only; image-free LIO skips camera/VIO/image subscription, and consumes sparse head clouds under the buffer mutex. Existing estimator arithmetic and default V19 selection preserved.",
+        "patch": "third_party/fast_livo2/patches/0002-opt-in-lio-observer.patch",
+        "functional_equivalence_to_upstream_claimed": false,
+        "validation": "Independent new-prefix core/wrapper build, native opt-in/queue/mutex harness and observer launcher --check; not a full SLAM or physical route certification."
       }
     },
     {
@@ -419,9 +428,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/src/LIVMapper.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp",
-      "bytes": 125156,
+      "bytes": 127368,
       "source_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
-      "vendored_sha256": "054c0c49179bb556d1edf88f00a3e73511b03ad8849b0736d16d0a1340cf57be",
+      "vendored_sha256": "da2ad848ce115334f45b3a60757a4bc08c4aabf18555322181410cc7b6e6bbb0",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -429,6 +438,22 @@
         "baseline_bytes": 108192,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "local_functional_revision": {
+        "date_utc": "2026-11-09",
+        "baseline_git_commit": "5e32eb9db643f4a3d9f6418be9c9a14b25074d2f",
+        "baseline_vendored_sha256": "054c0c49179bb556d1edf88f00a3e73511b03ad8849b0736d16d0a1340cf57be",
+        "reason": "Explicit default-false common.allow_lio_only; image-free LIO skips camera/VIO/image subscription, and consumes sparse head clouds under the buffer mutex. Existing estimator arithmetic and default V19 selection preserved.",
+        "patch": "third_party/fast_livo2/patches/0002-opt-in-lio-observer.patch",
+        "functional_equivalence_to_upstream_claimed": false,
+        "validation": "Independent new-prefix core/wrapper build, native opt-in/queue/mutex harness and observer launcher --check; not a full SLAM or physical route certification."
+      },
+      "lio_instantaneous_time_revision": {
+        "date_utc": "2026-11-09",
+        "baseline_vendored_sha256": "1df400d8c980a0a2a6e1e880ed4808e538fd0ba065b98206dc763de1354a001d",
+        "reason": "ONLY_LIO generic instantaneous working-copy offsets now share the previous-propagation origin expected by UndistortPcl; raw points and non-generic timing retained; unused VIO diagnostic fields value-initialized. Default LIVO source unchanged.",
+        "patch": "third_party/fast_livo2/patches/0003-lio-instantaneous-time-origin.patch",
+        "validation": "Real native regression fails with pre-correction core (0.284937m erroneous deskew), passes corrected core for 100ms/200ms IMU motion and preserves raw identity/non-generic times. Separate new build/install prefix; no claim of physical SLAM drift acceptance."
       }
     },
     {
@@ -524,11 +549,11 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/src/vio.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/vio.cpp",
-      "bytes": 98364,
+      "bytes": 98389,
       "source_sha256": "1ecf2cd169bf8a5809dba7a866c7b2cea7e064601b4bde80775436eb587c53cd",
-      "vendored_sha256": "f394b29397a5d3eff16515d0bddc5afb39850d19bbee1680576fbb4f8f4307a3",
+      "vendored_sha256": "309e624f5efa7ba645dbafc1fc313724985c7c52ca984b5e4a6c5b7176e0f434",
       "modified": true,
-      "change": "Apply recorded isolated VIO floor repair; exact bytes match recovered patched source.",
+      "change": "Includes the recorded isolated VIO floor repair; subsequent local revisions are recorded below.",
       "patch": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
       "patched_source": "recovered isaac_rgbd_slam_interface/isolated_vio_floor_fix/vio.cpp",
       "local_readability_revision": {
@@ -537,6 +562,15 @@
         "baseline_bytes": 82986,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "local_functional_revision": {
+        "date_utc": "2026-11-09",
+        "baseline_git_commit": "5e32eb9db643f4a3d9f6418be9c9a14b25074d2f",
+        "baseline_vendored_sha256": "f394b29397a5d3eff16515d0bddc5afb39850d19bbee1680576fbb4f8f4307a3",
+        "reason": "Initialize visual_submap ownership to nullptr before camera-free ONLY_LIO teardown; normal initializeVIO allocation and estimator arithmetic unchanged.",
+        "patch": "third_party/fast_livo2/patches/0004-safe-uninitialized-vio-lifecycle.patch",
+        "functional_equivalence_to_upstream_claimed": false,
+        "validation": "Existing-core gdb SIGSEGV in VIOManager destructor with explicit rmw_fastrtps_cpp/UDPv4; deterministic poisoned-storage lifecycle regression added. New-core rebuild/test result is separate from this source manifest."
       }
     },
     {
