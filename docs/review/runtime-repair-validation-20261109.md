@@ -102,7 +102,7 @@ bash -n scripts/run_dynanav_lio.sh
 git diff --check
 ```
 
-最终全部代码（包括合作式信号处理和监督终态校验）重新执行：unit **351 项，18.131 s，OK (skipped=3)**；regression **86 项，7.603 s，OK (skipped=5)**。3项unit skip需要USD运行时/本地人形资产，5项regression skip因宿主可选CPU Torch缺失。57个变更Python文件AST解析、shell语法和 `git diff --check` 通过；变更Markdown的593个相对链接在检查时均存在。未把fake故障注入、合成传输探针或历史运行加算进整套数字。
+最终全部代码（包括合作式信号处理和监督终态校验）重新执行：unit **351 项，18.131 s，OK (skipped=3)**；regression **86 项，7.603 s，OK (skipped=5)**。3项unit skip需要USD运行时/本地人形资产，5项regression skip因宿主可选CPU Torch缺失。57个变更Python文件AST解析、shell语法和 `git diff --check` 通过；变更Markdown的596个相对链接在检查时均存在。未把fake故障注入、合成传输探针或历史运行加算进整套数字。发布前另去掉新提取 pid_support.py 文件末尾多余空行，AST前后相同；此纯空白收尾不作为真实PID运行源码哈希相同的证明。
 
 ## 后续工作与发布范围
 

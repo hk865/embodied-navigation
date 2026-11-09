@@ -1026,5 +1026,3 @@ from embodied_navigation.control.parking.navigation_stop_window import (
     reset_transition,
     bind_transition_context,
 )
-
-
