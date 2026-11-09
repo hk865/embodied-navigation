@@ -195,6 +195,26 @@ class ObserverOverride(unittest.TestCase):
         self.assertIs(contract["pose_covariance_available"], False)
         self.assertIs(contract["visual_update_on_every_image"], False)
 
+    def test_transport_check_selects_profile_without_creating_run_or_starting_nodes(self):
+        capture, _, blackboard, markers = self.livo_fixture()
+        for key in ("FASTRTPS_DEFAULT_PROFILES_FILE", "FASTDDS_DEFAULT_PROFILES_FILE",
+                    "FASTDDS_ENVIRONMENT_FILE", "SKIP_DEFAULT_XML"):
+            self.environment.pop(key, None)
+        self.environment.update(RMW_IMPLEMENTATION="rmw_fastrtps_cpp", FASTDDS_BUILTIN_TRANSPORTS="UDPv4")
+        output = self.data / "experiments/transport check"
+        for policy in ("auto", "baseline"):
+            with self.subTest(policy=policy):
+                result = self.invoke("--check", "--mode", "livo", "--capture-result", str(capture),
+                                     "--camera-blackboard", str(blackboard), "--output-dir", str(output),
+                                     "--observer-transport", policy)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                transport = json.loads(result.stdout)["observer_transport"]
+                self.assertEqual(transport["policy"], policy)
+                self.assertEqual(bool(transport["profile"]), policy == "auto")
+                self.assertFalse(transport["socket_buffer_verified"])
+                self.assertFalse(output.exists())
+                self.assertTrue(all(not marker.exists() for marker in markers))
+
     def test_livo_check_uses_capture_camera_calibration_without_starting_nodes(self):
         capture, installation, blackboard, markers = self.livo_fixture()
         output = self.data / "experiments/livo check run"

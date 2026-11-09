@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 隔离试验：仅 observer 的 UDPv4 接收缓冲请求为 4 MiB。
+     不设置发送缓冲、接口白名单、消息尺寸、QoS、频率或应用队列门限。
+     只声明原基线使用的 UDPv4，其他 descriptor 字段使用相同库的默认值。 -->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>observer_udp_rx4m</transport_id>
+        <type>UDPv4</type>
+        <receiveBufferSize>4194304</receiveBufferSize>
+      </transport_descriptor>
+    </transport_descriptors>
+    <participant profile_name="observer_udp_rx4m_default" is_default_profile="true">
+      <rtps>
+        <userTransports><transport_id>observer_udp_rx4m</transport_id></userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

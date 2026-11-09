@@ -8,6 +8,7 @@ Usage: run_dynanav_lio.sh --output-dir NEW_DIRECTORY [--binary-prefix PREFIX] [-
        run_dynanav_lio.sh --mode livo --capture-result RESULT_JSON --output-dir NEW_DIRECTORY
        run_dynanav_lio.sh --check [--mode lio|livo] [--capture-result RESULT_JSON]
        Optional: --observer-namespace /dynanav/lio_observer   # default
+       Optional: --observer-transport auto|baseline   # DYNANAV_OBSERVER_TRANSPORT or auto
        Optional: --lidar-topic /dynanav/lidar_perception_filtered
 
 PREFIX contains install/ros. PROJECT_DATA_ROOT can supply the verified, fixed
@@ -23,6 +24,10 @@ in the observer namespace and reads only sensor_installation calibration from
 need native diagnostics/snapshots to establish that observations were used.
 --dependency-prefix can select the existing ROS dependency
 prefix (the directory containing lib and share). ROS_DOMAIN_ID defaults to 91.
+--observer-transport auto selects the bundled 4 MiB UDP receive profile only
+for LIVO with explicit rmw_fastrtps_cpp/UDPv4 and no existing DDS configuration.
+baseline preserves the inherited environment without adding a profile. This
+launcher changes only its observer process tree, never the Isaac publisher.
 --check inspects files, hashes and dynamic dependencies without creating a run
 directory or starting ROS, a mapper, a camera service, or a simulator.
 EOF
@@ -37,10 +42,13 @@ observer_namespace=/dynanav/lio_observer
 lidar_topic=/dynanav/lidar_static
 capture_result=""
 camera_blackboard=/opt/ros/jazzy/lib/demo_nodes_cpp/parameter_blackboard
+observer_transport=${DYNANAV_OBSERVER_TRANSPORT:-auto}
+observer_transport_source=default
+[[ -z ${DYNANAV_OBSERVER_TRANSPORT:-} ]] || observer_transport_source=environment
 check_only=false
 while (($#)); do
     case "$1" in
-        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--mode|--capture-result|--camera-blackboard|--observer-namespace|--lidar-topic)
+        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--mode|--capture-result|--camera-blackboard|--observer-namespace|--lidar-topic|--observer-transport)
             (($# >= 2)) || { printf 'Missing value for %s\n' "$1" >&2; exit 2; }
             case "$1" in
                 --binary-prefix) binary_prefix=$2 ;;
@@ -48,6 +56,7 @@ while (($#)); do
                 --output-dir) output_dir=$2 ;;
                 --parameter-override) parameter_override=$2 ;;
                 --mode) mode=$2 ;;
+                --observer-transport) observer_transport=$2; observer_transport_source=cli ;;
                 --observer-namespace) observer_namespace=$2 ;;
                 --lidar-topic) lidar_topic=$2 ;;
                 --capture-result) capture_result=$2 ;;
@@ -103,7 +112,7 @@ export AMENT_PREFIX_PATH="$install_prefix:$dependency_prefix${AMENT_PREFIX_PATH:
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-91}
 
 preflight_status=0
-preflight_json=$(python3 - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" "$lidar_topic" <<'PY'
+preflight_json=$(python3 -B - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" "$lidar_topic" "$script_dir" "$observer_transport" "$observer_transport_source" <<'PY'
 import hashlib
 import json
 import os
@@ -120,6 +129,10 @@ capture_result = Path(sys.argv[8]) if sys.argv[8] else None
 blackboard = Path(sys.argv[9])
 observer_namespace = sys.argv[10]
 lidar_input_topic = sys.argv[11]
+sys.path.insert(0, sys.argv[12])
+from dynanav_observer_transport import select_transport
+transport = select_transport(mode, sys.argv[13], os.environ, Path(sys.argv[12]).parent, Path.cwd())
+transport["policy_source"] = sys.argv[14]
 base_parameters = yaml.safe_load(parameters.read_text())["/**"]["ros__parameters"]
 post_vio_enabled = base_parameters.get("publish", {}).get("post_vio_odometry_en", False)
 if type(post_vio_enabled) is not bool or post_vio_enabled != (mode == "livo"):
@@ -218,6 +231,7 @@ post_vio_contract = ({"pose_source": "livo_post_vio", "state_stage": "post_vio",
 receipt = {
     "scope": "File/hash/dependency inspection only; no ROS node or estimator executed",
     "mode": mode,
+    "observer_transport": transport,
     "observer_namespace": observer_namespace,
     "lidar_input_topic": lidar_input_topic,
     "lidar_input_scope": "oracle-static input" if lidar_input_topic.endswith("/lidar_static") else "learned-person filtered temporary LIO candidates; background is not certified static",
@@ -264,6 +278,12 @@ case "$output_dir/" in
 esac
 mkdir -p -- "$(dirname -- "$output_dir")"
 mkdir -- "$output_dir"
+# 只在本启动器内导出，且位于只读 --check 返回之后。
+# 不要把此 profile 导出到 supervisor 或 publisher 的环境。
+selected_profile=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["observer_transport"]["profile"] or "")' "$preflight_json")
+if [[ -n $selected_profile ]]; then
+    export FASTRTPS_DEFAULT_PROFILES_FILE="$selected_profile"
+fi
 export DEMO_RUN_DIR="$output_dir"
 export ROS_LOG_DIR="$output_dir/ros_logs"
 export FASTLIVO_DIAGNOSTIC_DIR="$output_dir/diagnostics"
@@ -330,6 +350,7 @@ camera = Path(sys.argv[9])
 calibration_file = Path(sys.argv[10]) if sys.argv[10] else None
 receipt = {
     "schema": "dynanav_lio_observer_launch/v1",
+    "observer_transport": preflight["observer_transport"],
     "command": sys.argv[11:], "ros_domain_id": os.environ["ROS_DOMAIN_ID"],
     "runner": str(runner), "core": str(core), "dependency_prefix": str(dependencies),
     "runner_sha256": hashlib.sha256(runner.read_bytes()).hexdigest(),
