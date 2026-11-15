@@ -4,7 +4,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
         exit 0
     fi
 done
@@ -25,6 +25,7 @@ UNTIL_STOPPED=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
 EXTRA_CAPTURE_ARGS=()
+EXTRA_PLANNER_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
@@ -34,6 +35,9 @@ while (($#)); do
         --isaac-root)
             (($# >= 2)) || { echo "Missing value for --isaac-root"; exit 2; }
             ISAAC_ROOT=$2; shift 2 ;;
+        --pct-max-grid-cells)
+            (($# >= 2)) || { echo "Missing value for --pct-max-grid-cells"; exit 2; }
+            EXTRA_PLANNER_ARGS+=("$1" "$2"); shift 2 ;;
         --overview-eye-base|--overview-focus-base)
             (($# >= 4)) || { echo "Missing XYZ values for $1"; exit 2; }
             EXTRA_CAPTURE_ARGS+=("$1" "$2" "$3" "$4"); shift 4 ;;
@@ -126,7 +130,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     /usr/bin/python3 scripts/run_dynanav_pct_scan.py --run-dir "$RUN/capture" \
-        --scan-prefix "$SCAN_PREFIX" --speed "$SPEED" --build-scan --build-only \
+        --scan-prefix "$SCAN_PREFIX" --speed "$SPEED" --build-scan --build-only "${EXTRA_PLANNER_ARGS[@]}" \
         > "$RUN/planner_build.log" 2>&1
     set +u
     source "$SCAN_PREFIX/setup.bash"
@@ -185,6 +189,7 @@ done
 if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     /usr/bin/python3 scripts/run_dynanav_pct_scan.py --run-dir "$RUN/capture" \
         --scan-prefix "$SCAN_PREFIX" --speed "$SPEED" --body-support-offset "$PCT_BODY_SUPPORT_OFFSET_M" --pct-start-blind-radius "$PCT_START_BLIND_RADIUS_M" \
+        "${EXTRA_PLANNER_ARGS[@]}" \
         > "$RUN/planner.log" 2>&1 &
     PLANNER=$!; PIDS+=("$PLANNER")
 fi

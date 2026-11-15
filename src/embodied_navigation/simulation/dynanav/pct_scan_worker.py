@@ -23,6 +23,7 @@ import uuid
 import numpy as np
 
 from embodied_navigation.perception.pose_velocity import update_pose_velocity
+from embodied_navigation.planning.pct.measured_tomogram import DEFAULT_MAX_GRID_CELLS
 from embodied_navigation.planning.scan_handoff import ReferenceHandoff, reference_waypoints
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -210,7 +211,7 @@ class OwnedScan:
             self.log.close()
 
 
-def run(args):
+def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     import rclpy
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
@@ -236,9 +237,11 @@ def run(args):
     velocity_policy = dict(source='post_vio_pose_window', window_s=0.5,
                            reset_gap_s=0.25, frame='estimator_map', input_topic=VIO,
                            raw_odometry_twist_used=False)
-    atomic_json(mailbox / 'planner_worker_parameters.json', dict(
+    parameters = dict(
         reference_response_timeout_s=args.reference_response_timeout_s,
-        body_velocity=velocity_policy, speed=args.speed))
+        body_velocity=velocity_policy, speed=args.speed,
+        pct_max_grid_cells=pct_max_grid_cells)
+    atomic_json(mailbox / 'planner_worker_parameters.json', parameters)
     velocity_history = deque()
     # All accumulations are process-local and begin empty for this run.
     measured_voxels = {}
@@ -251,6 +254,7 @@ def run(args):
     def plan_snapshot(points, track, start, goal, source):
         planner = MeasuredPctPlanner(points, trajectory_body_xyz=track,
             body_support_offset_m=args.body_support_offset, start_blind_radius_m=args.pct_start_blind_radius, native_binary=args.pct_binary,
+            max_grid_cells=parameters['pct_max_grid_cells'],
             generation=run_id, source_metadata=source)
         result = planner.plan(start, goal)
         return dict(status=('ready' if result['found'] else
@@ -701,17 +705,21 @@ def main(argv=None):
     parser.add_argument('--reference-response-timeout-s', type=float, default=10.0,
         help='Wall-time limit for child startup/odometry ACK and reference response only')
     parser.add_argument('--pct-binary', type=Path, default=None)
+    parser.add_argument('--pct-max-grid-cells', type=int, default=DEFAULT_MAX_GRID_CELLS,
+        help='Positive dense multilayer allocation budget; does not preallocate or filter the measured map')
     parser.add_argument('--body-support-offset', type=float, default=0.32)
     parser.add_argument('--pct-start-blind-radius', type=float, default=0.0,
         help='Explicit opt-in radius for measured-floor start-blind-region inference; 0 keeps strict measured cells')
     args = parser.parse_args(argv)
+    if args.pct_max_grid_cells <= 0:
+        parser.error('--pct-max-grid-cells must be a positive integer')
     if not math.isfinite(args.reference_response_timeout_s) or args.reference_response_timeout_s <= 0:
         parser.error('--reference-response-timeout-s must be finite and positive')
     if args.build_scan:
         build_scan(Path(args.scan_prefix).resolve().parent)
     if not args.build_only:
         try:
-            run(args)
+            run(args, pct_max_grid_cells=args.pct_max_grid_cells)
         except KeyboardInterrupt:
             pass
 
