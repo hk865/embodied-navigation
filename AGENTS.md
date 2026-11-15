@@ -34,7 +34,7 @@
 3. **诊断只能观察，不能改变决策。** 诊断代码不得把 `allowed=False` 改成 True，也不得跳过超时或业务门。不要再新增空的探针调用（`_observer_api(...)` 一类）。需要追踪时序时，用一个真正写盘的 Tracer，并用配置打开。
 4. **不加没有依据的校验。** 防护外部输入（ROS 消息、文件、socket、CLI）的校验要保留。内部可信值、上游已经校验过的值、当前调用图里不可能出现的情况，都不写防御分支。新增一项检查前，先说清它防的是哪个真实会发生的场景。
 5. **不复制已有的实现。** 写新函数前先 `git grep` 查有没有现成的；例如 `common/geometry.py` 里已有 `wrap_angle` 和 `quaternion_matrix`。确实要共用时，删掉旧副本，只保留一份。
-6. **不写本机绝对路径**（`/home/<user>`、`/media/<user>`、`D:\...`）。路径统一用 `${PROJECT_ROOT}`、`$PROJECT_DATA_ROOT` 或参数传入。
+6. **代码、配置和文档里不写本机绝对路径**（`/home/<user>`、`/media/<user>`、`D:\...`）。路径统一用 `${PROJECT_ROOT}`、`$PROJECT_DATA_ROOT` 或参数传入。这条只约束写进仓库的内容，不限制读取项目外的数据，见第 6 节。
 7. **运行产物不进仓库**，包括日志、bag、点云、视频、逐帧 JSON、审计台账和 source snapshot。它们放在 `$PROJECT_DATA_ROOT/embodied-navigation/runs/<批次>/<run-id>/`。仓库只放实验定义和不超过 300 行的结论报告。单个文件超过 200 KB 默认不允许提交。
 8. **`docs/experiments/`、`docs/review/` 不再新增文件。** 过程记录放进 `experiments/<批次>/REPORT.md`，或者留在数据卷。
 9. **vendored 代码（`third_party/`）不原地改格式、不改注释。** 逻辑修改走 `third_party/<包>/patches/`。
@@ -63,7 +63,23 @@
 - 难包（核心规则、跨模块）采用“一个 agent 施工、另一个 agent 同时按同一份裁定写验收测试，两边互相看不到”的做法。普通的删除包和返工交给 DSH。
 - 提交信息说明做了什么和为什么。不提交密钥，也不提交 `.env*`。
 
-## 6. 沟通
+## 6. 数据在项目外
+
+模型、场景、构建缓存、实验运行目录都放在仓库外的数据盘上，不进仓库。
+
+- **位置**：由环境变量 `PROJECT_DATA_ROOT` 指定，写在仓库根目录的 `.env.local` 里。这个文件已被 gitignore，参考 `.env.example`。本项目的数据在 `$PROJECT_DATA_ROOT/embodied-navigation/` 下：
+  - `build_cache/`：二进制和场景；
+  - `experiments/`、`runs/`：运行目录；
+  - `runtime_assets/`：模型与资产。
+- **读取**：agent 可以读取 `$PROJECT_DATA_ROOT` 下的任何文件，比如查看运行目录、日志、地图，或用历史运行做离线测试。需要数据时先读 `.env.local` 拿到路径，不要猜。
+- **写入**：只允许新建运行目录，即 `$PROJECT_DATA_ROOT/embodied-navigation/{experiments,runs}/<批次>/<run-id>/`。
+- **禁止**：修改、覆盖或删除已有的数据和运行目录；把数据复制进仓库。
+- **工具权限**：数据盘在项目目录之外，各工具需要在本机单独放行。放行的路径只写在本机的设置文件里，不提交。
+  - Claude Code：在 `.claude/settings.local.json` 中加 `{"permissions": {"additionalDirectories": ["<PROJECT_DATA_ROOT 的实际路径>"]}}`，或者启动时传 `--add-dir <路径>`。
+  - 其他 agent：用对应工具的“额外工作目录”选项。
+  - 如果读不到数据盘，就向用户说明需要放行哪个目录，不要绕过限制，也不要把数据拷进仓库。
+
+## 7. 沟通
 
 - **汇报、进度和结论一律用中文。** 英文只用于代码标识符、路径和命令。
 - 汇报时说清楚：改了什么、在本机验证到什么程度、哪些地方没有验证（例如本机跑不了 Isaac）、服务器上应该重点看什么。
