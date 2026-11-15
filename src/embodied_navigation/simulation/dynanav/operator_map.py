@@ -103,6 +103,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from embodied_navigation.common.geometry import quaternion_matrix
+from embodied_navigation.simulation.dynanav.exploration_waypoints import (
+    FORBIDDEN_POSE_SOURCES,
+)
 
 __all__ = [
     "DEFAULT_BAND_WIDTH_M",
@@ -223,15 +226,6 @@ POINT_FRAMES = ("sensor", "base", "map")
 FREE_MODES = ("floor", "rays", "both", "none")
 DEFAULT_FREE_MODE = "both"
 
-# Mirrors the simulator-side and operator-client gate: a ground-truth pose
-# name can never become a map or waypoint frame.
-FORBIDDEN_POSE_SOURCES = (
-    "native_truth",
-    "native_pose",
-    "simulator_native_pose",
-    "ground_truth",
-    "gt_diagnostic",
-)
 FORBIDDEN_CLOUD_SOURCES = ("ground_truth", "gt_mesh", "oracle_mesh")
 
 DEFAULT_NOTE = (

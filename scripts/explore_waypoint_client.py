@@ -53,18 +53,14 @@ import numpy as np
 import time
 from pathlib import Path
 
-PROTOCOL_VERSION = 1
-DEFAULT_MAILBOX_NAME = "interactive"
-# Mirrors the simulator-side gate: a ground-truth frame can never be a waypoint
-# frame. Checked here as well so a mistaken client call fails before the file is
-# written, not after the simulator has to reject it.
-FORBIDDEN_POSE_SOURCES = (
-    "native_truth",
-    "native_pose",
-    "simulator_native_pose",
-    "ground_truth",
-    "gt_diagnostic",
+# Mirror the simulator gate: refuse a ground-truth frame before the file is written.
+from embodied_navigation.simulation.dynanav.exploration_waypoints import (
+    FORBIDDEN_POSE_SOURCES,
+    PROTOCOL_VERSION,
+    atomic_write_json,
 )
+
+DEFAULT_MAILBOX_NAME = "interactive"
 OCCUPIED = 1
 FREE = 0
 
@@ -114,14 +110,6 @@ GLOBAL_ACTION_STATUS = {"terminal": "terminal", "hold": "held"}
 def mailbox_for(run_dir, mailbox=None):
     """Resolve the mailbox directory for one run."""
     return Path(mailbox) if mailbox else Path(run_dir) / DEFAULT_MAILBOX_NAME
-
-
-def atomic_write_json(path, payload):
-    """Write JSON through a same-directory replace so the simulator never reads half a file."""
-    path = Path(path)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-    os.replace(temporary, path)
 
 
 def read_json(path, default=None):
