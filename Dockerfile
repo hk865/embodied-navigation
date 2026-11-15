@@ -49,7 +49,6 @@ RUN source /opt/ros/jazzy/setup.bash \
 COPY src/embodied_navigation/localization_mapping/backend/native /workspace/navigation/src/embodied_navigation/localization_mapping/backend/native
 COPY src/embodied_navigation/simulation/actuators /workspace/navigation/src/embodied_navigation/simulation/actuators
 COPY src/embodied_navigation/common/communication /workspace/navigation/src/embodied_navigation/common/communication
-COPY src/embodied_navigation/simulation/gazebo/robogauge/motor_src /workspace/navigation/src/embodied_navigation/simulation/gazebo/robogauge/motor_src
 RUN source /opt/ros/jazzy/setup.bash \
  && CMAKE_PREFIX_PATH="/workspace/navigation/install/dds:${CMAKE_PREFIX_PATH:-}" python3 docker/build_owned_native.py --jobs "${BUILD_JOBS}" --execute
 

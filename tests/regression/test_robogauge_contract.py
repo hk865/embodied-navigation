@@ -1,6 +1,5 @@
 """CPU numerical fixtures. No simulator, ROS, network or model is required."""
 
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -20,7 +19,6 @@ from embodied_navigation.robot.unitree.policy.native.observation import (
     quaternion_rotation,
     CONTRACT,
 )
-from embodied_navigation.navigation.robogauge.commands import admit_command, read_command
 
 
 class RoboGaugeContract(unittest.TestCase):
@@ -89,32 +87,6 @@ class RoboGaugeContract(unittest.TestCase):
             np.testing.assert_allclose(hi, reference, atol=1e-14)
             np.testing.assert_allclose(lo, -reference, atol=1e-14)
             np.testing.assert_allclose(tau, np.clip(raw, -reference, reference), atol=1e-14)
-
-    def test_command_guard_and_zero_on_invalid(self):
-        record = dict(
-            run_id="run1", command=[0.2, 0, 0.1], stamp_ns=1_000_000_000, monotonic_wall=10.0
-        )
-        kw = dict(run_id="run1", source_ns=1_100_000_000, monotonic_now=10.1)
-        np.testing.assert_array_equal(admit_command(record, **kw), record["command"])
-        for field, value in [
-            ("run_id", "other"),
-            ("stamp_ns", 0),
-            ("monotonic_wall", 9.0),
-            ("command", [0.2, 0, 0.31]),
-            ("command", [np.nan, 0, 0]),
-        ]:
-            with self.assertRaises(ValueError):
-                admit_command({**record, field: value}, **kw)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "command.json"
-            path.write_text("[]")
-            cmd, _, error = read_command(path, **kw)
-            np.testing.assert_array_equal(cmd, np.zeros(3))
-            self.assertIsNotNone(error)
-            path.write_text(json.dumps(record))
-            cmd, _, error = read_command(path, **kw)
-            self.assertIsNone(error)
-            np.testing.assert_array_equal(cmd, record["command"])
 
     def test_bad_weights_rejected_without_importing_torch(self):
         with tempfile.TemporaryDirectory() as tmp:

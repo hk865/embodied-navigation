@@ -1,1 +1,1 @@
-"""RoboGauge command admission, route tracking and offline execution-evidence audit."""
+"""RoboGauge native-pose route tracking."""

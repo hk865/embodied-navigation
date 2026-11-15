@@ -19,7 +19,6 @@ from embodied_navigation.project import project_root
 
 LOOPS = (
     ("student", "robot/unitree/policy/native/worker.py", 247),
-    ("robogauge", "simulation/gazebo/robogauge/native_loop.py", 45),
 )
 
 
@@ -58,15 +57,13 @@ class NativeSafetyLoopIntegration(unittest.TestCase):
         import torch
         from embodied_navigation.robot.unitree.policy.native import worker as student
         from embodied_navigation.robot.unitree.policy.native.observation import build_observation
-        from embodied_navigation.robot.unitree.robogauge.contract import observation
-        from embodied_navigation.simulation.gazebo.robogauge import native_loop as robogauge
         from embodied_navigation.control.safety.simulation_gate import SimulationSafetyGate
         from embodied_navigation.simulation.safety_state import from_gazebo_native64
 
-        loop = student if backend == "student" else robogauge
+        loop = student
         self.assertIs(loop.SimulationSafetyGate, SimulationSafetyGate)
         self.assertIs(loop.from_gazebo_native64, from_gazebo_native64)
-        dimension = 247 if backend == "student" else 45
+        dimension = 247
 
         class Peer:
             def __init__(self):
@@ -161,7 +158,7 @@ class NativeSafetyLoopIntegration(unittest.TestCase):
         def obs_builder(*args, **kwargs):
             if terrain_failure:
                 return np.zeros(dimension, dtype=np.float32), {}
-            return (build_observation if backend == "student" else observation)(*args, **kwargs)
+            return build_observation(*args, **kwargs)
 
         class BadTerrain:
             def height(self, *args, **kwargs):

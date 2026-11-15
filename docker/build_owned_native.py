@@ -13,7 +13,6 @@ modules = [
     ("localization_mapping/backend/native", "backend"),
     ("simulation/actuators", "actuators"),
     ("common/communication", "communication"),
-    ("simulation/gazebo/robogauge/motor_src", "robogauge"),
 ]
 for relative, name in modules:
     source = ROOT / "src/embodied_navigation" / relative
