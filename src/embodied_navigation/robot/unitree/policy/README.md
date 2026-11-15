@@ -39,12 +39,12 @@ src/embodied_navigation/robot/unitree/policy/
 
 ## 模块内文件耦合
 
-- 依赖方向：`worker.py`（组合根）→ `student.py`、`native/`、`lower_loop_ack.py`、`control/`、`simulation/terrain/`；`student.py` → `speed_tiers.py`、`common/config`、`common/input_freshness`；`lower_loop_ack.py` → `speed_tiers.py`、`student_xy_stop_takeover_ack.py`、`yaw_measurement_feedback.py`、`control/parking/integral_unload`；`speed_tiers.py` 与 `student_xy_stop_takeover_ack.py` 是叶子。**目录内无 import 环**（`worker → native/worker` 是单向复用）。
+- 依赖方向：`worker.py`（组合根）→ `student.py`、`native/`、`lower_loop_ack.py`、`control/`；`student.py` → `speed_tiers.py`、`common/config`、`common/input_freshness`；`lower_loop_ack.py` → `speed_tiers.py`、`student_xy_stop_takeover_ack.py`、`yaw_measurement_feedback.py`、`control/parking/integral_unload`；`speed_tiers.py` 与 `student_xy_stop_takeover_ack.py` 是叶子。**目录内无 import 环**（`worker → native/worker` 是单向复用）。
 - 反向依赖（被谁用）：`lower_loop_ack.py` 被 `control/parking/transition_gate.py`、`control/tracking/cascade_core.py`、`navigation/base_node.py`、`navigation/pid_control.py`、`worker.py` 五处 import；`student.py` 被 `simulation/dynanav/capture/policy.py`、`simulation/truth_worker.py` 复用。即 robot 与 control/navigation 之间存在**包级双向依赖**，但文件级未成环。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `worker.py` | 479 | common×2、control×2、本目录×5（policy 包、lower_loop_ack、native 包、native.worker、student）、simulation/terrain×2 | 无（进程入口，由 launch 启动） | 偏重：11 个内部 import 的组合根，`main()` 416 行 |
+| `worker.py` | 479 | common×2、control×2、本目录×5（policy 包、lower_loop_ack、native 包、native.worker、student） | 无（进程入口，由 launch 启动） | 偏重：11 个内部 import 的组合根，`main()` 416 行 |
 | `student.py` | 837 | common×2、speed_tiers | worker、dynanav/capture/policy、simulation/truth_worker | 偏重：三件事（45D 计算 / COM 速度 PID / 运行时装配）在一个文件 |
 | `lower_loop_ack.py` | 561 | speed_tiers、xy_stop_ack、yaw_feedback、control.parking.integral_unload | 5 处（见上） | 清楚但被跨层复用，改动影响面大 |
 | `speed_tiers.py` | 152 | 无 | lower_loop_ack、student、yaw_feedback、dynanav/capture/policy | 清楚（纯叶子） |
@@ -56,7 +56,7 @@ src/embodied_navigation/robot/unitree/policy/
 
 - **上帝文件**：有——`student.py` 837 行（>800）；`worker.py` 文件 479 行但 `main()` 单函数 416 行。
 - **重复实现**：有（小范围）——`exact_student45()` 内联构造 world-from-body 旋转矩阵（`student.py:43-49`，`exact_student45` 内），与 [native/observation.py](native/observation.py) 的 `quaternion_rotation()`（22-35 行）是同一公式的两份实现。Student 侧保持自包含可能有数值/审查理由，但代码没有注释说明这一点。
-- **跨层直达**：有——`StudentRuntime` 直接 `read()["student_runtime"]` 重读 configs（绕过 prepare 冻结的 runtime context，见 [configs/README.md](../../../../../configs/README.md)）；`worker.py` 直接 import `simulation/terrain/`；`lower_loop_ack.py` 直接 import `control.parking.integral_unload`；反向地，[control/tracking/policy_selection.py](../../../control/tracking/policy_selection.py) 把本目录路径写死为 `ROOT / "src/embodied_navigation/robot/unitree/policy"`，用于快照/校验。
+- **跨层直达**：有——`StudentRuntime` 直接 `read()["student_runtime"]` 重读 configs（绕过 prepare 冻结的 runtime context，见 [configs/README.md](../../../../../configs/README.md)）；`lower_loop_ack.py` 直接 import `control.parking.integral_unload`；反向地，[control/tracking/policy_selection.py](../../../control/tracking/policy_selection.py) 把本目录路径写死为 `ROOT / "src/embodied_navigation/robot/unitree/policy"`，用于快照/校验。
 - **隐式契约**：有——字符串键（`actor_kind`、`student_runtime`、`r109_speed_tier`、`r85_student_lower_loop_ack`、`cascade.command_limits`）、固定文件名（`navigation_command.json`、`closed_loop_executor_ack.json`）、ACK 时钟差常量 `20_000_000` ns（`lower_loop_ack.py:439/475`）、以及**按路径动态加载的可选扩展**：`StudentRuntime` 用 `Path(__file__).with_name(...)` 加载 `pre_zero_integral_unload.py`、`student_xy_stop_takeover.py`、`student_yaw_measurement_feedback.py`、`student_yaw_pd_fade.py`（`__init__` 里的 unload 加载 + 3 个 `configure_*_candidate` 方法）。**这 4 个文件当前都不在仓库里**（全仓 `find` 无同名 `.py`；`history/` 下只有 `pre_zero_integral_unload` 的历史目录，不是可执行副本），只有 profile 打开对应开关（`r85_pre_zero_integral_unload`、`cascade.r85_student_lower_loop_ack.xy_stop_takeover_enabled`、`r85_student_yaw_measurement_p_retention`、`r85_student_yaw_pd_fade`）时才会走到；这几个开关在 `configs/control/settings.json` 中默认 `enabled:false`。
 
 结论：**偏重但契约边界写得细**。`worker.py` 作为组合根 import 多是合理的，真正需要关注的是 `student.py` 的 837 行三合一与那条“配置开启才会踩到”的动态 import 路径。

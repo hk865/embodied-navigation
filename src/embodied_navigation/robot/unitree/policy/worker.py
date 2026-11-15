@@ -109,61 +109,6 @@ def main():
 
         student = adapter.StudentRuntime(run, scope, binding, limits)
     provider = None
-    if p.get("terrain_layer_switch") is not None or p.get("mission46_required"):
-        if p.get("mission46_required"):
-            from embodied_navigation.simulation.terrain.mission46 import (
-                MissionTerrainProvider as SwitchingTerrainProvider,
-            )
-        else:
-            from embodied_navigation.simulation.terrain.provider import SwitchingTerrainProvider
-        original_map = legacy.TerrainHeightMap
-        observation = sys.modules[legacy.build_observation.__module__]
-        try:
-            provider = SwitchingTerrainProvider(run, scope, original_map, observation)
-        except Exception as error:
-            with (run / "terrain_provider_initialization_failure.json").open("x") as out:
-                out.write(
-                    canonical(
-                        {
-                            "schema": "teacher_actor_terrain_switch/v1",
-                            "status": "failed",
-                            "stage": "initialization",
-                            "error": type(error).__name__ + ": " + str(error),
-                            "navigation_ground_truth_used": False,
-                        }
-                    )
-                    + "\n"
-                )
-            raise
-
-        class ActorTerrainFactory:
-            @staticmethod
-            def from_sdf(
-                path, include_models=None, excluded_models=("go2", "teacher_go2", "moving_obstacle")
-            ):
-                if include_models is None:
-                    # Native clearance/contact safety is independent of Actor
-                    # terrain selection and retains all static collisions.
-                    return original_map.from_sdf(path, excluded_models=excluded_models)
-                if (
-                    Path(path).resolve() != provider.world
-                    or list(include_models) != provider.initial_models
-                    or tuple(excluded_models) != ("go2", "teacher_go2", "moving_obstacle")
-                ):
-                    raise ValueError(
-                        "Unexpected Actor terrain constructor; no geometry fallback allowed"
-                    )
-                return provider
-
-        legacy.TerrainHeightMap = ActorTerrainFactory
-        original_build = legacy.build_observation
-
-        def build_observation(*args, **kwargs):
-            obs, extra = original_build(*args, **kwargs)
-            extra.update(actor_terrain_provider=provider.evidence())
-            return obs, extra
-
-        legacy.build_observation = build_observation
     recording.install_height_path(legacy)
     observation_builder = legacy.build_observation
 

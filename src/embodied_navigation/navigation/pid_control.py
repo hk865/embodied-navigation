@@ -833,29 +833,6 @@ class ControlMixin:
                 self.publish_command()
                 return
             return self.control_admission_hold(now)
-        if self.profile.get("mission46_required"):
-            from embodied_navigation.navigation.mission.mission46_guard import mission_hold
-
-            hold, reason = mission_hold(
-                self.run,
-                self.request_id,
-                self.region_arrivals,
-                self.goals_definition_sha256,
-                self.get_clock().now().nanoseconds,
-                now,
-            )
-            if hold:
-                if self.interrupt_active_handoff("active_handoff_mission_hold"):
-                    self.publish_command()
-                    return
-                self.message = "Teacher46 transition: " + reason
-                # 已到达相位终点时保留既有反馈保持；连接段暂停是向现役 Teacher
-                # 发零速度请求，绝不是零动作或另起一个关节控制器。
-                if self.state == "succeeded" and self.final_bundle is not None:
-                    return self.control_parking(now)
-                self.apply_tilt_guard(now, self.get_clock().now().nanoseconds / 1e9)
-                self.publish_command()
-                return
         self.continuous_release_target()
         if self.state == "succeeded" and self.final_bundle is not None:
             return self.control_parking(now)

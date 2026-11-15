@@ -113,7 +113,7 @@ src/embodied_navigation/navigation/
 | `pid_admission.py` | 616 | `pid_support` | `pid_admission_apply`、`pid_navigation` | 清楚 |
 | `pid_admission_apply.py` | 891 | `pid_admission`、`pid_support`、`planning.reference*` | `pid_navigation` | 可疑（852 行单函数，见下） |
 | `pid_route.py` | 301 | `pid_support` | `pid_navigation` | 清楚 |
-| `pid_control.py` | 1173 | `pid_support`、`control.parking.*`、`control.safety.*`、`control.publication_ledger`、`mission.mission46_guard` | `pid_navigation` | 偏重 |
+| `pid_control.py` | 1173 | `pid_support`、`control.parking.*`、`control.safety.*`、`control.publication_ledger` | `pid_navigation` | 偏重 |
 | `pid_navigation.py` | 249 | 5 个 `*Mixin` + `pid_support` + `pid_entrypoint` + `planning.admission.physical_gate` | `pid_entrypoint`（延迟） | 清楚（门面职责单一） |
 | `building_navigation.py` | 650 | `control.parking.*`、`control.safety.contact_mailbox`、`control.tracking.*`、`common.project` | 无（子进程 `-m`） | 可疑（import 即执行） |
 
@@ -122,7 +122,7 @@ src/embodied_navigation/navigation/
 1. **上帝文件（>800 行）**：本目录 5 个 —— `base_node.py` 1617、`pid_control.py` 1173、`pid_support.py` 1030、`pid_admission_apply.py` 891、`ros_node.py` 874；另有 `building_navigation.py` 650 行，虽未过 800 线，但它是单文件单类的模块级脚本（见第 3 类）。行数来自 `wc -l`。
 2. **重复实现**：两处同名 `class Navigation`（`base_node.py:108` 与 `building_navigation.py:68`）——同名不同类，靠文档区分，容易误读；`main()` 有 4 份（`base_node.py:1594`、`ros_node.py:829`、`pid_entrypoint.py:294`、`pid_navigation.py:243`），但语义不同（前两个是独立历史入口）。
 3. **跨层直达**：`pid_support` 直接 import 节点层 `ros_node`（向上依赖）；`pid_ingress` 直接读 `localization_mapping.feedback_state`（本地化内部状态）而不是走公共 observation 契约；`base_node.py:139` 直接按路径读 `src/embodied_navigation/simulation/scenario.json`。
-4. **隐式契约**：run 目录文件名/JSON 键是主要跨进程契约（`navigation_request.json` 被 `ros_node.py:581` 与 `simulation/terrain/*` 读，`navigation_anchor.json` 被 `planning/admission/path_admission.py:93` 读），没有 schema 版本常量集中定义；`base_node` 与 `ros_node` 各自写 `navigation_guard_history.jsonl`（同名文件两个写入方）。
+4. **隐式契约**：run 目录文件名/JSON 键是主要跨进程契约（`navigation_request.json` 被 `ros_node.py:581` 读，`navigation_anchor.json` 被 `planning/admission/path_admission.py:93` 读），没有 schema 版本常量集中定义；`base_node` 与 `ros_node` 各自写 `navigation_guard_history.jsonl`（同名文件两个写入方）。
 
 结论：**耦合方向清楚但分层偏浅**——mixin 拆分确实把 1173/1030/891 行的实现从门面里搬出来了，`pid_navigation.py` 只剩 249 行组合代码；但没有真正解耦职责，`pid_support` 变成"什么都依赖、什么都被依赖"的枢纽，`pid_admission_apply` 把 852 行压进一个函数。适合当前单人维护，不适合多人并行改 controller。
 
