@@ -5,7 +5,7 @@
 ## 边界
 
 - 做：把 canonical SLAM 位姿、IMU、点云与 SCAN 轨迹换算成有界机体速度；维护停车窗口与零输入 ACK 契约；在仿真安全门禁上给出 fault/stop/reason；检查停车反馈来源。
-- 不做：任务级状态机（默认主路径在 `../navigation/base_node.py` 的 `Navigation.control()`；mission 目标层在 `../navigation/mission/mission_runtime.py`；`../navigation/task.py` 只服务独立 `relative-slam-navigation` 入口，见 [navigation/README.md](../navigation/README.md)）、路径规划与准入（在 [planning/README.md](../planning/README.md)）、进程装配（见 [launch/README.md](launch/README.md)）。
+- 不做：任务级状态机（默认主路径在 `../navigation/base_node.py` 的 `Navigation.control()`；mission 目标层在 `../navigation/mission/mission_runtime.py`；`../navigation/task.py` 已无 console 入口，见 [navigation/README.md](../navigation/README.md)）、路径规划与准入（在 [planning/README.md](../planning/README.md)）、进程装配（见 [launch/README.md](launch/README.md)）。
 - 不提供实机安全后端；`safety/` 包含仿真物理门禁，以及 SLAM 来源、时钟和 IMU 等运行保护，见 [safety/README.md](safety/README.md)。
 - 本目录的 6 个文件里没有配置文件读取点，也不写业务日志；`configs/control/settings.json` 由 `tracking/` 子包消费，见下文与 [tracking/README.md](tracking/README.md)。
 
@@ -18,7 +18,7 @@ src/embodied_navigation/control/
 ├── safety/                 # 子模块，见 safety/README.md
 ├── tracking/               # 子模块，见 tracking/README.md
 ├── README.md               # 本文件
-├── __init__.py             # 1 行，只重导出 relative_pid 的 RelativePidConfig / follow_segment
+├── __init__.py             # 空文件（原 re-export 已删除）
 ├── collision.py            # 61 行，支撑栅格、制动扫掠、深度碰撞三个纯几何检查
 ├── executor_command.py     # 220 行，CommandReader：命令生产者、来源时钟与零命令绑定校验
 ├── io.py                   # 14 行，证据写入器与最新命令写入器的构造入口
@@ -32,12 +32,12 @@ src/embodied_navigation/control/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 代码 | `relative_pid.py` | 活代码，纯函数；默认 `demo.launch.py` 不经过它，只服务独立 `relative-slam-navigation` 入口（`../navigation/task.py`）与 `scripts/replay_controller.py` |
-| 代码 | `collision.py` | 活代码，纯几何；只被独立入口 `../navigation/relative_slam_node.py`、`../navigation/task.py` 使用 |
+| 代码 | `relative_pid.py` | 活代码，纯函数；默认 `demo.launch.py` 不经过它，只被 `../navigation/task.py` 使用 |
+| 代码 | `collision.py` | 活代码，纯几何；只被 `../navigation/task.py` 使用 |
 | 代码 | `executor_command.py` | 活代码；策略 worker 读命令文件时构造 `CommandReader`（`../robot/unitree/policy/worker.py` 内延迟导入） |
 | 代码 | `publication_ledger.py` | 活代码；`../navigation/pid_control.py` 在每次实际 `cmd_pub.publish` 前后调用 `begin` / `publication_started` / `completed` |
 | 代码 | `io.py` | 活代码接线层；`make_evidence_writer` 给 `../navigation/ros_node.py`，`make_command_writer` 给 `../robot/unitree/bridge.py` |
-| 代码 | `__init__.py` | 兼容门面，只做两个符号重导出，无逻辑 |
+| 代码 | `__init__.py` | 空文件，无逻辑 |
 
 **日志/输出**
 
@@ -48,21 +48,20 @@ src/embodied_navigation/control/
 **配置**
 
 - 本目录没有配置读取点：`relative_pid.py` 的参数是 `RelativePidConfig` 的 dataclass 默认值；`executor_command.py` 的 `run_id` / `scope_sha` / `limits` 由调用方传入；`publication_ledger.py`、`io.py`、`collision.py` 不读 `configs/`。
-- `configs/control/relative_pid.yaml` 当前**无 Python 读取点**：它是独立 `relative-slam-navigation` 入口的保留配置，值与 `RelativePidConfig` 默认值一致但未接线，见 [configs/README.md](../../../configs/README.md) 的"当前无 Python 读取点"表；改它不会生效。
 - cascade 速度界等 `configs/control/settings.json` 的键不在本目录消费，由 `tracking/` 读取。
 
 ## 模块内文件耦合
 
-依赖方向：`__init__.py → relative_pid` 是唯一的包内 import；其余 5 个文件互不 import。跨包方向是"根目录向下依赖子包"：`executor_command.py` 在模块级 import `parking/parking_zero_contract.py`，运行时延迟 import `parking/terminal_reference.py`。39 个非 launch 模块可单独 import（`PYTHONPATH=src` 冒烟，无环错误）；`launch/` 下 2 个模块需要 ROS `launch` 包，本机未安装，未做导入冒烟。
+依赖方向：包内无 import（`__init__.py` 为空）；其余 5 个文件互不 import。跨包方向是"根目录向下依赖子包"：`executor_command.py` 在模块级 import `parking/parking_zero_contract.py`，运行时延迟 import `parking/terminal_reference.py`。39 个非 launch 模块可单独 import（`PYTHONPATH=src` 冒烟，无环错误）；`launch/` 下 2 个模块需要 ROS `launch` 包，本机未安装，未做导入冒烟。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `relative_pid.py` | 83 | `..planning.route` | `control/__init__`、`../navigation/task.py`、`scripts/replay_controller.py` | 清楚 |
-| `collision.py` | 61 | numpy | `../navigation/relative_slam_node.py`、`../navigation/task.py` | 清楚 |
+| `relative_pid.py` | 83 | `..planning.route` | `../navigation/task.py` | 清楚 |
+| `collision.py` | 61 | numpy | `../navigation/task.py` | 清楚 |
 | `executor_command.py` | 220 | `common.observation`、`common.integration_limits`、`common.input_freshness`、`parking.parking_zero_contract`（模块级）、`parking.terminal_reference`（延迟） | `../robot/unitree/policy/worker.py`（函数内延迟） | 偏重：单函数 163 行 |
 | `publication_ledger.py` | 85 | 标准库 | `../navigation/pid_control.py`（函数内延迟） | 可疑：反射式读取调用方状态 |
 | `io.py` | 14 | `common.runtime_io`、`common.runtime_telemetry` | `../navigation/ros_node.py`、`../robot/unitree/bridge.py` | 清楚 |
-| `__init__.py` | 1 | `relative_pid` | 无 | 清楚 |
+| `__init__.py` | 1 | 无 | 无 | 清楚（空文件） |
 
 四类问题：
 

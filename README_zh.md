@@ -39,7 +39,7 @@ embodied-navigation/
 
 ## 模块耦合
 
-包内模块依赖不是严格 DAG（按一级模块统计有 9 组 A↔B 双向依赖，2026-11-09 AST 统计）。明确构成层次倒置的有：规划 import 控制器（`planning/reference/global_route_reference.py` → `control/tracking/cascade_core.Controller`）、定位 import 导航数据类（`localization_mapping/relative_odometry.py` → `navigation.task.Observation`）、传感适配层 import 控制内部（`perception/sensors/feedback_mailbox.py`）、策略 ACK 与停车控制双向依赖、安全门禁同时 import 机器人与规划。逐条证据与其余窄环见根 [README.md](README.md) 的"模块耦合"节与各模块 README。
+包内模块依赖不是严格 DAG（按一级模块统计有 9 组 A↔B 双向依赖，2026-11-09 AST 统计）。明确构成层次倒置的有：规划 import 控制器（`planning/reference/global_route_reference.py` → `control/tracking/cascade_core.Controller`）、传感适配层 import 控制内部（`perception/sensors/feedback_mailbox.py`）、策略 ACK 与停车控制双向依赖、安全门禁同时 import 机器人与规划。逐条证据与其余窄环见根 [README.md](README.md) 的"模块耦合"节与各模块 README。
 
 ## 可读性评估
 

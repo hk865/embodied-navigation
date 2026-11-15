@@ -4,17 +4,14 @@ This is the current supported task: relative-SLAM waypoints, settle, turn and
 stop/failure. There is no invented global replanner or autonomous recovery.
 
 Public contract: ``Observation`` and ``TaskConfig`` field names/defaults are
-re-exported by ``navigation/__init__.py``; ``Observation`` is constructed by the
-relative-odometry producer (``localization_mapping/relative_odometry.py``) and
-both are used by the ROS adapter (``navigation/relative_slam_node.py``).
+re-exported by ``navigation/__init__.py``.
 ``update`` consumes one measured observation and ``step`` returns
 ``(command3, diagnostic_dict)``. Phase names, failure strings and evidence keys
 are written into the recorded run output.
 
-Scope: this state machine serves only the independent ``relative-slam-navigation``
-console entry. The default native launch (``demo.launch.py``) runs
-``navigation/base_node.py`` ``Navigation.control()`` instead, so changing this
-module does not change default navigation behaviour.
+Scope: this state machine has no console entry and is not wired into
+``demo.launch.py``, so changing this module does not change default navigation
+behaviour.
 """
 
 from dataclasses import dataclass, field

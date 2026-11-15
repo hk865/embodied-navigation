@@ -26,9 +26,8 @@ src/embodied_navigation/navigation/
 ├── pid_navigation.py                   # 249 行，现役 controller 兼容门面：类组合 + 旧导入路径重导出
 ├── pid_route.py                        # 301 行，checked trajectory 执行、连续进度与规划适配 mixin
 ├── pid_support.py                      # 1030 行，共享导入枢纽 + 证据/探针助手
-├── relative_slam_node.py               # 172 行，relative-SLAM 任务的 ROS 适配器（独立入口）
 ├── ros_node.py                         # 874 行，TeacherNavigation 有限包装 + RecordedPublisher 状态发布/证据写入器
-└── task.py                             # 346 行，shuttle 任务状态机，与 ROS/仿真解耦（独立入口使用）
+└── task.py                             # 346 行，shuttle 任务状态机，与 ROS/仿真解耦（无 console 入口）
 ```
 
 ## 代码、日志与配置
@@ -43,7 +42,7 @@ src/embodied_navigation/navigation/
 | `pid_entrypoint.py` | 活代码（进程入口） | `_main()`（L59–291）做 rclpy init、`IntegratedNavigation` 组合、drain 与收尾收据 |
 | `base_node.py` | 活代码 | `class Navigation(Node)`（L108）+ `control()`（L1077–1493，417 行）；`main()` 在 L1594 |
 | `ros_node.py` | 活代码 | `TeacherNavigation(base.Navigation)`（L134）+ `RecordedPublisher`（L58）；`control()` 在 L600 |
-| `task.py` + `relative_slam_node.py` | 活代码（独立入口） | 只有显式 `main()` 建节点；console script `relative-slam-navigation` 指向 `relative_slam_node.py` |
+| `task.py` | 活代码（无 console 入口） | 与 ROS 解耦的状态机；原 console script `relative-slam-navigation` 已删除 |
 | `building_navigation.py` | 活代码（仅子进程） | L28 起模块级 `run = Path(os.environ["DEMO_RUN_DIR"])`、读 `experiment_setup.json`/`PCT_route.json`/`sensor_contract.json`，L47 `rclpy.init()`；只由 `../../launch/building.py:354` 与 `robogauge/benchmark.py:118` 以 `-m` 启动 |
 | `__init__.py` | 重导出 | 58 字节，只有 `from .task import NavigationTask, Observation, TaskConfig` |
 
@@ -80,7 +79,6 @@ src/embodied_navigation/navigation/
 | `base_node.py` | `scan_route_definitions.jsonl`、`r85_reference_attempts.jsonl`、`r85_reference_holds.jsonl` | — | `append()`：路线定义与 r85 参考尝试/保持证据 |
 | `building_navigation.py`（Building 路径） | `navigation_history.jsonl`、`navigation_slam_poses.jsonl`、`accepted_SCAN_curves.jsonl`、`actual_command_ack.jsonl`、`native_pose_source.jsonl` | ✅ | 真实文件句柄（`open("w")`/`open()`），只在 Building run 目录出现 |
 | `building_navigation.py`（Building 路径） | `parking_10Hz_result.json`、`truth_navigation_status.json` | ✅ | 模块内 `atomic()`（临时文件 + `replace`） |
-| `relative_slam_node.py`（独立入口） | `result.json`、`stop_request.json` | ✅ | `write_text()` 到 `--output`，不一定在 run 目录 |
 
 两份常见但**不是本目录写**的文件：`mission46_status.json` 与 `closed_loop_executor_ack.json` 在本包只有读点（`pid_control.py:571`、`:209`）；前者在本检出的 Python 源码里没有写入点（推测由原生 SCAN 侧产生，未核实），后者由 `robot/unitree/policy/worker.py:250` 的 `atomic_ack_rows` 写。`navigation_anchor.json` / `navigation_request.json` / `global_reference.json` 也不是本目录写的：由 `mission/mission_runtime.py` 冻结/发布（见 `mission/README.md`）。
 
@@ -107,8 +105,7 @@ src/embodied_navigation/navigation/
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
 | `__init__.py` | 1 | `task` | `ros_node`（包级导入） | 清楚 |
-| `task.py` | 346 | `control.collision`、`control.relative_pid` | `navigation/__init__`、`relative_slam_node`、`localization_mapping.relative_odometry` | 清楚（纯状态机，无 ROS） |
-| `relative_slam_node.py` | 172 | `task`、`control.collision`、`localization_mapping.relative_odometry` | 无（console script 入口） | 清楚 |
+| `task.py` | 346 | `control.collision`、`control.relative_pid` | `navigation/__init__` | 清楚（纯状态机，无 ROS） |
 | `base_node.py` | 1617 | 14 个跨层模块（common/control/localization_mapping/perception/planning）+ `mission.goal_regions` | `ros_node` | 偏重（上帝类） |
 | `ros_node.py` | 874 | `base_node`、`mission.dynamic_stop_event`、control/common 多模块 | `pid_support` | 偏重（节点包装承担 12 处证据写点，默认只有状态快照真落盘） |
 | `pid_support.py` | 1030 | `ros_node` + 24 个内部模块 | 5 个 `*Mixin` + `pid_navigation` + `pid_entrypoint` | 可疑（导入枢纽：7 个文件依赖它，且自身 42 个函数（含嵌套）混杂） |
@@ -152,7 +149,6 @@ src/embodied_navigation/navigation/
 - `pid_admission_apply.py`：`_admit_matched_spline`（L40–891）**单函数 852 行**、0 docstring；这是全目录最长的单个可执行单元，任何准入改动都要在一个函数里定位。
 - `pid_control.py`：12 函数 0 docstring，`publish_command`（L852–1173）322 行、`select_pid_velocity`（L237–515）279 行；4 个 >80 行函数。
 - `pid_support.py`：导入枢纽，且**文件中部还有 import**——import 分成三段：L9–108（主体）、L255（单独一条 `import sys`）、L1011–1029（`goal_regions`/`continuous_route`/`path_commit`/`pending_path_commit`/`navigation_stop_window`）；读者很难一眼判断完整依赖面。
-- `relative_slam_node.py`：7 函数 0 docstring，`main()` 153 行（L16–168）把 argparse、建节点、循环、收尾写在一起。
 - `building_navigation.py`：`import` 即执行（模块级读 4 个 run 文件、`rclpy.init()`、`os.environ["DEMO_RUN_DIR"]` 无兜底），因此无法在无 run 目录的进程里导入做静态检查或单测；`tick()`（L435–635）201 行。
 
 区分说明：`base_node.py`/`pid_admission_apply.py`/`pid_control.py`/`pid_support.py` 的问题是**结构**（长函数、导入枢纽、门面之外没有稳定边界）；`task.py`、`pid_ingress.py`、`pid_admission.py` 的问题是**文档**（函数规模可接受但缺 docstring），不要混为一谈。
@@ -178,7 +174,6 @@ src/embodied_navigation/navigation/
 | `controller` 角色 | `pid_navigation.PIDNavigation`（由 `pid_ingress`/`pid_admission`/`pid_admission_apply`/`pid_route`/`pid_control` 组合）→ `TeacherNavigation` → `base_node.Navigation`；进程入口 `pid_entrypoint` | `../control/launch/components.py` | 是；任务状态机是 `base_node.Navigation.control()` |
 | `mission` 角色 | `mission.mission_runtime.Mission`（文件内定义，非 `mission/state_machine.py`） | `../control/launch/components.py` | 是；只冻结/发布目标与参考，不产生速度 |
 | Building 节点 | `building_navigation.Navigation`（同名不同类） | `../launch/building.py`、`robogauge/benchmark.py` | 否 |
-| relative-SLAM 入口 | `task.py` 状态机 + `relative_slam_node.py` | console script `relative-slam-navigation`（`pyproject.toml`） | 否，独立入口 |
 
 注意 `state_machine.py`（`mission/`）在本检出中没有实例化点；`continuous_route_contract.enabled=false`。四条路径的总览见 [`../../../docs/architecture.md`](../../../docs/architecture.md)，术语见 [`../../../docs/glossary.md`](../../../docs/glossary.md)。
 
@@ -194,8 +189,7 @@ src/embodied_navigation/navigation/
   该 facade 还按旧导入路径重导出原模块的 27 个 helper 以及 `_drain_executor`/`_main`（`_main` 保留 `(shutdown_signals)` 原签名），并使用 absolute imports，因此旧的 `python .../pid_navigation.py --run ...` 直接脚本入口和 `-m` 入口都保留；实现仍在上面的职责模块。`../control/launch/components.py` 仍以 `--run <run_dir>` 启动 `embodied_navigation.navigation.pid_navigation`。
 - `ros_node.py`：`TeacherNavigation(base.Navigation)`，Teacher 的有限包装，拒绝重复或倒退的来源 header，并要求实测 SLAM/点云。
 - `base_node.py`：`Navigation` 基类，做 measured-pose SCAN 执行、freshness watchdog 与 LiDAR 停/恢复；自身不设仿真位姿、不订阅真值。
-- `task.py`：现有 shuttle 任务状态机（等待、跟随、settle、转向、停止/失败），与 ROS、仿真解耦；**只在独立 `relative-slam-navigation` 入口使用，不在 `demo.launch.py` 中**；驾驶指令来自 `../control/relative_pid.py`。
-- `relative_slam_node.py`：相对 SLAM 任务的 ROS 适配器，也是 pyproject 的 `relative-slam-navigation` 入口；只有显式 `main()` 才创建节点。
+- `task.py`：现有 shuttle 任务状态机（等待、跟随、settle、转向、停止/失败），与 ROS、仿真解耦；**不在 `demo.launch.py` 中**；驾驶指令来自 `../control/relative_pid.py`。
 - `building_navigation.py`：Building 分支节点（canonical FAST-LIVO2，只允许 SLAM），读 run 目录的 `PCT_route.json`，由 `../launch/building.py` 与 `robogauge/benchmark.py` 启动。
 - `mission/` 见 `mission/README.md`；`robogauge/` 见 `robogauge/README.md`。
 

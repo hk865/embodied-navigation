@@ -31,7 +31,6 @@ src/embodied_navigation/localization_mapping/
 ├── localization_runtime.py         # 已知场景地图辅助定位节点，发布 corrected 话题（429 行）
 ├── odom_adapter.py                 # FAST-LIVO2 IMU 状态 → body/lidar 里程计与有效 twist（237 行）
 ├── point_provenance.py             # 点/commit 身份编码、校验与几何证据打包（397 行）
-├── relative_odometry.py            # 一次性对齐的相对 SLAM 里程计（独立 relative-slam 入口用，61 行）
 └── sensor_snapshot.py              # 实时 SLAM 位姿/点云按源时间与 frame 配对（185 行）
 ```
 
@@ -45,7 +44,7 @@ src/embodied_navigation/localization_mapping/
 | 代码（库/契约） | `known_scene_matcher.py`、`known_scene_adapter.py`、`point_provenance.py`、`sensor_snapshot.py`、`geometry.py` | 纯函数/类，无 ROS I/O；`known_scene_adapter.py` 例外：`MatcherWorker` 会起一个后台线程。 |
 | 代码（host 扩展） | `known_scene_inputs.py`、`known_scene_hold_guard.py` | 不是独立节点：前者是被 `navigation/pid_entrypoint.py` 混入的 `KnownSceneInputMixin`，后者是一组接收 `node` 的函数。 |
 | 代码（prepare 期） | `known_scene_reference_builder.py` | 由 `launch/prepare.py` 生成 `known_scene_reference.json`，运行期只被 `localization_runtime` 读取该 JSON。 |
-| 代码（独立入口配套） | `relative_odometry.py`、`feedback_state.py` | 前者只被 `navigation/relative_slam_node.py` 使用；后者只被 `navigation/pid_ingress.py` 调用。 |
+| 代码（独立入口配套） | `feedback_state.py` | 只被 `navigation/pid_ingress.py` 调用。 |
 | 日志/输出 | `building_runtime.py` → run 目录 `slam_status.json`、`slam_poses.jsonl`、`correction_applications.jsonl` | `slam_status.json` 原子替换（`.tmp` + `replace`），`navigation/building_navigation.py:469` 读它的 `pairs` 做门禁；两个 `.jsonl` 以 `"x"` 模式打开，同一 run 目录重跑会直接失败。`slam_poses.jsonl` 在 `src/`+`scripts/` 里没有读取方，是运行证据。 |
 | 日志/输出 | `localization_runtime.py` → run 目录 `known_scene_status.json` | 每个 tick 原子写一次，内容含 `schema="known_scene_navigation_status/v1"`、`generation`、`bundles_published`、`robot_truth_pose_used=false`。仓库内没有代码读取它（grep 只命中写入处），属证据/排障文件。 |
 | 日志/输出 | `/demo/navigation/localization_bundle`、`/demo/navigation/localization_status` | 运行期契约话题（`String` JSON），分别由 `localization_runtime` 发布、被导航侧消费；不是日志文件。 |
@@ -74,7 +73,6 @@ src/embodied_navigation/localization_mapping/
 | `building_sensors.py` | 171 | 仅 rclpy/scipy | 无 import 方 | 清楚 |
 | `geometry.py` | 96 | 仅 NumPy/SciPy | `mapping/map_archive`、`odom_adapter`、`perception/sensors/self_echo_filter` | 清楚 |
 | `known_scene_reference_builder.py` | 81 | 仅标准库 + SciPy | `launch/prepare.py`（prepare 期一次） | 清楚 |
-| `relative_odometry.py` | 61 | **`navigation/task.py`**（取 `Observation` 数据类） | `navigation/relative_slam_node.py` | 清楚但依赖方向反直觉 |
 | `feedback_state.py` | 33 | 无 | `navigation/pid_ingress.py` | 清楚 |
 | `__init__.py` | 1 | 无 | 无 | 清楚 |
 
@@ -82,7 +80,7 @@ src/embodied_navigation/localization_mapping/
 
 - **上帝文件**：`known_scene_inputs.py` 1138 行、30 个方法、单函数最长 187 行（`_r86_commit_feedback`）。它同时承担订阅包装、时钟策略、R86/R92/R99/R104 状态机、反馈提交与 map-frame 交接，是典型的"按历史轮次堆叠的 mixin"。
 - **重复实现**：PointCloud2 的 XYZ 解码有 3 份近似实现——`point_provenance.xyz`（无有限性检查）、`sensor_snapshot.xyz`（多的 `np.isfinite` 检查）、`known_scene_adapter.pointcloud_xyz`（另写一遍）；`checked_transform` 有 2 份且容差不一致（`known_scene_matcher.py:28` 末行 `atol=1e-10` vs `backend/geometry.py:13` 末行 `atol=1e-8`）。
-- **跨层直达**：`known_scene_inputs.py:72-77` 直接 import `control.parking.causal_join`/`terminal_owner`；`known_scene_hold_guard.py:252,263` 在函数内 import `control.parking.transition_gate.TeacherHeadingGate`；反向 `control/parking/terminal_owner.py:6` 又 import `known_scene_hold_guard._frame`。于是**包级依赖成环**：`localization_mapping ↔ control.parking`（文件级无 import 环，因为一侧是延迟 import）。同理 `relative_odometry.py:8` 让 `localization_mapping → navigation.task`，而 `navigation/*` 反过来 import `known_scene_hold_guard`/`known_scene_inputs`/`feedback_state`。`localization_runtime.py:168` 还直接 import `perception.sensors.async_writers`。
+- **跨层直达**：`known_scene_inputs.py:72-77` 直接 import `control.parking.causal_join`/`terminal_owner`；`known_scene_hold_guard.py:252,263` 在函数内 import `control.parking.transition_gate.TeacherHeadingGate`；反向 `control/parking/terminal_owner.py:6` 又 import `known_scene_hold_guard._frame`。于是**包级依赖成环**：`localization_mapping ↔ control.parking`（文件级无 import 环，因为一侧是延迟 import）。`localization_runtime.py:168` 还直接 import `perception.sensors.async_writers`。
 - **隐式契约**：`KnownSceneInputMixin` 假定宿主节点已有 `self.run`、`self.profile`、`self.pose_timeout`、`self.cloud_timeout`、`_admit_matched_spline` 等属性，并用 `getattr(self, "profile", None)` 兜底；`pid_entrypoint.py` 还在运行时替换 `IntegratedNavigation._known_generation_ready`。`known_scene_hold_guard._frame()` 返回 `(generation, C_world_odom, T_navigation_world)` 三元组、`BINDING_KEYS` 十个字符串键，都是靠调用顺序和 dict key 维持的约定，没有类型或协议声明。
 
 结论：**局部清楚、包级偏重**。节点→库的单向分层是好的（四个节点互不 import），纯函数文件的 docstring 与命名也规范；问题集中在"历史轮次 mixin 长大"和"localization ↔ control/navigation 双向 import"两处，属于结构债而非乱写。
@@ -118,7 +116,7 @@ src/embodied_navigation/localization_mapping/
 - [mapping/README.md](mapping/README.md)：运行期观测地图归档。
 - [semantic_mapping/README.md](semantic_mapping/README.md)：纯 CPU 的动静分层、对象 ID、历史与结构化查询；显式保存 SLAM/oracle 来源，目前由 DynaNav 诊断接入，不代表生产语义感知已完成。
 - 顶层节点：[odom_adapter.py](odom_adapter.py) 把 `/aft_mapped_to_init` 的 IMU 状态换算成 body/lidar 里程计与有效 twist；[localization_runtime.py](localization_runtime.py) 做已知场景地图辅助的实时定位与 bundle 发布；[building_runtime.py](building_runtime.py) 是 Building 唯一的校正 owner；[building_sensors.py](building_sensors.py) 过滤 LiDAR 自回波。
-- 支撑模块：`geometry.py`（坐标代数）、`sensor_snapshot.py`（同源时间配对）、`point_provenance.py`（点与 commit 身份校验）、`known_scene_*.py`（场景参考、匹配、输入与保持门）、`relative_odometry.py`、`feedback_state.py`。
+- 支撑模块：`geometry.py`（坐标代数）、`sensor_snapshot.py`（同源时间配对）、`point_provenance.py`（点与 commit 身份校验）、`known_scene_*.py`（场景参考、匹配、输入与保持门）、`feedback_state.py`。
 
 ## 输入输出
 

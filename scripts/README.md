@@ -21,7 +21,6 @@ scripts/
 ├── query_scene_map.py                         # 76 行，查询已落盘的 scene_map.json 快照（回放/查询）
 ├── reconstruct_dynanav_learned_person_map.py # 452 行，learned person 点 + LIO 位姿离线重建（重建）
 ├── reconstruct_dynanav_slam_map.py           # 602 行，用记录的 LIO 估计重建观测点层（重建）
-├── replay_controller.py                      # 103 行，用已保存 run 校验提取出的驾驶律（回放）
 ├── replay_dynanav_imu.py                     # 444 行，按收到的 /clock 回放 SDK IMU 行（回放）
 ├── replay_dynanav_rgb.py                     # 651 行，按收到的 clock 回放原始 RGB NPZ 帧（回放）
 ├── run_dynanav_experiment.py                 # 7 行，experiment.main 的薄入口（入口）
@@ -51,7 +50,6 @@ scripts/
 | 重建 | `reconstruct_dynanav_learned_person_map.py` | 452 | learned person mask + 记录 LIO 位姿的离线重建；复用 `reconstruct_dynanav_slam_map.py` 的位姿索引；带上游 provenance 校验 |
 | 回放 | `replay_dynanav_imu.py` | 444 | 按收到的 `/clock` 回放真实 SDK IMU 行到 `/dynanav/imu`；只取 time/accel_body/gyro_body；`--check` 不 import ROS，但仍会写 receipt |
 | 回放 | `replay_dynanav_rgb.py` | 651 | 按收到的 clock 回放原始 RGB NPZ 帧到 `/dynanav/camera`；只读 rgb/source_ns/frame_id/encoding/frame_index 数组，别的数组（含真值）一概不加载；`--check` 同样会写 receipt |
-| 回放 | `replay_controller.py` | 103 | 离线校验"提取出的驾驶律"与一次真实保存的 run 是否一致；帧选择只用记录的 target/heading/distance，不用被检验的 command |
 | 回放/查询 | `view_dynanav_map.py` | 268 | 把已有估计 XYZ 地图发布到隔离静态话题 `/dynanav/review/static_map`；不启动控制/TF/仿真/重建 |
 | 回放/查询 | `query_scene_map.py` | 76 | 查询一份已落盘 `scene_map.json` 快照；查询/过滤逻辑在 `localization_mapping.semantic_mapping.query`，本文件只是 CLI 包装 |
 | 评测 | `evaluate_dynanav_person_segmentation.py` | 464 | 离线 RGB-only 行人 mask 对稀疏 oracle 采样评测；**不做在线控制**；输出必须是数据卷下的新目录 |
@@ -77,7 +75,6 @@ scripts/
 | `audit_dynanav_speed_ladder.py` | `--output`（新目录） | `speed-ladder-evidence.json`（schema `dynanav_speed_ladder_offline_audit/v1`）、`speed-ladder-table.csv`，并把自身与 helper 源码副本写成 `audit-used.py`、`summarize_dynanav_experiment.py` |
 | `replay_dynanav_imu.py` | `--receipt`（新文件） | schema `dynanav_sdk_imu_replay_receipt_v1`；`--check` 也写 receipt（status=`validated_check_only`） |
 | `replay_dynanav_rgb.py` | `--receipt`（新文件） | schema `dynanav_original_rgb_replay_receipt/v1`；receiver 字段明写 `native_observer_receipt_verified=false`、`ack_scope` 只代表 publisher 侧可靠确认 |
-| `replay_controller.py` | stdout 或 `--output` | 逐命令误差/dropped 计数 |
 | `view_dynanav_map.py` / `query_scene_map.py` | 无文件产出（前者发话题，后者 stdout） | 只读输入 |
 | `configure_data.py` | 仓库根 `assets`/`models`/`runs` 三个软链 | stdout 打印 `data_present`/`linked` |
 
@@ -97,7 +94,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 - `PROJECT_DATA_ROOT`：数据卷根（`project.data_root()` 返回 `<PROJECT_DATA_ROOT>/embodied-navigation`）。缺失时不会回退到仓库内路径：`configure_data.py` 与 `run_dynanav_online_person.py` 直接 `SystemExit`，其余脚本调用 `project.data_root()` 抛 `RuntimeError`。
 - `PYTHONPATH`：`run_dynanav_online_person.py:163` 给子进程注入 `<repo>/src`；7 个脚本自己也做 `sys.path.insert(0, ROOT/"src")`。
 - `ROS_DOMAIN_ID`：`run_dynanav_lio.sh:103` 默认 91；supervisor 用 `--domain`（默认 116）显式指定，并要求 worker/observer/capture 同域。
-- 其它被读取的环境变量：`NAV_END_SIM`（`relative_slam_node.py`）、`NAVIGATION_ACTOR_PYTHON`（robogauge benchmark，不属本目录）。
+- 其它被读取的环境变量：`NAVIGATION_ACTOR_PYTHON`（robogauge benchmark，不属本目录）。
 
 ## 模块内文件耦合
 
@@ -118,7 +115,6 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 | `query_scene_map.py` | 76 | `localization_mapping.semantic_mapping(.query)` | 无 | 清楚 |
 | `reconstruct_dynanav_learned_person_map.py` | 452 | 按路径加载 `reconstruct_dynanav_slam_map.py` + `perception.learned_person_mapping`、`person_segmentation` | 无 | 可疑（按路径加载） |
 | `reconstruct_dynanav_slam_map.py` | 602 | `localization_mapping.semantic_mapping` | 被同目录 1 个脚本按路径加载 | 偏重（602 行，同时做 bag 解码/位姿索引/重建/收据） |
-| `replay_controller.py` | 103 | `control.relative_pid` | 无 | 清楚 |
 | `replay_dynanav_imu.py` | 444 | 标准库 + 延迟 import ROS | 无 | 清楚（ROS 只在 `run_ros` 里 import） |
 | `replay_dynanav_rgb.py` | 651 | 标准库 + 延迟 import ROS | 无 | 偏重（651 行 / 20 函数） |
 | `run_dynanav_experiment.py` | 7 | `simulation.dynanav.experiment` | 被 supervisor 以子进程调 | 清楚 |
@@ -156,7 +152,6 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 - `evaluate_dynanav_person_segmentation.py`（464 行 / 7 函数 / docstring 1/7，最长 `main` 156 行，2 个 >80）：推理/评测/可视化分开，但 `main` 承担全部参数校验与流程。
 - `replay_dynanav_imu.py`（444 行 / 18 函数 / docstring 4/18，最长 `run_ros` 116 行（L254–369））：函数切得细，ROS 只在 `run_ros` 内延迟 import，`--check` 路径无 ROS 依赖。
 - `view_dynanav_map.py`（268 行 / 7 函数 / 0 个 >80 / docstring 1/7，最长 `load_map` 67 行，L60–126）。
-- `replay_controller.py`（103 行 / 3 函数 / 0 个 >80 / docstring 0/3，最长 `replay` 64 行，L20–83）。
 
 **需改进**
 
@@ -165,7 +160,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 - `reconstruct_dynanav_learned_person_map.py`（452 行 / 6 函数 / docstring 0/6，`reconstruct_mode` 232 行（L102–333）、2 个 >80）：逐帧重建 + 多层地图写盘压在一个函数里，与 `reconstruct_dynanav_slam_map.py` 的清晰分层形成对比。
 - `audit_dynanav_speed_ladder.py`（288 行 / 10 函数 / docstring 1/10，最长 `audit_run` 118 行（L120–237））：**代码风格**与其余脚本不一致——大量单行 `if ...:raise ...`、单行 `with`、紧凑字典字面量（L252–283），正文注释只有 1 行；功能上没问题，但阅读成本明显高于同目录其他文件。
 
-区分说明：`replay_dynanav_rgb.py`/`run_dynanav_person_worker.py`/`reconstruct_dynanav_learned_person_map.py` 是**结构问题**（超长函数）；`summarize_dynanav_experiment.py`/`view_dynanav_map.py`/`replay_controller.py` 只是**文档问题**（结构已足够小）；`audit_dynanav_speed_ladder.py` 是**风格问题**（压缩写法），不要误判成功能缺陷。
+区分说明：`replay_dynanav_rgb.py`/`run_dynanav_person_worker.py`/`reconstruct_dynanav_learned_person_map.py` 是**结构问题**（超长函数）；`summarize_dynanav_experiment.py`/`view_dynanav_map.py` 只是**文档问题**（结构已足够小）；`audit_dynanav_speed_ladder.py` 是**风格问题**（压缩写法），不要误判成功能缺陷。
 
 ## 重构建议
 
@@ -207,7 +202,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 | `summarize_dynanav_experiment.py` | `tests/unit/test_dynanav_experiment_summary.py` |
 | `view_dynanav_map.py` | `tests/unit/test_dynanav_map_viewer.py` |
 
-未被直接引用的 6 个：`capture_dynanav.py`、`configure_data.py`、`evaluate_dynanav_person_segmentation.py`、`replay_controller.py`、`run_dynanav_experiment.py`、`run_dynanav_person_worker.py`。其中 `capture_dynanav.py` 的行为经 `tests/unit/test_dynanav_capture_orchestration.py` 覆盖被它 `runpy` 执行的 `capture_go2_rgbd`（不是覆盖这个入口本身）；`replay_controller.py` 只在 `docs/architecture.md` 的测试边界里被提及，没有测试。测试命令与边界见 [`../tests/README.md`](../tests/README.md)。
+未被直接引用的 5 个：`capture_dynanav.py`、`configure_data.py`、`evaluate_dynanav_person_segmentation.py`、`run_dynanav_experiment.py`、`run_dynanav_person_worker.py`。其中 `capture_dynanav.py` 的行为经 `tests/unit/test_dynanav_capture_orchestration.py` 覆盖被它 `runpy` 执行的 `capture_go2_rgbd`（不是覆盖这个入口本身）。测试命令与边界见 [`../tests/README.md`](../tests/README.md)。
 
 ## 限制
 

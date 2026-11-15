@@ -22,7 +22,7 @@
 ## 状态机与任务
 
 - **默认任务状态机**：`navigation/base_node.py` 的 `Navigation.control()`（idle/running/succeeded/failed/stopped 与 drive/pre_turn/align/settle 相位）。这是 `demo.launch.py` 实际运行的。
-- **`navigation/task.py`**：独立 `relative-slam-navigation` 入口的 shuttle 状态机，不在默认 launch 中。
+- **`navigation/task.py`**：shuttle 状态机，原独立 `relative-slam-navigation` 入口已删除，不在默认 launch 中。
 - **mission**：目标/参考层。`mission/mission_runtime.py` 是默认 launch 的 `mission` 进程；`mission/state_machine.py` 在本检出没有实例化点；`mission46`/`continuous_route` 契约默认关闭。
 - **admission / fence**：路径准入证明。默认启用 `r85_auto_reference_contract` 时走 `AutomaticRouteFence` + `R85PhysicalPathGate`；`FrozenFence` 是未闭合的 fallback。
 - **hold / resume**：在检测到动态障碍或准入失败后暂停、条件解除后继续；与停车（parking）是不同阶段。
