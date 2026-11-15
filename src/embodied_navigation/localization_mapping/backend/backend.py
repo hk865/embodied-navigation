@@ -195,7 +195,7 @@ class SlamBackend:
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
-        """World cloud of ``_loop_window``; the loop edge anchors to its keyframe nearest the match."""
+        """World cloud of the candidate's ``_loop_window`` (the ICP target of a loop check)."""
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
