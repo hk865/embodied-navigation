@@ -122,6 +122,6 @@ A/D 两条执行路径与进程图见 [docs/architecture.md](../../../docs/archi
 ## 测试与限制
 
 - 后端有专用用例 `tests/unit/test_slam_backend_*.py`（合成世界，纯 numpy/scipy）与 C++ spool 对接用例 [tests/regression/test_snapshot_bridge.py](../../../tests/regression/test_snapshot_bridge.py)；语义层有 [tests/unit/test_layered_mapping.py](../../../tests/unit/test_layered_mapping.py)。
-- 顶层 ROS 节点没有专用 unittest。`known_scene_*` 与 `odom_adapter`/`localization_runtime` 在 `tests/` 中无直接断言（`grep -rn "known_scene|odom_adapter" tests/` 无命中），只能静态阅读。
+- 顶层 ROS 节点没有专用 unittest。`known_scene_*` 与 `odom_adapter`/`localization_runtime` 在 `tests/` 中无直接断言（`grep -rn "known_scene\|odom_adapter" tests/` 无命中），只能静态阅读。
 - `fastlivo_mapping` 二进制来自 `install/ros`，缺失只表示本机未构建；`feedback_state` 的 `pose_producer="fast_livo2_async_backend"` 是**标签**，与 `backend/` 的 D 路径后端无关，不要凭标签推断进程存在（未核实）。
 - 本目录没有做端到端验收：没有真实 FAST-LIVO2 吞吐、没有 GPS/回环全局一致性、没有实机验证；本轮只读代码与磁盘，未运行 ROS。

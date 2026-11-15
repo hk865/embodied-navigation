@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the three own native modules; source/headers come only from this clone."""
+"""Build the two own native modules; source/headers come only from this clone."""
 
 from pathlib import Path
 import argparse, os, subprocess
