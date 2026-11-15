@@ -1,6 +1,6 @@
 # localization_mapping
 
-本目录是导航系统的定位与建图层：把 FAST-LIVO2 的里程计和点云接入导航坐标系，提供已知场景/地图辅助定位，归档本次运行观测到的地图，并给出可选的异步后端配准。导入本包不启动节点、不建线程、不写文件；有副作用的是各 `main()` 入口。
+本目录是导航系统的定位与建图层：把 FAST-LIVO2 的里程计和点云接入导航坐标系，提供已知场景/地图辅助定位，归档本次运行观测到的地图，并为 D 路径（DynaNav）提供点云 SLAM 后端（回环、位姿图、地图保存/加载、先验地图重定位，输出 map→odom 修正）。导入本包不启动节点、不建线程、不写文件；有副作用的是各 `main()` 入口。
 
 ## 边界
 
@@ -12,7 +12,7 @@
 
 ```text
 src/embodied_navigation/localization_mapping/
-├── backend/                        # 可选异步配准后端，见 backend/README.md
+├── backend/                        # D 路径点云 SLAM 后端，见 backend/README.md
 ├── frontend/                       # FAST-LIVO2 接入资料副本，见 frontend/README.md
 ├── launch/                         # 本模块 ROS 进程装配，见 launch/README.md
 ├── mapping/                        # 运行期观测地图归档，见 mapping/README.md
@@ -105,7 +105,7 @@ src/embodied_navigation/localization_mapping/
 
 ## 组成
 
-- [backend/README.md](backend/README.md)：异步配准、关键帧历史、回环验证与 SE(3) 图优化。
+- [backend/README.md](backend/README.md)：D 路径点云 SLAM 后端：消费 FAST-LIVO2 关键帧 spool，ScanContext 位置识别、ICP 回环、SE(3) 位姿图、地图保存/加载、先验地图重定位，由 `backend.node` 发布 map→odom。
 - [frontend/README.md](frontend/README.md)：FAST-LIVO2 的 ROS 接入资料。
 - [launch/README.md](launch/README.md)：本模块的 ROS 进程装配。
 - [mapping/README.md](mapping/README.md)：运行期观测地图归档。
@@ -121,7 +121,7 @@ A/D 两条执行路径与进程图见 [docs/architecture.md](../../../docs/archi
 
 ## 测试与限制
 
-- 后端有专用用例 [tests/regression/test_backend_flow.py](../../../tests/regression/test_backend_flow.py)、[test_backend_registration.py](../../../tests/regression/test_backend_registration.py)、[test_backend_auto_loops.py](../../../tests/regression/test_backend_auto_loops.py)；语义层有 [tests/unit/test_layered_mapping.py](../../../tests/unit/test_layered_mapping.py)。
-- 顶层 ROS 节点没有专用 unittest。`known_scene_*` 与 `odom_adapter`/`localization_runtime` 在 `tests/` 中无直接断言（`grep -rn "known_scene\|odom_adapter" tests/` 无命中），只能静态阅读。
-- `fastlivo_mapping` 二进制来自 `install/ros`，缺失只表示本机未构建；`feedback_state` 的 `pose_producer="fast_livo2_async_backend"` 是**标签**，仓库内无法确认它指 C++ 内部异步后端还是 `backend/` 的 Python 后端，不要凭标签推断进程存在（未核实）。
+- 后端有专用用例 `tests/unit/test_slam_backend_*.py`（合成世界，纯 numpy/scipy）与 C++ spool 对接用例 [tests/regression/test_snapshot_bridge.py](../../../tests/regression/test_snapshot_bridge.py)；语义层有 [tests/unit/test_layered_mapping.py](../../../tests/unit/test_layered_mapping.py)。
+- 顶层 ROS 节点没有专用 unittest。`known_scene_*` 与 `odom_adapter`/`localization_runtime` 在 `tests/` 中无直接断言（`grep -rn "known_scene|odom_adapter" tests/` 无命中），只能静态阅读。
+- `fastlivo_mapping` 二进制来自 `install/ros`，缺失只表示本机未构建；`feedback_state` 的 `pose_producer="fast_livo2_async_backend"` 是**标签**，与 `backend/` 的 D 路径后端无关，不要凭标签推断进程存在（未核实）。
 - 本目录没有做端到端验收：没有真实 FAST-LIVO2 吞吐、没有 GPS/回环全局一致性、没有实机验证；本轮只读代码与磁盘，未运行 ROS。
