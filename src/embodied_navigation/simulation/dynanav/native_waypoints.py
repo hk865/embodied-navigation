@@ -15,6 +15,7 @@ import numpy as np
 
 from embodied_navigation.common.time import float32_time_half_ulp
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
+from embodied_navigation.perception.pose_velocity import update_pose_velocity
 from embodied_navigation.simulation.dynanav.slam_route import _number, pose_transform
 
 
@@ -301,16 +302,9 @@ class NativeWaypointTracker:
         self._last_stamp = stamp
         distinct = stamp != self._last_consumed
         evidence["distinct_measurement"] = distinct
-        if distinct:
-            self._history.append((stamp, p.copy()))
-            cutoff = stamp - self.parameters["pose_speed_window_s"]
-            while len(self._history) > 2 and self._history[1][0] <= cutoff:
-                self._history.popleft()
-        speed = None
-        if self._history:
-            start, first = self._history[0]
-            if stamp - start >= self.parameters["pose_speed_window_s"]:
-                speed = float(np.linalg.norm(p - first) / (stamp - start))
+        velocity = update_pose_velocity(self._history, stamp, p,
+                                        self.parameters["pose_speed_window_s"], distinct=distinct)
+        speed = None if velocity is None else float(np.linalg.norm(velocity))
         evidence["pose_window_speed_mps"] = speed
         # Activation occurs only on an actual measured pose, without frame alignment.
         if self.tracker is None and self._pending:
