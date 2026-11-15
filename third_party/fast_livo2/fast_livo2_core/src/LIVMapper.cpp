@@ -12,6 +12,8 @@ which is included as part of this source code package.
 */
 
 #include "LIVMapper.h"
+#include "visual_snapshot.h"
+#include "multicamera_native.h"
 #include <unordered_set>
 #include <cstdio>
 #include <exception>
@@ -21,6 +23,7 @@ which is included as part of this source code package.
 #include "diagnostics.h"
 // BOUNDARY_TIMING_BEGIN include
 #include "boundary_timing.h"
+#include "sync_observation.h"
 // BOUNDARY_TIMING_END include
 #include <chrono>
 #include <filesystem>
@@ -90,11 +93,23 @@ LIVMapper::LIVMapper(rclcpp::Node::SharedPtr &node, std::string node_name)
     serial_imu_priority = imu_priority && std::string(imu_priority) == "1";
     if (serial_imu_priority && pipeline_mode != "serial")
         throw std::runtime_error("FASTLIVO_SERIAL_IMU_PRIORITY requires serial mode");
-    if (p_pre->lidar_type != 0 || use_gps || hilti_en ||
+    const bool ouster_lidar = p_pre->lidar_type == OUST64 && allow_ouster_lidar;
+    if ((p_pre->lidar_type != 0 && !ouster_lidar) || use_gps || hilti_en ||
         this->node->get_parameter("preprocess.hilti_en").as_bool() || !lidar_en ||
         (!img_en && !allow_lio_only) || !imu_en)
-        throw std::runtime_error("V19 requires generic cloud, IMU+RGB, GPS off, HILTI off; "
+        throw std::runtime_error("V19 requires generic cloud or Ouster (common.allow_ouster_lidar=true), "
+                                 "IMU+RGB, GPS off, HILTI off; "
                                  "LIO-only additionally requires common.allow_lio_only=true");
+    if (ouster_lidar && (!require_complete_imu || p_pre->feature_enabled ||
+                         p_pre->N_SCANS < 1 || p_pre->N_SCANS > 128 ||
+                         p_pre->point_filter_num < 1))
+        throw std::runtime_error("Ouster requires common.require_complete_imu=true, "
+                                 "feature_extract_enabled=false, scan_line in [1,128], "
+                                 "and point_filter_num >= 1");
+    if (complete_scan_watermark && (!ouster_lidar || !img_en || !same_pair_vio_handoff ||
+                                    !require_complete_imu || p_pre->N_SCANS != 32 ||
+                                    lidar_time_offset != 0.0))
+        throw std::runtime_error("Complete scan requires OS1 32-line LIVO, same-pair, complete IMU and original LiDAR time");
     VoxelMapConfig voxel_config;
     loadVoxelConfig(this->node, voxel_config);
 
@@ -132,6 +147,25 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->declare_parameter<bool>("debug.sensor_sync_diagnostics", false);
     this->node->declare_parameter<int>("common.img_en", 1);
     this->node->declare_parameter<bool>("common.allow_lio_only", false);
+    this->node->declare_parameter<bool>("common.allow_ouster_lidar", false);
+    complete_scan_watermark = this->node->declare_parameter<bool>("common.complete_scan_watermark", false);
+    same_pair_vio_handoff = this->node->declare_parameter<bool>("common.same_pair_vio_handoff", false);
+    // Explicit source-cache hard limits. Zero preserves existing configurations;
+    // the RTX configuration opts in. Never evict unconsumed sensor evidence.
+    for (const auto *name : {"common.max_buffered_images", "common.max_buffered_imu",
+                             "common.max_buffered_prop_imu"})
+        this->node->declare_parameter<int64_t>(name, 0);
+    const auto buffer_limit = [&](const char *name) {
+        const auto value = this->node->get_parameter(name).as_int();
+        if (value < 0) throw std::invalid_argument(std::string(name) + " must be nonnegative");
+        return static_cast<size_t>(value);
+    };
+    max_buffered_images = buffer_limit("common.max_buffered_images");
+    max_buffered_imu = buffer_limit("common.max_buffered_imu");
+    max_buffered_prop_imu = buffer_limit("common.max_buffered_prop_imu");
+    RCLCPP_INFO(this->node->get_logger(),
+                "[PAIR_HANDOFF] enabled=%d cache_caps image=%zu imu=%zu prop_imu=%zu",
+                int(same_pair_vio_handoff), max_buffered_images, max_buffered_imu, max_buffered_prop_imu);
     this->node->declare_parameter<int>("common.lidar_en", 1);
     this->node->declare_parameter<std::string>("common.img_topic", "/left_camera/image");
 
@@ -217,6 +251,7 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
     this->node->get_parameter("debug.sensor_sync_diagnostics", sensor_sync_diagnostics);
     this->node->get_parameter("common.img_en", img_en);
     this->node->get_parameter("common.allow_lio_only", allow_lio_only);
+    this->node->get_parameter("common.allow_ouster_lidar", allow_ouster_lidar);
     this->node->get_parameter("common.lidar_en", lidar_en);
     this->node->get_parameter("common.img_topic", img_topic);
 
@@ -424,13 +459,24 @@ void LIVMapper::initializeFiles() {
 
 void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node,
                                                    image_transport::ImageTransport &it_) {
-    if (p_pre->lidar_type == AVIA) {
+    auto replay_qos = rclcpp::SensorDataQoS().keep_last(64);
+    const char *replay_reliable = std::getenv("FASTLIVO_REPLAY_RELIABLE");
+    if (replay_reliable && std::string(replay_reliable) == "1") replay_qos.reliable();
+    if (complete_scan_watermark) {
+        // Exact ROS remaps do not apply to a suffix. Resolve the selected base
+        // input first, then subscribe to that source's typed envelope.
+        const auto complete_topic = this->node->get_node_topics_interface()->resolve_topic_name(lid_topic) + "/complete_scan";
+        sub_pcl = this->node->create_subscription<fastlivo_scan::Certificate>(
+            complete_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
+            std::bind(&LIVMapper::receive_complete_scan, this, std::placeholders::_1));
+        RCLCPP_INFO(node->get_logger(), "[COMPLETE_SCAN] enabled topic=%s contract=1", complete_topic.c_str());
+    } else if (p_pre->lidar_type == AVIA) {
         sub_pcl = this->node->create_subscription<livox_ros_driver2::msg::CustomMsg>(
-            lid_topic, rclcpp::SensorDataQoS().keep_last(4),
+            lid_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
             std::bind(&LIVMapper::livox_pcl_cbk, this, std::placeholders::_1));
     } else {
         sub_pcl = this->node->create_subscription<sensor_msgs::msg::PointCloud2>(
-            lid_topic, rclcpp::SensorDataQoS().keep_last(4),
+            lid_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
             std::bind(&LIVMapper::receive_cloud, this, std::placeholders::_1));
     }
     if (serial_imu_priority) {
@@ -439,16 +485,16 @@ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node
         rclcpp::SubscriptionOptions imu_options;
         imu_options.callback_group = imu_priority_group;
         sub_imu = this->node->create_subscription<sensor_msgs::msg::Imu>(
-            imu_topic, rclcpp::SensorDataQoS().keep_last(512),
+            imu_topic, (replay_reliable && std::string(replay_reliable) == "1") ? rclcpp::QoS(replay_qos).keep_last(2048) : rclcpp::SensorDataQoS().keep_last(512),
             std::bind(&LIVMapper::receive_imu, this, std::placeholders::_1), imu_options);
     } else {
         sub_imu = this->node->create_subscription<sensor_msgs::msg::Imu>(
-            imu_topic, rclcpp::SensorDataQoS().keep_last(512),
+            imu_topic, (replay_reliable && std::string(replay_reliable) == "1") ? rclcpp::QoS(replay_qos).keep_last(2048) : rclcpp::SensorDataQoS().keep_last(512),
             std::bind(&LIVMapper::receive_imu, this, std::placeholders::_1));
     }
     if (img_en) {
         sub_img = this->node->create_subscription<sensor_msgs::msg::Image>(
-            img_topic, rclcpp::SensorDataQoS().keep_last(4),
+            img_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
             std::bind(&LIVMapper::receive_image, this, std::placeholders::_1));
     }
     if (use_gps) {
@@ -526,6 +572,7 @@ void LIVMapper::gravityAlignment() {
 }
 
 void LIVMapper::processImu() {
+    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
     // double t0 = omp_get_wtime();
 
     auto &diag = fastlivo_diag::Logger::instance();
@@ -557,7 +604,17 @@ void LIVMapper::processImu() {
         fastlivo_diag::append(values, _state.cov);
         diag.emit(10, -1, -1, std::move(values));
     }
+    const bool pair_lio = same_pair_vio_handoff && slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == LIO;
+    const bool pair_vio = same_pair_vio_handoff && slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO;
+    if ((pair_lio && pending_pair.phase != PendingLivoPair::LioSelected) ||
+        (pair_vio && pending_pair.phase != PendingLivoPair::VioSelected))
+        throw std::logic_error("LIVO pair IMU phase already consumed or not selected");
+    const bool initializing_before = p_imu->imu_need_init;
+    if (pair_lio && initializing_before)
+        feats_undistort->clear(); // Initialization returns without replacing this output.
+    const bool sync_observe_initializing = fastlivo_sync::enabled() && initializing_before;
     p_imu->Process2(LidarMeasures, _state, feats_undistort);
+    fastlivo_sync::stage(*this, "imu_processed", true, false, sync_observe_initializing);
 
     if (gravity_align_en)
         gravityAlignment();
@@ -569,6 +626,18 @@ void LIVMapper::processImu() {
         fastlivo_diag::state(values, _state);
         fastlivo_diag::append(values, _state.cov);
         diag.emit(11, -1, -1, std::move(values));
+    }
+    if (pair_lio) {
+        if (initializing_before || p_imu->imu_need_init)
+            pending_pair.skip(PendingLivoPair::Initializing);
+        else if (!feats_undistort || feats_undistort->empty())
+            pending_pair.skip(PendingLivoPair::EmptyCloud);
+        else if (LidarMeasures.last_lio_update_time != pending_pair.target_time)
+            pending_pair.skip(PendingLivoPair::InvalidOutput);
+        else
+            pending_pair.phase = PendingLivoPair::ImuProcessed;
+    } else if (pair_vio) {
+        pending_pair.phase = PendingLivoPair::VioImuProcessed;
     }
     state_propagat = _state;
     voxelmap_manager->state_ = _state;
@@ -598,6 +667,10 @@ void LIVMapper::stateEstimationAndMapping() {
 }
 
 void LIVMapper::handleVIO() {
+    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
+    if (same_pair_vio_handoff && slam_mode_ == LIVO &&
+        pending_pair.phase != PendingLivoPair::VioImuProcessed)
+        throw std::logic_error("LIVO pair VIO handler without current IMU handoff");
     // BOUNDARY_TIMING_BEGIN handle_vio_all
     fastlivo_timing::Scope timing_handle_vio_all(15);
     // BOUNDARY_TIMING_END handle_vio_all
@@ -611,8 +684,11 @@ void LIVMapper::handleVIO() {
              << std::endl;
 
     if (!pcl_w_wait_pub || pcl_w_wait_pub->empty()) {
+        fastlivo_sync::stage(*this, "vio_skipped_empty_cloud", false, false);
         diag_stage(12, 0, _state);
         backendVioSnapshot(false);
+        pending_pair.retire(PendingLivoPair::VioSkipped);
+        fastlivo_sync::stage(*this, "pair_retired", false, false);
         return;
     }
 
@@ -627,13 +703,15 @@ void LIVMapper::handleVIO() {
     {
         fastlivo_timing::Scope timing_vio_process(6);
         // BOUNDARY_TIMING_END vio_process_open
-        vio_manager->processFrame(LidarMeasures.measures.back().img, _pv_list,
-                                  voxelmap_manager->voxel_map_,
-                                  LidarMeasures.last_lio_update_time - _first_lidar_time);
+        if (!fastlivo_multicamera::process_archive_frame(*this))
+            vio_manager->processFrame(LidarMeasures.measures.back().img, _pv_list,
+                                      voxelmap_manager->voxel_map_,
+                                      LidarMeasures.last_lio_update_time - _first_lidar_time);
         // BOUNDARY_TIMING_BEGIN vio_process_close
     }
     // BOUNDARY_TIMING_END vio_process_close
 
+    fastlivo_sync::stage(*this, "vio_processed", true, vio_manager->last_frame_ekf_updated);
     backendVioSnapshot(vio_manager->last_frame_ekf_updated);
     diag_stage(12, 1, _state);
     publish_post_vio_odometry(vio_manager->last_frame_ekf_updated);
@@ -665,9 +743,20 @@ void LIVMapper::handleVIO() {
              << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
              << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose()
              << " " << feats_undistort->points.size() << std::endl;
+    pending_pair.retire(PendingLivoPair::VioCompleted);
+    fastlivo_sync::stage(*this, "pair_retired", true, vio_manager->last_frame_ekf_updated);
 }
 
 void LIVMapper::handleLIO() {
+    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
+    if (same_pair_vio_handoff && slam_mode_ == LIVO) {
+        if (pending_pair.phase == PendingLivoPair::Skip) {
+            fastlivo_sync::stage(*this, "lio_pair_skipped", false, false);
+            return;
+        }
+        if (pending_pair.phase != PendingLivoPair::ImuProcessed)
+            throw std::logic_error("LIVO pair LIO handler without current IMU output");
+    }
     fastlivo_timing::frame_mark(4);
     // BOUNDARY_TIMING_BEGIN handle_lio_all
     fastlivo_timing::Scope timing_handle_lio_all(14);
@@ -680,7 +769,9 @@ void LIVMapper::handleLIO() {
              << endl;
 
     if (!feats_undistort || feats_undistort->empty()) {
+        fastlivo_sync::stage(*this, p_imu->imu_need_init ? "lio_skipped_initializing" : "lio_skipped_empty_cloud", false, false);
         diag_stage(13, 0, _state);
+        if (slam_mode_ == LIVO) pending_pair.skip(PendingLivoPair::EmptyCloud);
         return;
     }
 
@@ -692,6 +783,11 @@ void LIVMapper::handleLIO() {
     double t_down = omp_get_wtime();
 
     feats_down_size = feats_down_body->points.size();
+    if (same_pair_vio_handoff && slam_mode_ == LIVO && feats_down_size == 0) {
+        pending_pair.skip(PendingLivoPair::EmptyCloud);
+        fastlivo_sync::stage(*this, "lio_pair_skipped", false, false);
+        return;
+    }
     voxelmap_manager->feats_down_body_ = feats_down_body;
     transformLidar(_state.rot_end, _state.pos_end, feats_down_body, feats_down_world);
     voxelmap_manager->feats_down_world_ = feats_down_world;
@@ -835,6 +931,27 @@ void LIVMapper::handleLIO() {
              << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
              << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose()
              << " " << feats_undistort->points.size() << std::endl;
+    if (slam_mode_ == LIVO) {
+        // No residual threshold: normal bootstrap/map-building is a valid LIO
+        // completion too. Never authorize VIO from an old cloud or nonfinite state.
+        const bool finite = _state.pos_end.allFinite() && _state.rot_end.allFinite() &&
+            _state.vel_end.allFinite() && _state.bias_g.allFinite() &&
+            _state.bias_a.allFinite() && _state.gravity.allFinite() &&
+            _state.cov.allFinite() && std::isfinite(_state.inv_expo_time);
+        if (finite && pcl_w_wait_pub && !pcl_w_wait_pub->empty() &&
+            LidarMeasures.last_lio_update_time == pending_pair.target_time)
+            pending_pair.phase = PendingLivoPair::LioReady;
+        else
+            pending_pair.skip(PendingLivoPair::InvalidOutput);
+    }
+    fastlivo_sync::stage(*this, "lio_completed", true, false);
+    // Optional diagnostic copy only, after the current LIO/map update and before
+    // the paired VIO. The default-disabled exporter never changes native state.
+    fastlivo_visual_snapshot::export_if_requested(_state, _pv_list,
+        voxelmap_manager->voxel_map_, LidarMeasures.last_lio_update_time,
+        pending_pair.source_stamp_valid ? pending_pair.source_stamp_ns : 0,
+        odom_frame, raw_body_frame, voxelmap_manager->config_setting_.max_voxel_size_);
+
 }
 
 void LIVMapper::savePCD() {
@@ -982,6 +1099,7 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
     } catch (...) {
         // PRIMARY_EXCEPTION_PRESERVATION_BEGIN
         const auto primary_exception = std::current_exception();
+        pending_pair.retire(PendingLivoPair::Aborted);
         try {
             ingress_queue.fail("owner run exception");
         } catch (...) {
@@ -997,6 +1115,8 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
         // PRIMARY_EXCEPTION_PRESERVATION_END
     }
     stop_ingress(rclcpp::ok() && fast_livo2_core::mapping_stop_requested());
+    pending_pair.retire(PendingLivoPair::Aborted);
+    fastlivo_sync::flush(*this);
     savePCD();
 }
 
@@ -1174,6 +1294,10 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::ConstShare
                                    double(msg->row_step)};
         fastlivo_diag::Logger::instance().raw(2, diag_stamp(msg->header.stamp), std::move(values));
     }
+    if (complete_scan_watermark && (!committing_ingress || !committing_ingress->complete_scan)) {
+        scan_watermark.failed = true;
+        throw std::runtime_error("complete scan mode rejects uncertified raw cloud ingress");
+    }
     if (!lidar_en)
         return;
     std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
@@ -1208,6 +1332,10 @@ void LIVMapper::standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::ConstShare
     }
     if (lid_raw_data_buffer.size() >= 8 || ptr->size() > 65536)
         throw std::runtime_error("LiDAR buffered source capacity");
+    if (complete_scan_watermark && committing_ingress && committing_ingress->complete_scan)
+        scan_watermark.commit(*committing_ingress->complete_scan, msg.get());
+    else if (complete_scan_watermark)
+        throw std::runtime_error("complete scan metadata missing after certified stream started");
     lid_raw_data_buffer.push_back(PairedCloud{ptr});
     lid_header_time_buffer.push_back(cur_head_time);
     last_timestamp_lidar = cur_head_time;
@@ -1319,15 +1447,21 @@ void LIVMapper::imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in) {
         timestamp += std::round(last_timestamp_lidar - timestamp);
     msg->header.stamp = sec2Stamp(timestamp);
 
-    mtx_buffer.lock();
+    std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
 
     if (last_timestamp_imu > 0.0 && timestamp < last_timestamp_imu) {
-        mtx_buffer.unlock();
+        sensor_buffer_lock.unlock();
         sig_buffer.notify_all();
         RCLCPP_ERROR(this->node->get_logger(), "imu loop back, offset: %lf \n",
                      last_timestamp_imu - timestamp);
         return;
     }
+
+    // Receiver/decoder threads never access these owner-only deques. Check
+    // before either queue or timestamp changes; preserve rejected-old semantics.
+    checkBufferCapacity("imu_buffer", imu_buffer.size(), max_buffered_imu);
+    if (imu_prop_enable && !p_imu->imu_need_init)
+        checkBufferCapacity("prop_imu_buffer", prop_imu_buffer.size(), max_buffered_prop_imu);
 
     if (last_timestamp_imu > 0.0 && timestamp > last_timestamp_imu + 0.2) {
         // A late subscription or a temporary sensor dropout legitimately creates
@@ -1342,7 +1476,7 @@ void LIVMapper::imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in) {
 
     imu_buffer.push_back(msg);
     // cout<<"got imu: "<<timestamp<<" imu size "<<imu_buffer.size()<<endl;
-    mtx_buffer.unlock();
+    sensor_buffer_lock.unlock();
     if (imu_prop_enable) {
         mtx_buffer_imu_prop.lock();
         if (imu_prop_enable && !p_imu->imu_need_init) {
@@ -1423,22 +1557,24 @@ void LIVMapper::img_cbk(const sensor_msgs::msg::Image::ConstSharedPtr &msg_in) {
         return;
     }
 
-    mtx_buffer.lock();
+    std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
 
     double img_time_correct = msg_header_time; // last_timestamp_lidar + 0.105;
 
     if (img_time_correct - last_timestamp_img < 0.02) {
         RCLCPP_WARN(this->node->get_logger(), "Image need Jumps: %.6f", img_time_correct);
-        mtx_buffer.unlock();
+        sensor_buffer_lock.unlock();
         sig_buffer.notify_all();
         return;
     }
 
+    checkBufferCapacity("img_buffer", img_buffer.size(), max_buffered_images);
     if (committing_ingress && committing_ingress->decode_error)
         std::rethrow_exception(committing_ingress->decode_error);
     cv::Mat img_cur = committing_ingress ? committing_ingress->image : getImageFromMsg(msg);
     img_buffer.push_back(img_cur);
     img_time_buffer.push_back(img_time_correct);
+    img_source_stamp_buffer.push_back(diag_stamp(msg_in->header.stamp));
 
     // ROS_INFO("Correct Image time: %.6f", img_time_correct);
 
@@ -1446,7 +1582,7 @@ void LIVMapper::img_cbk(const sensor_msgs::msg::Image::ConstSharedPtr &msg_in) {
     // cv::imshow("img", img);
     // cv::waitKey(1);
     // cout<<"last_timestamp_img:::"<<last_timestamp_img<<endl;
-    mtx_buffer.unlock();
+    sensor_buffer_lock.unlock();
     sig_buffer.notify_all();
 }
 
@@ -1534,21 +1670,105 @@ void LIVMapper::gpsUpdate() {
     }
 }
 
+void LIVMapper::checkBufferCapacity(const char *queue, size_t count, size_t limit) {
+    if (limit && count >= limit) {
+        pending_pair.retire(PendingLivoPair::Aborted);
+        throw std::runtime_error(std::string("sensor cache capacity: ") + queue +
+            " count=" + std::to_string(count) + " limit=" + std::to_string(limit) +
+            "; refusing new sample, new owned run required");
+    }
+}
+
+bool LIVMapper::pendingImageMatches() const {
+    return !img_buffer.empty() && !img_buffer.front().empty() &&
+        img_buffer.size() == img_time_buffer.size() &&
+        img_time_buffer.front() == pending_pair.image_time &&
+        img_time_buffer.front() + exposure_time_init == pending_pair.target_time &&
+        img_buffer.front().data == pending_pair.image_data &&
+        pending_pair.source_stamp_valid &&
+        img_source_stamp_buffer.size() == img_time_buffer.size() &&
+        img_source_stamp_buffer.front() == pending_pair.source_stamp_ns;
+}
+
+void LIVMapper::retirePendingPair(PendingLivoPair::Outcome outcome, bool consume_image) {
+    if (consume_image && pendingImageMatches()) {
+        if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
+        img_buffer.pop_front();
+        img_time_buffer.pop_front();
+    }
+    pending_pair.retire(outcome);
+    LidarMeasures.measures.clear();
+    LidarMeasures.lio_vio_flg = WAIT;
+    lidar_pushed = false;
+    // Current LIO publication and point/variance lists must never resurrect a
+    // skipped pair. The next scan slice remains owned by pcl_proc_next.
+    if (pcl_w_wait_pub) pcl_w_wait_pub->clear();
+}
+
+bool LIVMapper::completeScanCovers(const LidarMeasureGroup &meas, double target) const {
+    if (!complete_scan_watermark || slam_mode_ != LIVO ||
+        (meas.lio_vio_flg != WAIT && meas.lio_vio_flg != VIO) ||
+        !scan_watermark.covers(meas.last_lio_update_time, target)) return false;
+    // Legacy pending storage is copied verbatim to current. This shortcut is
+    // valid only if every such point belongs before the new target. Do not
+    // silently release pending points at/on the other side of an image boundary.
+    if (meas.pcl_proc_next) {
+        const float limit_ms = (target - meas.last_lio_update_time) * 1000.0f;
+        for (const auto &p : meas.pcl_proc_next->points)
+            if (!std::isfinite(p.curvature) || !(p.curvature < limit_ms)) return false;
+    }
+    return true;
+}
+
 bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
+    if (complete_scan_watermark && (scan_watermark.failed || !ingress_queue.stats().failure.empty()))
+        throw std::runtime_error("complete scan ingress failed: new owned run required");
+    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
+    fastlivo_sync::Attempt sync_observation(*this, meas);
     // BOUNDARY_TIMING_BEGIN sync_packages
     fastlivo_timing::Scope timing_sync_packages(13);
     // BOUNDARY_TIMING_END sync_packages
     // fprintf(stderr, "[ sync ] enter, lid=%d img=%d imu=%d mode=%d\n",
     //  (int)!lid_raw_data_buffer.empty(), (int)!img_buffer.empty(), (int)!imu_buffer.empty(), (int)slam_mode_); fflush(stderr);
-    if (lid_raw_data_buffer.empty() && lidar_en)
-        return false;
+    if (same_pair_vio_handoff && slam_mode_ == LIVO && pending_pair.active()) {
+        if (meas.lio_vio_flg == LIO) {
+            if (!pendingImageMatches()) {
+                retirePendingPair(PendingLivoPair::IdentityChanged, false);
+                return sync_observation.result(fastlivo_sync::PairIdentityChanged, false);
+            }
+            if (pending_pair.phase == PendingLivoPair::Skip) {
+                retirePendingPair(pending_pair.outcome, true);
+                return sync_observation.result(fastlivo_sync::PairSkipped, false);
+            }
+            if (pending_pair.phase != PendingLivoPair::LioReady)
+                return sync_observation.result(fastlivo_sync::PairLioUnfinished, false);
+            if (meas.last_lio_update_time != pending_pair.target_time || p_imu->imu_need_init) {
+                retirePendingPair(PendingLivoPair::InvalidOutput, true);
+                return sync_observation.result(fastlivo_sync::PairSkipped, false);
+            }
+            // Existing LIO->VIO branch below consumes only this image. All point
+            // and IMU coverage was already checked before selecting this LIO.
+        } else {
+            // Do not select another LIO while VIO still owns state/map pointers.
+            return sync_observation.result(fastlivo_sync::PairVioUnfinished, false);
+        }
+    } else if (same_pair_vio_handoff && slam_mode_ == LIVO && meas.lio_vio_flg == LIO) {
+        // A stage flag alone must never revive an absent/retired pair.
+        return sync_observation.result(fastlivo_sync::PairLioUnfinished, false);
+    }
+    const bool ready_pair = same_pair_vio_handoff && slam_mode_ == LIVO &&
+        pending_pair.phase == PendingLivoPair::LioReady;
+    const bool certified_pending = !img_time_buffer.empty() && meas.pcl_proc_next &&
+        !meas.pcl_proc_next->empty() && completeScanCovers(meas, img_time_buffer.front() + exposure_time_init);
+    if (!ready_pair && !certified_pending && lid_raw_data_buffer.empty() && lidar_en)
+        return sync_observation.result(fastlivo_sync::RawEmpty, false);
     if (img_buffer.empty() &&
         img_en) { /* fprintf(stderr, "[ sync ] no img, return false\n"); fflush(stderr); */
-        return false;
+        return sync_observation.result(fastlivo_sync::ImageEmpty, false);
     }
-    if (imu_buffer.empty() &&
+    if (!ready_pair && imu_buffer.empty() &&
         imu_en) { /* fprintf(stderr, "[ sync ] no imu, return false\n"); fflush(stderr); */
-        return false;
+        return sync_observation.result(fastlivo_sync::ImuEmpty, false);
     }
 
     switch (slam_mode_) {
@@ -1562,7 +1782,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             {
                 std::lock_guard<std::mutex> lock(mtx_buffer);
                 if (lid_raw_data_buffer.empty())
-                    return false;
+                    return sync_observation.result(fastlivo_sync::SparseDrainEmpty, false);
                 const auto &cloud = lid_raw_data_buffer.front().cloud;
                 if (cloud && cloud->points.size() > 1)
                     break;
@@ -1589,11 +1809,10 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             meas.lidar_frame_end_time =
                 meas.lidar_frame_beg_time +
                 meas.lidar->points.back().curvature / double(1000); // calc lidar scan end time
-            if (p_pre->lidar_type == 0) {
-                // Generic RGB-D points are simultaneous at the current header.
-                // UndistortPcl measures offsets from the previous propagation
-                // end, not from this frame header. Keep the raw cloud owned and
-                // unchanged, and rebase only its working copy to that origin.
+            if (p_pre->lidar_type == 0 || p_pre->lidar_type == OUST64) {
+                // UndistortPcl offsets reference the previous propagation end,
+                // not this scan's header. Rebase a working copy, preserving raw
+                // Ouster relative timing (including gaps between scans).
                 meas.pcl_proc_cur.reset(new PointCloudXYZI(*meas.lidar));
                 const float header_offset_ms =
                     (meas.lidar_frame_beg_time - meas.last_lio_update_time) * 1000.0f;
@@ -1610,7 +1829,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             // larger than _lidar_frame_end_time,
             // make sure complete propagate.
             // ROS_ERROR("out sync");
-            return false;
+            return sync_observation.result(fastlivo_sync::WaitScanImu, false);
         }
 
         struct MeasureGroup m{}; // unused VIO fields are deterministic in LIO diagnostics.
@@ -1633,7 +1852,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
         meas.measures.push_back(m);
         // ROS_INFO("ONlY HAS LiDAR and IMU, NO IMAGE!");
         lidar_pushed = false; // sync one whole lidar scan.
-        return true;
+        return sync_observation.result(fastlivo_sync::OnlyLioSelected, true);
 
         break;
     }
@@ -1648,6 +1867,10 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
         // double img_capture_time = meas.lidar_frame_beg_time + exposure_time_init;
         case WAIT:
         case VIO: {
+            if (same_pair_vio_handoff &&
+                (img_source_stamp_buffer.size() != img_time_buffer.size() ||
+                 img_buffer.size() != img_time_buffer.size()))
+                throw std::runtime_error("LIVO source image stamp queue identity mismatch");
             const bool instantaneous_lidar = p_pre->lidar_type == 0;
             // Conversion through double seconds can round an exact ROS stamp by
             // two nanoseconds. This tolerance applies only to instantaneous frames.
@@ -1663,20 +1886,24 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
                 // In simulation, camera may start before LiDAR, causing buffered image
                 // timestamps to be older than the first LiDAR time. Use the earlier of
                 // the two as the reference to avoid discarding valid images.
-                if (!img_time_buffer.empty() && img_time_buffer.front() < meas.last_lio_update_time)
+                // Certified cold startup starts at the first actual interval,
+                // never before it. Older camera frames still use OldImageDropped.
+                // Do not reseed an already nonnegative previous estimator time.
+                if (!complete_scan_watermark && !img_time_buffer.empty() && img_time_buffer.front() < meas.last_lio_update_time)
                     meas.last_lio_update_time = img_time_buffer.front();
             }
 
             // Safety: check for empty point cloud (Gazebo may emit empty scans)
-            auto last_pcl = lid_raw_data_buffer.back().cloud;
-            if (!last_pcl || last_pcl->points.empty()) {
+            const bool certified_coverage = completeScanCovers(meas, img_capture_time);
+            auto last_pcl = lid_raw_data_buffer.empty() ? PointCloudXYZI::Ptr() : lid_raw_data_buffer.back().cloud;
+            if (!certified_coverage && (!last_pcl || last_pcl->points.empty())) {
                 fprintf(stderr, "[ sync ] empty point cloud, skip (ptr=%p ptsize=%zu buf=%zu)\n",
                         (void *)last_pcl.get(), last_pcl ? last_pcl->points.size() : 0UL,
                         lid_raw_data_buffer.size());
                 fflush(stderr);
-                return false;
+                return sync_observation.result(fastlivo_sync::RawTailEmpty, false);
             }
-            double lid_newest_time =
+            double lid_newest_time = certified_coverage ? fastlivo_scan::seconds(scan_watermark.end_ns) :
                 lid_header_time_buffer.back() + last_pcl->points.back().curvature / double(1000);
             double imu_newest_time = stamp2Sec(imu_buffer.back()->header.stamp);
             // fprintf(stderr, "[ sync ] lid_newest=%.6f imu_newest=%.6f\n", lid_newest_time, imu_newest_time); fflush(stderr);
@@ -1684,20 +1911,25 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
             if (img_capture_time < meas.last_lio_update_time + 0.00001) {
                 img_buffer.pop_front();
                 img_time_buffer.pop_front();
+                if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
                 RCLCPP_ERROR(this->node->get_logger(), "[ Data Cut ] Throw one image frame! \n");
-                return false;
+                return sync_observation.result(fastlivo_sync::OldImageDropped, false);
             }
 
+            // Explicit certified mode never falls back to a later tail point
+            // across missing/earlier coverage. Default-off remains legacy.
+            if (complete_scan_watermark && !certified_coverage)
+                return sync_observation.result(fastlivo_sync::WaitPointCoverage, false);
             if (img_capture_time > lid_newest_time + instantaneous_time_tolerance) {
                 // fprintf(stderr, "[ sync ] img too new (LiDAR), return false\n"); fflush(stderr);
-                return false;
+                return sync_observation.result(fastlivo_sync::WaitPointCoverage, false);
             }
             // Relaxed IMU check for simulation: IMU may lag behind LiDAR/Camera
             // in Gazebo due to physics vs rendering clock differences.
             // IMU data will be accumulated as available in processImu.
             if (imu_newest_time <
                 (require_complete_imu ? img_capture_time : meas.last_lio_update_time + 0.01)) {
-                return false;
+                return sync_observation.result(fastlivo_sync::WaitImageImu, false);
             }
 
             // fprintf(stderr, "[ sync ] creating MeasureGroup...\n"); fflush(stderr);
@@ -1791,50 +2023,51 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
                             meas.pcl_proc_next->size());
             }
 
+            pending_pair.begin(img_time_buffer.front(), img_capture_time, img_buffer.front().data,
+                img_source_stamp_buffer.empty() ? 0 : img_source_stamp_buffer.front(),
+                img_source_stamp_buffer.size() == img_time_buffer.size());
+            if (same_pair_vio_handoff) meas.measures.clear();
             meas.measures.push_back(m);
             meas.lio_vio_flg = LIO;
+            if (p_pre->lidar_type == OUST64)
+                std::stable_sort(meas.pcl_proc_cur->begin(), meas.pcl_proc_cur->end(),
+                                 [](const PointType &a, const PointType &b) {
+                                     return a.curvature < b.curvature;
+                                 });
             // meas.last_lio_update_time = m.lio_time;
             // printf("!!! meas.lio_vio_flg: %d \n", meas.lio_vio_flg);
             // printf("[ Data Cut ] pcl_proc_cur number: %d \n", meas.pcl_proc_cur
             // ->points.size()); printf("[ Data Cut ] LIO process time: %lf \n",
             // omp_get_wtime() - t0);
-            return true;
+            return sync_observation.result(fastlivo_sync::LivoLioSelected, true);
         }
 
         case LIO: {
-            double img_capture_time = img_time_buffer.front() + exposure_time_init;
-            meas.lio_vio_flg = VIO;
-            // printf("[ Data Cut ] VIO \n");
-            meas.measures.clear();
-            double imu_time = stamp2Sec(imu_buffer.front()->header.stamp);
-
+            // No new raw cloud or IMU is read here. Preserve the original
+            // zero-duration VIO Process2 and posterior-to-prior handoff.
             struct MeasureGroup m;
-            m.vio_time = img_capture_time;
+            m.vio_time = same_pair_vio_handoff ? pending_pair.target_time
+                                               : img_time_buffer.front() + exposure_time_init;
             m.lio_time = meas.last_lio_update_time;
             m.img = img_buffer.front();
-            mtx_buffer.lock();
-            // while ((!imu_buffer.empty() && (imu_time < img_capture_time)))
-            // {
-            //   imu_time = stamp2Sec(imu_buffer.front()->header.stamp);
-            //   if (imu_time > img_capture_time) break;
-            //   m.imu.push_back(imu_buffer.front());
-            //   imu_buffer.pop_front();
-            //   printf("[ Data Cut ] imu time: %lf \n",
-            //   stamp2Sec(imu_buffer.front()->header.stamp));
-            // }
-            img_buffer.pop_front();
-            img_time_buffer.pop_front();
-            mtx_buffer.unlock();
-            sig_buffer.notify_all();
+            {
+                std::lock_guard<std::mutex> lock(mtx_buffer);
+                img_buffer.pop_front();
+                img_time_buffer.pop_front();
+                if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
+            }
+            meas.measures.clear();
             meas.measures.push_back(m);
-            lidar_pushed = false; // after VIO update, the _lidar_frame_end_time will be refresh.
-            // printf("[ Data Cut ] VIO process time: %lf \n", omp_get_wtime() - t0);
-            return true;
+            meas.lio_vio_flg = VIO;
+            pending_pair.phase = PendingLivoPair::VioSelected;
+            lidar_pushed = false;
+            sig_buffer.notify_all();
+            return sync_observation.result(fastlivo_sync::LivoVioSelected, true);
         }
 
         default: {
             // printf("!! WRONG EKF STATE !!");
-            return false;
+            return sync_observation.result(fastlivo_sync::InvalidStage, false);
         }
             // return false;
         }
@@ -1845,7 +2078,7 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
         if (!lidar_pushed) {
             // If not in lidar scan, need to generate new meas
             if (lid_raw_data_buffer.empty())
-                return false;
+                return sync_observation.result(fastlivo_sync::OnlyLoEmpty, false);
             meas.lidar = lid_raw_data_buffer.front().cloud; // push the first lidar topic
             meas.lidar_frame_beg_time = lid_header_time_buffer.front(); // generate lidar_beg_time
             meas.lidar_frame_end_time =
@@ -1863,13 +2096,13 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
         lidar_pushed = false;  // sync one whole lidar scan.
         meas.lio_vio_flg = LO; // process lidar topic, so timestamp should be lidar scan end.
         meas.measures.push_back(m);
-        return true;
+        return sync_observation.result(fastlivo_sync::OnlyLoSelected, true);
         break;
     }
 
     default: {
         printf("!! WRONG SLAM TYPE !!");
-        return false;
+        return sync_observation.result(fastlivo_sync::InvalidMode, false);
     }
     }
     RCLCPP_ERROR(this->node->get_logger(), "out sync");
@@ -2322,7 +2555,23 @@ void LIVMapper::admit_ingress(const std::shared_ptr<IngressPacket> &p) {
     if (pipeline_mode == "serial")
         commit_ingress();
 }
+void LIVMapper::receive_complete_scan(const fastlivo_scan::Certificate::ConstSharedPtr &scan) {
+    if (!complete_scan_watermark || !ingress_enabled)
+        throw std::runtime_error("complete scan requires enabled ordered ingress");
+    // Aliasing shared_ptr binds the message lifetime and exact cloud object.
+    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud(scan, &scan->cloud);
+    receive_cloud_packet(cloud, scan);
+}
 void LIVMapper::receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
+    receive_cloud_packet(msg, nullptr);
+}
+void LIVMapper::receive_cloud_packet(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg,
+                                    const fastlivo_scan::Certificate::ConstSharedPtr &scan) {
+    if (complete_scan_watermark && !scan) {
+        // Receiver must not mutate estimator-owner watermark state.
+        ingress_queue.fail("complete scan mode rejects uncertified raw cloud ingress");
+        throw std::runtime_error("complete scan mode rejects uncertified raw cloud ingress");
+    }
     if (!ingress_enabled) {
         standard_pcl_cbk(msg);
         return;
@@ -2335,6 +2584,7 @@ void LIVMapper::receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPt
     p->receive_tid = syscall(SYS_gettid);
     p->source_ns = diag_stamp(msg->header.stamp);
     p->cloud_message = msg;
+    p->complete_scan = scan;
     try {
         const auto count = pipeline_mul(msg->width, msg->height);
         if (count > 65536 || msg->data.size() > 2 * 1024 * 1024)
@@ -2350,6 +2600,8 @@ void LIVMapper::receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPt
         for (const auto &f : msg->fields)
             p->reserved_bytes = pipeline_add(p->reserved_bytes, f.name.capacity());
         p->reserved_bytes = pipeline_add(p->reserved_bytes, msg->header.frame_id.capacity());
+        if (scan) p->reserved_bytes = pipeline_add(p->reserved_bytes, sizeof(*scan) +
+            scan->session_id.capacity() + scan->sensor_id.capacity() + scan->config_id.capacity());
     } catch (...) {
         p->reserved_bytes = std::numeric_limits<size_t>::max();
     }
@@ -2420,6 +2672,7 @@ void LIVMapper::decode_ingress(const std::shared_ptr<IngressPacket> &p) {
     p->decode_cpu_begin = ingress_thread_cpu();
     try {
         if (p->kind == 2) {
+            if (p->complete_scan) fastlivo_scan::validate(*p->complete_scan, p->cloud_message.get());
             p->cloud.reset(new PointCloudXYZI());
             p_pre->process(p->cloud_message, p->cloud);
         } else if (p->kind == 3)
@@ -2543,6 +2796,7 @@ void LIVMapper::commit_ingress() {
         } catch (...) {
             // PRIMARY_CALLBACK_DIAGNOSTIC_BEGIN
             const auto primary_exception = std::current_exception();
+            if (complete_scan_watermark && p->kind == 2) scan_watermark.failed = true;
             committing_ingress = nullptr;
             try {
                 std::rethrow_exception(primary_exception);
@@ -2590,6 +2844,7 @@ void LIVMapper::commit_ingress() {
     }
 }
 void LIVMapper::stop_ingress(bool normal) {
+    pending_pair.retire(PendingLivoPair::Aborted);
     if (!ingress_started || ingress_stopped)
         return;
     ingress_stopped = true;

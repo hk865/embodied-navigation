@@ -42,10 +42,33 @@ def resolve_limits(experiment):
 
 
 def create_route_controller(
-    experiment, *, gt_diagnostic, slam_control, target_speed, spawn
+    experiment,
+    *,
+    gt_diagnostic,
+    slam_control,
+    interactive_control=False,
+    target_speed,
+    spawn,
 ):
-    """Create the native-pose RouteTracker or measured-SLAM controller."""
+    """Create the native-pose, measured-SLAM or interactive-waypoint tracker.
+
+    interactive_control is the explicit simulation-only exploration mode: the
+    operator publishes waypoints and only a measured estimator pose may drive
+    them. It reuses the measured-SLAM branch for mapping/pose plumbing but is
+    created and reported separately, so a reader can tell the three control
+    sources apart.
+    """
     tracker = None
+    if interactive_control:
+        from embodied_navigation.simulation.dynanav.native_waypoints import (
+            NativeWaypointTracker,
+        )
+
+        if experiment.get("interactive_controller") == "pct_scan":
+            from embodied_navigation.simulation.dynanav.pct_scan_waypoints import PctScanWaypointTracker
+            tracker = PctScanWaypointTracker(experiment, speed_mps=target_speed)
+        else:
+            tracker = NativeWaypointTracker(experiment, speed_mps=target_speed)
     if gt_diagnostic:
         from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
 
@@ -56,7 +79,7 @@ def create_route_controller(
             motion_end=experiment["motion_end_s"],
             stop_on_stall=experiment.get("stop_on_stall", True),
         )
-    if slam_control:
+    if slam_control and not interactive_control:
         from embodied_navigation.simulation.dynanav.experiment import (
             make_slam_controller,
         )
@@ -67,7 +90,7 @@ def create_route_controller(
 
 def annotate_policy_receipt(
     result, experiment, gt_diagnostic, slam_control, robogauge, target_speed,
-    physical_speed_guard
+    physical_speed_guard, interactive_control=False
 ):
     """Record the unchanged speed_test/policy receipts before walking."""
     result["speed_test"] = {
@@ -78,6 +101,14 @@ def annotate_policy_receipt(
         "stair_specific_speed_limit": None,
         "native_COM_velocity_PID": not robogauge,
         "command_slew": not robogauge,
+        "interactive_waypoint_interface": interactive_control,
+        "interactive_command_source": (
+            ("pct_global_scan_local_over_live_post_vio"
+             if experiment.get("interactive_controller") == "pct_scan"
+             else "native_route_tracker_over_live_measured_pose")
+            if interactive_control
+            else None
+        ),
     }
     result["policy_loaded"] = True
     result["policy"].update(
@@ -85,6 +116,8 @@ def annotate_policy_receipt(
         policy_hz=50,
         command_source="native_pose_diagnostic"
         if gt_diagnostic
+        else "interactive_waypoint_exploration"
+        if interactive_control
         else experiment.get("navigation_command_source", "measured_lio_route")
         if slam_control
         else "/dynanav/nav/approved_cmd",
@@ -104,6 +137,7 @@ class ControlLoop:
         experiment,
         gt_diagnostic,
         slam_control,
+        interactive_control=False,
         robogauge,
         target_speed,
         indices,
@@ -118,6 +152,7 @@ class ControlLoop:
         self.experiment = experiment
         self.gt_diagnostic = gt_diagnostic
         self.slam_control = slam_control
+        self.interactive_control = interactive_control
         self.robogauge = robogauge
         self.target_speed = target_speed
         self.indices = indices
@@ -133,12 +168,14 @@ class ControlLoop:
         self.odometry_hold_started = None
         self.source_terminal_reason = None
         self.reading = {}
+        self.reading_wall = None
         self.stop_detected_at = None
         self.park_since = None
 
     def observe_imu(self, reading):
-        """Keep the previous IMU reading for the measured-SLAM gyro input."""
+        """Keep the previous IMU reading and its real arrival for the gyro gate."""
         self.reading = reading
+        self.reading_wall = time.perf_counter()
 
     def tick(
         self,
@@ -163,6 +200,7 @@ class ControlLoop:
         experiment = self.experiment
         gt_diagnostic = self.gt_diagnostic
         slam_control = self.slam_control
+        interactive_control = self.interactive_control
         robogauge = self.robogauge
         target_speed = self.target_speed
         indices = self.indices
@@ -279,7 +317,49 @@ class ControlLoop:
             if tracker is not None:
                 if held:
                     tracker.invalidate_measurement()
-                if slam_control:
+                if interactive_control:
+                    odom = latest_odom[0] or {}
+                    gyro = locals().get("reading", {}).get("angular_velocity")
+                    tracker.observe_native_guards(
+                        tilt_rad=float(np.arccos(np.clip(R[2, 2], -1.0, 1.0))),
+                        native_speed_mps=float(np.linalg.norm(v0.numpy()[0])),
+                    )
+                    measured_command, control_receipt = tracker.tick(
+                        state[0],
+                        odom.get("time"),
+                        odom.get("position"),
+                        odom.get("orientation_wxyz"),
+                        odom.get("estimated_velocity"),
+                        float(gyro[2])
+                        if gyro is not None and len(gyro) == 3
+                        else None,
+                        ready=policy_stand_gate_done and not held,
+                        now_wall=time.perf_counter(),
+                        arrival_wall=odom.get("arrival_wall"),
+                        frame_id=odom.get("frame_id"),
+                        child_frame_id=odom.get("child_frame_id"),
+                        pose_source=odom.get("pose_source"),
+                        imu_source_stamp_s=(
+                            locals().get("reading", {}).get("time")
+                            if isinstance(locals().get("reading", {}), dict)
+                            else None
+                        ),
+                        imu_arrival_wall_s=self.reading_wall,
+                        imu_frame=(
+                            locals().get("reading", {}).get("frame_id")
+                            if isinstance(locals().get("reading", {}), dict)
+                            else None
+                        ),
+                        imu_valid=bool(
+                            gyro is not None
+                            and len(gyro) == 3
+                            and np.isfinite(float(gyro[2]))
+                        ),
+                    )
+                    request = np.asarray(measured_command)
+                    result["interactive_waypoint_control"] = control_receipt
+                    journal("interactive_waypoint_control.jsonl", control_receipt)
+                elif slam_control:
                     odom = latest_odom[0] or {}
                     gyro = locals().get("reading", {}).get("angular_velocity")
                     measured_command, control_receipt = tracker.tick(
@@ -317,7 +397,12 @@ class ControlLoop:
                     "failure": tracker.failure,
                     "events": tracker.events,
                 }
-                if tracker.arrived or tracker.failure:
+                interactive_terminal = getattr(tracker, "terminal_reason", None)
+                if interactive_terminal is not None:
+                    source_terminal_reason = (
+                        source_terminal_reason or interactive_terminal
+                    )
+                elif tracker.arrived or tracker.failure:
                     source_terminal_reason = (
                         "route_arrived" if tracker.arrived else tracker.failure
                     )
@@ -342,7 +427,7 @@ class ControlLoop:
                     if latest_odom[0]
                     else float("inf")
                 )
-                fresh = (
+                fresh = bool(
                     latest_odom[0] is not None
                     and odom_sim_age < 0.25
                     and odom_wall_age < 0.5

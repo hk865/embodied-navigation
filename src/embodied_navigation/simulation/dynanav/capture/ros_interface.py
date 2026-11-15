@@ -35,10 +35,11 @@ class RosInterface:
     publish_depth_and_info: Callable
     publish_rgb: Callable
     destroy: Callable
+    publish_rtx_cloud: Callable | None = None
 
 
 
-def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None):
+def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None, metadata_message=None):
     """记录“本地 publish 调用”边界，不代表 DDS 已投递或收到确认。
 
     仅记录标量元数据，每个被跟踪的传感器帧写两行（publish_call/
@@ -48,10 +49,12 @@ def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None
     if journal is None:
         publisher.publish(message)
         return
+    # Typed envelopes publish unchanged; their embedded cloud supplies trace metadata.
+    observed = message if metadata_message is None else metadata_message
     metadata = {
         "topic": topic,
-        "source_ns": message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec,
-        "data_bytes": len(message.data),
+        "source_ns": observed.header.stamp.sec * 1_000_000_000 + observed.header.stamp.nanosec,
+        "data_bytes": len(observed.data),
         "point_count": point_count,
         "delivery_confirmed": False,
     }
@@ -83,6 +86,15 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2, PointField
 
+    rtx_enabled = experiment.get("point_cloud_source", "rgbd") == "rtx_lidar"
+
+    # Optional recording profile: reliable source writers permit bag retransmission
+    # of large fragmented sensor messages. Default/native subscribers remain unchanged.
+    reliable_recording = os.environ.get("DYNANAV_RECORD_RELIABLE") == "1"
+    if reliable_recording:
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        qos_profile_sensor_data = QoSProfile(depth=128, reliability=ReliabilityPolicy.RELIABLE)
+
     # 发布追踪是显式实验开关：开启后必须提供 journal，否则直接拒绝启动，
     # 避免把“未记录”误当成“已投递”。
     trace_enabled = os.environ.get("DYNANAV_PUBLISH_TRACE") == "1"
@@ -105,7 +117,7 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     # 交给采集编排统一处理 SIGINT/SIGTERM：rclpy 不安装自己的信号处理器，
     # 这样关停顺序（先停传感器循环再销毁节点）由上层保证。
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    node = rclpy.create_node("actual_go2_rgbd_source")
+    node = rclpy.create_node("actual_go2_rtx_source" if rtx_enabled else "actual_go2_rgbd_source")
     pub_imu = node.create_publisher(Imu, "/dynanav/imu", qos_profile_sensor_data)
     pub_img = node.create_publisher(Image, "/dynanav/camera", qos_profile_sensor_data)
     pub_cloud = node.create_publisher(
@@ -125,6 +137,12 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     pub_info = node.create_publisher(
         CameraInfo, "/dynanav/camera_info", qos_profile_sensor_data
     )
+    pub_rtx = node.create_publisher(PointCloud2, "/dynanav/lidar_rtx", qos_profile_sensor_data) if rtx_enabled else None
+    pub_complete_rtx = None
+    if rtx_enabled and os.environ.get("DYNANAV_RTX_COMPLETE_SCAN") == "1":
+        from dynanav_sensor_msgs.msg import CompleteLidarScan
+        from .lidar import COMPLETE_SCAN_TOPIC
+        pub_complete_rtx = node.create_publisher(CompleteLidarScan, COMPLETE_SCAN_TOPIC, qos_profile_sensor_data)
     latest_odom = [None]
 
     def odom_callback(m):
@@ -289,6 +307,24 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
             publish_cloud_message(pub_perception_cloud, filtered_msg, "/dynanav/lidar_perception_filtered")
 
 
+    def publish_rtx_cloud(packet):
+        if pub_rtx is None:
+            raise ValueError("RTX publisher not explicitly configured")
+        from .lidar import pointcloud_message
+        message = pointcloud_message(packet)
+        publish_cloud_message(pub_rtx, message, "/dynanav/lidar_rtx")
+        published["cloud"] += 1
+        published["rtx_lidar"] = published.get("rtx_lidar", 0) + 1
+        if pub_complete_rtx is not None:
+            from .lidar import complete_scan_message
+            envelope = complete_scan_message(packet, message)
+            if envelope is not None:
+                _publish_sensor(
+                    pub_complete_rtx, envelope, COMPLETE_SCAN_TOPIC, trace_journal,
+                    point_count=message.width * message.height, metadata_message=message,
+                )
+                published["rtx_complete_scan"] = published.get("rtx_complete_scan", 0) + 1
+
     def publish_depth_and_info(it, zz):
         # 深度图按 32FC1（米）发布，frame 为相机光学系；图像尺寸取自数组形状，
         # 因此不强制 512x512。
@@ -356,4 +392,5 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         publish_depth_and_info=publish_depth_and_info,
         publish_rgb=publish_rgb,
         destroy=destroy,
+        publish_rtx_cloud=publish_rtx_cloud,
     )

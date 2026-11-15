@@ -4,9 +4,12 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -24,7 +27,9 @@ class ObserverOverride(unittest.TestCase):
         lib = self.prefix / "install/ros/lib"
         (lib / "fast_livo2_ros").mkdir(parents=True)
         (lib / "libfast_livo2_core.so").write_bytes(
-            b"test-only common.allow_lio_only publish.post_vio_odometry_en"
+            b"test-only common.allow_lio_only publish.post_vio_odometry_en common.allow_ouster_lidar "
+            b"common.same_pair_vio_handoff common.max_buffered_images common.max_buffered_imu "
+            b"common.max_buffered_prop_imu"
         )
         runner = lib / "fast_livo2_ros/fastlivo_mapping"
         runner.write_text(
@@ -119,6 +124,288 @@ class ObserverOverride(unittest.TestCase):
         self.assertEqual(
             json.loads(result.stdout)["parameter_override"]["path"], str(override)
         )
+
+    def test_rtx_preflight_selects_native_timed_sensor_profile_without_execution(self):
+        output = self.data / "experiments/rtx check"
+        result = self.invoke("--check", "--lidar-topic", "/dynanav/lidar_rtx", "--output-dir", str(output))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["ready"])
+        self.assertTrue(report["ouster_opt_in_parameter_present"])
+        self.assertEqual(report["capability_errors"], [])
+        self.assertFalse(output.exists())
+        self.assertEqual(report["lidar_input_topic"], "/dynanav/lidar_rtx")
+        self.assertEqual(report["measurement_source"], "RTX LiDAR range sensor; not RGB-D")
+        self.assertEqual(report["lidar_point_contract"]["t"], "uint32 nanoseconds relative to scan-start header")
+        self.assertEqual(report["lidar_point_contract"]["ring"], "uint8")
+        self.assertFalse(report["lidar_point_contract"]["runtime_data_verified"])
+        self.assertEqual(report["lidar_point_contract"]["capture_render_backend_required"], "fabric")
+        self.assertTrue(report["lidar_point_contract"]["capture_physics_fabric_required"])
+        self.assertFalse(report["lidar_point_contract"]["mount_updates_verified"])
+        sensor = report["lidar_sensor_parameters"]
+        self.assertTrue(sensor["path"].endswith("fastlivo_rtx_os1_32.yaml"))
+        self.assertEqual(sensor["parameters"]["preprocess"]["lidar_type"], 3)
+        self.assertEqual(sensor["sha256"], hashlib.sha256(Path(sensor["path"]).read_bytes()).hexdigest())
+
+    def test_complete_scan_is_explicit_typed_livo_and_requires_binary_support(self):
+        capture, _, blackboard, markers = self.livo_fixture()
+        override = self.directory / "complete_scan.yaml"
+        override.write_text("/**:\n  ros__parameters:\n    common.complete_scan_watermark: true\n")
+        args = ("--check", "--mode", "livo", "--capture-result", str(capture),
+                "--camera-blackboard", str(blackboard), "--lidar-topic", "/dynanav/lidar_rtx",
+                "--parameter-override", str(override))
+        result = self.invoke(*args)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("common.complete_scan_watermark", json.loads(result.stdout)["missing_rtx_features"])
+        core = self.prefix / "install/ros/lib/libfast_livo2_core.so"
+        core.write_bytes(core.read_bytes() + b" common.complete_scan_watermark")
+        result = self.invoke(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(report["complete_scan_watermark_requested"])
+        self.assertEqual(report["subscribed_lidar_topic"], "/dynanav/lidar_rtx/complete_scan")
+        result = self.invoke("--check", "--lidar-topic", "/dynanav/lidar_rtx", "--parameter-override", str(override))
+        self.assertEqual(result.returncode, 2)
+        self.assertTrue(all(not marker.exists() for marker in markers))
+
+    def test_rtx_allows_explicit_same_pair_handoff_comparison_switch(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                override = self.directory / "same pair handoff.yaml"
+                override.write_text(yaml.safe_dump({"/**": {"ros__parameters": {
+                    "common": {"same_pair_vio_handoff": enabled}
+                }}}))
+                result = self.invoke(
+                    "--check", "--lidar-topic", "/dynanav/lidar_rtx",
+                    "--parameter-override", str(override),
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertTrue(report["ready"])
+                self.assertIs(report["rtx_handoff_requested"], enabled)
+                self.assertEqual(report["parameter_override"]["path"], str(override))
+                self.assertEqual(report["lidar_sensor_parameters"]["parameters"]
+                                 ["preprocess"]["lidar_type"], 3)
+
+    def test_rtx_rejects_ouster_core_missing_requested_handoff_and_buffer_code(self):
+        core = self.prefix / "install/ros/lib/libfast_livo2_core.so"
+        core.write_bytes(b"common.allow_lio_only publish.post_vio_odometry_en common.allow_ouster_lidar")
+        result = self.invoke("--check", "--lidar-topic", "/dynanav/lidar_rtx")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["ready"])
+        self.assertTrue(report["ouster_opt_in_parameter_present"])
+        self.assertIn("common.same_pair_vio_handoff", report["missing_rtx_features"])
+        self.assertIn("a YAML setting alone", result.stderr)
+
+    def test_rtx_rejects_legacy_core_and_explains_explicit_build_root_without_starting(self):
+        core = self.prefix / "install/ros/lib/libfast_livo2_core.so"
+        old_bytes = b"test-only common.allow_lio_only publish.post_vio_odometry_en"
+        core.write_bytes(old_bytes)
+        output = self.data / "experiments/unsupported rtx"
+        for mode in ("lio", "livo"):
+            extra = []
+            if mode == "livo":
+                capture, _, blackboard, markers = self.livo_fixture()
+                extra = ["--capture-result", str(capture), "--camera-blackboard", str(blackboard)]
+            for check in ([], ["--check"]):
+                with self.subTest(mode=mode, check=check):
+                    result = self.invoke(*check, "--mode", mode, "--lidar-topic", "/dynanav/lidar_rtx",
+                                         "--output-dir", str(output), *extra)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertFalse(report["ready"])
+                    self.assertFalse(report["ouster_opt_in_parameter_present"])
+                    self.assertEqual(len(report["capability_errors"]), 1)
+                    self.assertIn("common.allow_ouster_lidar", result.stderr)
+                    self.assertIn("--binary-prefix BUILD_ROOT", result.stderr)
+                    self.assertIn("not install/ros itself", result.stderr)
+                    self.assertEqual(Path(report["core"]), core)
+                    self.assertEqual(core.read_bytes(), old_bytes)
+                    self.assertFalse(output.exists())
+            if mode == "livo":
+                self.assertTrue(all(not marker.exists() for marker in markers))
+        # The missing opt-in must not regress the legacy RGB-D preflight.
+        result = self.invoke("--check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["ouster_opt_in_parameter_present"])
+
+    def test_readiness_reports_a_dead_mapper_clearly_and_cleans_up_probe(self):
+        source = self.script.read_text().split("<<'PYREADY'\n", 1)[1].split("\nPYREADY", 1)[0]
+        for failure in ("kill", "proc", "zombie"):
+            with self.subTest(failure=failure):
+                node = Mock()
+                rclpy = types.ModuleType("rclpy")
+                rclpy.init = Mock()
+                rclpy.create_node = Mock(return_value=node)
+                rclpy.shutdown = Mock()
+                rclpy_node = types.ModuleType("rclpy.node")
+                rclpy_node.NodeNameNonExistentError = type("NodeNameNonExistentError", (Exception,), {})
+                preflight = {"mode": "lio", "observer_namespace": "/dynanav/lio_observer",
+                             "lidar_input_topic": "/dynanav/lidar_rtx"}
+                argv = ["readiness", str(self.directory), json.dumps(preflight), "123456", ""]
+                with patch.dict(sys.modules, {"rclpy": rclpy, "rclpy.node": rclpy_node}), patch.object(
+                    sys, "argv", argv
+                ), patch("os.kill", side_effect=ProcessLookupError() if failure == "kill" else None), patch.object(
+                    Path, "read_text", side_effect=FileNotFoundError() if failure == "proc" else None,
+                    return_value="123456 (fake mapper) Z 0 0",
+                ):
+                    with self.assertRaises(SystemExit) as error:
+                        exec(compile(source, str(self.script) + ":PYREADY", "exec"), {})
+                self.assertIn("owned mapper exited before sensor readiness", str(error.exception))
+                self.assertIn("runner.log", str(error.exception))
+                self.assertNotIn("ProcessLookupError", str(error.exception))
+                node.destroy_node.assert_called_once()
+                rclpy.shutdown.assert_called_once()
+
+    def _readiness_graph_case(self, certified, graph, ready, include_subscribed=True):
+        source = self.script.read_text().split("<<'PYREADY'\n", 1)[1].split("\nPYREADY", 1)[0]
+        node = Mock()
+        node.get_subscriber_names_and_types_by_node.return_value = list(graph.items())
+        rclpy = types.ModuleType("rclpy")
+        rclpy.init = Mock()
+        rclpy.create_node = Mock(return_value=node)
+        rclpy.shutdown = Mock()
+        rclpy.spin_once = Mock()
+        rclpy_node = types.ModuleType("rclpy.node")
+        rclpy_node.NodeNameNonExistentError = type("NodeNameNonExistentError", (Exception,), {})
+        preflight = {"mode": "livo", "observer_namespace": "/dynanav/rtx_livo",
+                     "lidar_input_topic": "/dynanav/lidar_rtx",
+                     "subscribed_lidar_topic": "/dynanav/lidar_rtx/complete_scan" if certified else "/dynanav/lidar_rtx",
+                     "complete_scan_watermark_requested": certified}
+        expected_lidar = preflight["subscribed_lidar_topic"]
+        if not include_subscribed:
+            preflight.pop("subscribed_lidar_topic")
+        argv = ["readiness", str(self.directory), json.dumps(preflight), "123456", "123457"]
+        with patch.dict(sys.modules, {"rclpy": rclpy, "rclpy.node": rclpy_node}), patch.object(
+            sys, "argv", argv
+        ), patch("os.kill"), patch.object(Path, "read_text", return_value="123456 (fake owned process) S 0 0"), patch(
+            "time.monotonic", side_effect=[0.0, 0.0, 11.0]
+        ):
+            if certified and not include_subscribed:
+                with self.assertRaisesRegex(SystemExit, "complete scan readiness requires explicit subscribed_lidar_topic"):
+                    exec(compile(source, str(self.script) + ":PYREADY", "exec"), {})
+                rclpy.init.assert_not_called()
+                rclpy.create_node.assert_not_called()
+                self.assertFalse((self.directory / "ready.json").exists())
+                return
+            if ready:
+                exec(compile(source, str(self.script) + ":PYREADY", "exec"), {})
+            else:
+                with self.assertRaisesRegex(SystemExit, "mapper input subscriptions not ready within 10s"):
+                    exec(compile(source, str(self.script) + ":PYREADY", "exec"), {})
+        node.get_subscriber_names_and_types_by_node.assert_called_once_with("dynanav_livo_observer", "/dynanav/rtx_livo")
+        node.destroy_node.assert_called_once()
+        rclpy.shutdown.assert_called_once()
+        self.assertEqual((self.directory / "ready.json").exists(), ready)
+        if ready:
+            receipt = json.loads((self.directory / "ready.json").read_text())
+            self.assertEqual(receipt["verified_sensor_subscriptions"], sorted([
+                expected_lidar, "/dynanav/imu", "/dynanav/camera"]))
+        else:
+            self.assertFalse((self.directory / "ready.json.tmp").exists())
+
+    def test_certified_readiness_accepts_actual_typed_dds_graph_without_raw_subscription(self):
+        self._readiness_graph_case(True, {
+            "/dynanav/lidar_rtx/complete_scan": ["dynanav_sensor_msgs/msg/CompleteLidarScan"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, True)
+
+    def test_certified_readiness_rejects_raw_only_dds_graph(self):
+        self._readiness_graph_case(True, {
+            "/dynanav/lidar_rtx": ["sensor_msgs/msg/PointCloud2"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, False)
+
+    def test_certified_readiness_rejects_missing_imu(self):
+        self._readiness_graph_case(True, {
+            "/dynanav/lidar_rtx/complete_scan": ["dynanav_sensor_msgs/msg/CompleteLidarScan"],
+            "/dynanav/camera": ["sensor_msgs/msg/Image"]}, False)
+
+    def test_certified_readiness_rejects_wrong_typed_topic(self):
+        self._readiness_graph_case(True, {
+            "/wrong/lidar_rtx/complete_scan": ["dynanav_sensor_msgs/msg/CompleteLidarScan"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, False)
+
+    def test_certified_readiness_rejects_wrong_type_on_correct_topic(self):
+        self._readiness_graph_case(True, {
+            "/dynanav/lidar_rtx/complete_scan": ["sensor_msgs/msg/PointCloud2"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, False)
+
+    def test_off_readiness_keeps_raw_graph_behavior_without_new_type_gate(self):
+        self._readiness_graph_case(False, {
+            "/dynanav/lidar_rtx": ["legacy_unchecked_type"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, True)
+
+    def test_off_readiness_rejects_typed_only_graph(self):
+        self._readiness_graph_case(False, {
+            "/dynanav/lidar_rtx/complete_scan": ["dynanav_sensor_msgs/msg/CompleteLidarScan"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]}, False)
+
+    def test_legacy_off_readiness_without_subscribed_metadata_keeps_original_raw_check(self):
+        self._readiness_graph_case(False, {
+            "/dynanav/lidar_rtx": ["legacy_unchecked_type"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]},
+            True, include_subscribed=False)
+
+    def test_certified_readiness_without_subscribed_metadata_fails_closed(self):
+        self._readiness_graph_case(True, {
+            "/dynanav/lidar_rtx/complete_scan": ["dynanav_sensor_msgs/msg/CompleteLidarScan"],
+            "/dynanav/imu": ["sensor_msgs/msg/Imu"], "/dynanav/camera": ["sensor_msgs/msg/Image"]},
+            False, include_subscribed=False)
+
+    def test_rtx_launch_records_actual_sensor_override_and_enters_owned_readiness(self):
+        python_shim = self.directory / "mock tools/python3"
+        python_shim.write_text(
+            "#!/usr/bin/python3\n"
+            "import json, os, pathlib, sys\n"
+            "if len(sys.argv) == 6 and sys.argv[1] == '-' and sys.argv[3].startswith('{'):\n"
+            "    preflight = json.loads(sys.argv[3])\n"
+            "    (pathlib.Path(sys.argv[2])/'mock_readiness.json').write_text(json.dumps(preflight))\n"
+            "else:\n"
+            "    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+        )
+        python_shim.chmod(0o755)
+        output = self.data / "experiments/rtx launch"
+        result = self.invoke("--lidar-topic", "/dynanav/lidar_rtx", "--output-dir", str(output))
+        # The test mapper intentionally exits. This must not leave a ready flag
+        # or report successful initialization; the probe here is fake and offline.
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((output / "mock_readiness.json").is_file())
+        self.assertTrue((output / "shutdown.json").is_file())
+        self.assertFalse((output / "ready.json").exists())
+        receipt = json.loads((output / "launch.json").read_text())
+        command = receipt["command"]
+        self.assertIn("/dynanav/lidar_static:=/dynanav/lidar_rtx", command)
+        self.assertEqual(command.count("--params-file"), 2)
+        sensor = receipt["lidar_sensor_parameters"]
+        self.assertIn(sensor["path"], command)
+        self.assertEqual(receipt["sensor_inputs"], ["/dynanav/lidar_rtx", "/dynanav/imu"])
+        self.assertEqual(receipt["measurement_source"], "RTX LiDAR range sensor; not RGB-D")
+        self.assertEqual(command[1:], json.loads((output / "mock_argv.json").read_text()))
+
+    def test_rtx_override_cannot_erase_return_timing_or_double_apply_mount(self):
+        for parameter in (
+            "preprocess.lidar_type: 0", "preprocess.scan_line: 64",
+            "preprocess.feature_extract_enabled: true", "preprocess.point_filter_num: 2",
+            "common.allow_ouster_lidar: false", "common.require_complete_imu: false",
+            "extrin_calib.extrinsic_T: [0.1, 0.0, 0.0]",
+        ):
+            with self.subTest(parameter=parameter):
+                override = self.directory / "bad rtx override.yaml"
+                override.write_text("/**:\n  ros__parameters:\n    " + parameter + "\n")
+                result = self.invoke("--check", "--lidar-topic", "/dynanav/lidar_rtx", "--parameter-override", str(override))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertTrue(json.loads(result.stdout)["observer_contract_conflicts"])
+
+    def test_rtx_livo_keeps_capture_calibration_separate_from_lidar_override(self):
+        capture, installation, blackboard, markers = self.livo_fixture()
+        result = self.invoke("--check", "--mode", "livo", "--capture-result", str(capture),
+                             "--camera-blackboard", str(blackboard), "--lidar-topic", "/dynanav/lidar_rtx")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["camera_calibration"]["parameters"]["extrin_calib"]["Pcl"],
+                         installation["camera_optical_translation_from_IMU"])
+        self.assertNotIn("Rcl", report["lidar_sensor_parameters"]["parameters"]["extrin_calib"])
+        self.assertTrue(all(not marker.exists() for marker in markers))
 
     def test_override_cannot_enable_truth_or_redirect_observer_sensor_inputs(self):
         for parameters in (

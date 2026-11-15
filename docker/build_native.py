@@ -21,6 +21,7 @@ PACKAGES = [
     "livox_ros_driver2",
     "vikit_common",
     "vikit_ros",
+    "dynanav_sensor_msgs",
     "fast_livo2_core",
     "fast_livo2_ros",
     "plan_env",

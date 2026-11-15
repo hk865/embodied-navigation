@@ -72,7 +72,13 @@ class TrackedRoutes(unittest.TestCase):
         self.assertEqual(
             get_route("first-flight")["waypoints_xyz"], [[-22.0, -7.5, -1.1441]]
         )
-        self.assertEqual(self.config["floor_paths"], old["floor_paths"])
+        # The full-route baseline retains its original seven tiles; the shared
+        # first-flight session repair now covers all audited office floor tiles.
+        self.assertEqual(len(self.config["floor_paths"]), 7)
+        self.assertTrue(set(self.config["floor_paths"]) <= set(old["floor_paths"]))
+        self.assertIn(
+            "/Root/SM_Floor_6m_17/SM_Floor_6m/SM_Floor_6m", old["floor_paths"]
+        )
         self.assertEqual(self.config["stair_paths"], old["stair_paths"])
 
     def test_full_route_has_both_flights_landing_and_ground_exit(self):

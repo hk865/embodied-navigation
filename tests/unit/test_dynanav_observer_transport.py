@@ -67,6 +67,17 @@ class ObserverTransport(unittest.TestCase):
                     self.assertEqual(self.select()["environment_assignment"], {})
             self.env[key] = original
 
+    def test_rtx_lio_explicitly_selects_bounded_receive_profile(self):
+        receipt = TRANSPORT.select_transport(
+            "lio", "auto", self.env, ROOT, self.cwd, lidar_topic="/dynanav/lidar_rtx"
+        )
+        self.assertEqual(receipt["receive_buffer_request_bytes"], 4194304)
+        self.assertIn("runtime delivery unverified", receipt["reason"])
+        receipt = TRANSPORT.select_transport(
+            "lio", "baseline", self.env, ROOT, self.cwd, lidar_topic="/dynanav/lidar_rtx"
+        )
+        self.assertEqual(receipt["environment_assignment"], {})
+
     def test_invalid_policy_is_rejected(self):
         with self.assertRaises(ValueError):
             self.select(policy="typo")

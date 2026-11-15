@@ -4,6 +4,8 @@
 
 ## 目录结构
 
+最新 DynaNav：默认为 [实测 PCT + 原生 SCAN 连续跟随](docs/dynanav-pct-scan.md)，见 [4 米实时核验与边界](docs/experiments/dynanav-pct-scan-live-20261111.md)。此前 [直线跟随架构](docs/dynanav-exploration.md) 与 [32 航点记录](docs/experiments/dynanav-native-exploration-32-waypoints-20261111.md) 保留为历史基线。可复用 skill/SOP 已归档在 `.agents/skills/dynanav-explore/`；运行数据继续留新卷，不复制进源码。
+
 ```text
 embodied-navigation/
 ├── README.md                # 完整说明（结构、耦合、可读性、重构建议、验证状态）

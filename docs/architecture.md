@@ -5,6 +5,8 @@
 真实开发源码位于src/embodied_navigation，配置在configs，原生第三方源码在third_party。
 无代码或文档从外部工程、历史副本或Documents索引导入。assets、models、runs可以是本地数据链接；它们被Git和Docker构建输入排除。仿真地图、机器人资产和策略权重须按配置另行提供，不把私有数据打包为源码。
 
+当前 DynaNav native 探索的功能分层、模块选型、ROS 话题和测量时序见 [专项架构](dynanav-exploration.md)。下文 A/B/C/D 区分仍适用；D 的原生探索现已另有统一启动脚本，不能把它当成 A 的 SCAN/PCT 主路径。
+
 ## 从入口阅读实际流程
 
 1. start.py调用launch/main.py。prepare.py从configs准备本次运行，demo.launch.py只装配进程和配置。
@@ -23,7 +25,7 @@
 | A. Native 主路径 | `start.py` → `launch/main.py` → `launch/launch/demo.launch.py` | ROS `/demo/*` + run 目录 JSON + `TEACHER_SOCKET` | 15 个受管进程，默认 SLAM 导航 |
 | B. Building（SLAM-only） | `launch/building.py` | 自管 `Popen`，`/building/*`，数据卷 `runs/` | 只接受 `--mode slam` |
 | C. RoboGauge benchmark | `navigation/robogauge/benchmark.py` | 自管 `Popen`，45D 观测 + 专用 actuator | 45D 不是 Student exact45 的裁剪 |
-| D. DynaNav/Isaac 实验 | `scripts/run_dynanav_experiment.py` + `scripts/run_dynanav_lio.sh` + `scripts/run_dynanav_person_worker.py` | `/dynanav/*`，外部数据卷 `experiments/` | 手工三终端；可选统一入口 `scripts/run_dynanav_online_person.py`（只监督三进程顺序与收尾，不替代手工命令，也不做验收） |
+| D. DynaNav/Isaac 实验 | 当前 native 探索：`scripts/run_dynanav_native_exploration.sh`；其他隔离实验仍使用 `run_dynanav_experiment.py`/`run_dynanav_lio.sh`/可选 person worker | `/dynanav/*`，外部数据卷 `experiments/` | native 启动器拥有 capture、FAST-LIVO 与 operator map 生命周期，模型/操作者通过 mailbox 给目标；在线行人另有 `run_dynanav_online_person.py`，不可混成同一进程图 |
 
 ## 默认主路径的任务状态机
 

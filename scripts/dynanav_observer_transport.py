@@ -1,4 +1,4 @@
-"""只读选择已验证的 observer UDP 接收配置，不扩大适用范围。"""
+"""只读选择显式 LIVO/RTX observer 的有界 UDP 接收配置。"""
 
 import hashlib
 from pathlib import Path
@@ -9,7 +9,7 @@ PROFILE_KEYS = ("FASTRTPS_DEFAULT_PROFILES_FILE", "FASTDDS_DEFAULT_PROFILES_FILE
 DEFAULT_FILES = ("DEFAULT_FASTRTPS_PROFILES.xml", "DEFAULT_FASTDDS_PROFILES.xml")
 
 
-def select_transport(mode, policy, environment, repo, cwd):
+def select_transport(mode, policy, environment, repo, cwd, *, lidar_topic=None):
     """不修改调用方环境，也不推断未明确指定的传输方式。"""
     if policy not in ("auto", "baseline"):
         raise ValueError("observer transport must be auto or baseline")
@@ -20,7 +20,7 @@ def select_transport(mode, policy, environment, repo, cwd):
     selected = False
     if policy == "baseline":
         reason = "baseline requested; inherited DDS configuration retained"
-    elif mode != "livo":
+    elif mode != "livo" and lidar_topic != "/dynanav/lidar_rtx":
         reason = "LIO mode unchanged"
     elif custom_keys or default_files:
         reason = "existing DDS configuration retained"
@@ -30,7 +30,11 @@ def select_transport(mode, policy, environment, repo, cwd):
         reason = "UDPv4 transport not explicitly selected"
     else:
         selected = True
-        reason = "validated LIVO FastRTPS UDPv4 receive profile selected"
+        reason = (
+            "RTX LiDAR FastRTPS UDPv4 receive profile selected; runtime delivery unverified"
+            if lidar_topic == "/dynanav/lidar_rtx"
+            else "validated LIVO FastRTPS UDPv4 receive profile selected"
+        )
     profile = Path(repo) / PROFILE if selected else None
     rmem = Path("/proc/sys/net/core/rmem_max")
     try:

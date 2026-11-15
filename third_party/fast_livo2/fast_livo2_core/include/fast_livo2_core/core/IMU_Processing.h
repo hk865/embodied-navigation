@@ -59,6 +59,11 @@ class ImuProcess {
     void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout,
                       PointCloudXYZI &pcl_out);
 
+    // Read-only handoff inspection for native regression/diagnostics. These do
+    // not drive estimation or expose mutable propagation ownership.
+    double propagation_end_time() const { return last_prop_end_time; }
+    sensor_msgs::msg::Imu::ConstSharedPtr last_imu_sample() const { return last_imu; }
+
     ofstream fout_imu;
     double IMU_mean_acc_norm;
     V3D unbiased_gyr;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start an isolated static RGB-D/IMU observer. Never starts a simulator.
+# Start an isolated RGB-D or explicit RTX LiDAR/IMU observer. Never starts a simulator.
 set -euo pipefail
 
 usage() {
@@ -16,7 +16,15 @@ build-cache default. --parameter-override appends a second ROS parameter file
 for estimation experiments; observer input/mode selectors stay fixed.
 --observer-namespace defaults to /dynanav/lio_observer. Explicit other namespaces
 isolate every native output, including /tf. --lidar-topic explicitly selects the
-legacy oracle-static cloud or online learned-filtered temporary candidates.
+legacy oracle-static cloud (/dynanav/lidar_static), the online learned-filtered
+temporary candidates (/dynanav/lidar_perception_filtered), or the raw static-scene
+depth cloud published by the capture (/dynanav/lidar_filtered, IMU frame, no
+ground-truth geometry), or real rotating RTX returns (/dynanav/lidar_rtx).
+RTX automatically appends fastlivo_rtx_os1_32.yaml: official Ouster OS1 Rev6,
+32 channels at 10 Hz, type 3, per-return t/ring and identity IMU extrinsics.
+RTX also requires a native core exposing common.allow_ouster_lidar. Select that
+build explicitly with --binary-prefix BUILD_ROOT (which contains install/ros,
+not install/ros itself); the legacy default prefix is never switched silently.
 Other absolute sensor inputs and estimation modes stay fixed.
 --mode defaults to lio. livo additionally starts its own parameter_blackboard
 in the observer namespace and reads only sensor_installation calibration from
@@ -25,7 +33,8 @@ need native diagnostics/snapshots to establish that observations were used.
 --dependency-prefix can select the existing ROS dependency
 prefix (the directory containing lib and share). ROS_DOMAIN_ID defaults to 91.
 --observer-transport auto selects the bundled 4 MiB UDP receive profile only
-for LIVO with explicit rmw_fastrtps_cpp/UDPv4 and no existing DDS configuration.
+for LIVO or explicit RTX LiDAR with rmw_fastrtps_cpp/UDPv4 and no existing DDS
+configuration. RTX delivery and socket buffers still require runtime verification.
 baseline preserves the inherited environment without adding a profile. This
 launcher changes only its observer process tree, never the Isaac publisher.
 --check inspects files, hashes and dynamic dependencies without creating a run
@@ -69,7 +78,10 @@ while (($#)); do
     esac
 done
 [[ $observer_namespace =~ ^(/[a-zA-Z_][a-zA-Z0-9_]*)+$ ]] || { printf 'Observer namespace must be an absolute non-root ROS namespace without trailing slash.\n' >&2; exit 2; }
-[[ $lidar_topic == /dynanav/lidar_static || $lidar_topic == /dynanav/lidar_perception_filtered ]] || { printf 'Unsupported explicit lidar input topic.\n' >&2; exit 2; }
+# /dynanav/lidar_filtered is the online depth-derived static cloud published by the
+# capture (IMU frame, no ground-truth geometry). /dynanav/lidar_rtx is a distinct
+# rotating sensor with native per-return timing; never alias it to a depth cloud.
+[[ $lidar_topic == /dynanav/lidar_static || $lidar_topic == /dynanav/lidar_perception_filtered || $lidar_topic == /dynanav/lidar_filtered || $lidar_topic == /dynanav/lidar_rtx ]] || { printf 'Unsupported explicit lidar input topic.\n' >&2; exit 2; }
 [[ $mode == lio || $mode == livo ]] || { printf 'Mode must be lio or livo.\n' >&2; exit 2; }
 if [[ $mode == livo ]]; then
     [[ -n $capture_result && -r $capture_result ]] || { printf 'LIVO requires readable --capture-result calibration.\n' >&2; exit 2; }
@@ -98,6 +110,10 @@ runner="$install_prefix/lib/fast_livo2_ros/fastlivo_mapping"
 core="$install_prefix/lib/libfast_livo2_core.so"
 parameters="$repo_dir/configs/simulation/dynanav/fastlivo_${mode}.yaml"
 camera="$repo_dir/configs/simulation/dynanav/camera_rgbd.yaml"
+sensor_parameters=""
+if [[ $lidar_topic == /dynanav/lidar_rtx ]]; then
+    sensor_parameters="$repo_dir/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml"
+fi
 if [[ -n $parameter_override ]]; then
     [[ -f $parameter_override && -r $parameter_override ]] || { printf 'Unreadable parameter override: %s\n' "$parameter_override" >&2; exit 2; }
     parameter_override=$(realpath -- "$parameter_override")
@@ -112,7 +128,7 @@ export AMENT_PREFIX_PATH="$install_prefix:$dependency_prefix${AMENT_PREFIX_PATH:
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-91}
 
 preflight_status=0
-preflight_json=$(python3 -B - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" "$lidar_topic" "$script_dir" "$observer_transport" "$observer_transport_source" <<'PY'
+preflight_json=$(python3 -B - "$runner" "$core" "$parameters" "$camera" "$dependency_prefix" "$parameter_override" "$mode" "$capture_result" "$camera_blackboard" "$observer_namespace" "$lidar_topic" "$script_dir" "$observer_transport" "$observer_transport_source" "$sensor_parameters" <<'PY'
 import hashlib
 import json
 import os
@@ -131,8 +147,13 @@ observer_namespace = sys.argv[10]
 lidar_input_topic = sys.argv[11]
 sys.path.insert(0, sys.argv[12])
 from dynanav_observer_transport import select_transport
-transport = select_transport(mode, sys.argv[13], os.environ, Path(sys.argv[12]).parent, Path.cwd())
+transport = select_transport(mode, sys.argv[13], os.environ, Path(sys.argv[12]).parent, Path.cwd(), lidar_topic=lidar_input_topic)
 transport["policy_source"] = sys.argv[14]
+sensor_parameters = Path(sys.argv[15]) if sys.argv[15] else None
+sensor_values = (
+    yaml.safe_load(sensor_parameters.read_text())["/**"]["ros__parameters"]
+    if sensor_parameters is not None else {}
+)
 base_parameters = yaml.safe_load(parameters.read_text())["/**"]["ros__parameters"]
 post_vio_enabled = base_parameters.get("publish", {}).get("post_vio_odometry_en", False)
 if type(post_vio_enabled) is not bool or post_vio_enabled != (mode == "livo"):
@@ -171,6 +192,8 @@ if mode == "livo":
                    "convention": "p_camera_optical = Rcl * p_go2_imu + Pcl; cloud is already go2_imu",
                    "parameters": calibration_parameters}
 override_conflicts = []
+watermark_requested = False
+handoff_requested = sensor_values.get("common", {}).get("same_pair_vio_handoff", False)
 if override is not None:
     document = yaml.safe_load(override.read_text())
     fixed = {"common.img_en": int(mode == "livo"), "common.allow_lio_only": mode == "lio",
@@ -199,10 +222,25 @@ if override is not None:
                 else:
                     yield from parameter_blocks(value)
 
+    # A user override may tune estimation, not switch the selected physical
+    # sensor back to instantaneous RGB-D or apply its static transform twice.
+    fixed.update(dict(flatten(sensor_values)))
+    # This scheduling optimization has an explicit rollback/comparison switch.
+    # It does not change the sensor, time contract, IMU coverage or buffer limits.
+    fixed.pop("common.same_pair_vio_handoff", None)
     blocks = list(parameter_blocks(document))
     if not blocks:
         raise SystemExit("Override requires a ROS ros__parameters mapping")
     for block in blocks:
+        for name, value in flatten(block):
+            if name == "common.complete_scan_watermark":
+                if type(value) is not bool:
+                    raise SystemExit("common.complete_scan_watermark must be a boolean")
+                watermark_requested = value
+            if name == "common.same_pair_vio_handoff":
+                if type(value) is not bool:
+                    raise SystemExit("common.same_pair_vio_handoff must be a boolean")
+                handoff_requested = value
         override_conflicts.extend(name for name, value in flatten(block)
                                   if name in fixed and value != fixed[name])
 missing = [str(path) for path in (runner, core, parameters, camera) if not path.is_file()]
@@ -222,19 +260,73 @@ for path in (runner, core):
 core_bytes = core.read_bytes() if core.is_file() else b""
 capability_marker = b"common.allow_lio_only" in core_bytes
 post_vio_capability = b"publish.post_vio_odometry_en" in core_bytes
+ouster_capability = b"common.allow_ouster_lidar" in core_bytes
+capability_errors = []
+if sensor_parameters is not None and not ouster_capability:
+    capability_errors.append(
+        "Selected native core does not support common.allow_ouster_lidar required "
+        "for /dynanav/lidar_rtx. Pass --binary-prefix BUILD_ROOT for an Ouster-capable "
+        "build (the directory containing install/ros, not install/ros itself). "
+        "The selected prefix has not been changed."
+    )
+if watermark_requested and (sensor_parameters is None or mode != "livo" or not handoff_requested):
+    capability_errors.append("Complete scan watermark requires explicit RTX LIVO with same-pair handoff")
+requested_rtx_features = ["common.complete_scan_watermark"] if watermark_requested else []
+if sensor_parameters is not None:
+    if handoff_requested:
+        requested_rtx_features.append("common.same_pair_vio_handoff")
+    requested_rtx_features.extend(
+        "common." + name for name in
+        ("max_buffered_images", "max_buffered_imu", "max_buffered_prop_imu")
+        if sensor_values.get("common", {}).get(name, 0) > 0
+    )
+missing_rtx_features = [name for name in requested_rtx_features
+                        if name.encode() not in core_bytes]
+if sensor_parameters is not None and ouster_capability and missing_rtx_features:
+    capability_errors.append(
+        "Selected Ouster core lacks requested RTX handoff/buffer parameters: "
+        + ", ".join(missing_rtx_features)
+        + ". Pass --binary-prefix BUILD_ROOT for the matching updated build; "
+          "a YAML setting alone does not enable missing native code."
+    )
 post_vio_contract = ({"pose_source": "livo_post_vio", "state_stage": "post_vio",
                       "twist_available": False, "pose_covariance_available": False,
                       "unavailable_covariance_diagonal": 1e12,
                       "visual_update_on_every_image": False,
                       "publication_scope": "one final pose after an actually processed image; per-image status records whether a visual update was retained"}
                      if post_vio_enabled else None)
+# The scope text must describe the topic that is actually subscribed: the raw
+# depth-derived static-scene cloud is not the learned-person filtered candidate
+# cloud, and neither is the oracle-static cloud. Naming them the same would make
+# a receipt claim a pipeline that never ran.
+lidar_input_scope = {
+    "/lidar_static": "oracle-static input (ground-truth geometry; diagnostics only)",
+    "/lidar_perception_filtered": "learned-person filtered temporary LIO candidates; background is not certified static",
+    "/lidar_filtered": "raw depth-derived static-scene cloud from the capture; no ground-truth geometry, no learned-person filtering; background is not certified static",
+    "/lidar_rtx": "official Ouster OS1 Rev6 32-channel 10 Hz RTX range returns; rotating scan with per-return time, no RGB-D backprojection or ground-truth deskew",
+}.get("/" + lidar_input_topic.rsplit("/", 1)[-1], "unrecognised lidar input topic")
 receipt = {
     "scope": "File/hash/dependency inspection only; no ROS node or estimator executed",
     "mode": mode,
     "observer_transport": transport,
     "observer_namespace": observer_namespace,
     "lidar_input_topic": lidar_input_topic,
-    "lidar_input_scope": "oracle-static input" if lidar_input_topic.endswith("/lidar_static") else "learned-person filtered temporary LIO candidates; background is not certified static",
+    "lidar_input_scope": lidar_input_scope,
+    "measurement_source": "RTX LiDAR range sensor; not RGB-D" if sensor_parameters else "RGB-D cloud; not an independent LiDAR sensor",
+    "lidar_sensor_parameters": ({"path": str(sensor_parameters),
+                                 "sha256": hashlib.sha256(sensor_parameters.read_bytes()).hexdigest(),
+                                 "parameters": sensor_values}
+                                if sensor_parameters is not None else None),
+    "lidar_point_contract": ({"model": "OS1_REV6_32ch10hz1024res", "lidar_type": 3,
+                              "frame_id": "go2_imu", "scan_line": 32, "scan_hz": 10.0,
+                              "t": "uint32 nanoseconds relative to scan-start header", "ring": "uint8",
+                              "sort": "native non-feature preprocessor sorts by t before scan-end calculation",
+                              "ground_truth_deskew": False,
+                              "capture_render_backend_required": "fabric",
+                              "capture_physics_fabric_required": True,
+                              "mount_updates_verified": False,
+                              "runtime_data_verified": False}
+                             if sensor_parameters is not None else None),
     "tf_output_topic": "/tf" if observer_namespace == "/dynanav/lio_observer" else observer_namespace + "/tf",
     "post_vio_odometry_enabled": post_vio_enabled,
     "post_vio_output_capability_present": post_vio_capability,
@@ -247,8 +339,15 @@ receipt = {
     "camera_blackboard": str(blackboard) if mode == "livo" else None,
     "camera_parameter_service": observer_namespace + "/parameter_blackboard/get_parameters" if mode == "livo" else None,
     "ready": not missing and not unresolved and capability_marker and not override_conflicts
-             and (not post_vio_enabled or post_vio_capability),
+             and (not post_vio_enabled or post_vio_capability) and not capability_errors,
+    "ouster_opt_in_parameter_present": ouster_capability,
+    "capability_errors": capability_errors,
     "observer_contract_conflicts": override_conflicts,
+    "rtx_handoff_requested": handoff_requested,
+    "complete_scan_watermark_requested": watermark_requested,
+    "subscribed_lidar_topic": lidar_input_topic + "/complete_scan" if watermark_requested else lidar_input_topic,
+    "requested_rtx_features": requested_rtx_features,
+    "missing_rtx_features": missing_rtx_features,
     "parameter_override": ({"path": str(override),
                              "sha256": hashlib.sha256(override.read_bytes()).hexdigest()}
                             if override is not None else None),
@@ -260,6 +359,8 @@ receipt = {
 }
 print(json.dumps(receipt, indent=2))
 if not receipt["ready"]:
+    for error in capability_errors:
+        print(error, file=sys.stderr)
     raise SystemExit(2)
 PY
 ) || preflight_status=$?
@@ -306,6 +407,9 @@ calibration = json.loads(sys.argv[2])["camera_calibration"]["parameters"]
 Path(sys.argv[1]).write_text(yaml.safe_dump({"/**": {"ros__parameters": calibration}}, sort_keys=False))
 PY
     command+=(--params-file "$camera")
+fi
+if [[ -n $sensor_parameters ]]; then
+    command+=(--params-file "$sensor_parameters")
 fi
 if [[ -n $parameter_override ]]; then
     command+=(--params-file "$parameter_override")
@@ -361,7 +465,9 @@ receipt = {
                             if override is not None else None),
     "lidar_input_topic": preflight["lidar_input_topic"],
     "lidar_input_scope": preflight["lidar_input_scope"],
-    "sensor_inputs": [preflight["lidar_input_topic"], "/dynanav/imu"] + (["/dynanav/camera"] if mode == "livo" else []),
+    "complete_scan_watermark_requested": preflight["complete_scan_watermark_requested"],
+    "subscribed_lidar_topic": preflight["subscribed_lidar_topic"],
+    "sensor_inputs": [preflight["subscribed_lidar_topic"], "/dynanav/imu"] + (["/dynanav/camera"] if mode == "livo" else []),
     "clock_input": "/clock", "ground_truth_input": False,
     "navigation_command_output": False,
     "mode": "explicit_opt_in_ONLY_LIO" if mode == "lio" else "explicit_RGB_assisted_LIVO",
@@ -381,14 +487,19 @@ receipt = {
     "camera_config_sha256": hashlib.sha256(camera.read_bytes()).hexdigest() if mode == "livo" else None,
     "capture_calibration_sha256": hashlib.sha256(calibration_file.read_bytes()).hexdigest() if calibration_file else None,
     "visual_parameters_source": "native defaults explicitly selected as experiment settings; no accuracy acceptance claim" if mode == "livo" else None,
-    "measurement_source": "RGB-D cloud; not an independent LiDAR sensor",
+    "measurement_source": preflight["measurement_source"],
+    "lidar_sensor_parameters": preflight["lidar_sensor_parameters"],
+    "lidar_point_contract": preflight["lidar_point_contract"],
+    "ouster_opt_in_parameter_present": preflight["ouster_opt_in_parameter_present"],
     "scope": "Launch receipt, not evidence of estimator initialization or route completion",
 }
 (output / "launch.json").write_text(json.dumps(receipt, indent=2) + "\n")
 PY
 printf 'Starting %s observer; log: %s/runner.log\n' "$mode" "$output_dir" >&2
 
-if [[ $mode == lio ]]; then
+# Preserve legacy RGB-D LIO lifecycle. RTX LIO uses the same owned-process
+# readiness handshake as LIVO so capture can wait for actual subscriptions.
+if [[ $mode == lio && $lidar_topic != /dynanav/lidar_rtx ]]; then
     exec "${command[@]}" >"$output_dir/runner.log" 2>&1
 fi
 
@@ -500,7 +611,14 @@ preflight = json.loads(sys.argv[2])
 pids = [int(pid) for pid in sys.argv[3:] if pid]
 namespace = preflight["observer_namespace"]
 name = "dynanav_" + preflight["mode"] + "_observer"
-expected = {preflight["lidar_input_topic"], "/dynanav/imu"}
+complete_scan_mode = preflight.get("complete_scan_watermark_requested", False)
+if complete_scan_mode and not preflight.get("subscribed_lidar_topic"):
+    raise SystemExit("complete scan readiness requires explicit subscribed_lidar_topic")
+# Off mode deliberately keeps the original raw-topic lookup, including legacy
+# internal preflight fixtures with no certified-subscription metadata.
+lidar_subscription = (preflight["subscribed_lidar_topic"] if complete_scan_mode
+                      else preflight["lidar_input_topic"])
+expected = {lidar_subscription, "/dynanav/imu"}
 if preflight["mode"] == "livo":
     expected.add("/dynanav/camera")
 rclpy.init(args=[])
@@ -508,17 +626,30 @@ node = rclpy.create_node("dynanav_observer_readiness_check")
 try:
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        for pid in pids:
-            os.kill(pid, 0)
-            # kill(0) also succeeds for a child waiting to be reaped.
-            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-            if stat[0] == "Z":
-                raise RuntimeError("owned observer process exited: " + str(pid))
+        for index, pid in enumerate(pids):
+            role = "mapper" if index == 0 else "camera parameter server"
+            log = "runner.log" if index == 0 else "camera_parameters.log"
+            exited = f"owned {role} exited before sensor readiness (pid={pid}); see {output / log}"
+            try:
+                os.kill(pid, 0)
+                # kill(0) also succeeds for a child waiting to be reaped; the
+                # process can disappear between this call and the /proc read.
+                stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            except (ProcessLookupError, FileNotFoundError):
+                raise RuntimeError(exited) from None
+            if stat[0] in ("Z", "X"):
+                raise RuntimeError(exited)
         try:
-            subscriptions = {topic for topic, _ in node.get_subscriber_names_and_types_by_node(name, namespace)}
+            subscription_types = dict(node.get_subscriber_names_and_types_by_node(name, namespace))
         except NodeNameNonExistentError:
-            subscriptions = set()
-        if expected <= subscriptions:
+            subscription_types = {}
+        subscriptions = set(subscription_types)
+        # Certified ingress must expose its actual typed DDS subscription. Raw
+        # mode keeps the original topic-set check with no new type requirement.
+        typed_ready = (not complete_scan_mode
+                       or set(subscription_types.get(lidar_subscription, []))
+                       == {"dynanav_sensor_msgs/msg/CompleteLidarScan"})
+        if expected <= subscriptions and typed_ready:
             receipt = {"state": "ready", "mapper_pid": pids[0],
                        "blackboard_pid": pids[1] if len(pids) > 1 else None,
                        "verified_sensor_subscriptions": sorted(expected),
@@ -530,6 +661,8 @@ try:
         rclpy.spin_once(node, timeout_sec=0.1)
     else:
         raise RuntimeError("mapper input subscriptions not ready within 10s")
+except RuntimeError as error:
+    raise SystemExit(str(error)) from None
 finally:
     node.destroy_node()
     rclpy.shutdown()

@@ -4,6 +4,13 @@
 
 ## 系统结构
 
+当前 DynaNav 探索默认已接入 [实测 PCT 全局 + 原生 SCAN 局部规划](docs/dynanav-pct-scan.md)，并完成 [单个 4 米目标的实时闭环核验](docs/experiments/dynanav-pct-scan-live-20261111.md)。此前 [原生直线跟随架构与时序](docs/dynanav-exploration.md) 和 [32 航点运行](docs/experiments/dynanav-native-exploration-32-waypoints-20261111.md) 为历史基线。这是 2026-11-11 本机工作树状态，不表示下列历史审查的所有文件计数仍适用，也不表示已经提交或推送。
+
+- 现役探索入口：`scripts/run_dynanav_native_exploration.sh`；执行链为 live RGB/RTX → FAST-LIVO2 → 模型/操作者选点 → `PctScanWaypointTracker → measured PCT → native SCAN → ContinuousScanFollower → RoboGauge`；显式 `NAVIGATION_BACKEND=native_route` 保留原跟随器作诊断对照。
+- 新增只读 [连续路线候选收益与提前准备](docs/dynanav-waypoint-utility.md)：DSH仍负责长目标与最终goto；已完成 [离线和两段实时核验](docs/experiments/dynanav-waypoint-utility-live-20261111.md)，无自动派发、额外goto门禁或视觉定位收益伪装。
+- 项目内可复用 skill/SOP：`.agents/skills/dynanav-explore/`；代码和说明留仓库，点云、地图、视频、日志与构建产物留外部项目数据卷。
+- 已有 frontier 仅提供实测 FREE/UNKNOWN 边界候选；自动目标派发、多 agent 分工及完整覆盖验收尚未实现；新工具只提供显式模型代理量建议。32 次 reached 回执不代表全楼覆盖或无接触。
+
 各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，src 下 47 个模块 README（另有包索引，共 48 个 README 文件）均从该索引进入。易混术语（四条执行路径、provenance、raw/corrected 位姿、45D/247D、时钟域）见 [术语对照](docs/glossary.md)。
 
 **本轮起每个模块 README 都包含**：当前目录结构、代码/日志/配置的含义、模块内文件耦合评估、可读性评估、按优先级排序的重构建议。跨模块汇总与全部重构建议见 [模块结构与耦合总评](docs/review/module-structure-coupling-20261109.md)。此前 589 个代码/配置目标的可读性报告见 [全量可读性总入口](docs/review/full-readability/README.md)（DSH 全量实现，Codex 独立事实复核，DSH 串行合入）。此前的 [本轮验证记录](docs/review/readability-verification.md)、[审计明细](docs/review/validation-and-threshold-audit.md) 与各模块 README 索引保留为历史记录。
@@ -114,9 +121,9 @@ embodied-navigation/
 ## 两个运行边界
 
 1. Native Gazebo 系统：start.py 装配已有导航模块。Dockerfile 从公开 ROS Jazzy、Gazebo Harmonic、CPU Torch 2.7.1 构建，必要自建源码均包含，FAST-LIVO2/SCAN/PCT 与补丁也在仓库中。
-2. Isaac / DynaNav：当前入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。navigation/relative_slam_node.py 是分离后的任务节点。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 是旧的采集探针：`--check` 只检查文件，普通参数（`--scene/--output/--steps`）仍会启动采集。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
+2. Isaac / DynaNav：当前 static native 探索使用 `scripts/run_dynanav_native_exploration.sh`（见上方专项架构）；其他隔离实验的入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。navigation/relative_slam_node.py 是分离后的任务节点。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 是旧的采集探针：`--check` 只检查文件，普通参数（`--scene/--output/--steps`）仍会启动采集。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
 
-最新 DynaNav 在线感知、速度阶梯与完整路线状态见 [在线行人实验记录](docs/experiments/dynanav-online-person-20261109.md)；此前的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
+2026-11-09 阶段的 DynaNav 在线感知、速度阶梯与路线状态见 [在线行人实验记录](docs/experiments/dynanav-online-person-20261109.md)；此前的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
 
 ## 快速检查
 
@@ -139,7 +146,7 @@ Git不包含运行数据、原始日志、地图、权重、USD/纹理、图片�
 
 ## 验证状态与限制
 
-2026-11-09 最新生命周期修复与真实重验见 [运行故障修复记录](docs/review/runtime-repair-validation-20261109.md)。本轮真实 Isaac 在线行人仍因缺 RGB 后的原 8 帧缓存守卫中止；Gazebo PID 在 R85 路径证书门保持，未取得到达/5 秒终态停车证明。离线通过、进程退出与路线验收分开记录，未放宽安全门。
+2026-11-09 阶段的生命周期修复与真实重验见 [运行故障修复记录](docs/review/runtime-repair-validation-20261109.md)。本轮真实 Isaac 在线行人仍因缺 RGB 后的原 8 帧缓存守卫中止；Gazebo PID 在 R85 路径证书门保持，未取得到达/5 秒终态停车证明。离线通过、进程退出与路线验收分开记录，未放宽安全门。
 
 2026-11-09 较早阶段的独立复核、两项启动参数修复及当时 54 项单元/62 项回归结果见 [独立复核记录](docs/verification/independent-review-2026-11-09.md)。该阶段 5 项可选 Torch 测试跳过，未重跑仿真。后续 DynaNav 实际运行与最新测试另见上方实验记录。
 

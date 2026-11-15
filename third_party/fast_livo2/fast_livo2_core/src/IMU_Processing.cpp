@@ -570,6 +570,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
     fastlivo_timing::Scope timing_deskew_points(2);
 // BOUNDARY_TIMING_END deskew_points
     const bool instantaneous_lidar = lidar_type == 0;
+    const bool include_scan_start = instantaneous_lidar || lidar_type == OUST64;
     bool point_begin_processed = false;
     auto it_pcl = pcl_wait_proc.points.end() - 1;
     M3D extR_Ri(Lid_rot_to_IMU.transpose() * state_inout.rot_end.transpose());
@@ -591,13 +592,13 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       // printf("it_pcl->curvature: %lf pt dt: %lf \n", it_pcl->curvature,
       // it_pcl->curvature / double(1000) - head->offset_time);
 
-      for (; instantaneous_lidar
+      for (; include_scan_start
                  ? it_pcl->curvature / double(1000) >= head->offset_time - 5e-9
                  : it_pcl->curvature / double(1000) > head->offset_time;
            it_pcl--)
       {
         dt = it_pcl->curvature / double(1000) - head->offset_time;
-        if (instantaneous_lidar && dt < 0.0 && dt >= -5e-9) dt = 0.0;
+        if (include_scan_start && dt < 0.0 && dt >= -5e-9) dt = 0.0;
 
         /* Transform to the 'end' frame */
         M3D R_i(R_imu * Exp(angvel_avr, dt));
@@ -616,9 +617,8 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
 
         if (it_pcl == pcl_wait_proc.points.begin())
         {
-          // A uniform instantaneous frame must not process its first point
-          // again while walking back through older IMU intervals.
-          point_begin_processed = instantaneous_lidar;
+          // Do not process the first point again in an older IMU interval.
+          point_begin_processed = include_scan_start;
           break;
         }
       }
@@ -655,7 +655,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
     /// The very first lidar frame
     IMU_init(meas, stat, init_iter_num);
 
-    if (lidar_type == 0)
+    if (lidar_type == 0 || lidar_type == OUST64)
     {
       // The point offset and the propagation origin must reference the same
       // most recent measurement while initialization consumes stationary IMU.

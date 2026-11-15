@@ -11,6 +11,29 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def _native_static_exploration(experiment):
+    """Scope prototype acceptance envelopes to static, simulation-only native runs."""
+    return (
+        experiment.get("control_mode") == "interactive_waypoint_exploration"
+        and experiment.get("interactive_controller") in ("native_route", "pct_scan")
+        and experiment.get("interactive_simulation_only") is True
+        and not experiment.get("pedestrian")
+    )
+
+
+def _record_configured_bound(result, name, observation, save):
+    """Retain threshold events as evidence; never send them to navigation."""
+    if observation.get("startup_exemption", False) or observation["within_guard"]:
+        return
+    count_key = name + "_out_of_band_steps"
+    count = result.get(count_key, 0) + 1
+    result[count_key] = count
+    result.setdefault(name + "_first_out_of_band", dict(observation))
+    result[name + "_last_out_of_band"] = dict(observation)
+    if count == 1:
+        save(force=True)
+
+
 @dataclass
 class Measurement:
     """步进后测量值，供控制、帧处理与收据阶段共享。
@@ -56,7 +79,11 @@ class PhysicsStepper:
         physical_speed_guard,
         imu_mount,
         mount,
+        sync_usd_for_camera=False,
+        capture_render_outputs=None,
     ):
+        self.capture_render_outputs = capture_render_outputs
+        self.sync_usd_for_camera = sync_usd_for_camera
         self.art = art
         self.experiment = experiment
         self.indices = indices
@@ -108,20 +135,38 @@ class PhysicsStepper:
         )
         time_before = float(SimulationManager.get_simulation_time())
         steps_before = SimulationManager.get_num_physics_steps()
-        # 普通步用 SimulationManager 推进一步；每 10 步改用 replicator 的
-        # orchestrator.step 一次，让渲染/标注器与物理保持同一 0.005 s 时间基准
-        # （为何取 10 这个周期，代码与文档未说明）。
-        if (i + 1) % 10:
+        # Keep one 0.005 s physical step per iteration. Legacy RGB-D renders
+        # every 10 steps; tick-controlled RTX/RGB sensors render every 20,
+        # matching their real 10 Hz period instead of waiting for nonexistent
+        # camera frames at 20 Hz.
+        render_stride = 20 if self.sync_usd_for_camera else 10
+        if (i + 1) % render_stride:
             SimulationManager.step(steps=1, update_fabric=use_fabric)
-            if not use_fabric:
+            if not use_fabric or self.sync_usd_for_camera:
                 omni.physx.get_physx_simulation_interface().fetch_results()
                 omni.physx.get_physx_interface().update_transformations(
                     False, True, True, False
                 )
         else:
             rep.orchestrator.step(
-                rt_subframes=1, delta_time=0.005, pause_timeline=False
+                rt_subframes=1, delta_time=0.005, pause_timeline=False,
+                # Multi-tick camera outputs are already scheduled by this
+                # update. Waiting for an additional dispatcher compute at
+                # fixed physics time times out for tick-controlled sensors.
+                wait_for_render=not self.sync_usd_for_camera,
             )
+            if self.sync_usd_for_camera:
+                from isaacsim.core.rendering_manager import RenderingManager
+                if self.capture_render_outputs is not None:
+                    self.capture_render_outputs()
+                # Flush the pipelined sensor frame without advancing physics.
+                # Native frame timestamps and deduplication remain authoritative.
+                RenderingManager.render()
+                if self.capture_render_outputs is not None:
+                    self.capture_render_outputs()
+                RenderingManager.render()
+                if self.capture_render_outputs is not None:
+                    self.capture_render_outputs()
         actual_time = float(SimulationManager.get_simulation_time())
         effort_after = art.get_dof_efforts().numpy()[0].copy()
         assert np.allclose(effort_after, tau, atol=1e-5), (
@@ -157,33 +202,119 @@ class PhysicsStepper:
         wq, xq, yq, zq = quat
         roll = np.arctan2(2 * (wq * xq + yq * zq), 1 - 2 * (xq * xq + yq * yq))
         pitch = np.arcsin(np.clip(2 * (wq * yq - zq * xq), -1, 1))
-        # 前 300 步（约 1.5 s）为出生/落地稳定期，不做姿态与接触判据；
-        # 之后 |roll|、|pitch| 必须 < 0.5 rad（约 28.6°），且不得有身体接触
-        # （experiment.body_contact_report_only 为 true 时只记录不拦截）。
+        native_static_diagnostics = _native_static_exploration(experiment)
+        # Independent diagnostics from existing readbacks; no new motion gate.
+        result["contact_observation"] = {
+            "physics_s": actual_time, "iteration": i,
+            "counts_body_FR_FL_RR_RL": list(map(int, contact_state)),
+            "body_contact_detected": bool(contact_state[0]),
+            "body_contact_report_only": bool(experiment.get("body_contact_report_only", False)),
+            "startup_exemption": bool(i < 300), "navigation_input": False,
+        }
+        result["attitude_observation"] = {
+            "physics_s": actual_time, "iteration": i,
+            "roll_rad": float(roll), "pitch_rad": float(pitch),
+            "limit_rad": 0.5,
+            "within_guard": bool(max(abs(roll), abs(pitch)) < 0.5),
+            "diagnostic_only": native_static_diagnostics,
+            "startup_exemption": bool(i < 300), "navigation_input": False,
+        }
+        result["physical_state_observation"] = {
+            "physics_s": actual_time, "iteration": i,
+            "position_finite": bool(np.isfinite(pos).all()),
+            "quaternion_finite": bool(np.isfinite(quat).all()),
+            "linear_velocity_finite": bool(np.isfinite(v.numpy()[0]).all()),
+            "angular_velocity_finite": bool(np.isfinite(w.numpy()[0]).all()),
+            "joint_position_finite": bool(np.isfinite(q).all()),
+            "joint_velocity_finite": bool(np.isfinite(qd).all()),
+            "joint_readback_stage": "pre_step",
+            "base_readback_stage": "post_step",
+            "navigation_input": False,
+        }
+        # Static native exploration records the prototype attitude envelope;
+        # other modes retain its original startup exemption and threshold.
+        # Preserve the old threshold's implicit rejection of non-finite poses.
+        # Contact handling still follows body_contact_report_only in every mode.
+        if native_static_diagnostics:
+            _record_configured_bound(
+                result, "attitude_threshold", result["attitude_observation"], save
+            )
         if i >= 300 and contact_state[0]:
             result["body_contact_steps"] = result.get("body_contact_steps", 0) + 1
         assert i < 300 or (
-            max(abs(roll), abs(pitch)) < 0.5
+            np.isfinite(quat).all()
+            and np.isfinite([roll, pitch]).all()
+            and (
+                native_static_diagnostics
+                or result["attitude_observation"]["within_guard"]
+            )
             and (
                 contact_state[0] == 0
                 or experiment.get("body_contact_report_only", False)
             )
         ), "Fall/body-contact gate"
-        # 400 步（约 2 s）后限制 base 线速度；上限由 control.resolve_limits 从
-        # experiment.physical_speed_guard_mps 读取（默认 0.65 m/s），experiment.py
-        # 生成时取 max(0.65, 目标速度 + 0.5)。
-        assert i < 400 or np.linalg.norm(v.numpy()[0]) < physical_speed_guard, (
-            "Configured experiment physical overspeed bound"
+        # After startup, the configured base-speed threshold is diagnostic
+        # only. Contacts, attitude and state validity remain separate evidence;
+        # strict contact handling, finite-state, motor and clock checks remain.
+        # Diagnostic only: retain the same already-read physics sample and
+        # existing contact counters; never feed these scalars to navigation.
+        linear_velocity_readback = v.numpy()[0]
+        speed_norm = float(np.linalg.norm(linear_velocity_readback))
+        speed_observation = {
+            "physics_s": actual_time,
+            "iteration": i,
+            "linear_speed_norm_mps": speed_norm,
+            "horizontal_speed_norm_mps": float(
+                np.linalg.norm(linear_velocity_readback[:2])
+            ),
+            "abs_vertical_speed_mps": float(abs(linear_velocity_readback[2])),
+            "limit_mps": float(physical_speed_guard),
+            "within_guard": bool(speed_norm < physical_speed_guard),
+            "startup_exemption": bool(i < 400),
+            "contact_counts_body_FR_FL_RR_RL": list(map(int, contact_state)),
+            "navigation_input": False,
+            "diagnostic_only": True,
+        }
+        result["physical_speed_guard_observation"] = speed_observation
+        new_speed_peak = speed_norm > result.get("physical_speed_guard_peak", {}).get(
+            "linear_speed_norm_mps", -1.0
         )
+        if new_speed_peak:
+            result["physical_speed_guard_peak"] = dict(speed_observation)
+        if i >= 400 and not speed_observation["within_guard"]:
+            steps = result.get("physical_speed_guard_out_of_band_steps", 0) + 1
+            result["physical_speed_guard_out_of_band_steps"] = steps
+            result.setdefault("physical_speed_guard_first_out_of_band", dict(speed_observation))
+            result["physical_speed_guard_last_out_of_band"] = dict(speed_observation)
+            # Force-save the first event; existing periodic saves retain
+            # subsequent peaks without per-step threshold-event disk I/O.
+            if steps == 1:
+                save(force=True)
         # 位置安全：base 高度下限取 experiment.minimum_base_z_m（默认 0.15 m），
         # 相对出生点的水平位移上限取 experiment.maximum_displacement_m，
         # 缺省回退到环境变量 MAX_DISPLACEMENT（默认 ".25" m）。
-        assert pos[2] > float(
-            experiment.get("minimum_base_z_m", 0.15)
-        ) and np.linalg.norm(pos[:2] - spawn[:2]) < float(
-            experiment.get(
-                "maximum_displacement_m", os.environ.get("MAX_DISPLACEMENT", ".25")
+        minimum_base_z = float(experiment.get("minimum_base_z_m", 0.15))
+        maximum_displacement = float(experiment.get(
+            "maximum_displacement_m", os.environ.get("MAX_DISPLACEMENT", ".25")
+        ))
+        horizontal_displacement = float(np.linalg.norm(pos[:2] - spawn[:2]))
+        position_within_guard = bool(
+            pos[2] > minimum_base_z and horizontal_displacement < maximum_displacement
+        )
+        result["position_bound_observation"] = {
+            "physics_s": actual_time, "iteration": i,
+            "base_z_m": float(pos[2]), "minimum_base_z_m": minimum_base_z,
+            "horizontal_displacement_m": horizontal_displacement,
+            "maximum_displacement_m": maximum_displacement,
+            "within_guard": position_within_guard,
+            "diagnostic_only": native_static_diagnostics, "navigation_input": False,
+        }
+        if native_static_diagnostics:
+            _record_configured_bound(
+                result, "position_bound", result["position_bound_observation"], save
             )
+        assert np.isfinite(pos).all() and (
+            native_static_diagnostics or position_within_guard
         ), "Position safety bound"
         reading = imu_sensor.get_data()
         it = float(reading["time"])

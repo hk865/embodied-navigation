@@ -1,0 +1,103 @@
+{
+  "schema": "coverage_physical_regions/v1",
+  "run_id": "native_exploration_20261111T111150Z",
+  "physical_regions": [
+    {
+      "region_id": "lower_observed",
+      "name": "Current lower hall and north corridor",
+      "assignment_status": "observed_partial_physical_region",
+      "assignment_evidence_refs": [
+        "s01/rgb.png",
+        "s02/rgb.png",
+        "s03/rgb.png",
+        "s04/rgb.png",
+        "s05/rgb.png",
+        "s05/scene_local_multiview.png",
+        "s05/observation.json",
+        "s05/map.json:last_frame.floor_evidence",
+        "s09/rgb.png",
+        "s09/observation.json"
+      ],
+      "display_xy_roi_m": null,
+      "display_point_z_band_m": [
+        -0.497432,
+        1.5
+      ],
+      "display_pose_z_band_m": [
+        -0.20126921196998582,
+        0.1923394167727304
+      ],
+      "observed_features": [
+        "lower hall",
+        "north passage",
+        "closed electrical equipment doors",
+        "storage-side opening with shelves"
+      ],
+      "actually_traversed_features": [
+        "lower hall to north passage",
+        "north corridor to door-front s05",
+        "north corridor side-room near interior s09"
+      ],
+      "physical_support_certified": false,
+      "whole_building_completion_fraction": null,
+      "height_band_derivation": {
+        "snapshot": "s05",
+        "measured_candidate_floor_z_m": -0.397432,
+        "current_established_floor_z_m": -0.340066,
+        "display_floor_near_band_m": [
+          -0.497432,
+          -0.24006599999999997
+        ],
+        "meaning": "new-generation map measurement classification only; no support proof",
+        "pose_band_source": "s05 actual postVIO range +/-0.15m for display only"
+      },
+      "display_bounds_mode": "current_grid_and_trajectory"
+    },
+    {
+      "region_id": "upper_observed",
+      "name": "Upper reception hall: partial measured relative-height display",
+      "renderer": "relative_measured_surface",
+      "assignment_status": "observed_and_partially_traversed",
+      "assignment_evidence_refs": [
+        "s24/rgb.png",
+        "s25/rgb.png",
+        "s25/observation.json",
+        "s26/rgb.png",
+        "s29/rgb.png"
+      ],
+      "display_xy_roi_m": [
+        -0.5,
+        20.5,
+        -4.5,
+        22.5
+      ],
+      "surface_reference_seed": "upper_surface_reference_s25.json",
+      "relative_point_height_m": [
+        0.15,
+        1.5
+      ],
+      "first_seen_source_min_s": 1245.8,
+      "first_seen_filter_is_conservative_display_only": true,
+      "semantic_complete_segmentation": false,
+      "whole_building_completion_fraction": null,
+      "physical_support_certified": false
+    }
+  ],
+  "unassigned_regions": [],
+  "transition_evidence": {
+    "status": "both_stair_flights_and_platform_transition_traversed_to_upper_reception",
+    "not_an_upper_hall_assignment": true,
+    "evidence_refs": [
+      "s15/rgb.png",
+      "s16/rgb.png",
+      "s18/rgb.png",
+      "s20/rgb.png",
+      "s20/observation.json",
+      "s22/rgb.png",
+      "s24/rgb.png",
+      "s25/observation.json",
+      "s26/rgb.png"
+    ],
+    "latest_reviewed_snapshot": "s30"
+  }
+}

@@ -1,0 +1,7 @@
+# Explicit optional overlay, never included by the default launcher.
+# Requires the matching typed-message build and DYNANAV_RTX_COMPLETE_SCAN=1
+# in the capture process. No sensor time, safety or estimator parameter changes.
+/**:
+  ros__parameters:
+    common:
+      complete_scan_watermark: true

@@ -13,16 +13,60 @@
       "destination": "third_party/fast_livo2/fast_livo2_core/CMakeLists.txt",
       "bytes": 4960,
       "source_sha256": "ee285d2f2b7de5d1e5360aead304f619070bedb2bc95c37043834dfd601e3beb",
-      "vendored_sha256": "ee285d2f2b7de5d1e5360aead304f619070bedb2bc95c37043834dfd601e3beb",
-      "modified": false
+      "vendored_sha256": "893a1dc35ce78836e9bcba109c48a4159240e031fef22f4a38b6e5423cee8d77",
+      "modified": true,
+      "vendored_bytes": 5080,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "ee285d2f2b7de5d1e5360aead304f619070bedb2bc95c37043834dfd601e3beb",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      },
+      "visual_snapshot_revision": {
+        "date_utc": "2026-11-11",
+        "baseline_vendored_sha256": "9b70f70691c6e7d6fde6d7df0260d9d17263baf76d1185e65d4a6d2500381aee",
+        "patch": "third_party/fast_livo2/patches/0009-read-only-visual-state-snapshot.patch",
+        "reason": "Default-disabled read-only post-LIO full covariance and VIO-query geometry snapshots; estimator and ROS output mathematics unchanged.",
+        "validation": "Isolated core with unchanged-object hashes, 6/6 native regressions, snapshot/branch tests, 20-second real six-camera capture and frozen-data replays; see dynanav-multicamera-native-shadow-20261112.md"
+      },
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": "7a3d2becfd2d3e811a4bca948130c7794ac00d6d51729edb8094135c4de4d767",
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/README.md",
       "destination": "third_party/fast_livo2/fast_livo2_core/README.md",
-      "bytes": 2869,
+      "bytes": 3063,
       "source_sha256": "2640dd02de8c10f21cef44e3fd4667d204a698cd8c4e57185fb234d7c8526d10",
-      "vendored_sha256": "2640dd02de8c10f21cef44e3fd4667d204a698cd8c4e57185fb234d7c8526d10",
-      "modified": false
+      "vendored_sha256": "f06092be75c2adf3bf68583f6d89252b58a7721e078283c15cd8ef07f23e8dd5",
+      "modified": true,
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "2640dd02de8c10f21cef44e3fd4667d204a698cd8c4e57185fb234d7c8526d10",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
+      },
+      "vendored_bytes": 5447,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "423d99e150336aa3db75133fddebf3a5fdb056e96b9889e80164b4e3a7011b5d",
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
+      },
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "1a724c353f913306422b7187557f1830f5dc30b093fc17515fce0d9a30a2a526",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/backend/snapshot_bridge.hpp",
@@ -44,7 +88,7 @@
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h",
       "bytes": 3801,
       "source_sha256": "b89d3f7e4d9cd38bd10a4f4abdcfdda2644f91f8817d91d4506130576f600319",
-      "vendored_sha256": "d25a8f19ecad0ba0e602088504ae4046f3ce392763260f8c9abdeb17460436bb",
+      "vendored_sha256": "1c53905c11827e651fb995b524ee2dccd47b7fa9c91ded45fa4db13bc9c02c7a",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -52,14 +96,22 @@
         "baseline_bytes": 3169,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "vendored_bytes": 4109,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "d25a8f19ecad0ba0e602088504ae4046f3ce392763260f8c9abdeb17460436bb",
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
       }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h",
-      "bytes": 13188,
+      "bytes": 13225,
       "source_sha256": "e63923463cbf9892cdb46a04e3ed62a505ea4aa13eea954352ff573b9fd7bf10",
-      "vendored_sha256": "73ceee92df97f67207b9bd9658ab763fc70073e8d2a8ffeb374c4a2b621efd17",
+      "vendored_sha256": "a78a14fcccac396a0832098b5c6c055469b5958508b1452fbd5b951af8590d93",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -83,6 +135,28 @@
         "patch": "third_party/fast_livo2/patches/0005-explicit-post-vio-pose-output.patch",
         "reason": "Add opt-in final post-processFrame Odometry and explicit stage/status; unavailable twist is not used for stopping. Existing estimator update arithmetic and original output semantics are unchanged.",
         "validation": "Separate fresh build and native output/lifecycle regressions; live full-route post-pose audit and closed-loop run recorded separately."
+      },
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "73ceee92df97f67207b9bd9658ab763fc70073e8d2a8ffeb374c4a2b621efd17",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
+      },
+      "vendored_bytes": 14244,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "5a3bf5da0dcc1229fad8e822ef9a314c8261b1a252acb753baf0106e7de58698",
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
+      },
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "a0fc9f47523bb594c1de02e0546e4cd1bf2df5cf15038f65556de558b194b4a9",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
       }
     },
     {
@@ -201,9 +275,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/preprocess.h",
-      "bytes": 7196,
+      "bytes": 7697,
       "source_sha256": "03c8a5f6062eac3bf3461e384f585601c7c40f20eddf7e104c852b078ce7e648",
-      "vendored_sha256": "64d372c6a66eff1f79ff2587f4aaef2d74fe868832ab22cefd4fffc7a0a1ed90",
+      "vendored_sha256": "7e015c73b3fdc9f5830fa01ea7d88fd2f557fd872d4e8ab99defc8681663913c",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -211,6 +285,13 @@
         "baseline_bytes": 5897,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "64d372c6a66eff1f79ff2587f4aaef2d74fe868832ab22cefd4fffc7a0a1ed90",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
       }
     },
     {
@@ -278,7 +359,7 @@
       "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/vio.h",
       "bytes": 7317,
       "source_sha256": "747e8f19b5d834b97a26abe9d90d3b2a193d407baebbe25aad34364a19d53627",
-      "vendored_sha256": "a1b1f18ae9a5f5ba0100dffd3ce4c97816145e81d07f908c045b76ffccc45099",
+      "vendored_sha256": "eb44b8911724fa897fd835a4226eff1de42234d8580a7695aeacecbc12d759a4",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -286,6 +367,14 @@
         "baseline_bytes": 6770,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "vendored_bytes": 7741,
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": "a1b1f18ae9a5f5ba0100dffd3ce4c97816145e81d07f908c045b76ffccc45099",
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
       }
     },
     {
@@ -414,15 +503,23 @@
       "destination": "third_party/fast_livo2/fast_livo2_core/package.xml",
       "bytes": 1179,
       "source_sha256": "60a13ea1c298fc451807b7e452022d21c021a6e44e058304ac772f3772272f63",
-      "vendored_sha256": "60a13ea1c298fc451807b7e452022d21c021a6e44e058304ac772f3772272f63",
-      "modified": false
+      "vendored_sha256": "5da120d39c8418973e215eb5f8539b3ab2454285b4b1fa72b2c5238022c82d8f",
+      "modified": true,
+      "vendored_bytes": 1218,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "60a13ea1c298fc451807b7e452022d21c021a6e44e058304ac772f3772272f63",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/IMU_Processing.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/IMU_Processing.cpp",
-      "bytes": 27590,
+      "bytes": 27625,
       "source_sha256": "d74ba24b02c7ee8bde1084874511fd0396dad24e7d9c51938600440254356c17",
-      "vendored_sha256": "7af5caa2054d5b7fe8d84a3b8c2aab6324e3c7d7618bd7d7a3e80d58eda2fb7a",
+      "vendored_sha256": "5c9e63c7e734828a4a66bda316f59e52c5d7317895c3d61817bdad815ef4c306",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -430,14 +527,21 @@
         "baseline_bytes": 27082,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "7af5caa2054d5b7fe8d84a3b8c2aab6324e3c7d7618bd7d7a3e80d58eda2fb7a",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
       }
     },
     {
       "source": "src/localization/frontend/fast_livo2_core/src/LIVMapper.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp",
-      "bytes": 131071,
+      "bytes": 132112,
       "source_sha256": "2dbb20a0638af3c42a926e14f304bb1448e15537f3820aaf868d7a44e2becb61",
-      "vendored_sha256": "2e08232bacd986086f40eaec3f18ef580d32f2ebba1d346ebc2a6b6aa572a395",
+      "vendored_sha256": "ae9b6c019a5001082ebd49e347ff1ff1961783f37a93333dca222734708995dc",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -468,6 +572,42 @@
         "patch": "third_party/fast_livo2/patches/0005-explicit-post-vio-pose-output.patch",
         "reason": "Add opt-in final post-processFrame Odometry and explicit stage/status; unavailable twist is not used for stopping. Existing estimator update arithmetic and original output semantics are unchanged.",
         "validation": "Separate fresh build and native output/lifecycle regressions; live full-route post-pose audit and closed-loop run recorded separately."
+      },
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "2e08232bacd986086f40eaec3f18ef580d32f2ebba1d346ebc2a6b6aa572a395",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
+      },
+      "vendored_bytes": 149266,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "18851da1bd650aba547098e0d54afcce9469f8bdb2f55455b4c01b39e90f8b2e",
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
+      },
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "0e3430238bee5ca57d5acb89fdd212f9c61c41ca3976044178f78ed18cae96d5",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      },
+      "visual_snapshot_revision": {
+        "date_utc": "2026-11-11",
+        "baseline_vendored_sha256": "a3657b1a86251135e5aed7af3ff35002a051c9d510ac6fa67a553cd3ce7aa5f4",
+        "patch": "third_party/fast_livo2/patches/0009-read-only-visual-state-snapshot.patch",
+        "reason": "Default-disabled read-only post-LIO full covariance and VIO-query geometry snapshots; estimator and ROS output mathematics unchanged.",
+        "validation": "Isolated core with unchanged-object hashes, 6/6 native regressions, snapshot/branch tests, 20-second real six-camera capture and frozen-data replays; see dynanav-multicamera-native-shadow-20261112.md"
+      },
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": "f06efb4eaba8d0acc950541c04ca35f6614058d702bbed33f1d2052db6b27faf",
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
       }
     },
     {
@@ -518,9 +658,9 @@
     {
       "source": "src/localization/frontend/fast_livo2_core/src/preprocess.cpp",
       "destination": "third_party/fast_livo2/fast_livo2_core/src/preprocess.cpp",
-      "bytes": 41208,
+      "bytes": 42806,
       "source_sha256": "5c9c30b0f293251bfe7c721b888fbf80e1c087a52630a4355ebe7a1e5dc90d94",
-      "vendored_sha256": "13b488b1656b1d95331b8978d243a72cb04ffac4614ccdbc5de959ddcb3f9bae",
+      "vendored_sha256": "e2cefe727403338c581e428f4181e0b0607e01606e35e40f9cfb04d76b4bf8b5",
       "modified": true,
       "local_readability_revision": {
         "baseline_git_commit": "5e7982ea3c82f2ae263b46e156a90cafca86780c",
@@ -528,6 +668,13 @@
         "baseline_bytes": 34651,
         "reason": "Local readability edits; see separate equivalence/verification evidence",
         "equivalence_verified_by_this_hash_tool": false
+      },
+      "ouster_native_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "13b488b1656b1d95331b8978d243a72cb04ffac4614ccdbc5de959ddcb3f9bae",
+        "patch": "third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch",
+        "reason": "Explicit opt-in Ouster type=3 only, complete IMU required, validated per-point timing and Ouster-only propagation/deskew boundary corrections. Generic default and GPS/HILTI/IMU gates retained.",
+        "validation": "Fresh isolated core/wrapper build; original two native fixtures plus new Ouster guard/schema/receive/sync/angular-deskew/RGB constructor checks passed 3/3. Not full-route or sensor-SLAM accuracy acceptance."
       }
     },
     {
@@ -565,7 +712,7 @@
       "destination": "third_party/fast_livo2/fast_livo2_core/src/vio.cpp",
       "bytes": 98389,
       "source_sha256": "1ecf2cd169bf8a5809dba7a866c7b2cea7e064601b4bde80775436eb587c53cd",
-      "vendored_sha256": "309e624f5efa7ba645dbafc1fc313724985c7c52ca984b5e4a6c5b7176e0f434",
+      "vendored_sha256": "33040adaf1e80512cd18b8eb94411b41a798c2bad8f7d2a9254060a5f6274163",
       "modified": true,
       "change": "Includes the recorded isolated VIO floor repair; subsequent local revisions are recorded below.",
       "patch": "third_party/fast_livo2/patches/0001-consistent-negative-voxel-floor.patch",
@@ -585,6 +732,14 @@
         "patch": "third_party/fast_livo2/patches/0004-safe-uninitialized-vio-lifecycle.patch",
         "functional_equivalence_to_upstream_claimed": false,
         "validation": "Existing-core gdb SIGSEGV in VIOManager destructor with explicit rmw_fastrtps_cpp/UDPv4; deterministic poisoned-storage lifecycle regression added. New-core rebuild/test result is separate from this source manifest."
+      },
+      "vendored_bytes": 99513,
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": "309e624f5efa7ba645dbafc1fc313724985c7c52ca984b5e4a6c5b7176e0f434",
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
       }
     },
     {
@@ -3718,6 +3873,194 @@
       "vendored_sha256": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
       "modified": false,
       "placement_note": "Original package-local LICENSE was absent. This is the verified existing repository GPL-2.0 text, not a new license grant."
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/pending_pair.h",
+      "bytes": 1939,
+      "source_sha256": null,
+      "vendored_sha256": "0872629578fc0af2a550a7cde3a985c874b647f36366e040b87168c71f96a992",
+      "vendored_bytes": 1939,
+      "modified": true,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
+      }
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h",
+      "bytes": 10911,
+      "source_sha256": null,
+      "vendored_sha256": "eb887e115c801821fce90fc71efdee6fb803896f0a20243d7adb8ea4b07373be",
+      "vendored_bytes": 11547,
+      "modified": true,
+      "same_pair_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0007-same-pair-vio-handoff.patch",
+        "reason": "Explicit same-pair completion/skip ledger, original image stamp identity, optional bounded caches and default-disabled observation. No point/IMU timing or estimator math changes.",
+        "validation": "Independent build; 5/5 native tests and observation OFF/ON equivalence. No Isaac/GPU run."
+      },
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": "9afa0c15c91f412d7edd0159b3d5d5426c28b98590d234732afb84a5d39400cc",
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/complete_scan.h",
+      "bytes": 4370,
+      "source_sha256": null,
+      "vendored_sha256": "2d5f15f9b00c056db06a729f0b37a5fa49725992f9d6edc99e5467a8ee7c1999",
+      "vendored_bytes": 4370,
+      "modified": true,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/dynanav_sensor_msgs/CMakeLists.txt",
+      "bytes": 348,
+      "source_sha256": null,
+      "vendored_sha256": "8a59606550ac74f4e2161ddfaefc0f00ba6bfb0123ccba95f8514f3795d01db4",
+      "vendored_bytes": 348,
+      "modified": true,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/dynanav_sensor_msgs/msg/CompleteLidarScan.msg",
+      "bytes": 608,
+      "source_sha256": null,
+      "vendored_sha256": "99d699dde42a28863a8fc544596739e99d84d944adef70093317f99fb9e4404c",
+      "vendored_bytes": 608,
+      "modified": true,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
+    },
+    {
+      "source": "local addition; no upstream file",
+      "destination": "third_party/fast_livo2/dynanav_sensor_msgs/package.xml",
+      "bytes": 606,
+      "source_sha256": null,
+      "vendored_sha256": "3f7a67798ed075040327fbcbb34d2132bf987e04135e8585a9a4833a7b8f085b",
+      "vendored_bytes": 606,
+      "modified": true,
+      "complete_scan_revision": {
+        "date_utc": "2026-11-10",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0008-certified-complete-scan-watermark.patch",
+        "reason": "Explicit opt-in atomic full-scan certificate, owner-held contiguous coverage and actual pending-point continuation; no estimator/point/IMU math changes.",
+        "validation": "See isolated build and test manifests; no GPU/ROS production run; recorded fragments use fresh equal state and blank images."
+      }
+    },
+    {
+      "source": "locally_authored_extension/visual_snapshot.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/visual_snapshot.h",
+      "bytes": 1251,
+      "source_sha256": "14dda4440c430d76a605a100aaa1c6a8aa78aa1035f1a9cff80b4a8c9fc0b4e6",
+      "vendored_sha256": "14dda4440c430d76a605a100aaa1c6a8aa78aa1035f1a9cff80b4a8c9fc0b4e6",
+      "modified": true,
+      "origin": "Local extension, not an upstream source copy",
+      "vendored_bytes": 1251,
+      "visual_snapshot_revision": {
+        "date_utc": "2026-11-11",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0009-read-only-visual-state-snapshot.patch",
+        "reason": "Default-disabled read-only post-LIO full covariance and VIO-query geometry snapshots; estimator and ROS output mathematics unchanged.",
+        "validation": "Isolated core with unchanged-object hashes, 6/6 native regressions, snapshot/branch tests, 20-second real six-camera capture and frozen-data replays; see dynanav-multicamera-native-shadow-20261112.md"
+      }
+    },
+    {
+      "source": "locally_authored_extension/visual_snapshot.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/visual_snapshot.cpp",
+      "bytes": 8206,
+      "source_sha256": "1baa7b32c5d817a903075e6e26dcd3af215b6211c7e2d672c734f3965ba75d6e",
+      "vendored_sha256": "1baa7b32c5d817a903075e6e26dcd3af215b6211c7e2d672c734f3965ba75d6e",
+      "modified": true,
+      "origin": "Local extension, not an upstream source copy",
+      "vendored_bytes": 8206,
+      "visual_snapshot_revision": {
+        "date_utc": "2026-11-11",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0009-read-only-visual-state-snapshot.patch",
+        "reason": "Default-disabled read-only post-LIO full covariance and VIO-query geometry snapshots; estimator and ROS output mathematics unchanged.",
+        "validation": "Isolated core with unchanged-object hashes, 6/6 native regressions, snapshot/branch tests, 20-second real six-camera capture and frozen-data replays; see dynanav-multicamera-native-shadow-20261112.md"
+      }
+    },
+    {
+      "source": "locally_authored_extension/src/multicamera_native.cpp",
+      "destination": "third_party/fast_livo2/fast_livo2_core/src/multicamera_native.cpp",
+      "bytes": 8593,
+      "source_sha256": "cfedd55bb30b55e0fb5545467be8f10c86ad89a536cc25d90860679e5c5f6004",
+      "vendored_sha256": "cfedd55bb30b55e0fb5545467be8f10c86ad89a536cc25d90860679e5c5f6004",
+      "modified": true,
+      "origin": "Locally authored experimental native extension; not an upstream source copy",
+      "vendored_bytes": 8593,
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
+      }
+    },
+    {
+      "source": "locally_authored_extension/include/fast_livo2_core/core/multicamera_native.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/multicamera_native.h",
+      "bytes": 103,
+      "source_sha256": "862926c46a69631749ead06fdc081044d0483d0ed6cd86ec8845a4be44b7b585",
+      "vendored_sha256": "862926c46a69631749ead06fdc081044d0483d0ed6cd86ec8845a4be44b7b585",
+      "modified": true,
+      "origin": "Locally authored experimental native extension; not an upstream source copy",
+      "vendored_bytes": 103,
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
+      }
+    },
+    {
+      "source": "locally_authored_extension/include/fast_livo2_core/core/multicamera_joint.h",
+      "destination": "third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/multicamera_joint.h",
+      "bytes": 5519,
+      "source_sha256": "c0971886c7621d05e05d515a3c244b8cdf2e3068b0ec8ec6f4461c290f5d30d5",
+      "vendored_sha256": "c0971886c7621d05e05d515a3c244b8cdf2e3068b0ec8ec6f4461c290f5d30d5",
+      "modified": true,
+      "origin": "Locally authored experimental native extension; not an upstream source copy",
+      "vendored_bytes": 5519,
+      "multicamera_native_revision": {
+        "date_utc": "2026-11-12",
+        "baseline_vendored_sha256": null,
+        "patch": "third_party/fast_livo2/patches/0010-experimental-native-multicamera-update.patch",
+        "reason": "Default-off frozen same-source four-camera native photometric factors with private nuisance marginalization and normalized physical likelihood pool; formal state update only in explicitly selected experimental replay mode. Default real-time measurement QoS unchanged; reliable replay is explicit.",
+        "validation": "Six native math tests; identical complete static input epochs under reliable replay; movement comparison and limitations recorded in dynanav-multicamera-sol-exploration-20261112.md. Not statistically calibrated."
+      }
     }
   ],
   "excluded": [

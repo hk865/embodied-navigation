@@ -17,6 +17,8 @@ which is included as part of this source code package.
 #include "vio.h"
 #include "preprocess.h"
 #include "ordered_ingress.h"
+#include "pending_pair.h"
+#include "complete_scan.h"
 #include "fast_livo2_core/backend/snapshot_bridge.hpp"
 #include <thread>
 #if __has_include(<cv_bridge/cv_bridge.hpp>)
@@ -51,6 +53,7 @@ class LIVMapper {
         uint64_t receive_tid = 0, decode_cpu_begin = 0, decode_cpu_end = 0;
         std::exception_ptr decode_error;
         sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_message;
+        fastlivo_scan::Certificate::ConstSharedPtr complete_scan;
         sensor_msgs::msg::Image::ConstSharedPtr image_message;
         sensor_msgs::msg::Imu::ConstSharedPtr imu_message;
         PointCloudXYZI::Ptr cloud;
@@ -70,6 +73,9 @@ class LIVMapper {
     const IngressPacket *committing_ingress = nullptr;
     std::shared_ptr<IngressPacket> rejected_ingress;
     void receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &);
+    void receive_complete_scan(const fastlivo_scan::Certificate::ConstSharedPtr &);
+    void receive_cloud_packet(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &,
+                              const fastlivo_scan::Certificate::ConstSharedPtr &);
     void receive_image(const sensor_msgs::msg::Image::ConstSharedPtr &);
     void receive_imu(const sensor_msgs::msg::Imu::ConstSharedPtr &);
     void receive_tick();
@@ -89,6 +95,15 @@ class LIVMapper {
     void stateEstimationAndMapping();
     void handleVIO();
     void handleLIO();
+    bool same_pair_vio_handoff = false;
+    bool complete_scan_watermark = false;
+    fastlivo_scan::Watermark scan_watermark;
+    bool completeScanCovers(const LidarMeasureGroup &meas, double target) const;
+    PendingLivoPair pending_pair;
+    size_t max_buffered_images = 0, max_buffered_imu = 0, max_buffered_prop_imu = 0;
+    void checkBufferCapacity(const char *queue, size_t count, size_t limit);
+    bool pendingImageMatches() const;
+    void retirePendingPair(PendingLivoPair::Outcome outcome, bool consume_image);
     void initializeBackendSnapshots();
     void backendLioSnapshot();
     void backendVioSnapshot(bool updated);
@@ -200,6 +215,7 @@ class LIVMapper {
     int64_t post_vio_last_published_stamp_ns = 0;
     int img_en = 1, imu_int_frame = 3;
     bool allow_lio_only = false;
+    bool allow_ouster_lidar = false;
     uint64_t lio_sparse_cloud_drops = 0;
     bool normal_en = true;
     bool exposure_estimate_en = false;
@@ -221,6 +237,8 @@ class LIVMapper {
     deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
     deque<cv::Mat> img_buffer;
     deque<double> img_time_buffer;
+    // Exact received stamps, kept beside the existing calibrated image times.
+    deque<uint64_t> img_source_stamp_buffer;
     vector<pointWithVar> _pv_list;
     vector<double> extrinT;
     vector<double> extrinR;

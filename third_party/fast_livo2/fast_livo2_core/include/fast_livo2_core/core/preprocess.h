@@ -65,6 +65,15 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(velodyne_ros::Point,
 
 /*** Ouster ***/
 namespace ouster_ros {
+// Required estimator fields only. Physical drivers may carry additional
+// reflectivity/ambient/range fields; RTX need not synthesize unused channels.
+struct EIGEN_ALIGN16 TimedPoint {
+    PCL_ADD_POINT4D;
+    float intensity;
+    std::uint32_t t;
+    std::uint8_t ring;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
 struct EIGEN_ALIGN16 Point {
     PCL_ADD_POINT4D;
     float intensity;
@@ -76,6 +85,10 @@ struct EIGEN_ALIGN16 Point {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 } // namespace ouster_ros
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+    ouster_ros::TimedPoint,
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)
+    (std::uint32_t, t, t)(std::uint8_t, ring, ring))
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     ouster_ros::Point,
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(std::uint32_t, t, t)(

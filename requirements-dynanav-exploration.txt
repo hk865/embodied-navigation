@@ -1,0 +1,4 @@
+# Offline view/review/SOP-snapshot dependencies; ROS is a separate runtime.
+-r requirements-cpu.lock
+matplotlib>=3.6,<4
+Pillow>=9,<13

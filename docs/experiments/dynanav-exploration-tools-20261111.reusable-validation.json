@@ -1,0 +1,177 @@
+{
+  "schema": "dynanav_project_exploration_validation/v1",
+  "work_dir": "/tmp/dynanav-project-tools-smoke-reons36b",
+  "checks": [
+    {
+      "name": "historical_snapshot_review",
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration.py",
+        "review",
+        "--binding",
+        "/tmp/dynanav-project-tools-smoke-reons36b/legacy.json",
+        "--snapshot",
+        "s01"
+      ],
+      "returncode": 0,
+      "elapsed_wall_s": 9.722689767135307,
+      "stdout": "{\n  \"out\": \"/tmp/dynanav-project-tools-smoke-reons36b/legacy_review/s01\",\n  \"run_id\": \"native_exploration_20261111T111150Z\",\n  \"points\": 178071,\n  \"trace_samples\": 132,\n  \"physical_regions\": 0\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "recorded_multiview",
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration.py",
+        "view",
+        "--cloud",
+        "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/measured_cloud.npz",
+        "--observation",
+        "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/raw_native_observation.json",
+        "--output-dir",
+        "/tmp/dynanav-project-tools-smoke-reons36b/view",
+        "--prefix",
+        "s01",
+        "--expected-run-id",
+        "native_exploration_20261111T111150Z",
+        "--observation-run-id",
+        "native_exploration_20261111T111150Z",
+        "--recorded-pose"
+      ],
+      "returncode": 0,
+      "elapsed_wall_s": 1.5692620819900185,
+      "stdout": "{\"local\": \"/tmp/dynanav-project-tools-smoke-reons36b/view/s01_local_multiview.png\", \"full\": \"/tmp/dynanav-project-tools-smoke-reons36b/view/s01_full_multiview.png\", \"metadata\": \"/tmp/dynanav-project-tools-smoke-reons36b/view/s01_view_metadata.json\", \"run_id\": \"native_exploration_20261111T111150Z\", \"source_window_s\": [4.4, 18.8], \"pose_stamp_s\": 18.9, \"finite_points\": 178071, \"local_points\": 151831}\n",
+      "stderr": ""
+    },
+    {
+      "name": "current_sop_layout_review",
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration.py",
+        "review",
+        "--binding",
+        "/tmp/dynanav-project-tools-smoke-reons36b/current.json",
+        "--snapshot",
+        "s01"
+      ],
+      "returncode": 0,
+      "elapsed_wall_s": 9.524689740035683,
+      "stdout": "{\n  \"out\": \"/tmp/dynanav-project-tools-smoke-reons36b/current_review/s01\",\n  \"run_id\": \"native_exploration_20261111T111150Z\",\n  \"points\": 178071,\n  \"trace_samples\": 132,\n  \"physical_regions\": 0\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "current_sop_layout_roi",
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration.py",
+        "roi",
+        "--binding",
+        "/tmp/dynanav-project-tools-smoke-reons36b/roi.json",
+        "--snapshot",
+        "s01",
+        "--xy",
+        "-4",
+        "4",
+        "-4",
+        "4",
+        "--label",
+        "local"
+      ],
+      "returncode": 0,
+      "elapsed_wall_s": 0.8152314899489284,
+      "stdout": "{\n  \"run_id\": \"native_exploration_20261111T111150Z\",\n  \"snapshot\": \"s01\",\n  \"source_cloud\": \"/tmp/dynanav-project-tools-smoke-reons36b/current_layout/s01/measured_partial_cloud.npz\",\n  \"source_cloud_sha256\": \"54a6b60d744a25ff25e30b002cdc83455003ac9a1bf58549ce042a72afb419df\",\n  \"cloud_source_first_s\": 4.4,\n  \"cloud_source_last_s\": 18.8,\n  \"pose_marker\": {\n    \"snapshot\": \"s01\",\n    \"source_s\": 18.9,\n    \"xyz_m\": [\n      0.01865415231128317,\n      0.008567440663237443,\n      0.00789910636396622\n    ],\n    \"yaw_rad\": -0.11657522577618273,\n    \"fresh_at_snapshot\": true,\n    \"stale_at_current_snapshot\": false,\n    \"cloud_minus_pose_s\": -0.09999999999999787,\n    \"observation_minus_pose_s\": 0.19500000000000028\n  },\n  \"explicit_xy_roi_m\": [\n    -4.0,\n    4.0,\n    -4.0,\n    4.0\n  ],\n  \"measured_z_range_m\": [\n    -0.34834975004196167,\n    2.686014175415039\n  ],\n  \"points_in_roi\": 19961,\n  \"points_plotted\": 19961,\n  \"actual_postvio_samples_in_roi\": 132,\n  \"not_a_navigation_target\": true,\n  \"no_support_or_clearance_claim\": true,\n  \"image\": \"/tmp/dynanav-project-tools-smoke-reons36b/roi_review/s01/local_yz_oblique.png\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "official_sop_status",
+      "command": [
+        "/usr/bin/python3",
+        "-B",
+        "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration.py",
+        "sop",
+        "--run-dir",
+        "/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z",
+        "--evidence-dir",
+        "/tmp/dynanav-project-tools-smoke-reons36b/sop_evidence",
+        "status"
+      ],
+      "returncode": 0,
+      "elapsed_wall_s": 0.13644356909208,
+      "stdout": "{\"available\": true, \"command_ceiling_mps\": 1.0, \"coverage\": null, \"last_command\": [0.0, 0.0, 0.0], \"link\": {}, \"map\": null, \"measured_speed_mps\": null, \"native_guards\": null, \"pose\": {\"frame\": \"dynanav_lio_map\", \"fresh\": false, \"position_xyz_m\": null, \"sim_age_s\": null, \"source\": \"livo_post_vio\", \"wall_age_s\": null, \"yaw_rad\": null}, \"receipts\": [{\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-0.5, -0.3, 0.05], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 13}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-2.0, -0.3, 0.66], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 14}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-2.0, -0.3, 0.66], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 14}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-5.0, -0.3, 1.2], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 15}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-5.0, -0.3, 1.2], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 15}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-6.5, -0.3, 1.78], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 16}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-6.5, -0.3, 1.78], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 16}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-8.5, 0.5, 1.86], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 17}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-8.5, 0.5, 1.86], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 17}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-8.3, 1.6, 1.8], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 18}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-8.3, 1.6, 1.8], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 18}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-8.3, 8.0, 1.62], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 19}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-8.3, 8.0, 1.62], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 19}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-5.5, 8.5, 2.14], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 20}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-5.5, 8.5, 2.14], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 20}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [-2.0, 8.5, 2.96], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 21}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [-2.0, 8.5, 2.96], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 21}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [0.5, 8.5, 3.46], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 22}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [0.5, 8.5, 3.46], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 22}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [3.5, 8.5, 3.62], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 23}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [3.5, 8.5, 3.62], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 23}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [3.5, 3.0, 4.17], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 24}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [3.5, 3.0, 4.17], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 24}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [8.0, 3.0, 4.17], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 25}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [8.0, 3.0, 4.17], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 25}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [12.0, 3.0, 4.18], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 26}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [12.0, 3.0, 4.18], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 26}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [14.0, 5.0, 3.97], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 27}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [14.0, 5.0, 3.97], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 27}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [14.0, 10.0, 3.49], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 28}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [14.0, 10.0, 3.49], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 28}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [14.0, 16.0, 2.89], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 29}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [14.0, 16.0, 2.89], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 29}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [10.0, 18.0, 2.65], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 30}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [10.0, 18.0, 2.65], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 30}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [10.7, 22.0, 2.24], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 31}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [10.7, 22.0, 2.24], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 31}, {\"event\": \"waypoint_accepted\", \"goal_xyz_m\": [10.7, 29.0, 1.56], \"pose_source\": \"livo_post_vio\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 32}, {\"event\": \"waypoint_reached\", \"goal_xyz_m\": [10.7, 29.0, 1.56], \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 32}, {\"event\": \"stop_accepted\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 33}], \"run_id\": \"capture\", \"sim_frames\": {\"count\": 889, \"index\": \"/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z/capture/interactive_frames/index.jsonl\", \"latest\": \"/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z/capture/interactive_frames/rgb_000888.png\", \"pose_included\": false, \"source\": \"rgb frame rendered by this simulation\"}, \"sim_s\": 1777.695, \"waypoints\": {\"active_goal_xyz_m\": null, \"active_seq\": null, \"completed_goals\": 32, \"distance_to_goal_m\": null, \"failed_goals\": 0, \"last_failure\": null, \"last_result\": {\"event\": \"stop_accepted\", \"protocol_version\": 1, \"run_id\": \"capture\", \"seq\": 33}, \"phase\": \"terminal\", \"queued\": 0, \"terminal_reason\": \"interactive_stop\", \"z_error_m\": null}, \"generation_id\": \"native_exploration_20261111T111150Z\", \"failure\": null, \"raw_observation_source_status\": \"available\", \"raw_observation_available\": true, \"terminal_reason\": \"interactive_stop\", \"vertical_error_m\": null, \"observation_file_wall_age_s\": 22321.04928970337}\n",
+      "stderr": ""
+    }
+  ],
+  "real_recorded_points": 178071,
+  "real_postvio_samples": 132,
+  "legacy_and_current_layout_trajectory_equal": true,
+  "current_layout_height_charts": 1,
+  "source_and_mailbox_hashes_unchanged": true,
+  "input_sha256": {
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/level_+0.01_operator_map_partial.json": "07928798fe700856813941815fbdaa5437362f3c2d4d6357aa118b5766854c55",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/summary.json": "e5b23f98044aaa3af4e90ca99c93f4da66c03382c0801a16f80782a9718ea4fa",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/map.json": "a6beaf43f13f468fa1fb2450f81a1aa836383bbb453bb013b015467aa68ab313",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/level_+0.01_operator_map_partial.npz": "5207a9c0635fdb00620e860047558759fcdc8e10274799925be1a3ab18319aa1",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/measured_cloud.npz": "54a6b60d744a25ff25e30b002cdc83455003ac9a1bf58549ce042a72afb419df",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/scene_view_metadata.json": "ecf422aee0444d0bcd8d806967fb36001afbbe7b8b28c2531518cf2b0b5bb29d",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/latest_paired_cloud.npz": "af7e2b5297fa2072ed7404ab29cdb96230076e266e76b64c382f4223868e6ef1",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/map.png": "3071ca7046e5393d64819611e6dfe6a8f42695ec3938d6fce11293d57a04a5e8",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/scene_full_multiview.png": "f7a6bbe216a90c4ea673bfdb2eeb82bad11883d63d47dc1f98f9a980dabfe9a6",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/rgb_source.json": "8181985bd9638d21cc12968045c9471474804f70f9f7299e6641e5547776be51",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/observation.json": "ec2a83df2c749ded3a5fed954ce4e9a61f499582d7d5dfb3f13f5c6e04adceba",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/scene_local_multiview.png": "abeacb8a048bc4f8acd2c2016d52a751dc878cec903948a656a89af432a17d42",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/raw_native_observation.json": "9850b700958059c946e09fb34bfa0aea3b0ef5150876899855c401428a2f3396",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence/s01/rgb.png": "53e64ef149e9d20a6759e2b17cc1eff16b53750a1b192df74a596a3874493dee",
+    "/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z/capture/interactive/request.json": "57165eb48fb67da46e5a7bb572ef216bc7b24310b3296bc1cc8777fae484fd1a",
+    "/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z/capture/interactive/receipts.jsonl": "0c02892f63ac8a17f3d03d67f5e378760cce8541ec563239e6ec67c22ac9ebc5"
+  },
+  "not_run": [
+    "Isaac/ROS launch",
+    "live collector subscription",
+    "navigation request",
+    "commit/push"
+  ],
+  "full_cpu_suites": {
+    "unit": {
+      "command": "PYTHONPATH=src python3 -B -m unittest discover -s tests/unit -v",
+      "returncode": 0,
+      "tests": 1086,
+      "elapsed_wall_s": 25.348,
+      "skipped": 3,
+      "log": "/tmp/dynanav-project-tools-smoke-reons36b/unit.log"
+    },
+    "regression": {
+      "command": "PYTHONPATH=src python3 -B -m unittest discover -s tests/regression -v",
+      "returncode": 0,
+      "tests": 108,
+      "elapsed_wall_s": 11.767,
+      "skipped": 8,
+      "log": "/tmp/dynanav-project-tools-smoke-reons36b/regression.log"
+    }
+  },
+  "focused_tests": 22,
+  "visual_inspection": "global measured XY/XZ/YZ/3D and ROI YZ/oblique PNGs inspected; axes, captions, generation/source labels and pose markers readable",
+  "source_archive_sha256_matches": 28,
+  "project_skill_sha256_matches": 6,
+  "git_diff_check": "passed",
+  "promotion_sources": [
+    {
+      "historical": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_generation.py",
+      "active": "scripts/dynanav_exploration/review_generation.py",
+      "historical_sha256": "3a5e1eea24bad910b5e09713999ae0e3f6da83ea40d10fe0a27c2759de23f9aa",
+      "active_sha256": "92c248c66ebe131d8d443dbec003c8717875c46cd94d56c2716dd61b57978884"
+    },
+    {
+      "historical": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_observed_roi.py",
+      "active": "scripts/dynanav_exploration/review_roi.py",
+      "historical_sha256": "26c3327e7532e78dd84f7e5ec68ce4edc86bf2bfccc3c2f85d97e9c83fc8599e",
+      "active_sha256": "5fc9cf28c6ebf55b1d7140c2eb5bd540a64926c6f2277df8e7057241db215635"
+    }
+  ],
+  "generated_png_files": 13,
+  "png_files_including_copied_rgb_fixture": 14,
+  "current_sop_layout_note": "Real historical s01 NPZ/JSON/RGB bytes copied to a new external directory and renamed to current SOP filenames; not a new live SOP snapshot."
+}

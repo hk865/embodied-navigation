@@ -144,6 +144,14 @@ class VIOManager {
     void updateState(cv::Mat img, int level);
     // True only for a retained, non-empty numerical EKF update in this frame.
     bool last_frame_ekf_updated = false;
+    // Opt-in native four-view factor interface. Default path is unchanged.
+    bool measurement_only = false;
+    Eigen::Matrix<double,7,7> measurement_information = Eigen::Matrix<double,7,7>::Zero();
+    Eigen::Matrix<double,7,1> measurement_gradient = Eigen::Matrix<double,7,1>::Zero();
+    int measurement_pixels = 0;
+    double measurement_mse = 0.;
+    void finishMeasurementFrame(std::vector<pointWithVar> &points);
+
     void processFrame(cv::Mat &img, vector<pointWithVar> &pg,
                       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &feat_map,
                       double img_time);

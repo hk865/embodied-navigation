@@ -1,0 +1,3 @@
+interface:
+  display_name: "DynaNav Autonomous Exploration"
+  short_description: "Explore static Isaac scenes from live sensors and SLAM"

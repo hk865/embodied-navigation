@@ -965,7 +965,7 @@ void VIOManager::computeJacobianAndUpdateEKF(cv::Mat img) {
         } else
             updateState(img, level);
     }
-    state->cov -= G * state->cov;
+    if (!measurement_only) state->cov -= G * state->cov;
     // FASTLIVO_DIAG_BEGIN frame_cov_after
     if (diag_log.detail()) {
         fastlivo_diag::append(diag_frame_cov, state->cov);
@@ -2000,6 +2000,18 @@ void VIOManager::updateState(cv::Mat img, int level) {
 
         double t3 = omp_get_wtime();
 
+        // A single common-prior linearization of the finest level only.
+        // Pyramid levels reuse pixels and must not be counted as independent factors.
+        if (measurement_only) {
+            if (level == 0 && n_meas > 0 && std::isfinite(error)) {
+                measurement_information = (H_sub.transpose() * H_sub) / img_point_cov;
+                measurement_gradient = (H_sub.transpose() * z) / img_point_cov;
+                measurement_pixels = n_meas;
+                measurement_mse = error;
+            }
+            return;
+        }
+
         // FASTLIVO_DIAG_BEGIN iteration_before_updateState
         std::vector<double> diag_record;
         if (diag_enabled) {
@@ -2206,6 +2218,8 @@ void VIOManager::processFrame(cv::Mat &img, vector<pointWithVar> &pg,
                               const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &feat_map,
                               double img_time) {
     last_frame_ekf_updated = false;
+    measurement_information.setZero(); measurement_gradient.setZero();
+    measurement_pixels = 0; measurement_mse = 0.;
 
     // FASTLIVO_DIAG_BEGIN empty_image
     if (fastlivo_diag::Logger::instance().enabled() && img.empty())
@@ -2243,6 +2257,7 @@ void VIOManager::processFrame(cv::Mat &img, vector<pointWithVar> &pg,
     retrieveFromVisualSparseMap(img, pg, feat_map);
     // printf("[ VIO Debug ] 5: before computeJacobian\n"); fflush(stdout);
     computeJacobianAndUpdateEKF(img);
+    if (measurement_only) return; // Finalize references only after the shared update.
     // printf("[ VIO Debug ] 6: before generateVisualMapPoints\n"); fflush(stdout);
     generateVisualMapPoints(img, pg);
     // printf("[ VIO Debug ] 7: before updateVisualMapPoints\n"); fflush(stdout);
@@ -2275,4 +2290,12 @@ void VIOManager::processFrame(cv::Mat &img, vector<pointWithVar> &pg,
     // origin.y = 20;
     // cv::putText(img_cp, text, origin, cv::FONT_HERSHEY_COMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, 8, 0);
     // cv::imwrite("/home/chunran/Desktop/raycasting/" + std::to_string(new_frame_->id_) + ".png", img_cp);
+}
+
+void VIOManager::finishMeasurementFrame(std::vector<pointWithVar> &points) {
+    if (!measurement_only || !new_frame_) throw std::logic_error("no prepared native measurement frame");
+    updateFrameState(*state);
+    generateVisualMapPoints(new_frame_->img_, points);
+    updateVisualMapPoints(new_frame_->img_);
+    ++frame_count;
 }

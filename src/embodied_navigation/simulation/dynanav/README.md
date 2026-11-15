@@ -1,6 +1,10 @@
 # simulation/dynanav
 
-本目录负责办公室 DynaNav 场景、Go2 RGB-D/IMU 采集、显式楼梯实验与 oracle 分层地图适配。定位算法、语义地图数据结构和控制器仍属于各自模块。已完成的完整 GT 路线旁路 LIO/LIVO 对照与实际视觉闭环须分别看待，最新结果见[实验续篇](../../../../docs/experiments/dynanav-20261109-continuation.md)；先前失败保留于[历史报告](../../../../docs/experiments/dynanav-20261109.md)。
+**2026-11-11 后续更新**：当前 launcher 默认是 [实测 PCT + 原生 SCAN 连续跟随](../../../../docs/dynanav-pct-scan.md)，已有 [单个 4 米目标的实时核验](../../../../docs/experiments/dynanav-pct-scan-live-20261111.md)。原直线跟随器通过 `NAVIGATION_BACKEND=native_route` 保留为对照。
+
+**2026-11-11 先前 native 基线入口**：[功能架构与关键时序](../../../../docs/dynanav-exploration.md)、[32 航点运行记录](../../../../docs/experiments/dynanav-native-exploration-32-waypoints-20261111.md)。现役链使用 `native_waypoints.py` + 原 `RouteTracker`，不是早期 `InteractiveWaypointTracker`；`operator_map.py` 生成实测占据/frontier，供选点参考，不构成新的 native goto 门禁。`capture/lidar.py` 负责 RTX 完整扫证据；可复用 SOP 在仓库 `.agents/skills/dynanav-explore/`。以下目录行数与结构评价保留为 2026-11-09 历史快照，未覆盖此后新增模块。
+
+本目录负责办公室 DynaNav 场景、Go2 RGB-D/IMU 采集、显式楼梯实验与 oracle 分层地图适配。定位算法、语义地图数据结构和控制器仍属于各自模块。已完成的完整 GT 路线旁路 LIO/LIVO 对照与实际视觉闭环须分别看待，2026-11-09阶段结果见[实验续篇](../../../../docs/experiments/dynanav-20261109-continuation.md)；先前失败保留于[历史报告](../../../../docs/experiments/dynanav-20261109.md)。
 
 本目录是**隔离的 Isaac/DynaNav 实验路径**（`docs/architecture.md` 的四条执行路径 D），与默认主路径/RoboGauge benchmark 不共享进程图与 ROS 话题；产物写外部数据卷 `experiments/<run>/`，**不写 `runs/`**。
 
@@ -157,3 +161,6 @@ DYNANAV_RUN="$PROJECT_DATA_ROOT/embodied-navigation/experiments/dynanav-$(date -
 历史提交 `bffa2b6` 验证为unit170（skip3）、regression83（skip5）、native1/1及其lint；它不是新增post-VIO/learned代码的最终测试计数。提交`43cba33`当时的完整套件为unit217（skip3）、regression86（skip5），其余通过；native2/2，20个Python文件Ruff check/format、bash语法及vendor304文件大小/SHA通过。CPU fixture或文件检查不替代ROS/Isaac运行、完整地图或实机验收。
 
 采集实现的逐模块职责、入口与状态归属见 [capture 包说明](capture/README.md)。
+
+
+四台广视场实验可显式设置 `MULTICAMERA_COUNT=4 MULTICAMERA_HORIZONTAL_FOV=120`，同时必须给 `CAPTURE_CALIBRATION` 提供与 `fx=fy≈147.801669px` 匹配的前相机安装标定；launcher 会在启动前校验。对应 CLI 为 `--multicamera-horizontal-fov`，仅限 RTX 多相机模式。该参数会同步更改包括 camera_0 在内的实验相机 optics，默认仍保持原 24/42 比例。真实静止数据、逐路原生选点和五台资源对照见[四台 120° 实验报告](../../../../docs/experiments/dynanav-four-camera-120-comparison-20261112.md)。旁路没有回写正式定位，运动与在线融合尚未验证。

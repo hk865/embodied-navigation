@@ -2,6 +2,20 @@
 
 本目录直接测试真实 C++ `LIVMapper` / `ImuProcess`，使用小型合成点云与 IMU fixture。需要 ROS Jazzy 的 `rclcpp` 和已编译的本仓库 `fast_livo2_core` 及公共依赖；不启动 Isaac、相机参数服务或外部传感发布进程。测试会创建本地 ROS node，不是无 ROS 依赖的 NumPy 测试。
 
+## 2026-11-10 RTX Ouster 增量检查
+
+新增 `test_ouster_mode.cpp` / `dynanav_ouster_native`。此前两个 fixture 不变，新构建实测 **3/3 通过，0.78 s**，使用独立 prefix `build_cache/dynanav_rtx_ouster_20261110T134330Z/install/ros`，没有覆盖旧 binary。
+
+- 默认拒绝 Ouster；显式 `common.allow_ouster_lidar=true` 只允许 type=3，不解禁其他或未知类型。仍拒绝 GPS/HILTI、禁用 IMU/LiDAR、未 opt-in 的 image-free LIO；Ouster 必须完整 IMU、非 feature 模式、有效 scan_line/point_filter_num。
+- 直接读取最小 PointCloud2 字段：float32 x/y/z/intensity、uint32 t(ns)、uint8 ring。缺失/错误 timing 或布局失败；丢弃非有限坐标/强度、越界 ring 和 blind returns。保留 scan-start header、每点 offset、强度和原始消息，排序后 ns→ms，不填造时间/点。
+- 实际 serial ingress → preprocess → ONLY_LIO sync → IMU initialization/deskew。转动 fixture 覆盖首点 t=0、帧间隙、完整 IMU 等待、原始点所有权；解析旋转期望误差阈值 2e-5 m。
+- 实际 Ouster+RGB `LIVMapper` 构造、订阅和 image-time scan slicing；本地明确 camera 参数，无外部参数服务。完整 IMU 前不消费证据，切片保留后半扫描。
+- 仅新增 Ouster 路径校正初始化传播起点、ONLY_LIO 工作副本时间基准、LIVO 合并点时间顺序与首点边界。generic 和其他未开放类型的原 fixture 继续通过。
+
+构建方法与下文相同，`CORE_PREFIX` 改为上述新 prefix。记录位于该 build 根目录的 `source-manifest.json`、`build-identity.json`、`test-result.txt` 和 `build/test/Testing/Temporary/LastTest.log`。补丁见 `third_party/fast_livo2/patches/0006-opt-in-timed-ouster.patch`。
+
+这些是 native adapter/同步/IMU fixture，不证明 RTX 场景质量、视觉前端精度、地图漂移或导航闭环；真实 Isaac 运行由独立集成实验验证。下方 2/2 数字保留为此前 post-VIO 构建的历史记录。
+
 ## 目录结构
 
 ```text
@@ -89,3 +103,27 @@ ctest --test-dir "$TEST_BUILD" --output-on-failure
 - 本目录只证明 fixture 契约，不证明真实 sensor SLAM 的漂移、动态过滤或整条路线；`2/2` 通过也不是 `--check` 的替代。
 - 需要本机构建产物与 ROS Jazzy；未构建 core 时测试无法编译，不能把“跑不了”当成通过。
 - 本轮文档任务未重新执行 CTest；上述 2/2、0.51 s 来自原 README 记录的外部 `test-result.txt`，本轮未复核该文件当前内容。
+
+## 2026-11-10 同时间 pair 阶段交接
+
+独立构建 `build_cache/dynanav_same_pair_20261110T171010Z/install/ros` 的 **5/5 CTest 通过，1.29 s**。原三个 fixture 保留；新增 observation fixture 和 `test_same_pair_handoff.cpp`。后者直接执行真实 `Process2/handleLIO/handleVIO`，验证：
+
+- 初始化最后一次返回即使清除了 `imu_need_init` 也必须 skip；故意放入旧 deskew/发布点不能恢复旧 pair。正常 LIO 完成后 raw/IMU 新队列同时为空，同目标 VIO 仍可选择。
+- 仅 selected flag 或仅 IMU 处理完成不够；错图像时间、错原 stamp 1 ns、换图对象、缺原 stamp、空点、停止/异常不允许 VIO。每 pair 一次消费/skip，VIO 未结束不选择下一 LIO。
+- VIO 的零时长 Process2 后 state/cov 与 LIO posterior 逐元素相等，state_propagat 等于该 posterior；last IMU 样本及传播终点、当前/下一切片和原点时间不变。未跳过整段 VIO IMU 准备。
+- 同 binary `common.same_pair_vio_handoff=false/true` 的正常结果 state/cov/prior 逐元素相同；false 保留旧初始化、raw 空和 IMU 空门。默认配置/ONLY_LIO 原测试仍通过。
+- 小容量 image/primary-IMU/prop-IMU 测试恰在界限拒绝新增样本，不丢旧数据、不部分更新 timestamp、mutex 不泄漏；缺省三个限制仍为0。生产RTX配置明确32/8192/8192。
+- observation fixture 仍验证前段 point coverage 与 IMU 端点不足时等待且不消费。两个新增 fixture 的观测 OFF/ON 签名相同，ON 连续记录分别 7/91 行，OFF 不创建文件。
+
+记录：build root 的 `test-result.txt`、`artifact/observation-result.json`、`artifact/*-on.jsonl`、`source-manifest.json` 和 `build-identity.json`。补丁为 `0007-same-pair-vio-handoff.patch`，保留 `0006` 和旧 prefixes。合成 native fixtures 不证明 RTX 运动精度、真实延迟改善或完整导航闭环；本构建未运行 Isaac/GPU。详见 [实现与边界](../../../docs/experiments/dynanav-same-pair-handoff-20261110.md)。
+
+## Explicit complete-scan CPU fixture
+
+`test_complete_scan.cpp` adds typed certificate/continuity/identity/phase faults,
+owner-only failure persistence, pending/raw gates, early-image cold startup and
+zero-return/fully-filtered recovery. It compares real sync/Process2/LIO/VIO state,
+covariance, source points/float curvature and IMU lists with the switch off/on.
+`COMPLETE_SCAN_REPLAY_BIN` additionally consumes an SHA-verified stored source
+fragment exported by `scripts/prepare_complete_scan_replay.py`; it uses equal
+fresh initial state and blank images, not the original full trajectory/map/VIO.
+See the dedicated complete-scan experiment document and isolated build manifests.

@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {
+    "dynanav_sensor_msgs",
     "fast_livo2_core",
     "fast_livo2_ros",
     "vikit_common",

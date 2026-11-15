@@ -12,6 +12,7 @@ which is included as part of this source code package.
 
 #include "preprocess.h"
 #include <pcl/common/point_tests.h>
+#include <stdexcept>
 
 #define RETURN0 0x00
 #define RETURN0AND1 0x10
@@ -274,7 +275,24 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::ConstShared
     pl_surf.clear();
     pl_corn.clear();
     pl_full.clear();
-    pcl::PointCloud<ouster_ros::Point> pl_orig;
+    // Missing/mistyped timing must fail closed, never silently become an
+    // instantaneous cloud through PCL's permissive field mapping.
+    using Field = sensor_msgs::msg::PointField;
+    for (const auto &required : std::vector<std::pair<std::string, uint8_t>>{
+             {"x", Field::FLOAT32}, {"y", Field::FLOAT32}, {"z", Field::FLOAT32},
+             {"intensity", Field::FLOAT32}, {"t", Field::UINT32}, {"ring", Field::UINT8}}) {
+        const auto field = std::find_if(msg->fields.begin(), msg->fields.end(),
+                                       [&](const Field &f) { return f.name == required.first; });
+        const uint32_t bytes = required.second == Field::UINT8 ? 1 : 4;
+        if (field == msg->fields.end() || field->datatype != required.second ||
+            field->count != 1 || uint64_t(field->offset) + bytes > msg->point_step)
+            throw std::runtime_error("Ouster requires x/y/z/intensity float32, t uint32 ns, ring uint8");
+    }
+    if (msg->is_bigendian || uint64_t(msg->row_step) < uint64_t(msg->width) * msg->point_step ||
+        uint64_t(msg->data.size()) < uint64_t(msg->height) * msg->row_step ||
+        N_SCANS < 1 || N_SCANS > 128 || point_filter_num < 1)
+        throw std::runtime_error("Invalid Ouster cloud layout or preprocess configuration");
+    pcl::PointCloud<ouster_ros::TimedPoint> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
     int plsize = pl_orig.size();
     pl_corn.reserve(plsize);
@@ -289,7 +307,8 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::ConstShared
             double range = pl_orig.points[i].x * pl_orig.points[i].x +
                            pl_orig.points[i].y * pl_orig.points[i].y +
                            pl_orig.points[i].z * pl_orig.points[i].z;
-            if (range < blind_sqr)
+            if (!pcl::isFinite(pl_orig.points[i]) || !std::isfinite(pl_orig.points[i].intensity) ||
+                pl_orig.points[i].ring >= N_SCANS || range < blind_sqr)
                 continue;
             Eigen::Vector3d pt_vec;
             PointType added_pt;
@@ -342,7 +361,8 @@ void Preprocess::oust64_handler(const sensor_msgs::msg::PointCloud2::ConstShared
                            pl_orig.points[i].y * pl_orig.points[i].y +
                            pl_orig.points[i].z * pl_orig.points[i].z;
 
-            if (range < blind_sqr)
+            if (!pcl::isFinite(pl_orig.points[i]) || !std::isfinite(pl_orig.points[i].intensity) ||
+                pl_orig.points[i].ring >= N_SCANS || range < blind_sqr)
                 continue;
 
             Eigen::Vector3d pt_vec;

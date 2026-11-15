@@ -15,3 +15,6 @@ where = ["src"]
 [project.scripts]
 embodied-navigation = "embodied_navigation.launch.main:main"
 relative-slam-navigation = "embodied_navigation.navigation.relative_slam_node:main"
+
+[tool.setuptools.package-data]
+"embodied_navigation.planning.exploration" = ["os1_calibration.json"]

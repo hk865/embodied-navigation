@@ -1,0 +1,310 @@
+--- a/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
++++ b/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
+@@ -83,6 +83,7 @@
+   src/runner.cpp
+   src/backend/snapshot_bridge.cpp
+   src/visual_snapshot.cpp
++  src/multicamera_native.cpp
+   src/LIVMapper.cpp
+   src/IMU_Processing.cpp
+   src/frame.cpp
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -13,6 +13,7 @@
+ 
+ #include "LIVMapper.h"
+ #include "visual_snapshot.h"
++#include "multicamera_native.h"
+ #include <unordered_set>
+ #include <cstdio>
+ #include <exception>
+@@ -458,21 +459,24 @@
+ 
+ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node,
+                                                    image_transport::ImageTransport &it_) {
++    auto replay_qos = rclcpp::SensorDataQoS().keep_last(64);
++    const char *replay_reliable = std::getenv("FASTLIVO_REPLAY_RELIABLE");
++    if (replay_reliable && std::string(replay_reliable) == "1") replay_qos.reliable();
+     if (complete_scan_watermark) {
+         // Exact ROS remaps do not apply to a suffix. Resolve the selected base
+         // input first, then subscribe to that source's typed envelope.
+         const auto complete_topic = this->node->get_node_topics_interface()->resolve_topic_name(lid_topic) + "/complete_scan";
+         sub_pcl = this->node->create_subscription<fastlivo_scan::Certificate>(
+-            complete_topic, rclcpp::SensorDataQoS().keep_last(4),
++            complete_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
+             std::bind(&LIVMapper::receive_complete_scan, this, std::placeholders::_1));
+         RCLCPP_INFO(node->get_logger(), "[COMPLETE_SCAN] enabled topic=%s contract=1", complete_topic.c_str());
+     } else if (p_pre->lidar_type == AVIA) {
+         sub_pcl = this->node->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+-            lid_topic, rclcpp::SensorDataQoS().keep_last(4),
++            lid_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
+             std::bind(&LIVMapper::livox_pcl_cbk, this, std::placeholders::_1));
+     } else {
+         sub_pcl = this->node->create_subscription<sensor_msgs::msg::PointCloud2>(
+-            lid_topic, rclcpp::SensorDataQoS().keep_last(4),
++            lid_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
+             std::bind(&LIVMapper::receive_cloud, this, std::placeholders::_1));
+     }
+     if (serial_imu_priority) {
+@@ -481,16 +485,16 @@
+         rclcpp::SubscriptionOptions imu_options;
+         imu_options.callback_group = imu_priority_group;
+         sub_imu = this->node->create_subscription<sensor_msgs::msg::Imu>(
+-            imu_topic, rclcpp::SensorDataQoS().keep_last(512),
++            imu_topic, (replay_reliable && std::string(replay_reliable) == "1") ? rclcpp::QoS(replay_qos).keep_last(2048) : rclcpp::SensorDataQoS().keep_last(512),
+             std::bind(&LIVMapper::receive_imu, this, std::placeholders::_1), imu_options);
+     } else {
+         sub_imu = this->node->create_subscription<sensor_msgs::msg::Imu>(
+-            imu_topic, rclcpp::SensorDataQoS().keep_last(512),
++            imu_topic, (replay_reliable && std::string(replay_reliable) == "1") ? rclcpp::QoS(replay_qos).keep_last(2048) : rclcpp::SensorDataQoS().keep_last(512),
+             std::bind(&LIVMapper::receive_imu, this, std::placeholders::_1));
+     }
+     if (img_en) {
+         sub_img = this->node->create_subscription<sensor_msgs::msg::Image>(
+-            img_topic, rclcpp::SensorDataQoS().keep_last(4),
++            img_topic, (replay_reliable && std::string(replay_reliable) == "1") ? replay_qos : rclcpp::SensorDataQoS().keep_last(4),
+             std::bind(&LIVMapper::receive_image, this, std::placeholders::_1));
+     }
+     if (use_gps) {
+@@ -699,9 +703,10 @@
+     {
+         fastlivo_timing::Scope timing_vio_process(6);
+         // BOUNDARY_TIMING_END vio_process_open
+-        vio_manager->processFrame(LidarMeasures.measures.back().img, _pv_list,
+-                                  voxelmap_manager->voxel_map_,
+-                                  LidarMeasures.last_lio_update_time - _first_lidar_time);
++        if (!fastlivo_multicamera::process_archive_frame(*this))
++            vio_manager->processFrame(LidarMeasures.measures.back().img, _pv_list,
++                                      voxelmap_manager->voxel_map_,
++                                      LidarMeasures.last_lio_update_time - _first_lidar_time);
+         // BOUNDARY_TIMING_BEGIN vio_process_close
+     }
+     // BOUNDARY_TIMING_END vio_process_close
+--- a/third_party/fast_livo2/fast_livo2_core/src/vio.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/vio.cpp
+@@ -965,7 +965,7 @@
+         } else
+             updateState(img, level);
+     }
+-    state->cov -= G * state->cov;
++    if (!measurement_only) state->cov -= G * state->cov;
+     // FASTLIVO_DIAG_BEGIN frame_cov_after
+     if (diag_log.detail()) {
+         fastlivo_diag::append(diag_frame_cov, state->cov);
+@@ -1999,6 +1999,18 @@
+         //           << std::endl;
+ 
+         double t3 = omp_get_wtime();
++
++        // A single common-prior linearization of the finest level only.
++        // Pyramid levels reuse pixels and must not be counted as independent factors.
++        if (measurement_only) {
++            if (level == 0 && n_meas > 0 && std::isfinite(error)) {
++                measurement_information = (H_sub.transpose() * H_sub) / img_point_cov;
++                measurement_gradient = (H_sub.transpose() * z) / img_point_cov;
++                measurement_pixels = n_meas;
++                measurement_mse = error;
++            }
++            return;
++        }
+ 
+         // FASTLIVO_DIAG_BEGIN iteration_before_updateState
+         std::vector<double> diag_record;
+@@ -2206,6 +2218,8 @@
+                               const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &feat_map,
+                               double img_time) {
+     last_frame_ekf_updated = false;
++    measurement_information.setZero(); measurement_gradient.setZero();
++    measurement_pixels = 0; measurement_mse = 0.;
+ 
+     // FASTLIVO_DIAG_BEGIN empty_image
+     if (fastlivo_diag::Logger::instance().enabled() && img.empty())
+@@ -2243,6 +2257,7 @@
+     retrieveFromVisualSparseMap(img, pg, feat_map);
+     // printf("[ VIO Debug ] 5: before computeJacobian\n"); fflush(stdout);
+     computeJacobianAndUpdateEKF(img);
++    if (measurement_only) return; // Finalize references only after the shared update.
+     // printf("[ VIO Debug ] 6: before generateVisualMapPoints\n"); fflush(stdout);
+     generateVisualMapPoints(img, pg);
+     // printf("[ VIO Debug ] 7: before updateVisualMapPoints\n"); fflush(stdout);
+@@ -2276,3 +2291,11 @@
+     // cv::putText(img_cp, text, origin, cv::FONT_HERSHEY_COMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, 8, 0);
+     // cv::imwrite("/home/chunran/Desktop/raycasting/" + std::to_string(new_frame_->id_) + ".png", img_cp);
+ }
++
++void VIOManager::finishMeasurementFrame(std::vector<pointWithVar> &points) {
++    if (!measurement_only || !new_frame_) throw std::logic_error("no prepared native measurement frame");
++    updateFrameState(*state);
++    generateVisualMapPoints(new_frame_->img_, points);
++    updateVisualMapPoints(new_frame_->img_);
++    ++frame_count;
++}
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/vio.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/vio.h
+@@ -144,6 +144,14 @@
+     void updateState(cv::Mat img, int level);
+     // True only for a retained, non-empty numerical EKF update in this frame.
+     bool last_frame_ekf_updated = false;
++    // Opt-in native four-view factor interface. Default path is unchanged.
++    bool measurement_only = false;
++    Eigen::Matrix<double,7,7> measurement_information = Eigen::Matrix<double,7,7>::Zero();
++    Eigen::Matrix<double,7,1> measurement_gradient = Eigen::Matrix<double,7,1>::Zero();
++    int measurement_pixels = 0;
++    double measurement_mse = 0.;
++    void finishMeasurementFrame(std::vector<pointWithVar> &points);
++
+     void processFrame(cv::Mat &img, vector<pointWithVar> &pg,
+                       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &feat_map,
+                       double img_time);
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/src/multicamera_native.cpp
+@@ -0,0 +1,71 @@
++#include "LIVMapper.h"
++#include "multicamera_native.h"
++#include "multicamera_joint.h"
++#include <opencv2/imgcodecs.hpp>
++#include <nlohmann/json.hpp>
++#include <filesystem>
++#include <fstream>
++#include <map>
++#include <array>
++namespace fastlivo_multicamera {
++namespace fs=std::filesystem;using Json=nlohmann::json;
++struct View {std::unique_ptr<vk::PinholeCamera> camera;std::unique_ptr<VIOManager> manager;StatesGroup local,propagated;};
++struct Rig {
++ std::array<View,3> extra;
++ std::array<StatesGroup,4> local,propagated;
++ std::map<uint64_t,std::array<fs::path,4>> images;std::ofstream log;
++ Rig(LIVMapper&m,const fs::path&archive,const fs::path&output){
++  if(fs::exists(output))throw std::runtime_error("native multicamera log must be new");log.open(output);if(!log)throw std::runtime_error("native multicamera log cannot open");
++  const auto root=fs::canonical(archive);Json manifest;{std::ifstream in(root/"calibration.json");in>>manifest;}
++  if(manifest.at("generation")!=root.parent_path().string()||manifest.at("cameras").size()!=4)throw std::runtime_error("native four-view generation/calibration mismatch");
++  Json result;{std::ifstream in(root.parent_path()/"result.json");in>>result;}
++  if(result.at("outcome")!="completed")throw std::runtime_error("archive interface requires a completed frozen motion generation; live late frames cannot be injected retrospectively");
++  auto &front=*m.vio_manager;
++  if(front.inverse_composition_en||front.raycast_en||front.colmap_output_en)throw std::runtime_error("experimental native factors require forward, non-raycast, non-colmap configuration");
++  for(int i=0;i<4;++i){
++   const auto &c=manifest.at("cameras").at(i);if(c.at("camera_id")!=std::string("camera_")+std::to_string(i))throw std::runtime_error("camera identity/order mismatch");
++   const auto k=c.at("intrinsics_fx_fy_cx_cy");M3D r;V3D t;
++   for(int a=0;a<3;++a){t[a]=c.at("translation_camera_from_imu_m")[a];for(int b=0;b<3;++b)r(a,b)=c.at("R_camera_from_imu")[a][b];}
++   if(!(r.transpose()*r).isApprox(M3D::Identity(),1e-8)||std::abs(r.determinant()-1)>1e-8||!t.allFinite())throw std::runtime_error("invalid native camera extrinsic");
++   if(i==0){if(std::abs(front.fx-k[0].get<double>())>1e-5||std::abs(front.fy-k[1].get<double>())>1e-5||!front.Rci.isApprox(r,1e-7)||!front.Pci.isApprox(t,1e-7))throw std::runtime_error("native front and archive calibration disagree");continue;}
++   auto &v=extra[i-1];v.camera=std::make_unique<vk::PinholeCamera>(512,512,1.,k[0],k[1],k[2],k[3]);v.manager=std::make_unique<VIOManager>();auto &manager=*v.manager;
++   manager.cam=v.camera.get();manager.state=&local[i];manager.state_propagat=&propagated[i];
++   manager.grid_size=front.grid_size;manager.grid_n_height=front.grid_n_height;manager.patch_size=front.patch_size;manager.patch_pyrimid_level=front.patch_pyrimid_level;manager.max_iterations=front.max_iterations;manager.img_point_cov=front.img_point_cov;manager.outlier_threshold=front.outlier_threshold;manager.ncc_thre=front.ncc_thre;manager.normal_en=front.normal_en;manager.raycast_en=false;manager.inverse_composition_en=false;manager.exposure_estimate_en=front.exposure_estimate_en;manager.plot_flag=false;manager.has_ref_patch_cache=false;
++   manager.setImuToLidarExtrinsic(V3D::Zero(),M3D::Identity());std::vector<double>rv(9),tv(3);for(int a=0;a<3;++a){tv[a]=t[a];for(int b=0;b<3;++b)rv[a*3+b]=r(a,b);}manager.setLidarToCameraExtrinsic(rv,tv);manager.initializeVIO();
++  }
++  std::ifstream index(root/"index.jsonl");std::string line;
++  while(std::getline(index,line)){auto row=Json::parse(line);if(row.at("generation")!=root.parent_path().string()||row.at("time_evidence").at("body_now_substituted").get<bool>())throw std::runtime_error("native image source/generation invalid");
++   const std::string name=row.at("camera_id");if(name.size()!=8||name.substr(0,7)!="camera_"||name[7]<'0'||name[7]>'3')throw std::runtime_error("bad camera identity");int id=name[7]-'0';auto file=fs::canonical(root/row.at("rgb_path").get<std::string>());if(file.string().find(root.string()+"/")!=0)throw std::runtime_error("image path escapes archive");auto &entry=images[row.at("stamp_ns").get<uint64_t>()];if(!entry[id].empty())throw std::runtime_error("duplicate camera/source factor");entry[id]=file;}
++  for(const auto &entry:images)for(const auto &path:entry.second)if(path.empty())throw std::runtime_error("incomplete exact-source four-view archive group");
++ }
++ bool process(LIVMapper&m){
++  const uint64_t stamp=m.pending_pair.source_stamp_valid?m.pending_pair.source_stamp_ns:0;
++  auto group=images.find(stamp);if(group==images.end())return false;
++  const auto prior=m._state;auto &front=*m.vio_manager;auto *saved=front.state,*saved_propagated=front.state_propagat;const bool saved_only=front.measurement_only;
++  struct Restore {VIOManager &v;StatesGroup *s,*p;bool only;~Restore(){v.state=s;v.state_propagat=p;v.measurement_only=only;}}restore{front,saved,saved_propagated,saved_only};
++  std::array<VIOManager*,4> managers{&front,extra[0].manager.get(),extra[1].manager.get(),extra[2].manager.get()};std::array<cv::Mat,4> rgb;std::array<Factor,4> factors;Json record={{"source_stamp_ns",stamp},{"mode","native_archive_marginal_ci_v1"},{"source_skew_ns",0},{"confidence_calibrated",false},{"formal_state_commit",false},{"cameras",Json::array()}};
++  for(int i=0;i<4;++i){local[i]=propagated[i]=independent_image_prior(prior);auto &manager=*managers[i];manager.state=&local[i];manager.state_propagat=&propagated[i];manager.measurement_only=true;
++   rgb[i]=cv::imread(group->second[i].string(),cv::IMREAD_COLOR);if(rgb[i].rows!=512||rgb[i].cols!=512)throw std::runtime_error("bad archived native RGB dimensions");
++   if(i==0 && (m.LidarMeasures.measures.back().img.size()!=rgb[i].size() || cv::norm(m.LidarMeasures.measures.back().img,rgb[i],cv::NORM_INF)!=0.)) throw std::runtime_error("same-source primary packet pixels differ from native camera_0 archive");
++   manager.processFrame(rgb[i],m._pv_list,m.voxelmap_manager->voxel_map_,stamp*1e-9);
++   factors[i]={manager.measurement_information,manager.measurement_gradient,manager.measurement_pixels};record["cameras"].push_back({{"camera_id",i},{"pixels",manager.measurement_pixels},{"tracked_points",manager.total_points},{"mse",manager.measurement_mse}});
++  }
++  bool joint=false;std::string reason;
++  try {auto result=solve(prior,factors);local=result.cameras;m._state=local[0];joint=true;record["physical_increment_norm"]=result.physical_increment.norm();record["physical_covariance_trace"]=result.physical_covariance.trace();}
++  catch(const std::exception&e){reason=e.what();front.measurement_only=false;front.computeJacobianAndUpdateEKF(front.new_frame_->img_);front.measurement_only=true;m._state=local[0];for(int i=1;i<4;++i){local[i]=independent_image_prior(m._state);}}
++  for(int i=0;i<4;++i){managers[i]->state=&local[i];managers[i]->finishMeasurementFrame(m._pv_list);managers[i]->last_frame_ekf_updated=joint||(i==0&&front.last_frame_ekf_updated);}
++  record["prior_physical_trace"]=physical_marginal(prior).trace();
++  const auto physical=physical_marginal(m._state);record["posterior_physical_trace"]=physical.trace();
++  record["posterior_physical_minimum_eigenvalue"]=Eigen::SelfAdjointEigenSolver<Physical>(physical).eigenvalues().minCoeff();
++  record["private_inverse_exposure"]=Json::array();record["private_exposure_variance"]=Json::array();
++  for(int i=0;i<4;++i){record["private_inverse_exposure"].push_back(local[i].inv_expo_time);record["private_exposure_variance"].push_back(local[i].cov(6,6));}
++  front.last_frame_ekf_updated=joint||front.last_frame_ekf_updated;record["formal_state_commit"]=joint;record["fallback_reason"]=reason;record["fallback"]="single_front_native_update_when_joint_invalid";record["equal_physical_likelihood_weights"]={.25,.25,.25,.25};record["per_image_exposure_variance_model"]=.1;record["shared_prior_count"]=1;record["map_state_cross_covariance_known"]=false;
++  log<<record.dump()<<'\n';log.flush();return true;
++ }
++};
++bool process_archive_frame(LIVMapper&m){
++ const char *mode=std::getenv("FASTLIVO_MULTICAMERA_MODE");if(!mode||std::string(mode)=="off")return false;
++ if(std::string(mode)!="native_archive_marginal_ci_v1")throw std::runtime_error("unsupported explicit multicamera mode");
++ static std::map<LIVMapper*,std::unique_ptr<Rig>> rigs;auto &rig=rigs[&m];if(!rig){const char *path=std::getenv("FASTLIVO_MULTICAMERA_ARCHIVE"),*log=std::getenv("FASTLIVO_MULTICAMERA_LOG");if(!path||!log)throw std::runtime_error("experimental native mode requires frozen archive and new log");rig=std::make_unique<Rig>(m,path,log);}return rig->process(m);
++}
++}
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/multicamera_native.h
+@@ -0,0 +1,3 @@
++#pragma once
++class LIVMapper;
++namespace fastlivo_multicamera {bool process_archive_frame(LIVMapper&);}
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/multicamera_joint.h
+@@ -0,0 +1,69 @@
++#pragma once
++// Experimental native common-prior update. Numerical covariance checks do not
++// certify the inherited pixel/map uncertainty model or map/state correlation.
++#include "common_lib.h"
++#include <Eigen/Cholesky>
++#include <Eigen/Eigenvalues>
++#include <array>
++#include <stdexcept>
++namespace fastlivo_multicamera {
++using Physical=Eigen::Matrix<double,18,18>;
++using PhysicalVector=Eigen::Matrix<double,18,1>;
++struct Factor {
++ Eigen::Matrix<double,7,7> information=Eigen::Matrix<double,7,7>::Zero();
++ Eigen::Matrix<double,7,1> gradient=Eigen::Matrix<double,7,1>::Zero();
++ int pixels=0;
++};
++struct JointResult {std::array<StatesGroup,4> cameras;PhysicalVector physical_increment;Physical physical_covariance;};
++inline int index19(int i){return i<6?i:i+1;}
++inline Physical physical_marginal(const StatesGroup&s){Physical p;for(int i=0;i<18;++i)for(int j=0;j<18;++j)p(i,j)=s.cov(index19(i),index19(j));return p;}
++inline StatesGroup independent_image_prior(const StatesGroup &s,double exposure_variance=.1){
++ StatesGroup o=s;o.cov.setZero();o.inv_expo_time=1.;o.cov(6,6)=exposure_variance;
++ for(int i=0;i<18;++i)for(int j=0;j<18;++j)o.cov(index19(i),index19(j))=s.cov(index19(i),index19(j));return o;
++}
++inline JointResult solve(const StatesGroup&prior,const std::array<Factor,4>&f,double exposure_variance=.1){
++ if(!std::isfinite(exposure_variance)||exposure_variance<=0)throw std::invalid_argument("invalid independent exposure variance");
++ Physical p=physical_marginal(prior);p=.5*(p+p.transpose()).eval();
++ Eigen::LLT<Physical> chol(p);if(chol.info()!=Eigen::Success)throw std::runtime_error("native physical prior not SPD");
++ Physical information=chol.solve(Physical::Identity());PhysicalVector gradient=PhysicalVector::Zero();
++ std::array<double,4>d;std::array<Eigen::Matrix<double,1,18>,4>b;
++ for(int c=0;c<4;++c){
++  if(f[c].pixels<=0||!f[c].information.allFinite()||!f[c].gradient.allFinite())throw std::runtime_error("four same-source valid native factors required");
++  auto m=(.5*(f[c].information+f[c].information.transpose())).eval();
++  Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double,7,7>> es(m);
++  if(es.info()!=Eigen::Success||es.eigenvalues().minCoeff() < -1e-9*std::max(1.,es.eigenvalues().maxCoeff()))throw std::runtime_error("native photometric factor not PSD");
++  // Integrate each private nuisance BEFORE the fractional likelihood pool.
++  // Keeping four exposure priors in a pooled joint precision would change the
++  // physical confidence even for cloned observations. Each common x prior is
++  // used once; equal weights sum to one rather than four.
++  d[c]=1./(1./exposure_variance+m(6,6));
++  const Eigen::Matrix<double,6,6> marginal=m.topLeftCorner<6,6>()-m.block<6,1>(0,6)*d[c]*m.block<1,6>(6,0);
++  const Eigen::Matrix<double,6,1> g=f[c].gradient.head<6>()-m.block<6,1>(0,6)*d[c]*f[c].gradient[6];
++  information.topLeftCorner<6,6>()+=.25*marginal;gradient.head<6>()+=.25*g;
++  b[c].setZero();b[c].head<6>()=d[c]*m.block<1,6>(6,0);
++ }
++ information=.5*(information+information.transpose()).eval();Eigen::LLT<Physical> post_chol(information);
++ if(post_chol.info()!=Eigen::Success)throw std::runtime_error("joint precision not SPD");
++ JointResult result;result.physical_covariance=post_chol.solve(Physical::Identity());result.physical_covariance=.5*(result.physical_covariance+result.physical_covariance.transpose()).eval();result.physical_increment=-post_chol.solve(gradient);
++ if(!result.physical_increment.allFinite()||result.physical_increment.head<3>().norm()>.1||result.physical_increment.segment<3>(3).norm()>.5)throw std::runtime_error("joint step exceeds experimental numerical bound");
++ if(Eigen::LLT<Physical>(result.physical_covariance).info()!=Eigen::Success)throw std::runtime_error("joint physical covariance not SPD");
++ Eigen::SelfAdjointEigenSolver<Physical> gain(p-result.physical_covariance);
++ if(gain.info()!=Eigen::Success||gain.eigenvalues().minCoeff() < -1e-8*std::max(1.,p.norm()))throw std::runtime_error("joint covariance expands relative to shared prior");
++ const Physical prior_chart_covariance=result.physical_covariance;
++ const V3D w=result.physical_increment.head<3>();const double theta=w.norm();M3D hat;hat<<0.,-w.z(),w.y(),w.z(),0.,-w.x(),-w.y(),w.x(),0.;
++ const M3D jr=theta<1e-7 ? (M3D::Identity()-.5*hat+hat*hat/6.).eval() : (M3D::Identity()-(1-std::cos(theta))/(theta*theta)*hat+(theta-std::sin(theta))/(theta*theta*theta)*hat*hat).eval();
++ Physical transport=Physical::Identity();transport.topLeftCorner<3,3>()=jr;
++ result.physical_covariance=transport*prior_chart_covariance*transport.transpose();
++ for(int c=0;c<4;++c){
++  auto &s=result.cameras[c];s=prior;Eigen::Matrix<double,DIM_STATE,1> delta=Eigen::Matrix<double,DIM_STATE,1>::Zero();
++  for(int i=0;i<18;++i)delta[index19(i)]=result.physical_increment[i];s+=delta;
++  s.inv_expo_time=1.-d[c]*(f[c].gradient[6]+(f[c].information.block<1,6>(6,0)*result.physical_increment.head<6>())(0));
++  if(!std::isfinite(s.inv_expo_time)||s.inv_expo_time<.2||s.inv_expo_time>5.)throw std::runtime_error("invalid private exposure posterior");
++  s.cov.setZero();const PhysicalVector cross=-transport*prior_chart_covariance*b[c].transpose();
++  for(int i=0;i<18;++i){for(int j=0;j<18;++j)s.cov(index19(i),index19(j))=result.physical_covariance(i,j);s.cov(index19(i),6)=s.cov(6,index19(i))=cross[i];}
++  s.cov(6,6)=d[c]+(b[c]*prior_chart_covariance*b[c].transpose())(0);
++  if(Eigen::LLT<decltype(s.cov)>(s.cov).info()!=Eigen::Success)throw std::runtime_error("private exposure augmentation not SPD");
++ }
++ return result;
++}
++}

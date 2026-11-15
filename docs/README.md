@@ -1,6 +1,8 @@
 # 工程文档索引
 
-最新修复与真实运行边界见 [运行故障修复与重验](review/runtime-repair-validation-20261109.md)：故障生命周期/收据通过独立验证，不代表在线行人、R85 路线或 5 秒停车已验收。
+2026-11-09 阶段的修复与真实运行边界见 [运行故障修复与重验](review/runtime-repair-validation-20261109.md)：故障生命周期/收据通过独立验证，不代表在线行人、R85 路线或 5 秒停车已验收。
+当前 DynaNav 请先读 [功能架构、模块选型、节点话题与时序](dynanav-exploration.md)、[32 航点运行与限制](experiments/dynanav-native-exploration-32-waypoints-20261111.md) 和 [单航点失败恢复](experiments/dynanav-native-waypoint-failure-recovery-20261111.md)。下方结构计数与审查评价保留为 2026-11-09 快照，不代表当前文件总数。
+
 本目录是工程文档与证据的入口：`architecture.md` 与 `glossary.md` 是权威说明，`experiments/`、`review/`、`verification/` 是历史记录与回执，`dependencies/`、`robogauge/` 是依赖与部署专题。文档不参与运行时，也没有代码读取本目录。
 
 ## 目录结构
@@ -8,12 +10,13 @@
 ```text
 docs/
 ├── dependencies/          # 依赖闭包、构建、许可与核验证据（11 文件），见 dependencies/README.md
-├── experiments/           # DynaNav 实验记录 4 篇（含续篇与在线行人实验）
+├── experiments/           # 按日期保存的 DynaNav 实验记录（最新入口见上方）
 ├── research/              # 研究目标、用户原话与实现边界（1 篇）
 ├── review/                # 可读性/结构重构/流程审查报告与回执（20 文件，含本轮新增的模块结构总评）
 ├── robogauge/             # RoboGauge 部署说明与历史证据（11 文件），见 robogauge/README.md
 ├── verification/          # 独立复核与启动/容器/原生构建回执（8 文件）
 ├── README.md              # 本文件：文档索引与职责分类
+├── dynanav-exploration.md # 当前 native 探索功能架构、选型、接口与时序
 ├── architecture.md        # 权威：系统边界、四条执行路径、默认状态机、安全门禁（51 行）
 ├── control_provenance.json # 控制公式来源与 1000 例等价性测试记录（7 行）
 └── glossary.md            # 权威：术语与易混概念对照（43 行）
@@ -101,3 +104,5 @@ docs/
 - 文档里的行号、测试数量、run 标识都是**写报告时**的快照；结构重构后可能过期，引用前按当前磁盘复核。
 - 本目录不产生运行时配置，也不被运行时读取；不要把文档中的示例 JSON/命令当成生效配置。
 - 外部数据卷（`runs/`、`experiments/`、地图、视频、权重）不入 Git；文档中的绝对路径是记录，不是仓库内文件。
+
+- [2026-11-11 实际探索工具找回](experiments/dynanav-exploration-tools-20261111.md)：今日清理归档中的原工具、实际调用、SHA索引及无仿真重放方法。

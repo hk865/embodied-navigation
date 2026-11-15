@@ -1,0 +1,20 @@
+{
+  "schema": "coverage_generation_binding/v1",
+  "run_id": "native_exploration_20261111T111150Z",
+  "ros_domain_id": 232,
+  "binding_source": "root_explicit_new_generation",
+  "run_root": "/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z",
+  "evidence_root": "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence",
+  "output_root": "/home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150",
+  "allowed_input_roots": [
+    "/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/native_exploration_20261111T111150Z",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/explore_111150_evidence",
+    "/home/hyh001/Documents/Codex/2026-11-11/task/coverage_audit/live_111150"
+  ],
+  "cloud_stage": "LIO",
+  "map_frame": "dynanav_lio_map",
+  "pose_source": "livo_post_vio",
+  "pose_child_frame": "go2_imu",
+  "prior_generation_inputs_allowed": false,
+  "auditor_controls_allowed": false
+}

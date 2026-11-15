@@ -1,0 +1,1282 @@
+Subject: [PATCH] Opt-in same-time LIO/VIO handoff, exact image identity, cache hard limits and native tests
+
+diff --git a/third_party/fast_livo2/fast_livo2_core/README.md b/third_party/fast_livo2/fast_livo2_core/README.md
+--- a/third_party/fast_livo2/fast_livo2_core/README.md
++++ b/third_party/fast_livo2/fast_livo2_core/README.md
+@@ -30,3 +30,13 @@
+ serial模式两个单线程executor在owner内优先服务IMU，再处理普通callback；1ms intake预算不能抢占callback。队列有512项/64MiB边界，通用点云另限8帧/65536点。LIO残差行可4线程，VIO patch线程配置意图1而构建宏元数据4，不能仅凭环境变量确认实际团队。状态更新与矩阵聚合仍有序执行。
+ 
+ 调试先看源时间、初始化是否静止、量测残差关联、当前地图支撑与协方差，再看显示。小P、低残差或好看的RGB地图不独自认证绝对定位精度。使用/编译边界回到[SLAM模块](../../README.md)；公式、上下游及限制见[完整技术报告](../../../../docs/technical_report.zh-CN.md)。
++
++## 显式同时间 pair 交接（2026-11-10）
++
++`common.same_pair_vio_handoff` 默认 `false`，保留旧 raw/IMU 全局门和初始化时序；RTX override 显式设为 `true`。开启后，当前图像先经过原有逐点末时刻与 IMU 端点覆盖检查，再选择 LIO。pending pair 保存原始 header 整数 ns、校准队首时间、目标 t 和图像身份。只有当前非初始化 IMU 输出和正常 LIO handler 真正完成，才允许同一图像进入 VIO，不等待无关的新 raw/IMU。初始化、空点、身份变化、异常和停止均不能复用旧缓存；不是以 residual>0 定义成功，也不把成功等同于定位准确。
++
++VIO 仍执行原零时长 `Process2` 和 `state_propagat=_state`，使用当前 LIO posterior 作为先验；没有回放 IMU、再次 deskew、改写源 stamp、改动逐点时间或并行更新状态。`require_complete_imu` 现有语义只检查最新端点达到目标，不证明成熟区间没有内部采样缺口。
++
++`common.max_buffered_images/max_buffered_imu/max_buffered_prop_imu` 默认 0（旧配置不变），RTX 分别显式设 32/8192/8192。达到上限时在入队/时间戳更新前报错并结束当前运行，不删除未消费数据。它们是保守资源硬界，不是延迟或新鲜度目标；原源端 4 帧和 native raw 8 帧界限不变。启动 `[PAIR_HANDOFF]` 日志显示实际 flag 和三个上限。
++
++`FASTLIVO_SYNC_OBSERVE=1` 配合现有 boundary 文件可记录阶段、消费/skip 和三个缓存的实际首尾时间/计数；默认关闭，观测值不驱动估计。实现/5 个 native fixtures 与限制见 [同 pair 验证](../../../../docs/experiments/dynanav-same-pair-handoff-20261110.md)。
+diff --git a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/IMU_Processing.h
+@@ -59,6 +59,11 @@
+     void UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_inout,
+                       PointCloudXYZI &pcl_out);
+ 
++    // Read-only handoff inspection for native regression/diagnostics. These do
++    // not drive estimation or expose mutable propagation ownership.
++    double propagation_end_time() const { return last_prop_end_time; }
++    sensor_msgs::msg::Imu::ConstSharedPtr last_imu_sample() const { return last_imu; }
++
+     ofstream fout_imu;
+     double IMU_mean_acc_norm;
+     V3D unbiased_gyr;
+diff --git a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
+@@ -17,6 +17,7 @@
+ #include "vio.h"
+ #include "preprocess.h"
+ #include "ordered_ingress.h"
++#include "pending_pair.h"
+ #include "fast_livo2_core/backend/snapshot_bridge.hpp"
+ #include <thread>
+ #if __has_include(<cv_bridge/cv_bridge.hpp>)
+@@ -89,6 +90,12 @@
+     void stateEstimationAndMapping();
+     void handleVIO();
+     void handleLIO();
++    bool same_pair_vio_handoff = false;
++    PendingLivoPair pending_pair;
++    size_t max_buffered_images = 0, max_buffered_imu = 0, max_buffered_prop_imu = 0;
++    void checkBufferCapacity(const char *queue, size_t count, size_t limit);
++    bool pendingImageMatches() const;
++    void retirePendingPair(PendingLivoPair::Outcome outcome, bool consume_image);
+     void initializeBackendSnapshots();
+     void backendLioSnapshot();
+     void backendVioSnapshot(bool updated);
+@@ -222,6 +229,8 @@
+     deque<sensor_msgs::msg::Imu::ConstSharedPtr> imu_buffer;
+     deque<cv::Mat> img_buffer;
+     deque<double> img_time_buffer;
++    // Exact received stamps, kept beside the existing calibrated image times.
++    deque<uint64_t> img_source_stamp_buffer;
+     vector<pointWithVar> _pv_list;
+     vector<double> extrinT;
+     vector<double> extrinR;
+diff --git a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/pending_pair.h b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/pending_pair.h
+new file mode 100644
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/pending_pair.h
+@@ -0,0 +1,52 @@
++#pragma once
++#include <cstdint>
++#include <exception>
++
++// Estimator-owner state, independent of optional diagnostics. A selected LIO
++// stage is not proof that Process2 or the LIO handler completed successfully.
++struct PendingLivoPair {
++    enum Phase { Idle, LioSelected, ImuProcessed, LioReady, VioSelected,
++                 VioImuProcessed, Skip, Retired };
++    enum Outcome { None, Initializing, EmptyCloud, InvalidOutput, IdentityChanged,
++                   Aborted, VioCompleted, VioSkipped };
++    Phase phase = Idle;
++    Outcome outcome = None;
++    uint64_t sequence = 0, retired = 0, skipped = 0;
++    uint64_t source_stamp_ns = 0;
++    bool source_stamp_valid = false;
++    double image_time = 0, target_time = 0;
++    const unsigned char *image_data = nullptr;
++    bool active() const { return phase != Idle && phase != Retired; }
++    void begin(double image, double target, const unsigned char *data,
++               uint64_t source, bool source_valid) {
++        ++sequence;
++        phase = LioSelected;
++        outcome = None;
++        image_time = image;
++        target_time = target;
++        image_data = data;
++        source_stamp_ns = source;
++        source_stamp_valid = source_valid;
++    }
++    void skip(Outcome reason) { phase = Skip; outcome = reason; }
++    void retire(Outcome reason) {
++        if (!active()) return;
++        ++retired;
++        if (reason != VioCompleted) ++skipped;
++        phase = Retired;
++        outcome = reason;
++        image_data = nullptr;
++    }
++};
++
++// A failed owner operation cannot leave a reusable success token. Preserve the
++// primary exception; termination/recovery stays with the existing run lifecycle.
++struct PendingPairExceptionGuard {
++    PendingLivoPair &pair;
++    bool enabled;
++    int exceptions = std::uncaught_exceptions();
++    ~PendingPairExceptionGuard() {
++        if (enabled && std::uncaught_exceptions() > exceptions)
++            pair.retire(PendingLivoPair::Aborted);
++    }
++};
+diff --git a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h
+new file mode 100644
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h
+@@ -0,0 +1,216 @@
++#pragma once
++// Observation-only owner-thread ledger. No estimator/control code reads it.
++// Requires FASTLIVO_SYNC_OBSERVE=1 and FASTLIVO_BOUNDARY_TIMING_FILE. Reuses
++// the existing exclusive-create, no-fsync, shared 8 MiB ScalarWriter cap.
++#include "boundary_timing.h"
++#include <array>
++#include <cstring>
++
++namespace fastlivo_sync {
++enum Reason : size_t {
++    RawEmpty, ImageEmpty, ImuEmpty, SparseDrainEmpty, WaitScanImu,
++    OnlyLioSelected, RawTailEmpty, OldImageDropped, WaitPointCoverage,
++    WaitImageImu, LivoLioSelected, LivoVioSelected, InvalidStage,
++    OnlyLoEmpty, OnlyLoSelected, InvalidMode, PairIdentityChanged, PairSkipped,
++    PairLioUnfinished, PairVioUnfinished, ReasonCount
++};
++inline bool enabled() noexcept {
++    static const bool selected = [] {
++        const char *s = std::getenv("FASTLIVO_SYNC_OBSERVE");
++        return s && std::strcmp(s, "1") == 0;
++    }();
++    return selected && fastlivo_timing::scalar_writer().fd >= 0;
++}
++inline uint64_t now() noexcept {
++    bool valid = true;
++    return fastlivo_timing::read_clock(CLOCK_MONOTONIC, valid);
++}
++struct View {
++    int stage = 0, mode = 0;
++    // Valid bits: image_target=1, last_lio=2, raw_latest_point=4,
++    // imu_latest=8, last_committed_imu=16. Missing values are zero, never stale.
++    unsigned valid = 0;
++    std::array<double, 5> times{};
++    // raw clouds, raw headers, images, image stamps, IMUs, current/pending points.
++    std::array<size_t, 7> sizes{};
++    bool imu_initializing = false, complete_imu_required = false;
++    // Source-time windows, O(1); no inferred span from count or sample rate.
++    std::array<size_t, 3> cache_counts{}; // primary IMU, images, propagation IMU
++    std::array<double, 6> cache_endpoints{}; // oldest/newest for each queue
++    unsigned cache_valid = 0;
++};
++inline View snapshot(const LIVMapper &mapper, const LidarMeasureGroup &m) noexcept {
++    View out;
++    out.stage = m.lio_vio_flg;
++    out.mode = mapper.slam_mode_;
++    out.sizes = {mapper.lid_raw_data_buffer.size(), mapper.lid_header_time_buffer.size(),
++                 mapper.img_buffer.size(), mapper.img_time_buffer.size(), mapper.imu_buffer.size(),
++                 m.pcl_proc_cur ? m.pcl_proc_cur->size() : 0,
++                 m.pcl_proc_next ? m.pcl_proc_next->size() : 0};
++    const auto set_time = [&](size_t i, double value) {
++        if (std::isfinite(value) && value >= 0) {
++            out.times[i] = value;
++            out.valid |= 1u << i;
++        }
++    };
++    if (!mapper.img_time_buffer.empty() && out.sizes[2] == out.sizes[3])
++        set_time(0, mapper.img_time_buffer.front() + mapper.exposure_time_init);
++    set_time(1, m.last_lio_update_time);
++    if (!mapper.lid_raw_data_buffer.empty() && out.sizes[0] == out.sizes[1]) {
++        const auto &cloud = mapper.lid_raw_data_buffer.back().cloud;
++        if (cloud && !cloud->empty())
++            set_time(2, mapper.lid_header_time_buffer.back() + cloud->back().curvature / 1000.);
++    }
++    if (!mapper.imu_buffer.empty())
++        set_time(3, stamp2Sec(mapper.imu_buffer.back()->header.stamp));
++    set_time(4, mapper.last_timestamp_imu);
++    out.imu_initializing = mapper.p_imu && mapper.p_imu->imu_need_init;
++    out.complete_imu_required = mapper.require_complete_imu;
++    out.cache_counts = {mapper.imu_buffer.size(), mapper.img_time_buffer.size(),
++                        mapper.prop_imu_buffer.size()};
++    const auto window = [&](size_t i, double first, double last) {
++        if (std::isfinite(first) && std::isfinite(last)) {
++            out.cache_valid |= 1u << i;
++            out.cache_endpoints[2 * i] = first;
++            out.cache_endpoints[2 * i + 1] = last;
++        }
++    };
++    if (!mapper.imu_buffer.empty())
++        window(0, stamp2Sec(mapper.imu_buffer.front()->header.stamp),
++                  stamp2Sec(mapper.imu_buffer.back()->header.stamp));
++    if (!mapper.img_time_buffer.empty())
++        window(1, mapper.img_time_buffer.front(), mapper.img_time_buffer.back());
++    if (!mapper.prop_imu_buffer.empty())
++        window(2, stamp2Sec(mapper.prop_imu_buffer.front().header.stamp),
++                  stamp2Sec(mapper.prop_imu_buffer.back().header.stamp));
++    return out;
++}
++inline nlohmann::json json_pair(const LIVMapper &mapper) {
++    const auto &p = mapper.pending_pair;
++    return {{"enabled", mapper.same_pair_vio_handoff}, {"sequence", p.sequence}, {"phase", int(p.phase)}, {"outcome", int(p.outcome)},
++            {"source_stamp_ns", p.source_stamp_ns}, {"source_stamp_valid", p.source_stamp_valid},
++            {"image_time", p.image_time}, {"target_time", p.target_time},
++            {"retired", p.retired}, {"skipped", p.skipped}};
++}
++inline nlohmann::json json_view(const View &v) {
++    return {{"stage", v.stage}, {"mode", v.mode}, {"valid", v.valid},
++            {"times", v.times}, {"sizes", v.sizes},
++            {"imu_initializing", v.imu_initializing},
++            {"complete_imu_required", v.complete_imu_required},
++            {"cache_counts", v.cache_counts}, {"cache_endpoints", v.cache_endpoints},
++            {"cache_valid", v.cache_valid}};
++}
++struct Ledger {
++    uint64_t rows = 0, attempts = 0, pair = 0, last_summary = 0;
++    // Complete cumulative counts, indexed by reason then entry stage (WAIT,VIO,LIO,LO).
++    std::array<std::array<uint64_t, 4>, ReasonCount> counts{};
++    double selected_target = 0;
++    bool selected_target_valid = false, lio_completed = false, lio_effective = false;
++};
++inline Ledger &ledger() noexcept { static thread_local Ledger value; return value; }
++inline void emit(nlohmann::json row) noexcept {
++    try {
++        auto &l = ledger();
++        row["schema"] = "native_sync_observation/v1";
++        row["row"] = ++l.rows; // attempts, not a delivery receipt; gaps must be reported.
++        row["wall_ns"] = now();
++        row["tid"] = ::syscall(SYS_gettid);
++        row["pair"] = l.pair;
++        row["observation_only"] = true;
++        fastlivo_timing::scalar_writer().emit_raw(row.dump() + "\n");
++    } catch (...) {} // Never replace primary estimator results/exceptions.
++}
++inline bool same_target(const View &v, bool image) noexcept {
++    const auto &l = ledger();
++    const size_t index = image ? 0 : 1;
++    return l.selected_target_valid && (v.valid & (1u << index)) &&
++           fastlivo_diag::nanoseconds(l.selected_target) == fastlivo_diag::nanoseconds(v.times[index]);
++}
++class Attempt {
++  public:
++    Attempt(const LIVMapper &mapper, const LidarMeasureGroup &m) noexcept
++        : active_(enabled()), mapper_(mapper), m_(m) {
++        if (active_) before_ = snapshot(mapper, m);
++    }
++    bool result(Reason reason, bool result) noexcept {
++        if (!active_) return result;
++        try {
++            auto &l = ledger();
++            const View after = snapshot(mapper_, m_);
++            ++l.attempts;
++            if (before_.stage >= 0 && before_.stage < 4) ++l.counts[reason][before_.stage];
++            if (reason == LivoLioSelected || reason == OnlyLioSelected) {
++                ++l.pair;
++                l.selected_target_valid = !m_.measures.empty() &&
++                    std::isfinite(m_.measures.back().lio_time) && m_.measures.back().lio_time >= 0;
++                l.selected_target = l.selected_target_valid ? m_.measures.back().lio_time : 0;
++                l.lio_completed = l.lio_effective = false;
++            }
++            const auto wall = now();
++            const bool summary = !l.last_summary || wall - l.last_summary >= 1000000000ULL;
++            if (result || summary || reason == PairSkipped || reason == PairIdentityChanged) {
++                nlohmann::json row = {{"event", "sync_result"}, {"reason", reason},
++                    {"result", result}, {"attempt", l.attempts}, {"before", json_view(before_)},
++                    {"after", json_view(after)}, {"pending_pair", json_pair(mapper_)},
++                    {"selected_target", l.selected_target},
++                    {"selected_target_valid", l.selected_target_valid},
++                    {"pair_target_matches", same_target(before_, true)},
++                    {"lio_completed", l.lio_completed}, {"lio_effective", l.lio_effective}};
++                if (summary) {
++                    row["cumulative_reason_entry_stage_counts"] = l.counts;
++                    l.last_summary = wall;
++                }
++                emit(std::move(row));
++            }
++        } catch (...) {}
++        return result;
++    }
++  private:
++    bool active_;
++    const LIVMapper &mapper_;
++    const LidarMeasureGroup &m_;
++    View before_;
++};
++inline void stage(const LIVMapper &mapper, const char *event, bool completed,
++                  bool ekf_updated, bool initializing_before = false) noexcept {
++    if (!enabled()) return;
++    try {
++        const auto view = snapshot(mapper, mapper.LidarMeasures);
++        auto &l = ledger();
++        const bool match = same_target(view, false);
++        // Effective means the normal LIO handler completed with measured residuals,
++        // initialized IMU and finite pose. It is not navigation readiness or accuracy.
++        const bool lio = std::strcmp(event, "lio_completed") == 0;
++        const size_t residuals = lio ? mapper.voxelmap_manager->ptpl_list_.size() : 0;
++        const bool finite_pose = mapper._state.pos_end.allFinite() && mapper._state.rot_end.allFinite();
++        const bool finite_state = finite_pose && mapper._state.vel_end.allFinite() &&
++            mapper._state.bias_g.allFinite() && mapper._state.bias_a.allFinite() &&
++            mapper._state.gravity.allFinite() && mapper._state.cov.allFinite() &&
++            std::isfinite(mapper._state.inv_expo_time);
++        if (lio && match) {
++            l.lio_completed = completed;
++            l.lio_effective = completed && !view.imu_initializing && residuals > 0 && finite_pose;
++        }
++        emit({{"event", event}, {"view", json_view(view)}, {"pending_pair", json_pair(mapper)},
++              {"completed", completed},
++              {"ekf_updated", ekf_updated}, {"initializing_before", initializing_before},
++              {"pair_target_matches", match}, {"lio_completed", l.lio_completed},
++              {"lio_effective", l.lio_effective}, {"effective_residual_count", residuals},
++              {"handler_completed", completed}, {"initialized", !view.imu_initializing},
++              {"has_output_points", mapper.pcl_w_wait_pub && !mapper.pcl_w_wait_pub->empty()},
++              {"finite_state", finite_state},
++              {"finite_pose", finite_pose},
++              {"undistorted_points", mapper.feats_undistort ? mapper.feats_undistort->size() : 0}});
++    } catch (...) {}
++}
++inline void flush(const LIVMapper &mapper) noexcept {
++    if (!enabled()) return;
++    try {
++        emit({{"event", "sync_summary"}, {"final", true},
++              {"attempt", ledger().attempts}, {"view", json_view(snapshot(mapper, mapper.LidarMeasures))},
++              {"pending_pair", json_pair(mapper)},
++              {"cumulative_reason_entry_stage_counts", ledger().counts}});
++    } catch (...) {}
++}
++
++}
+diff --git a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -21,6 +21,7 @@
+ #include "diagnostics.h"
+ // BOUNDARY_TIMING_BEGIN include
+ #include "boundary_timing.h"
++#include "sync_observation.h"
+ // BOUNDARY_TIMING_END include
+ #include <chrono>
+ #include <filesystem>
+@@ -141,6 +142,23 @@
+     this->node->declare_parameter<int>("common.img_en", 1);
+     this->node->declare_parameter<bool>("common.allow_lio_only", false);
+     this->node->declare_parameter<bool>("common.allow_ouster_lidar", false);
++    same_pair_vio_handoff = this->node->declare_parameter<bool>("common.same_pair_vio_handoff", false);
++    // Explicit source-cache hard limits. Zero preserves existing configurations;
++    // the RTX configuration opts in. Never evict unconsumed sensor evidence.
++    for (const auto *name : {"common.max_buffered_images", "common.max_buffered_imu",
++                             "common.max_buffered_prop_imu"})
++        this->node->declare_parameter<int64_t>(name, 0);
++    const auto buffer_limit = [&](const char *name) {
++        const auto value = this->node->get_parameter(name).as_int();
++        if (value < 0) throw std::invalid_argument(std::string(name) + " must be nonnegative");
++        return static_cast<size_t>(value);
++    };
++    max_buffered_images = buffer_limit("common.max_buffered_images");
++    max_buffered_imu = buffer_limit("common.max_buffered_imu");
++    max_buffered_prop_imu = buffer_limit("common.max_buffered_prop_imu");
++    RCLCPP_INFO(this->node->get_logger(),
++                "[PAIR_HANDOFF] enabled=%d cache_caps image=%zu imu=%zu prop_imu=%zu",
++                int(same_pair_vio_handoff), max_buffered_images, max_buffered_imu, max_buffered_prop_imu);
+     this->node->declare_parameter<int>("common.lidar_en", 1);
+     this->node->declare_parameter<std::string>("common.img_topic", "/left_camera/image");
+ 
+@@ -536,6 +554,7 @@
+ }
+ 
+ void LIVMapper::processImu() {
++    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
+     // double t0 = omp_get_wtime();
+ 
+     auto &diag = fastlivo_diag::Logger::instance();
+@@ -567,7 +586,17 @@
+         fastlivo_diag::append(values, _state.cov);
+         diag.emit(10, -1, -1, std::move(values));
+     }
++    const bool pair_lio = same_pair_vio_handoff && slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == LIO;
++    const bool pair_vio = same_pair_vio_handoff && slam_mode_ == LIVO && LidarMeasures.lio_vio_flg == VIO;
++    if ((pair_lio && pending_pair.phase != PendingLivoPair::LioSelected) ||
++        (pair_vio && pending_pair.phase != PendingLivoPair::VioSelected))
++        throw std::logic_error("LIVO pair IMU phase already consumed or not selected");
++    const bool initializing_before = p_imu->imu_need_init;
++    if (pair_lio && initializing_before)
++        feats_undistort->clear(); // Initialization returns without replacing this output.
++    const bool sync_observe_initializing = fastlivo_sync::enabled() && initializing_before;
+     p_imu->Process2(LidarMeasures, _state, feats_undistort);
++    fastlivo_sync::stage(*this, "imu_processed", true, false, sync_observe_initializing);
+ 
+     if (gravity_align_en)
+         gravityAlignment();
+@@ -579,6 +608,18 @@
+         fastlivo_diag::state(values, _state);
+         fastlivo_diag::append(values, _state.cov);
+         diag.emit(11, -1, -1, std::move(values));
++    }
++    if (pair_lio) {
++        if (initializing_before || p_imu->imu_need_init)
++            pending_pair.skip(PendingLivoPair::Initializing);
++        else if (!feats_undistort || feats_undistort->empty())
++            pending_pair.skip(PendingLivoPair::EmptyCloud);
++        else if (LidarMeasures.last_lio_update_time != pending_pair.target_time)
++            pending_pair.skip(PendingLivoPair::InvalidOutput);
++        else
++            pending_pair.phase = PendingLivoPair::ImuProcessed;
++    } else if (pair_vio) {
++        pending_pair.phase = PendingLivoPair::VioImuProcessed;
+     }
+     state_propagat = _state;
+     voxelmap_manager->state_ = _state;
+@@ -608,6 +649,10 @@
+ }
+ 
+ void LIVMapper::handleVIO() {
++    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
++    if (same_pair_vio_handoff && slam_mode_ == LIVO &&
++        pending_pair.phase != PendingLivoPair::VioImuProcessed)
++        throw std::logic_error("LIVO pair VIO handler without current IMU handoff");
+     // BOUNDARY_TIMING_BEGIN handle_vio_all
+     fastlivo_timing::Scope timing_handle_vio_all(15);
+     // BOUNDARY_TIMING_END handle_vio_all
+@@ -621,8 +666,11 @@
+              << std::endl;
+ 
+     if (!pcl_w_wait_pub || pcl_w_wait_pub->empty()) {
++        fastlivo_sync::stage(*this, "vio_skipped_empty_cloud", false, false);
+         diag_stage(12, 0, _state);
+         backendVioSnapshot(false);
++        pending_pair.retire(PendingLivoPair::VioSkipped);
++        fastlivo_sync::stage(*this, "pair_retired", false, false);
+         return;
+     }
+ 
+@@ -644,6 +692,7 @@
+     }
+     // BOUNDARY_TIMING_END vio_process_close
+ 
++    fastlivo_sync::stage(*this, "vio_processed", true, vio_manager->last_frame_ekf_updated);
+     backendVioSnapshot(vio_manager->last_frame_ekf_updated);
+     diag_stage(12, 1, _state);
+     publish_post_vio_odometry(vio_manager->last_frame_ekf_updated);
+@@ -675,9 +724,20 @@
+              << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
+              << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose()
+              << " " << feats_undistort->points.size() << std::endl;
++    pending_pair.retire(PendingLivoPair::VioCompleted);
++    fastlivo_sync::stage(*this, "pair_retired", true, vio_manager->last_frame_ekf_updated);
+ }
+ 
+ void LIVMapper::handleLIO() {
++    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
++    if (same_pair_vio_handoff && slam_mode_ == LIVO) {
++        if (pending_pair.phase == PendingLivoPair::Skip) {
++            fastlivo_sync::stage(*this, "lio_pair_skipped", false, false);
++            return;
++        }
++        if (pending_pair.phase != PendingLivoPair::ImuProcessed)
++            throw std::logic_error("LIVO pair LIO handler without current IMU output");
++    }
+     fastlivo_timing::frame_mark(4);
+     // BOUNDARY_TIMING_BEGIN handle_lio_all
+     fastlivo_timing::Scope timing_handle_lio_all(14);
+@@ -690,7 +750,9 @@
+              << endl;
+ 
+     if (!feats_undistort || feats_undistort->empty()) {
++        fastlivo_sync::stage(*this, p_imu->imu_need_init ? "lio_skipped_initializing" : "lio_skipped_empty_cloud", false, false);
+         diag_stage(13, 0, _state);
++        if (slam_mode_ == LIVO) pending_pair.skip(PendingLivoPair::EmptyCloud);
+         return;
+     }
+ 
+@@ -702,6 +764,11 @@
+     double t_down = omp_get_wtime();
+ 
+     feats_down_size = feats_down_body->points.size();
++    if (same_pair_vio_handoff && slam_mode_ == LIVO && feats_down_size == 0) {
++        pending_pair.skip(PendingLivoPair::EmptyCloud);
++        fastlivo_sync::stage(*this, "lio_pair_skipped", false, false);
++        return;
++    }
+     voxelmap_manager->feats_down_body_ = feats_down_body;
+     transformLidar(_state.rot_end, _state.pos_end, feats_down_body, feats_down_world);
+     voxelmap_manager->feats_down_world_ = feats_down_world;
+@@ -845,6 +912,20 @@
+              << _state.vel_end.transpose() << " " << _state.bias_g.transpose() << " "
+              << _state.bias_a.transpose() << " " << V3D(_state.inv_expo_time, 0, 0).transpose()
+              << " " << feats_undistort->points.size() << std::endl;
++    if (slam_mode_ == LIVO) {
++        // No residual threshold: normal bootstrap/map-building is a valid LIO
++        // completion too. Never authorize VIO from an old cloud or nonfinite state.
++        const bool finite = _state.pos_end.allFinite() && _state.rot_end.allFinite() &&
++            _state.vel_end.allFinite() && _state.bias_g.allFinite() &&
++            _state.bias_a.allFinite() && _state.gravity.allFinite() &&
++            _state.cov.allFinite() && std::isfinite(_state.inv_expo_time);
++        if (finite && pcl_w_wait_pub && !pcl_w_wait_pub->empty() &&
++            LidarMeasures.last_lio_update_time == pending_pair.target_time)
++            pending_pair.phase = PendingLivoPair::LioReady;
++        else
++            pending_pair.skip(PendingLivoPair::InvalidOutput);
++    }
++    fastlivo_sync::stage(*this, "lio_completed", true, false);
+ }
+ 
+ void LIVMapper::savePCD() {
+@@ -992,6 +1073,7 @@
+     } catch (...) {
+         // PRIMARY_EXCEPTION_PRESERVATION_BEGIN
+         const auto primary_exception = std::current_exception();
++        pending_pair.retire(PendingLivoPair::Aborted);
+         try {
+             ingress_queue.fail("owner run exception");
+         } catch (...) {
+@@ -1007,6 +1089,8 @@
+         // PRIMARY_EXCEPTION_PRESERVATION_END
+     }
+     stop_ingress(rclcpp::ok() && fast_livo2_core::mapping_stop_requested());
++    pending_pair.retire(PendingLivoPair::Aborted);
++    fastlivo_sync::flush(*this);
+     savePCD();
+ }
+ 
+@@ -1329,15 +1413,21 @@
+         timestamp += std::round(last_timestamp_lidar - timestamp);
+     msg->header.stamp = sec2Stamp(timestamp);
+ 
+-    mtx_buffer.lock();
++    std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
+ 
+     if (last_timestamp_imu > 0.0 && timestamp < last_timestamp_imu) {
+-        mtx_buffer.unlock();
++        sensor_buffer_lock.unlock();
+         sig_buffer.notify_all();
+         RCLCPP_ERROR(this->node->get_logger(), "imu loop back, offset: %lf \n",
+                      last_timestamp_imu - timestamp);
+         return;
+     }
++
++    // Receiver/decoder threads never access these owner-only deques. Check
++    // before either queue or timestamp changes; preserve rejected-old semantics.
++    checkBufferCapacity("imu_buffer", imu_buffer.size(), max_buffered_imu);
++    if (imu_prop_enable && !p_imu->imu_need_init)
++        checkBufferCapacity("prop_imu_buffer", prop_imu_buffer.size(), max_buffered_prop_imu);
+ 
+     if (last_timestamp_imu > 0.0 && timestamp > last_timestamp_imu + 0.2) {
+         // A late subscription or a temporary sensor dropout legitimately creates
+@@ -1352,7 +1442,7 @@
+ 
+     imu_buffer.push_back(msg);
+     // cout<<"got imu: "<<timestamp<<" imu size "<<imu_buffer.size()<<endl;
+-    mtx_buffer.unlock();
++    sensor_buffer_lock.unlock();
+     if (imu_prop_enable) {
+         mtx_buffer_imu_prop.lock();
+         if (imu_prop_enable && !p_imu->imu_need_init) {
+@@ -1433,22 +1523,24 @@
+         return;
+     }
+ 
+-    mtx_buffer.lock();
++    std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
+ 
+     double img_time_correct = msg_header_time; // last_timestamp_lidar + 0.105;
+ 
+     if (img_time_correct - last_timestamp_img < 0.02) {
+         RCLCPP_WARN(this->node->get_logger(), "Image need Jumps: %.6f", img_time_correct);
+-        mtx_buffer.unlock();
++        sensor_buffer_lock.unlock();
+         sig_buffer.notify_all();
+         return;
+     }
+ 
++    checkBufferCapacity("img_buffer", img_buffer.size(), max_buffered_images);
+     if (committing_ingress && committing_ingress->decode_error)
+         std::rethrow_exception(committing_ingress->decode_error);
+     cv::Mat img_cur = committing_ingress ? committing_ingress->image : getImageFromMsg(msg);
+     img_buffer.push_back(img_cur);
+     img_time_buffer.push_back(img_time_correct);
++    img_source_stamp_buffer.push_back(diag_stamp(msg_in->header.stamp));
+ 
+     // ROS_INFO("Correct Image time: %.6f", img_time_correct);
+ 
+@@ -1456,7 +1548,7 @@
+     // cv::imshow("img", img);
+     // cv::waitKey(1);
+     // cout<<"last_timestamp_img:::"<<last_timestamp_img<<endl;
+-    mtx_buffer.unlock();
++    sensor_buffer_lock.unlock();
+     sig_buffer.notify_all();
+ }
+ 
+@@ -1544,21 +1636,86 @@
+     }
+ }
+ 
++void LIVMapper::checkBufferCapacity(const char *queue, size_t count, size_t limit) {
++    if (limit && count >= limit) {
++        pending_pair.retire(PendingLivoPair::Aborted);
++        throw std::runtime_error(std::string("sensor cache capacity: ") + queue +
++            " count=" + std::to_string(count) + " limit=" + std::to_string(limit) +
++            "; refusing new sample, new owned run required");
++    }
++}
++
++bool LIVMapper::pendingImageMatches() const {
++    return !img_buffer.empty() && !img_buffer.front().empty() &&
++        img_buffer.size() == img_time_buffer.size() &&
++        img_time_buffer.front() == pending_pair.image_time &&
++        img_time_buffer.front() + exposure_time_init == pending_pair.target_time &&
++        img_buffer.front().data == pending_pair.image_data &&
++        pending_pair.source_stamp_valid &&
++        img_source_stamp_buffer.size() == img_time_buffer.size() &&
++        img_source_stamp_buffer.front() == pending_pair.source_stamp_ns;
++}
++
++void LIVMapper::retirePendingPair(PendingLivoPair::Outcome outcome, bool consume_image) {
++    if (consume_image && pendingImageMatches()) {
++        if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
++        img_buffer.pop_front();
++        img_time_buffer.pop_front();
++    }
++    pending_pair.retire(outcome);
++    LidarMeasures.measures.clear();
++    LidarMeasures.lio_vio_flg = WAIT;
++    lidar_pushed = false;
++    // Current LIO publication and point/variance lists must never resurrect a
++    // skipped pair. The next scan slice remains owned by pcl_proc_next.
++    if (pcl_w_wait_pub) pcl_w_wait_pub->clear();
++}
++
+ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
++    PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
++    fastlivo_sync::Attempt sync_observation(*this, meas);
+     // BOUNDARY_TIMING_BEGIN sync_packages
+     fastlivo_timing::Scope timing_sync_packages(13);
+     // BOUNDARY_TIMING_END sync_packages
+     // fprintf(stderr, "[ sync ] enter, lid=%d img=%d imu=%d mode=%d\n",
+     //  (int)!lid_raw_data_buffer.empty(), (int)!img_buffer.empty(), (int)!imu_buffer.empty(), (int)slam_mode_); fflush(stderr);
+-    if (lid_raw_data_buffer.empty() && lidar_en)
+-        return false;
++    if (same_pair_vio_handoff && slam_mode_ == LIVO && pending_pair.active()) {
++        if (meas.lio_vio_flg == LIO) {
++            if (!pendingImageMatches()) {
++                retirePendingPair(PendingLivoPair::IdentityChanged, false);
++                return sync_observation.result(fastlivo_sync::PairIdentityChanged, false);
++            }
++            if (pending_pair.phase == PendingLivoPair::Skip) {
++                retirePendingPair(pending_pair.outcome, true);
++                return sync_observation.result(fastlivo_sync::PairSkipped, false);
++            }
++            if (pending_pair.phase != PendingLivoPair::LioReady)
++                return sync_observation.result(fastlivo_sync::PairLioUnfinished, false);
++            if (meas.last_lio_update_time != pending_pair.target_time || p_imu->imu_need_init) {
++                retirePendingPair(PendingLivoPair::InvalidOutput, true);
++                return sync_observation.result(fastlivo_sync::PairSkipped, false);
++            }
++            // Existing LIO->VIO branch below consumes only this image. All point
++            // and IMU coverage was already checked before selecting this LIO.
++        } else {
++            // Do not select another LIO while VIO still owns state/map pointers.
++            return sync_observation.result(fastlivo_sync::PairVioUnfinished, false);
++        }
++    } else if (same_pair_vio_handoff && slam_mode_ == LIVO && meas.lio_vio_flg == LIO) {
++        // A stage flag alone must never revive an absent/retired pair.
++        return sync_observation.result(fastlivo_sync::PairLioUnfinished, false);
++    }
++    const bool ready_pair = same_pair_vio_handoff && slam_mode_ == LIVO &&
++        pending_pair.phase == PendingLivoPair::LioReady;
++    if (!ready_pair && lid_raw_data_buffer.empty() && lidar_en)
++        return sync_observation.result(fastlivo_sync::RawEmpty, false);
+     if (img_buffer.empty() &&
+         img_en) { /* fprintf(stderr, "[ sync ] no img, return false\n"); fflush(stderr); */
+-        return false;
+-    }
+-    if (imu_buffer.empty() &&
++        return sync_observation.result(fastlivo_sync::ImageEmpty, false);
++    }
++    if (!ready_pair && imu_buffer.empty() &&
+         imu_en) { /* fprintf(stderr, "[ sync ] no imu, return false\n"); fflush(stderr); */
+-        return false;
++        return sync_observation.result(fastlivo_sync::ImuEmpty, false);
+     }
+ 
+     switch (slam_mode_) {
+@@ -1572,7 +1729,7 @@
+             {
+                 std::lock_guard<std::mutex> lock(mtx_buffer);
+                 if (lid_raw_data_buffer.empty())
+-                    return false;
++                    return sync_observation.result(fastlivo_sync::SparseDrainEmpty, false);
+                 const auto &cloud = lid_raw_data_buffer.front().cloud;
+                 if (cloud && cloud->points.size() > 1)
+                     break;
+@@ -1619,7 +1776,7 @@
+             // larger than _lidar_frame_end_time,
+             // make sure complete propagate.
+             // ROS_ERROR("out sync");
+-            return false;
++            return sync_observation.result(fastlivo_sync::WaitScanImu, false);
+         }
+ 
+         struct MeasureGroup m{}; // unused VIO fields are deterministic in LIO diagnostics.
+@@ -1642,7 +1799,7 @@
+         meas.measures.push_back(m);
+         // ROS_INFO("ONlY HAS LiDAR and IMU, NO IMAGE!");
+         lidar_pushed = false; // sync one whole lidar scan.
+-        return true;
++        return sync_observation.result(fastlivo_sync::OnlyLioSelected, true);
+ 
+         break;
+     }
+@@ -1657,6 +1814,10 @@
+         // double img_capture_time = meas.lidar_frame_beg_time + exposure_time_init;
+         case WAIT:
+         case VIO: {
++            if (same_pair_vio_handoff &&
++                (img_source_stamp_buffer.size() != img_time_buffer.size() ||
++                 img_buffer.size() != img_time_buffer.size()))
++                throw std::runtime_error("LIVO source image stamp queue identity mismatch");
+             const bool instantaneous_lidar = p_pre->lidar_type == 0;
+             // Conversion through double seconds can round an exact ROS stamp by
+             // two nanoseconds. This tolerance applies only to instantaneous frames.
+@@ -1683,7 +1844,7 @@
+                         (void *)last_pcl.get(), last_pcl ? last_pcl->points.size() : 0UL,
+                         lid_raw_data_buffer.size());
+                 fflush(stderr);
+-                return false;
++                return sync_observation.result(fastlivo_sync::RawTailEmpty, false);
+             }
+             double lid_newest_time =
+                 lid_header_time_buffer.back() + last_pcl->points.back().curvature / double(1000);
+@@ -1693,20 +1854,21 @@
+             if (img_capture_time < meas.last_lio_update_time + 0.00001) {
+                 img_buffer.pop_front();
+                 img_time_buffer.pop_front();
++                if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
+                 RCLCPP_ERROR(this->node->get_logger(), "[ Data Cut ] Throw one image frame! \n");
+-                return false;
++                return sync_observation.result(fastlivo_sync::OldImageDropped, false);
+             }
+ 
+             if (img_capture_time > lid_newest_time + instantaneous_time_tolerance) {
+                 // fprintf(stderr, "[ sync ] img too new (LiDAR), return false\n"); fflush(stderr);
+-                return false;
++                return sync_observation.result(fastlivo_sync::WaitPointCoverage, false);
+             }
+             // Relaxed IMU check for simulation: IMU may lag behind LiDAR/Camera
+             // in Gazebo due to physics vs rendering clock differences.
+             // IMU data will be accumulated as available in processImu.
+             if (imu_newest_time <
+                 (require_complete_imu ? img_capture_time : meas.last_lio_update_time + 0.01)) {
+-                return false;
++                return sync_observation.result(fastlivo_sync::WaitImageImu, false);
+             }
+ 
+             // fprintf(stderr, "[ sync ] creating MeasureGroup...\n"); fflush(stderr);
+@@ -1800,6 +1962,10 @@
+                             meas.pcl_proc_next->size());
+             }
+ 
++            pending_pair.begin(img_time_buffer.front(), img_capture_time, img_buffer.front().data,
++                img_source_stamp_buffer.empty() ? 0 : img_source_stamp_buffer.front(),
++                img_source_stamp_buffer.size() == img_time_buffer.size());
++            if (same_pair_vio_handoff) meas.measures.clear();
+             meas.measures.push_back(m);
+             meas.lio_vio_flg = LIO;
+             if (p_pre->lidar_type == OUST64)
+@@ -1812,43 +1978,35 @@
+             // printf("[ Data Cut ] pcl_proc_cur number: %d \n", meas.pcl_proc_cur
+             // ->points.size()); printf("[ Data Cut ] LIO process time: %lf \n",
+             // omp_get_wtime() - t0);
+-            return true;
++            return sync_observation.result(fastlivo_sync::LivoLioSelected, true);
+         }
+ 
+         case LIO: {
+-            double img_capture_time = img_time_buffer.front() + exposure_time_init;
+-            meas.lio_vio_flg = VIO;
+-            // printf("[ Data Cut ] VIO \n");
+-            meas.measures.clear();
+-            double imu_time = stamp2Sec(imu_buffer.front()->header.stamp);
+-
++            // No new raw cloud or IMU is read here. Preserve the original
++            // zero-duration VIO Process2 and posterior-to-prior handoff.
+             struct MeasureGroup m;
+-            m.vio_time = img_capture_time;
++            m.vio_time = same_pair_vio_handoff ? pending_pair.target_time
++                                               : img_time_buffer.front() + exposure_time_init;
+             m.lio_time = meas.last_lio_update_time;
+             m.img = img_buffer.front();
+-            mtx_buffer.lock();
+-            // while ((!imu_buffer.empty() && (imu_time < img_capture_time)))
+-            // {
+-            //   imu_time = stamp2Sec(imu_buffer.front()->header.stamp);
+-            //   if (imu_time > img_capture_time) break;
+-            //   m.imu.push_back(imu_buffer.front());
+-            //   imu_buffer.pop_front();
+-            //   printf("[ Data Cut ] imu time: %lf \n",
+-            //   stamp2Sec(imu_buffer.front()->header.stamp));
+-            // }
+-            img_buffer.pop_front();
+-            img_time_buffer.pop_front();
+-            mtx_buffer.unlock();
++            {
++                std::lock_guard<std::mutex> lock(mtx_buffer);
++                img_buffer.pop_front();
++                img_time_buffer.pop_front();
++                if (!img_source_stamp_buffer.empty()) img_source_stamp_buffer.pop_front();
++            }
++            meas.measures.clear();
++            meas.measures.push_back(m);
++            meas.lio_vio_flg = VIO;
++            pending_pair.phase = PendingLivoPair::VioSelected;
++            lidar_pushed = false;
+             sig_buffer.notify_all();
+-            meas.measures.push_back(m);
+-            lidar_pushed = false; // after VIO update, the _lidar_frame_end_time will be refresh.
+-            // printf("[ Data Cut ] VIO process time: %lf \n", omp_get_wtime() - t0);
+-            return true;
++            return sync_observation.result(fastlivo_sync::LivoVioSelected, true);
+         }
+ 
+         default: {
+             // printf("!! WRONG EKF STATE !!");
+-            return false;
++            return sync_observation.result(fastlivo_sync::InvalidStage, false);
+         }
+             // return false;
+         }
+@@ -1859,7 +2017,7 @@
+         if (!lidar_pushed) {
+             // If not in lidar scan, need to generate new meas
+             if (lid_raw_data_buffer.empty())
+-                return false;
++                return sync_observation.result(fastlivo_sync::OnlyLoEmpty, false);
+             meas.lidar = lid_raw_data_buffer.front().cloud; // push the first lidar topic
+             meas.lidar_frame_beg_time = lid_header_time_buffer.front(); // generate lidar_beg_time
+             meas.lidar_frame_end_time =
+@@ -1877,13 +2035,13 @@
+         lidar_pushed = false;  // sync one whole lidar scan.
+         meas.lio_vio_flg = LO; // process lidar topic, so timestamp should be lidar scan end.
+         meas.measures.push_back(m);
+-        return true;
++        return sync_observation.result(fastlivo_sync::OnlyLoSelected, true);
+         break;
+     }
+ 
+     default: {
+         printf("!! WRONG SLAM TYPE !!");
+-        return false;
++        return sync_observation.result(fastlivo_sync::InvalidMode, false);
+     }
+     }
+     RCLCPP_ERROR(this->node->get_logger(), "out sync");
+@@ -2604,6 +2762,7 @@
+     }
+ }
+ void LIVMapper::stop_ingress(bool normal) {
++    pending_pair.retire(PendingLivoPair::Aborted);
+     if (!ingress_started || ingress_stopped)
+         return;
+     ingress_stopped = true;
+diff --git a/tests/native/dynanav_lio/CMakeLists.txt b/tests/native/dynanav_lio/CMakeLists.txt
+--- a/tests/native/dynanav_lio/CMakeLists.txt
++++ b/tests/native/dynanav_lio/CMakeLists.txt
+@@ -35,3 +35,19 @@
+ target_link_libraries(test_dynanav_ouster fast_livo2_core::fast_livo2_core)
+ add_test(NAME dynanav_ouster_native COMMAND test_dynanav_ouster)
+ set_tests_properties(dynanav_ouster_native PROPERTIES TIMEOUT 30)
++
++add_executable(test_dynanav_sync_observation test_sync_observation.cpp)
++target_include_directories(test_dynanav_sync_observation PRIVATE "${native_prefix}/include")
++target_compile_definitions(test_dynanav_sync_observation PRIVATE X86_ARCH ROOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/")
++ament_target_dependencies(test_dynanav_sync_observation rclcpp fast_livo2_core image_transport)
++target_link_libraries(test_dynanav_sync_observation fast_livo2_core::fast_livo2_core)
++add_test(NAME dynanav_sync_observation_native COMMAND test_dynanav_sync_observation)
++set_tests_properties(dynanav_sync_observation_native PROPERTIES TIMEOUT 30)
++
++add_executable(test_dynanav_same_pair test_same_pair_handoff.cpp)
++target_include_directories(test_dynanav_same_pair PRIVATE "${native_prefix}/include")
++target_compile_definitions(test_dynanav_same_pair PRIVATE X86_ARCH ROOT_DIR="${CMAKE_CURRENT_BINARY_DIR}/")
++ament_target_dependencies(test_dynanav_same_pair rclcpp fast_livo2_core image_transport)
++target_link_libraries(test_dynanav_same_pair fast_livo2_core::fast_livo2_core)
++add_test(NAME dynanav_same_pair_native COMMAND test_dynanav_same_pair)
++set_tests_properties(dynanav_same_pair_native PROPERTIES TIMEOUT 60)
+diff --git a/tests/native/dynanav_lio/README.md b/tests/native/dynanav_lio/README.md
+--- a/tests/native/dynanav_lio/README.md
++++ b/tests/native/dynanav_lio/README.md
+@@ -103,3 +103,16 @@
+ - 本目录只证明 fixture 契约，不证明真实 sensor SLAM 的漂移、动态过滤或整条路线；`2/2` 通过也不是 `--check` 的替代。
+ - 需要本机构建产物与 ROS Jazzy；未构建 core 时测试无法编译，不能把“跑不了”当成通过。
+ - 本轮文档任务未重新执行 CTest；上述 2/2、0.51 s 来自原 README 记录的外部 `test-result.txt`，本轮未复核该文件当前内容。
++
++## 2026-11-10 同时间 pair 阶段交接
++
++独立构建 `build_cache/dynanav_same_pair_20261110T171010Z/install/ros` 的 **5/5 CTest 通过，1.29 s**。原三个 fixture 保留；新增 observation fixture 和 `test_same_pair_handoff.cpp`。后者直接执行真实 `Process2/handleLIO/handleVIO`，验证：
++
++- 初始化最后一次返回即使清除了 `imu_need_init` 也必须 skip；故意放入旧 deskew/发布点不能恢复旧 pair。正常 LIO 完成后 raw/IMU 新队列同时为空，同目标 VIO 仍可选择。
++- 仅 selected flag 或仅 IMU 处理完成不够；错图像时间、错原 stamp 1 ns、换图对象、缺原 stamp、空点、停止/异常不允许 VIO。每 pair 一次消费/skip，VIO 未结束不选择下一 LIO。
++- VIO 的零时长 Process2 后 state/cov 与 LIO posterior 逐元素相等，state_propagat 等于该 posterior；last IMU 样本及传播终点、当前/下一切片和原点时间不变。未跳过整段 VIO IMU 准备。
++- 同 binary `common.same_pair_vio_handoff=false/true` 的正常结果 state/cov/prior 逐元素相同；false 保留旧初始化、raw 空和 IMU 空门。默认配置/ONLY_LIO 原测试仍通过。
++- 小容量 image/primary-IMU/prop-IMU 测试恰在界限拒绝新增样本，不丢旧数据、不部分更新 timestamp、mutex 不泄漏；缺省三个限制仍为0。生产RTX配置明确32/8192/8192。
++- observation fixture 仍验证前段 point coverage 与 IMU 端点不足时等待且不消费。两个新增 fixture 的观测 OFF/ON 签名相同，ON 连续记录分别 7/91 行，OFF 不创建文件。
++
++记录：build root 的 `test-result.txt`、`artifact/observation-result.json`、`artifact/*-on.jsonl`、`source-manifest.json` 和 `build-identity.json`。补丁为 `0007-same-pair-vio-handoff.patch`，保留 `0006` 和旧 prefixes。合成 native fixtures 不证明 RTX 运动精度、真实延迟改善或完整导航闭环；本构建未运行 Isaac/GPU。详见 [实现与边界](../../../docs/experiments/dynanav-same-pair-handoff-20261110.md)。
+diff --git a/tests/native/dynanav_lio/test_same_pair_handoff.cpp b/tests/native/dynanav_lio/test_same_pair_handoff.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/native/dynanav_lio/test_same_pair_handoff.cpp
+@@ -0,0 +1,232 @@
++// Real mapper pipeline with synthetic messages. No Isaac, GPU, or external ROS run.
++#define main original_ouster_fixture_main
++#include "test_ouster_mode.cpp"
++#undef main
++#include <fast_livo2_core/core/sync_observation.h>
++
++namespace {
++void image(LIVMapper &mapper, double t) {
++    auto msg = std::make_shared<sensor_msgs::msg::Image>();
++    msg->header.stamp = rclcpp::Time(int64_t(std::llround(t * 1e9)));
++    msg->encoding = "bgr8"; msg->width = 320; msg->height = 240; msg->step = 960;
++    msg->data.resize(msg->height * msg->step, 96);
++    mapper.receive_image(msg);
++}
++void initial_pair(LIVMapper &mapper) {
++    auto &m = mapper.LidarMeasures;
++    mapper.receive_cloud(cloud(10., {0, 25000000, 50000000, 75000000, 100000000}));
++    image(mapper, 10.05);
++    for (int tick = 1000; tick <= 1005; ++tick) mapper.receive_imu(imu(tick / 100.));
++    require(mapper.sync_packages(m), "Initial pair not selected");
++    require(mapper.pending_pair.source_stamp_valid && mapper.pending_pair.source_stamp_ns == 10050000000ULL,
++            "Original image stamp not retained");
++    // Deliberately seed old output. The init return must never promote it.
++    PointType old{}; old.x = 5.; mapper.feats_undistort->push_back(old);
++    mapper.pcl_w_wait_pub->push_back(old);
++    mapper.handleFirstFrame(); mapper.processImu(); mapper.handleLIO();
++    require(!mapper.p_imu->imu_need_init && mapper.feats_undistort->empty(),
++            "Initialization completion reused an old deskew output");
++    require(mapper.pending_pair.phase == PendingLivoPair::Skip &&
++                mapper.pending_pair.outcome == PendingLivoPair::Initializing,
++            "Initialization pair falsely became LIO ready");
++    require(!mapper.sync_packages(m) && mapper.img_buffer.empty() && m.lio_vio_flg == WAIT,
++            "Initialization skip depended on next raw/IMU or retained its image");
++    require(mapper.pending_pair.retired == 1 && mapper.pending_pair.skipped == 1 &&
++                mapper.pcl_w_wait_pub->empty(), "Initialization skip not consumed exactly once");
++    require(!mapper.sync_packages(m) && mapper.pending_pair.retired == 1,
++            "Repeated sync consumed skipped pair twice");
++}
++void select_mature(LIVMapper &mapper, double start = 10.1) {
++    mapper.receive_cloud(cloud(start, {0, 25000000, 50000000, 75000000, 100000000}));
++    image(mapper, start + .05);
++    for (int i = 1; i <= 10; ++i) mapper.receive_imu(imu(start - .05 + i * .01));
++    require(mapper.sync_packages(mapper.LidarMeasures), "Mature LIO not selected");
++}
++void equal_state(const StatesGroup &a, const StatesGroup &b, const char *why) {
++    require((a.rot_end-b.rot_end).norm() == 0 && (a.pos_end-b.pos_end).norm() == 0 &&
++        (a.vel_end-b.vel_end).norm() == 0 && (a.bias_g-b.bias_g).norm() == 0 &&
++        (a.bias_a-b.bias_a).norm() == 0 && (a.gravity-b.gravity).norm() == 0 &&
++        (a.cov-b.cov).norm() == 0 && a.inv_expo_time == b.inv_expo_time, why);
++}
++void check_success() {
++    auto n = node("pair_success", {{"common.same_pair_vio_handoff", true}}, true); LIVMapper mapper(n, n->get_name());
++    image_transport::ImageTransport images(n); mapper.initializeSubscribersAndPublishers(n, images);
++    initial_pair(mapper); select_mature(mapper);
++    auto &m = mapper.LidarMeasures;
++    require(mapper.lid_raw_data_buffer.empty() && mapper.imu_buffer.empty(),
++            "Fixture did not exhaust new raw/IMU queues");
++    const auto input = *m.pcl_proc_cur;
++    const auto future = *m.pcl_proc_next;
++    require(!mapper.sync_packages(m), "Selected flag alone admitted VIO");
++    mapper.processImu();
++    require(!mapper.sync_packages(m), "IMU completion alone admitted VIO");
++    mapper.handleLIO();
++    require(mapper.pending_pair.phase == PendingLivoPair::LioReady,
++            "Normal finite LIO completion not marked ready");
++    const StatesGroup posterior = mapper._state;
++    const auto imu_tail = mapper.p_imu->last_imu_sample();
++    const auto target = mapper.p_imu->propagation_end_time();
++    const auto pub = *mapper.pcl_w_wait_pub;
++    const auto pv_size = mapper._pv_list.size();
++    const auto map_size = mapper.voxelmap_manager->voxel_map_.size();
++    require(mapper.sync_packages(m) && m.lio_vio_flg == VIO, "Same pair waited for unrelated new raw/IMU");
++    require(mapper.img_buffer.empty() && mapper.img_source_stamp_buffer.empty() &&
++            m.measures.size() == 1 && m.measures.back().imu.empty() &&
++            m.measures.back().lio_time == target && m.measures.back().vio_time == target,
++            "VIO handoff changed target or consumed extra IMU/image");
++    require(!mapper.sync_packages(m), "Next LIO admitted before VIO finished");
++    mapper.processImu();
++    equal_state(mapper._state, posterior, "Zero-duration VIO Process2 changed posterior/covariance");
++    equal_state(mapper.state_propagat, posterior, "VIO prior is not current LIO posterior");
++    require(mapper.p_imu->last_imu_sample() == imu_tail && mapper.p_imu->propagation_end_time() == target &&
++            m.last_lio_update_time == target && mapper.feats_undistort->empty(),
++            "VIO repeated integration/deskew or advanced IMU target");
++    require(mapper.pcl_w_wait_pub->size() == pub.size() && mapper._pv_list.size() == pv_size &&
++            mapper.voxelmap_manager->voxel_map_.size() == map_size &&
++            m.pcl_proc_cur->size() == input.size() && m.pcl_proc_next->size() == future.size(),
++            "VIO prepare damaged cached LIO output or next-slice ownership");
++    for (size_t i = 0; i < input.size(); ++i)
++        require((*m.pcl_proc_cur)[i].x == input[i].x && (*m.pcl_proc_cur)[i].curvature == input[i].curvature,
++                "VIO handoff changed source point geometry/timing");
++    mapper.handleVIO();
++    require(mapper.pending_pair.retired == 2 && mapper.pending_pair.skipped == 1 &&
++                mapper.pending_pair.outcome == PendingLivoPair::VioCompleted,
++            "Successful VIO did not retire its pair exactly once");
++    require(!mapper.sync_packages(m) && mapper.pending_pair.retired == 2,
++            "Retired same pair was consumed twice");
++    fastlivo_sync::flush(mapper);
++    std::cout << "EQUIVALENCE " << m.lio_vio_flg << ' ' << m.last_lio_update_time << ' '
++              << mapper.pending_pair.sequence << ' ' << mapper.pending_pair.retired << ' '
++              << mapper.pending_pair.skipped << ' ' << mapper._state.cov.trace() << ' '
++              << mapper._pv_list.size() << ' ' << m.pcl_proc_next->size() << '\n';
++    std::cout << "PASS real LIO completion, empty new queues, same-time VIO, unchanged prior/cov/IMU/point ownership\n";
++}
++void check_rejection() {
++    for (int mode = 0; mode < 7; ++mode) {
++        auto n = node("pair_reject_" + std::to_string(mode), {{"common.same_pair_vio_handoff", true}}, true);
++        LIVMapper mapper(n, n->get_name()); image_transport::ImageTransport images(n);
++        mapper.initializeSubscribersAndPublishers(n, images); initial_pair(mapper); select_mature(mapper);
++        auto &m = mapper.LidarMeasures;
++        if (mode == 0) {
++            // Empty current slice, with deliberately retained previous output.
++            m.pcl_proc_cur->clear();
++            mapper.processImu(); mapper.handleLIO();
++            require(mapper.pending_pair.phase == PendingLivoPair::Skip, "Empty LIO became ready");
++        } else {
++            mapper.processImu(); mapper.handleLIO();
++            require(mapper.pending_pair.phase == PendingLivoPair::LioReady, "Rejection fixture not ready");
++            if (mode == 1) mapper.img_time_buffer.front() += .01;
++            if (mode == 2) mapper.img_source_stamp_buffer.front() += 1;
++            if (mode == 3) {
++                cv::Mat replacement(240, 320, CV_8UC3, cv::Scalar(0));
++                require(replacement.data != mapper.img_buffer.front().data, "Replacement fixture reused image storage");
++                mapper.img_buffer.front() = replacement;
++            }
++            if (mode == 6) mapper.img_source_stamp_buffer.clear();
++            if (mode == 4) mapper.stop_ingress(false);
++            if (mode == 5) {
++                bool failed = false;
++                try { mapper.handleLIO(); } catch (const std::logic_error &) { failed = true; }
++                require(failed && mapper.pending_pair.outcome == PendingLivoPair::Aborted,
++                        "Exception left a reusable pair token");
++            }
++        }
++        require(!mapper.sync_packages(m), "Invalid/skipped/stopped pair admitted VIO");
++        require(mapper.pending_pair.retired == 2 && mapper.pending_pair.skipped == 2,
++                "Invalid pair did not retire once");
++        require(!mapper.sync_packages(m) && mapper.pending_pair.retired == 2,
++                "Invalid pair retired more than once");
++    }
++    std::cout << "PASS empty/mismatched image time/source stamp/object, stop, and exception pair rejection\n";
++}
++StatesGroup run_toggle(bool enabled) {
++    auto n = node(enabled ? "pair_flag_on" : "pair_flag_off",
++                  {{"common.same_pair_vio_handoff", enabled}}, true);
++    LIVMapper mapper(n, n->get_name()); image_transport::ImageTransport images(n);
++    mapper.initializeSubscribersAndPublishers(n, images);
++    auto &m = mapper.LidarMeasures;
++    if (enabled) { initial_pair(mapper); select_mature(mapper); }
++    else {
++        mapper.receive_cloud(cloud(10., {0, 25000000, 50000000, 75000000, 100000000}));
++        image(mapper, 10.05);
++        for (int tick = 1000; tick <= 1005; ++tick) mapper.receive_imu(imu(tick / 100.));
++        require(mapper.sync_packages(m), "Legacy initial LIO not selected");
++        mapper.handleFirstFrame(); mapper.processImu(); mapper.handleLIO();
++        require(!mapper.sync_packages(m) && m.lio_vio_flg == LIO && mapper.img_buffer.size() == 1,
++                "Disabled handoff changed legacy initialization raw gate/skip timing");
++        mapper.receive_cloud(cloud(10.1, {0, 25000000, 50000000, 75000000, 100000000}));
++        require(!mapper.sync_packages(m), "Disabled handoff bypassed legacy empty IMU gate");
++        mapper.receive_imu(imu(10.06));
++        require(mapper.sync_packages(m) && m.lio_vio_flg == VIO, "Legacy initialization VIO not selected");
++        mapper.processImu(); mapper.handleVIO();
++        image(mapper, 10.15);
++        for (int tick = 1007; tick <= 1015; ++tick) mapper.receive_imu(imu(tick / 100.));
++        require(mapper.sync_packages(m), "Legacy mature LIO not selected");
++    }
++    mapper.processImu(); mapper.handleLIO();
++    const auto posterior = mapper._state;
++    const auto target = mapper.p_imu->propagation_end_time();
++    if (!enabled) {
++        require(!mapper.sync_packages(m) && mapper.img_buffer.size() == 1,
++                "Disabled handoff bypassed legacy successful LIO raw gate");
++        mapper.receive_cloud(cloud(10.2, {0, 100000000}));
++        require(!mapper.sync_packages(m), "Disabled handoff bypassed legacy successful LIO IMU gate");
++        mapper.receive_imu(imu(10.16));
++    }
++    require(mapper.sync_packages(m) && m.lio_vio_flg == VIO, "Toggle VIO not selected");
++    mapper.processImu();
++    equal_state(mapper._state, posterior, "Toggle changed zero-duration VIO propagation");
++    equal_state(mapper.state_propagat, posterior, "Toggle changed VIO posterior-to-prior handoff");
++    require(mapper.p_imu->propagation_end_time() == target, "Toggle changed propagation target");
++    mapper.handleVIO();
++    return mapper._state;
++}
++void check_toggle() {
++    const auto baseline = run_toggle(false), fixed = run_toggle(true);
++    // Different arrival schedules have the same physical sensor measurements.
++    // Floating subtraction paths in the synthetic IMU generator are avoided.
++    equal_state(baseline, fixed, "Flag on/off changed same-pair state/covariance");
++    std::cout << "PASS same binary flag OFF legacy gates/init timing and ON identical state/cov/prior\n";
++}
++
++void check_capacity() {
++    for (int mode = 0; mode < 3; ++mode) {
++        Parameters p{{"common.max_buffered_images", 2}, {"common.max_buffered_imu", 2},
++                     {"common.max_buffered_prop_imu", 2}, {"uav.imu_rate_odom", mode == 2}};
++        auto n = node("pair_capacity_" + std::to_string(mode), p, true);
++        LIVMapper mapper(n, n->get_name());
++        mapper.receive_cloud(cloud(20., {0, 100000000}));
++        if (mode == 0) { image(mapper, 20.01); image(mapper, 20.04); }
++        else {
++            if (mode == 2) mapper.p_imu->imu_need_init = false;
++            mapper.receive_imu(imu(20.01)); mapper.receive_imu(imu(20.02));
++            if (mode == 2) mapper.imu_buffer.clear();
++        }
++        const auto images = mapper.img_buffer.size(), times = mapper.img_time_buffer.size();
++        const auto sources = mapper.img_source_stamp_buffer.size(), imus = mapper.imu_buffer.size();
++        const auto props = mapper.prop_imu_buffer.size();
++        const auto last_img = mapper.last_timestamp_img, last_imu = mapper.last_timestamp_imu;
++        bool rejected = false;
++        try { if (mode == 0) image(mapper, 20.08); else mapper.receive_imu(imu(20.03)); }
++        catch (const std::runtime_error &e) {
++            const std::string expected = mode == 0 ? "img_buffer" : mode == 1 ? "imu_buffer" : "prop_imu_buffer";
++            rejected = std::string(e.what()).find("sensor cache capacity: " + expected) != std::string::npos;
++        }
++        require(rejected && mapper.img_buffer.size() == images && mapper.img_time_buffer.size() == times &&
++            mapper.img_source_stamp_buffer.size() == sources && mapper.imu_buffer.size() == imus &&
++            mapper.prop_imu_buffer.size() == props && mapper.last_timestamp_img == last_img &&
++            mapper.last_timestamp_imu == last_imu, "Cache overflow silently evicted or partly committed input");
++        require(mapper.mtx_buffer.try_lock(), "Cache overflow leaked sensor mutex"); mapper.mtx_buffer.unlock();
++    }
++    auto n = node("pair_capacity_default"); LIVMapper mapper(n, n->get_name());
++    require(!mapper.max_buffered_images && !mapper.max_buffered_imu && !mapper.max_buffered_prop_imu,
++            "Explicit cache guard changed legacy defaults");
++    std::cout << "PASS explicit image/IMU/prop-IMU hard caps, no eviction/partial commit, legacy defaults\n";
++}
++
++}
++int main(int argc, char **argv) {
++    rclcpp::init(argc, argv);
++    try { check_success(); check_rejection(); check_toggle(); check_capacity(); rclcpp::shutdown(); return 0; }
++    catch (const std::exception &e) { std::cerr << "FAIL " << e.what() << '\n'; rclcpp::shutdown(); return 1; }
++}
+diff --git a/tests/native/dynanav_lio/test_sync_observation.cpp b/tests/native/dynanav_lio/test_sync_observation.cpp
+new file mode 100644
+--- /dev/null
++++ b/tests/native/dynanav_lio/test_sync_observation.cpp
+@@ -0,0 +1,57 @@
++// Reuse the original native synthetic input helpers without altering its three tests.
++#define main original_ouster_fixture_main
++#include "test_ouster_mode.cpp"
++#undef main
++#include <fast_livo2_core/core/sync_observation.h>
++int main(int argc, char **argv) {
++    rclcpp::init(argc, argv);
++    try {
++        auto n = node("sync_observation_boundary", {{"common.same_pair_vio_handoff", true}}, true);
++        LIVMapper mapper(n, n->get_name());
++        image_transport::ImageTransport images(n);
++        mapper.initializeSubscribersAndPublishers(n, images);
++        auto &m = mapper.LidarMeasures;
++        require(!mapper.sync_packages(m), "Empty raw gate changed");
++        mapper.receive_cloud(cloud(10., {100000000, 0, 50000000, 25000000, 75000000}));
++        require(!mapper.sync_packages(m), "Empty image gate changed");
++        m.last_lio_update_time = 10.;
++        mapper.img_buffer.push_back(cv::Mat::zeros(240, 320, CV_8UC1));
++        mapper.img_time_buffer.push_back(10.05);
++        mapper.img_source_stamp_buffer.push_back(10050000000ULL);
++        require(!mapper.sync_packages(m), "Empty IMU gate changed");
++        for (double t : {10.01, 10.02, 10.04}) mapper.receive_imu(imu(t));
++        require(!mapper.sync_packages(m), "Incomplete IMU was accepted");
++        require(mapper.lid_raw_data_buffer.size() == 1 && mapper.imu_buffer.size() == 3,
++                "Incomplete sync consumed input evidence");
++        mapper.receive_imu(imu(10.05)); mapper.receive_imu(imu(10.06));
++        require(mapper.sync_packages(m), "Complete pair selection changed");
++        require(m.lio_vio_flg == LIO && m.pcl_proc_cur->size() == 2 && m.pcl_proc_next->size() == 3,
++                "Point slicing changed");
++        mapper.handleFirstFrame(); mapper.processImu(); mapper.handleLIO();
++        require(std::abs(m.last_lio_update_time - 10.05) < 1e-9, "Initialization origin changed");
++        require(!mapper.sync_packages(m), "Initializing LIO was admitted to VIO");
++        require(m.lio_vio_flg == WAIT && mapper.img_buffer.empty() &&
++                    mapper.pending_pair.retired == 1 && mapper.pending_pair.skipped == 1,
++                "Initialization did not retire its own pair exactly once");
++        mapper.receive_cloud(cloud(10.1, {0, 10000000}));
++        mapper.img_buffer.push_back(cv::Mat::zeros(240, 320, CV_8UC1));
++        mapper.img_time_buffer.push_back(10.15);
++        mapper.img_source_stamp_buffer.push_back(10150000000ULL);
++        require(!mapper.sync_packages(m), "True point-coverage gate was bypassed");
++        mapper.receive_cloud(cloud(10.14, {0, 100000000}));
++        require(!mapper.sync_packages(m), "Full image IMU coverage gate was bypassed");
++        mapper.receive_imu(imu(10.16));
++        require(mapper.sync_packages(m) && m.lio_vio_flg == LIO,
++                "Complete second image pair changed");
++        fastlivo_sync::flush(mapper);
++        std::cout << "EQUIVALENCE " << m.lio_vio_flg << ' ' << m.last_lio_update_time << ' '
++                  << m.pcl_proc_cur->size() << ' ' << m.pcl_proc_next->size() << ' '
++                  << mapper.lid_raw_data_buffer.size() << ' ' << mapper.img_buffer.size() << ' '
++                  << mapper.imu_buffer.size() << ' ' << mapper.p_imu->imu_need_init << '\n';
++        std::cout << "PASS first-stage raw/image/IMU gates, true coverage, initialization skip, and point ownership\n";
++        rclcpp::shutdown(); return 0;
++    } catch (const std::exception &e) {
++        std::cerr << "FAIL " << e.what() << '\n';
++        rclcpp::shutdown(); return 1;
++    }
++}
+diff --git a/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml b/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml
+--- a/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml
++++ b/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml
+@@ -9,6 +9,12 @@
+     common:
+       allow_ouster_lidar: true
+       require_complete_imu: true
++      same_pair_vio_handoff: true
++      # Conservative count hard limits, not freshness/latency targets. Overflow
++      # fails the owned run rather than dropping unconsumed sensor evidence.
++      max_buffered_images: 32
++      max_buffered_imu: 8192
++      max_buffered_prop_imu: 8192
+     preprocess:
+       lidar_type: 3
+       scan_line: 32
+diff --git a/docs/experiments/dynanav-same-pair-handoff-20261110.md b/docs/experiments/dynanav-same-pair-handoff-20261110.md
+new file mode 100644
+--- /dev/null
++++ b/docs/experiments/dynanav-same-pair-handoff-20261110.md
+@@ -0,0 +1,42 @@
++# FAST-LIVO2 同时间 pair 的阶段化交接
++
++日期：2026-11-10 UTC。仓库已有 RTX/Ouster 和探索改动保留，无 commit/push。
++
++## 动机与限定
++
++旧 serial_observed 轨迹存在当前 LIO 已正常完成、图像仍为相同目标时间、raw 新队列为空时，入口 RawEmpty 门阻止 VIO 的实证。修复只解除已经完成的同 pair 对无关未来 raw/IMU 的依赖。新 LIO 的点时间覆盖和 IMU 端点检查没有放宽。`require_complete_imu` 不是内部缺口检测器：成熟 IMU 前跳仍沿用原 WARN/接纳策略，本轮没有改写积分缺口策略。
++
++## 实现
++
++- `common.same_pair_vio_handoff=false` 默认保留原时序；RTX YAML 明确 true。同一最终 binary 可只覆盖此参数作 false/true 对照。
++- `PendingLivoPair` 是 owner 单写状态，不依赖可选观测。选择时保存原始图像 header 整数 ns、校准队首时间、目标 t、图像 data 身份及 sequence。原整数 stamp 直接取自 callback 的 header，不从 double 反推。
++- 已选择不代表成功。Process2 开始时仍初始化的 pair，即使本次刚完成初始化，也不成为 ready。初始化可能不重写输出，因此仅在新路径清除旧输出，禁止旧点云充数。空点/空降采样也不能进入 ready。
++- 正常 LIO handler 到尾部，拥有当前发布点、有限 state/cov，且传播目标等于该 pair，才设 LioReady。不要求残差数大于零，正常建图/启动完成也可交接；这不是导航 readiness 或精度认证。
++- ready pair 必须精确匹配 source stamp/校准队首时间/目标/图像身份，方可绕过 raw/IMU 新队列门。图像只消费一次。VIO 继续调用原 Process2，零次新 IMU 积分，不重复 deskew，并保留 LIO posterior→state_propagat 的先验关系。
++- skip 只退役自己的图像；身份变化不偷取另一图像。异常/停止使 token 失效。VIO 未执行完不开始下一个 LIO；不并行改共享状态/地图。原 `pcl_proc_next` 所有权保留。
++
++## 缓存硬界与观测
++
++显式参数 `common.max_buffered_images/max_buffered_imu/max_buffered_prop_imu` 默认 0，保留旧配置；RTX YAML 为32/8192/8192。界限前拒绝新样本并报出队列名、计数/上限，终止当前 owned run，不静默删除未消费数据或替换时间戳。源端4帧、native raw8帧不变。这是保守资源界限，不是降低延迟的办法，也不放宽 freshness。
++
++旧串行观察样本的 raw/image/primary-IMU 计数峰值为3/3/64；初始化期间2/2/64。旧 probe 没有 prop-IMU 大小，不能声称已验证其正常峰值。8192高于该30 s实验全部6000条IMU，是初始保守硬界，需实跑新观测后收紧，而不是以初始化4.2s臆测缓存需要。
++
++默认关闭的 `sync_observation.h` 沿用 v1 schema 和 reason0..15，新增16 IdentityChanged、17 PairSkipped、18 LioUnfinished、19 VioUnfinished。pending_pair 含 enabled、sequence、phase、outcome、source_stamp_ns/valid、image_time/target_time、retired/skipped；phase0..7和outcome0..7见源码枚举。`pair_retired` 区分正常VIO完成与skip。View 新增 cache_counts（primary IMU/image/prop IMU）、cache_endpoints（各 oldest/newest）、cache_valid；这是实际 O(1) 队列首尾读取，缺失用valid区分，不按采样率猜跨度。
++
++## 构建与 native 验证
++
++BUILD_ROOT：`/media/hyh001/新加卷/6.project_data/embodied-navigation/build_cache/dynanav_same_pair_20261110T171010Z`
++
++- `install/ros/lib/libfast_livo2_core.so` SHA256：`667241240081236481f7d04f756aae148fda79962af96f4fba68ff3827f75f6b`
++- `install/ros/lib/fast_livo2_ros/fastlivo_mapping` SHA256：`0f47955abaee9d2666be294c42853f343ee87e6af63eadd1895456aaa0d4ec79`
++- 使用独立 source/build/install，`--parallel 2`。原 Ouster/observation prefixes 和 source/hash 保留。
++- CTest：5/5通过，1.29s。包括原 LIO、post-VIO、Ouster；新增 observation 与 same-pair。
++- 真正调用正常 LIO→VIO 的 fixture 中，新 raw/IMU 队列均空仍能交接。VIO零时长准备后 state/cov 与前一 LIO posterior 逐元素一致，先验/last IMU/传播目标/点时间与slice所有权不变。
++- 初始化、空点、未完成、不同 stamp/目标/图像、缺 stamp、停止/异常、重复消费、前段 point/IMU端点不足和三个缓存界限覆盖通过。
++- 同 binary feature OFF 保留旧门/初始化时序，feature ON 正常结果 state/cov/prior逐元素相同。两个新增fixture的 observation OFF/ON 签名相同；OFF不写文件，ON分别7/91行且row序列连续。
++
++可核文件：`test-result.txt`、`build/test/Testing/Temporary/LastTest.log`、`artifact/observation-result.json`、`artifact/*-on.jsonl`、`source-manifest.json`、`build-identity.json`。启动日志 `[PAIR_HANDOFF] enabled=... cache_caps image=... imu=... prop_imu=...` 可核实际配置。
++
++## 未验证范围
++
++没有启动 Isaac、GPU 或真实传感 ROS 实跑。合成 fixture 不证明真实延迟下降、RTX运动定位精度、视觉前端质量、漂移或完整导航闭环。实际控制/新鲜度阈值没有修改；后续必须用同一新binary、同caps/Writer、相同物理传感输入做 feature OFF/ON短运动对照，不能把 native通过当成实跑验收。

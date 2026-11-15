@@ -1,0 +1,432 @@
+--- a/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
++++ b/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
+@@ -51,6 +51,7 @@
+ find_package(geometry_msgs REQUIRED)
+ find_package(nav_msgs REQUIRED)
+ find_package(sensor_msgs REQUIRED)
++find_package(dynanav_sensor_msgs REQUIRED)
+ find_package(visualization_msgs REQUIRED)
+ find_package(pcl_ros REQUIRED)
+ find_package(pcl_conversions REQUIRED)
+@@ -121,6 +122,7 @@
+   geometry_msgs
+   nav_msgs
+   sensor_msgs
++  dynanav_sensor_msgs
+   visualization_msgs
+   cv_bridge
+   image_transport
+--- a/third_party/fast_livo2/fast_livo2_core/package.xml
++++ b/third_party/fast_livo2/fast_livo2_core/package.xml
+@@ -16,6 +16,7 @@
+   <depend>geometry_msgs</depend>
+   <depend>nav_msgs</depend>
+   <depend>sensor_msgs</depend>
++  <depend>dynanav_sensor_msgs</depend>
+   <depend>visualization_msgs</depend>
+   <depend>cv_bridge</depend>
+   <depend>image_transport</depend>
+--- a/third_party/fast_livo2/fast_livo2_core/README.md
++++ b/third_party/fast_livo2/fast_livo2_core/README.md
+@@ -40,3 +40,14 @@
+ `common.max_buffered_images/max_buffered_imu/max_buffered_prop_imu` 默认 0（旧配置不变），RTX 分别显式设 32/8192/8192。达到上限时在入队/时间戳更新前报错并结束当前运行，不删除未消费数据。它们是保守资源硬界，不是延迟或新鲜度目标；原源端 4 帧和 native raw 8 帧界限不变。启动 `[PAIR_HANDOFF]` 日志显示实际 flag 和三个上限。
+ 
+ `FASTLIVO_SYNC_OBSERVE=1` 配合现有 boundary 文件可记录阶段、消费/skip 和三个缓存的实际首尾时间/计数；默认关闭，观测值不驱动估计。实现/5 个 native fixtures 与限制见 [同 pair 验证](../../../../docs/experiments/dynanav-same-pair-handoff-20261110.md)。
++
++## Explicit RTX complete-scan coverage (default off)
++
++`common.complete_scan_watermark=true` requires the versioned atomic
++`dynanav_sensor_msgs/CompleteLidarScan` source, the fixed audited OS1 config,
++complete IMU, same-pair LIVO and original LiDAR timestamps. The default remains
++legacy PointCloud2. Certified mode never falls back to a later raw tail after a
++metadata/continuity failure. It preserves real pending points across an otherwise
++unnecessary future-scan wait; completion is not free-space evidence. See
++`docs/experiments/dynanav-complete-scan-watermark-20261111.md` for the exact
++15ms coordinate-frame phase, empty-packet lifecycle difference and replay limits.
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -104,6 +104,10 @@
+         throw std::runtime_error("Ouster requires common.require_complete_imu=true, "
+                                  "feature_extract_enabled=false, scan_line in [1,128], "
+                                  "and point_filter_num >= 1");
++    if (complete_scan_watermark && (!ouster_lidar || !img_en || !same_pair_vio_handoff ||
++                                    !require_complete_imu || p_pre->N_SCANS != 32 ||
++                                    lidar_time_offset != 0.0))
++        throw std::runtime_error("Complete scan requires OS1 32-line LIVO, same-pair, complete IMU and original LiDAR time");
+     VoxelMapConfig voxel_config;
+     loadVoxelConfig(this->node, voxel_config);
+ 
+@@ -142,6 +146,7 @@
+     this->node->declare_parameter<int>("common.img_en", 1);
+     this->node->declare_parameter<bool>("common.allow_lio_only", false);
+     this->node->declare_parameter<bool>("common.allow_ouster_lidar", false);
++    complete_scan_watermark = this->node->declare_parameter<bool>("common.complete_scan_watermark", false);
+     same_pair_vio_handoff = this->node->declare_parameter<bool>("common.same_pair_vio_handoff", false);
+     // Explicit source-cache hard limits. Zero preserves existing configurations;
+     // the RTX configuration opts in. Never evict unconsumed sensor evidence.
+@@ -452,7 +457,15 @@
+ 
+ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node,
+                                                    image_transport::ImageTransport &it_) {
+-    if (p_pre->lidar_type == AVIA) {
++    if (complete_scan_watermark) {
++        // Exact ROS remaps do not apply to a suffix. Resolve the selected base
++        // input first, then subscribe to that source's typed envelope.
++        const auto complete_topic = this->node->get_node_topics_interface()->resolve_topic_name(lid_topic) + "/complete_scan";
++        sub_pcl = this->node->create_subscription<fastlivo_scan::Certificate>(
++            complete_topic, rclcpp::SensorDataQoS().keep_last(4),
++            std::bind(&LIVMapper::receive_complete_scan, this, std::placeholders::_1));
++        RCLCPP_INFO(node->get_logger(), "[COMPLETE_SCAN] enabled topic=%s contract=1", complete_topic.c_str());
++    } else if (p_pre->lidar_type == AVIA) {
+         sub_pcl = this->node->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+             lid_topic, rclcpp::SensorDataQoS().keep_last(4),
+             std::bind(&LIVMapper::livox_pcl_cbk, this, std::placeholders::_1));
+@@ -1268,6 +1281,10 @@
+                                    double(msg->row_step)};
+         fastlivo_diag::Logger::instance().raw(2, diag_stamp(msg->header.stamp), std::move(values));
+     }
++    if (complete_scan_watermark && (!committing_ingress || !committing_ingress->complete_scan)) {
++        scan_watermark.failed = true;
++        throw std::runtime_error("complete scan mode rejects uncertified raw cloud ingress");
++    }
+     if (!lidar_en)
+         return;
+     std::unique_lock<std::mutex> sensor_buffer_lock(mtx_buffer);
+@@ -1302,6 +1319,10 @@
+     }
+     if (lid_raw_data_buffer.size() >= 8 || ptr->size() > 65536)
+         throw std::runtime_error("LiDAR buffered source capacity");
++    if (complete_scan_watermark && committing_ingress && committing_ingress->complete_scan)
++        scan_watermark.commit(*committing_ingress->complete_scan, msg.get());
++    else if (complete_scan_watermark)
++        throw std::runtime_error("complete scan metadata missing after certified stream started");
+     lid_raw_data_buffer.push_back(PairedCloud{ptr});
+     lid_header_time_buffer.push_back(cur_head_time);
+     last_timestamp_lidar = cur_head_time;
+@@ -1671,7 +1692,24 @@
+     if (pcl_w_wait_pub) pcl_w_wait_pub->clear();
+ }
+ 
++bool LIVMapper::completeScanCovers(const LidarMeasureGroup &meas, double target) const {
++    if (!complete_scan_watermark || slam_mode_ != LIVO ||
++        (meas.lio_vio_flg != WAIT && meas.lio_vio_flg != VIO) ||
++        !scan_watermark.covers(meas.last_lio_update_time, target)) return false;
++    // Legacy pending storage is copied verbatim to current. This shortcut is
++    // valid only if every such point belongs before the new target. Do not
++    // silently release pending points at/on the other side of an image boundary.
++    if (meas.pcl_proc_next) {
++        const float limit_ms = (target - meas.last_lio_update_time) * 1000.0f;
++        for (const auto &p : meas.pcl_proc_next->points)
++            if (!std::isfinite(p.curvature) || !(p.curvature < limit_ms)) return false;
++    }
++    return true;
++}
++
+ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
++    if (complete_scan_watermark && (scan_watermark.failed || !ingress_queue.stats().failure.empty()))
++        throw std::runtime_error("complete scan ingress failed: new owned run required");
+     PendingPairExceptionGuard pair_exception_guard{pending_pair, same_pair_vio_handoff};
+     fastlivo_sync::Attempt sync_observation(*this, meas);
+     // BOUNDARY_TIMING_BEGIN sync_packages
+@@ -1707,7 +1745,9 @@
+     }
+     const bool ready_pair = same_pair_vio_handoff && slam_mode_ == LIVO &&
+         pending_pair.phase == PendingLivoPair::LioReady;
+-    if (!ready_pair && lid_raw_data_buffer.empty() && lidar_en)
++    const bool certified_pending = !img_time_buffer.empty() && meas.pcl_proc_next &&
++        !meas.pcl_proc_next->empty() && completeScanCovers(meas, img_time_buffer.front() + exposure_time_init);
++    if (!ready_pair && !certified_pending && lid_raw_data_buffer.empty() && lidar_en)
+         return sync_observation.result(fastlivo_sync::RawEmpty, false);
+     if (img_buffer.empty() &&
+         img_en) { /* fprintf(stderr, "[ sync ] no img, return false\n"); fflush(stderr); */
+@@ -1833,20 +1873,24 @@
+                 // In simulation, camera may start before LiDAR, causing buffered image
+                 // timestamps to be older than the first LiDAR time. Use the earlier of
+                 // the two as the reference to avoid discarding valid images.
+-                if (!img_time_buffer.empty() && img_time_buffer.front() < meas.last_lio_update_time)
++                // Certified cold startup starts at the first actual interval,
++                // never before it. Older camera frames still use OldImageDropped.
++                // Do not reseed an already nonnegative previous estimator time.
++                if (!complete_scan_watermark && !img_time_buffer.empty() && img_time_buffer.front() < meas.last_lio_update_time)
+                     meas.last_lio_update_time = img_time_buffer.front();
+             }
+ 
+             // Safety: check for empty point cloud (Gazebo may emit empty scans)
+-            auto last_pcl = lid_raw_data_buffer.back().cloud;
+-            if (!last_pcl || last_pcl->points.empty()) {
++            const bool certified_coverage = completeScanCovers(meas, img_capture_time);
++            auto last_pcl = lid_raw_data_buffer.empty() ? PointCloudXYZI::Ptr() : lid_raw_data_buffer.back().cloud;
++            if (!certified_coverage && (!last_pcl || last_pcl->points.empty())) {
+                 fprintf(stderr, "[ sync ] empty point cloud, skip (ptr=%p ptsize=%zu buf=%zu)\n",
+                         (void *)last_pcl.get(), last_pcl ? last_pcl->points.size() : 0UL,
+                         lid_raw_data_buffer.size());
+                 fflush(stderr);
+                 return sync_observation.result(fastlivo_sync::RawTailEmpty, false);
+             }
+-            double lid_newest_time =
++            double lid_newest_time = certified_coverage ? fastlivo_scan::seconds(scan_watermark.end_ns) :
+                 lid_header_time_buffer.back() + last_pcl->points.back().curvature / double(1000);
+             double imu_newest_time = stamp2Sec(imu_buffer.back()->header.stamp);
+             // fprintf(stderr, "[ sync ] lid_newest=%.6f imu_newest=%.6f\n", lid_newest_time, imu_newest_time); fflush(stderr);
+@@ -1859,6 +1903,10 @@
+                 return sync_observation.result(fastlivo_sync::OldImageDropped, false);
+             }
+ 
++            // Explicit certified mode never falls back to a later tail point
++            // across missing/earlier coverage. Default-off remains legacy.
++            if (complete_scan_watermark && !certified_coverage)
++                return sync_observation.result(fastlivo_sync::WaitPointCoverage, false);
+             if (img_capture_time > lid_newest_time + instantaneous_time_tolerance) {
+                 // fprintf(stderr, "[ sync ] img too new (LiDAR), return false\n"); fflush(stderr);
+                 return sync_observation.result(fastlivo_sync::WaitPointCoverage, false);
+@@ -2494,7 +2542,23 @@
+     if (pipeline_mode == "serial")
+         commit_ingress();
+ }
++void LIVMapper::receive_complete_scan(const fastlivo_scan::Certificate::ConstSharedPtr &scan) {
++    if (!complete_scan_watermark || !ingress_enabled)
++        throw std::runtime_error("complete scan requires enabled ordered ingress");
++    // Aliasing shared_ptr binds the message lifetime and exact cloud object.
++    sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud(scan, &scan->cloud);
++    receive_cloud_packet(cloud, scan);
++}
+ void LIVMapper::receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
++    receive_cloud_packet(msg, nullptr);
++}
++void LIVMapper::receive_cloud_packet(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg,
++                                    const fastlivo_scan::Certificate::ConstSharedPtr &scan) {
++    if (complete_scan_watermark && !scan) {
++        // Receiver must not mutate estimator-owner watermark state.
++        ingress_queue.fail("complete scan mode rejects uncertified raw cloud ingress");
++        throw std::runtime_error("complete scan mode rejects uncertified raw cloud ingress");
++    }
+     if (!ingress_enabled) {
+         standard_pcl_cbk(msg);
+         return;
+@@ -2507,6 +2571,7 @@
+     p->receive_tid = syscall(SYS_gettid);
+     p->source_ns = diag_stamp(msg->header.stamp);
+     p->cloud_message = msg;
++    p->complete_scan = scan;
+     try {
+         const auto count = pipeline_mul(msg->width, msg->height);
+         if (count > 65536 || msg->data.size() > 2 * 1024 * 1024)
+@@ -2522,6 +2587,8 @@
+         for (const auto &f : msg->fields)
+             p->reserved_bytes = pipeline_add(p->reserved_bytes, f.name.capacity());
+         p->reserved_bytes = pipeline_add(p->reserved_bytes, msg->header.frame_id.capacity());
++        if (scan) p->reserved_bytes = pipeline_add(p->reserved_bytes, sizeof(*scan) +
++            scan->session_id.capacity() + scan->sensor_id.capacity() + scan->config_id.capacity());
+     } catch (...) {
+         p->reserved_bytes = std::numeric_limits<size_t>::max();
+     }
+@@ -2592,6 +2659,7 @@
+     p->decode_cpu_begin = ingress_thread_cpu();
+     try {
+         if (p->kind == 2) {
++            if (p->complete_scan) fastlivo_scan::validate(*p->complete_scan, p->cloud_message.get());
+             p->cloud.reset(new PointCloudXYZI());
+             p_pre->process(p->cloud_message, p->cloud);
+         } else if (p->kind == 3)
+@@ -2715,6 +2783,7 @@
+         } catch (...) {
+             // PRIMARY_CALLBACK_DIAGNOSTIC_BEGIN
+             const auto primary_exception = std::current_exception();
++            if (complete_scan_watermark && p->kind == 2) scan_watermark.failed = true;
+             committing_ingress = nullptr;
+             try {
+                 std::rethrow_exception(primary_exception);
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
+@@ -18,6 +18,7 @@
+ #include "preprocess.h"
+ #include "ordered_ingress.h"
+ #include "pending_pair.h"
++#include "complete_scan.h"
+ #include "fast_livo2_core/backend/snapshot_bridge.hpp"
+ #include <thread>
+ #if __has_include(<cv_bridge/cv_bridge.hpp>)
+@@ -52,6 +53,7 @@
+         uint64_t receive_tid = 0, decode_cpu_begin = 0, decode_cpu_end = 0;
+         std::exception_ptr decode_error;
+         sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_message;
++        fastlivo_scan::Certificate::ConstSharedPtr complete_scan;
+         sensor_msgs::msg::Image::ConstSharedPtr image_message;
+         sensor_msgs::msg::Imu::ConstSharedPtr imu_message;
+         PointCloudXYZI::Ptr cloud;
+@@ -71,6 +73,9 @@
+     const IngressPacket *committing_ingress = nullptr;
+     std::shared_ptr<IngressPacket> rejected_ingress;
+     void receive_cloud(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &);
++    void receive_complete_scan(const fastlivo_scan::Certificate::ConstSharedPtr &);
++    void receive_cloud_packet(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &,
++                              const fastlivo_scan::Certificate::ConstSharedPtr &);
+     void receive_image(const sensor_msgs::msg::Image::ConstSharedPtr &);
+     void receive_imu(const sensor_msgs::msg::Imu::ConstSharedPtr &);
+     void receive_tick();
+@@ -91,6 +96,9 @@
+     void handleVIO();
+     void handleLIO();
+     bool same_pair_vio_handoff = false;
++    bool complete_scan_watermark = false;
++    fastlivo_scan::Watermark scan_watermark;
++    bool completeScanCovers(const LidarMeasureGroup &meas, double target) const;
+     PendingLivoPair pending_pair;
+     size_t max_buffered_images = 0, max_buffered_imu = 0, max_buffered_prop_imu = 0;
+     void checkBufferCapacity(const char *queue, size_t count, size_t limit);
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/sync_observation.h
+@@ -38,9 +38,15 @@
+     std::array<size_t, 3> cache_counts{}; // primary IMU, images, propagation IMU
+     std::array<double, 6> cache_endpoints{}; // oldest/newest for each queue
+     unsigned cache_valid = 0;
++    bool complete_scan_enabled = false, complete_scan_valid = false;
++    std::array<uint64_t, 3> complete_scan_interval{}; // first S, contiguous E, sequence
+ };
+ inline View snapshot(const LIVMapper &mapper, const LidarMeasureGroup &m) noexcept {
+     View out;
++    out.complete_scan_enabled = mapper.complete_scan_watermark;
++    out.complete_scan_valid = mapper.scan_watermark.valid;
++    out.complete_scan_interval = {mapper.scan_watermark.start_ns, mapper.scan_watermark.end_ns,
++                                 mapper.scan_watermark.sequence};
+     out.stage = m.lio_vio_flg;
+     out.mode = mapper.slam_mode_;
+     out.sizes = {mapper.lid_raw_data_buffer.size(), mapper.lid_header_time_buffer.size(),
+@@ -98,7 +104,10 @@
+             {"imu_initializing", v.imu_initializing},
+             {"complete_imu_required", v.complete_imu_required},
+             {"cache_counts", v.cache_counts}, {"cache_endpoints", v.cache_endpoints},
+-            {"cache_valid", v.cache_valid}};
++            {"cache_valid", v.cache_valid},
++            {"complete_scan_enabled", v.complete_scan_enabled},
++            {"complete_scan_valid", v.complete_scan_valid},
++            {"complete_scan_interval_ns", v.complete_scan_interval}};
+ }
+ struct Ledger {
+     uint64_t rows = 0, attempts = 0, pair = 0, last_summary = 0;
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/complete_scan.h
+@@ -0,0 +1,77 @@
++#pragma once
++#include <dynanav_sensor_msgs/msg/complete_lidar_scan.hpp>
++#include <cmath>
++#include <cstring>
++#include <limits>
++#include <stdexcept>
++#include <string>
++
++namespace fastlivo_scan {
++using Certificate = dynanav_sensor_msgs::msg::CompleteLidarScan;
++inline constexpr uint64_t period_ns = 100000000ULL;
++inline constexpr const char *config_id = "OS1_REV6_32ch10hz1024res:sha256:ec5b732ef18521efe33ccdfc4e1242e9c3ce066e9482a91d29b3cea91fc7000b";
++inline double seconds(uint64_t ns) {
++    return double(ns / 1000000000ULL) + double(ns % 1000000000ULL) * 1e-9;
++}
++inline void validate(const Certificate &c, const sensor_msgs::msg::PointCloud2 *bound) {
++    // Pointer identity: the decoder owns an alias into this exact envelope.
++    // A separate latest metadata topic, header-only match, or replay cannot bind.
++    if (bound != &c.cloud || c.contract_version != 1 || !c.accumulate_outputs ||
++        !c.scan_complete || c.session_id.empty() || c.session_id.size() > 64 ||
++        c.sequence == 0 || c.sensor_id != "go2_rtx_os1" || c.config_id != config_id ||
++        c.source_start_ns > uint64_t(INT64_MAX) - period_ns ||
++        c.source_end_ns != c.source_start_ns + period_ns ||
++        c.coordinate_frame_start_ns != c.source_start_ns + 15000000ULL ||
++        c.coordinate_frame_end_ns != c.source_end_ns)
++        throw std::runtime_error("complete scan certificate identity/config/interval failure");
++    const auto &m = c.cloud;
++    if (m.header.stamp.sec < 0 || m.header.stamp.nanosec >= 1000000000U ||
++        uint64_t(m.header.stamp.sec) * 1000000000ULL + m.header.stamp.nanosec != c.source_start_ns ||
++        m.header.frame_id != "go2_imu" || m.height != 1 || m.width > 65536 ||
++        m.is_bigendian || m.point_step != 32 || m.row_step != uint64_t(m.width) * 32 ||
++        m.data.size() != m.row_step)
++        throw std::runtime_error("complete scan cloud binding/layout failure");
++    const char *names[] = {"x","y","z","intensity","t","reflectivity","ring","ambient","range"};
++    const uint32_t offsets[] = {0,4,8,12,16,20,22,24,28};
++    const uint8_t types[] = {7,7,7,7,6,4,2,4,6};
++    if (m.fields.size() != 9) throw std::runtime_error("complete scan field count failure");
++    for (size_t f = 0; f < 9; ++f)
++        if (m.fields[f].name != names[f] || m.fields[f].offset != offsets[f] ||
++            m.fields[f].datatype != types[f] || m.fields[f].count != 1)
++            throw std::runtime_error("complete scan field schema failure");
++    uint32_t previous = 0;
++    for (size_t i = 0; i < m.width; ++i) {
++        const auto *p = m.data.data() + i * 32;
++        uint32_t t; std::memcpy(&t, p + 16, 4);
++        if (t >= period_ns || (i && t < previous) || p[22] >= 32)
++            throw std::runtime_error("complete scan point outside certified interval/order/ring");
++        for (size_t f = 0; f < 4; ++f) {
++            float value; std::memcpy(&value, p + f * 4, 4);
++            if (!std::isfinite(value)) throw std::runtime_error("complete scan nonfinite retained point");
++        }
++        previous = t;
++    }
++}
++// Only the estimator owner commits this state. It survives raw->pending moves.
++// Never reset/reseed within a run, never bridge a missing source interval.
++struct Watermark {
++    bool valid = false, failed = false;
++    uint64_t start_ns = 0, end_ns = 0, sequence = 0, frame_id = 0;
++    std::string session_id;
++    void commit(const Certificate &c, const sensor_msgs::msg::PointCloud2 *bound) {
++        if (failed) throw std::runtime_error("complete scan session already failed: new owned run required");
++        try {
++        validate(c, bound);
++        if (valid && (c.session_id != session_id || c.sequence != sequence + 1 ||
++                      c.native_frame_id <= frame_id || c.source_start_ns != end_ns))
++            throw std::runtime_error("complete scan discontinuity/restart/duplicate: new owned run required");
++        if (!valid) { start_ns = c.source_start_ns; session_id = c.session_id; }
++        end_ns = c.source_end_ns; sequence = c.sequence; frame_id = c.native_frame_id; valid = true;
++        } catch (...) { failed = true; throw; }
++    }
++    bool covers(double previous, double target) const {
++        return valid && !failed && std::isfinite(previous) && std::isfinite(target) &&
++            previous >= seconds(start_ns) && target > previous && target <= seconds(end_ns);
++    }
++};
++} // namespace fastlivo_scan
+--- /dev/null
++++ b/third_party/fast_livo2/dynanav_sensor_msgs/CMakeLists.txt
+@@ -0,0 +1,8 @@
++cmake_minimum_required(VERSION 3.16)
++project(dynanav_sensor_msgs)
++find_package(ament_cmake REQUIRED)
++find_package(rosidl_default_generators REQUIRED)
++find_package(sensor_msgs REQUIRED)
++rosidl_generate_interfaces(${PROJECT_NAME} "msg/CompleteLidarScan.msg" DEPENDENCIES sensor_msgs)
++ament_export_dependencies(rosidl_default_runtime)
++ament_package()
+--- /dev/null
++++ b/third_party/fast_livo2/dynanav_sensor_msgs/msg/CompleteLidarScan.msg
+@@ -0,0 +1,17 @@
++# Explicit producer attestation for one atomic, unchanged PointCloud2.
++# Version 1 only: frozen OS1 Rev6 32ch 10Hz 1024res, full accumulated output.
++# [source_start_ns,source_end_ns) certifies scan completion, NEVER free space.
++uint32 contract_version
++string<=64 session_id
++uint64 sequence
++uint64 native_frame_id
++string<=64 sensor_id
++string<=160 config_id
++uint64 source_start_ns
++uint64 source_end_ns
++# Empirically audited coordinate-frame sampling phase, NOT scan start.
++uint64 coordinate_frame_start_ns
++uint64 coordinate_frame_end_ns
++bool accumulate_outputs
++bool scan_complete
++sensor_msgs/PointCloud2 cloud
+--- /dev/null
++++ b/third_party/fast_livo2/dynanav_sensor_msgs/package.xml
+@@ -0,0 +1,12 @@
++<?xml version="1.0"?>
++<package format="3">
++  <name>dynanav_sensor_msgs</name><version>0.1.0</version>
++  <description>Explicit, atomic RTX full-scan provenance and original point cloud.</description>
++  <maintainer email="user@todo.todo">user</maintainer><license>GPL-2.0-only</license>
++  <buildtool_depend>ament_cmake</buildtool_depend>
++  <build_depend>rosidl_default_generators</build_depend>
++  <exec_depend>rosidl_default_runtime</exec_depend>
++  <depend>sensor_msgs</depend>
++  <member_of_group>rosidl_interface_packages</member_of_group>
++  <export><build_type>ament_cmake</build_type></export>
++</package>

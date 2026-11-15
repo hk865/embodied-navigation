@@ -22,15 +22,50 @@ def load_config(path=None):
         raise ValueError("Unsupported basement collision configuration")
     floors, stairs = config["floor_paths"], config["stair_paths"]
     if (
-        len(floors) != 7
-        or len(set(floors)) != 7
+        not floors
+        or len(set(floors)) != len(floors)
         or len(stairs) != 4
         or len(set(stairs)) != 4
+        or any(not isinstance(path, str) or not path.startswith("/Root/")
+               for path in [*floors, *stairs])
     ):
         raise ValueError(
-            "Expected the seven original floors and four original stair meshes"
+            "Expected nonempty unique original floor and stair mesh paths"
         )
     return config
+
+
+def _validate_floor(prim, settings, xforms):
+    """Validate authored geometry, not its bounding-box proxy or navigation map."""
+    from pxr import UsdGeom
+
+    if (
+        prim.GetName() not in settings["mesh_names"]
+        or UsdGeom.Imageable(prim).ComputeVisibility() == UsdGeom.Tokens.invisible
+    ):
+        raise RuntimeError("Original visible floor unavailable: " + str(prim.GetPath()))
+    mesh = UsdGeom.Mesh(prim)
+    transform = xforms.GetLocalToWorldTransform(prim)
+    points = [transform.Transform(point) for point in mesh.GetPointsAttr().Get() or []]
+    if not points or not all(math.isfinite(v) for point in points for v in point):
+        raise RuntimeError("Invalid floor points: " + str(prim.GetPath()))
+    if max(p[2] for p in points) - min(p[2] for p in points) > settings["maximum_world_z_span_m"]:
+        raise RuntimeError("Non-horizontal floor: " + str(prim.GetPath()))
+    indices = list(mesh.GetFaceVertexIndicesAttr().Get() or [])
+    counts = list(mesh.GetFaceVertexCountsAttr().Get() or [])
+    if (not counts or any(n < 3 for n in counts) or sum(counts) != len(indices)
+            or any(i < 0 or i >= len(points) for i in indices)):
+        raise RuntimeError("Invalid floor topology: " + str(prim.GetPath()))
+    offset, area = 0, 0.0
+    holes = set(mesh.GetHoleIndicesAttr().Get() or [])
+    for face, count in enumerate(counts):
+        polygon = [points[i] for i in indices[offset:offset + count]]
+        offset += count
+        if face not in holes:
+            area += abs(sum(a[0] * b[1] - b[0] * a[1]
+                            for a, b in zip(polygon, polygon[1:] + polygon[:1]))) / 2
+    if area < settings["minimum_projected_area_m2"]:
+        raise RuntimeError("Degenerate floor surface: " + str(prim.GetPath()))
 
 
 def repair_basement_session(stage, config_path=None):
@@ -45,6 +80,7 @@ def repair_basement_session(stage, config_path=None):
     config = load_config(config_path)
     floors = [stage.GetPrimAtPath(path) for path in config["floor_paths"]]
     ground = stage.GetPrimAtPath(config["ground_plane_path"])
+    xforms = UsdGeom.XformCache()
     for path, prim in zip(config["floor_paths"], floors):
         if (
             not prim
@@ -53,6 +89,7 @@ def repair_basement_session(stage, config_path=None):
             or prim.IsInstanceProxy()
         ):
             raise RuntimeError("Original editable floor unavailable: " + path)
+        _validate_floor(prim, config["floor_validation"], xforms)
     if not ground or not ground.HasAPI(UsdPhysics.CollisionAPI):
         raise RuntimeError("Original GroundPlane collision unavailable")
     stairs = {}

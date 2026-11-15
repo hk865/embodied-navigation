@@ -10,14 +10,17 @@ called from the explicit ``run()`` entry; importing it has no side effects.
 """
 
 import os
+import hashlib
+from pathlib import Path
+import time
 
 import numpy as np
 
 from embodied_navigation.project import data_root
 
 
-def start_simulation_app(use_fabric):
-    """Create the headless SimulationApp with the exact original settings."""
+def start_simulation_app(use_fabric, *, rtx_lidar=False):
+    """Create the legacy app, with required FSD/multi-tick only for explicit RTX."""
     from isaacsim import SimulationApp
 
     app = SimulationApp(
@@ -26,6 +29,7 @@ def start_simulation_app(use_fabric):
             "width": 512,
             "height": 512,
             "renderer": "RaytracedLighting",
+            "enable_motion_bvh": rtx_lidar,
             "create_new_stage": False,
             "disable_viewport_updates": True,
             "multi_gpu": False,
@@ -35,11 +39,20 @@ def start_simulation_app(use_fabric):
                 "--/app/settings/persistent=0",
                 "--/app/extensions/registryEnabled=false",
                 "--/app/fastShutdown=true",
-                "--/rtx/hydra/supportMultiTickRate=false",
-                f"--/app/useFabricSceneDelegate={'true' if use_fabric else 'false'}",
+                f"--/rtx/hydra/supportMultiTickRate={'true' if rtx_lidar else 'false'}",
+                f"--/app/useFabricSceneDelegate={'true' if (use_fabric or rtx_lidar) else 'false'}",
+                *(["--/rtx/rendering/perSensorTickTlas=true",
+                   "--/app/settings/fabricDefaultSimPeriodNumerator=1",
+                   "--/app/settings/fabricDefaultSimPeriodDenominator=200"] if rtx_lidar else []),
             ],
         }
     )
+    if rtx_lidar:
+        import omni.usd
+        from isaacsim.core.rendering_manager import RenderingManager
+        omni.usd.get_context().new_stage()
+        # Configure history before the sensor stage/render products are created.
+        RenderingManager.set_dt(0.005)
     return app
 
 
@@ -90,13 +103,110 @@ def resolve_spawn(experiment):
     return spawn, spawn_yaw, sim_rtf
 
 
+def prepare_rtx_scene_stage(scene):
+    """Populate static scene geometry before Fabric observes the stage.
+
+    RC7 Fabric can omit Office instance-proxy geometry when the original stage
+    is opened first. Changing instanceable after renderer population is too
+    late. Expand only the source scene's instances in its anonymous session
+    layer, before attachment; the robot and sensors do not exist yet. No source
+    geometry, transforms, materials, collision flags or asset files are edited.
+    Keep FSD and physics Fabric enabled for real sensor motion/history.
+    """
+    from pxr import Sdf, Usd, UsdUtils
+
+    source_hash = hashlib.sha256(Path(scene).read_bytes()).hexdigest()
+    root = Sdf.Layer.FindOrOpen(str(scene))
+    if root is None:
+        raise RuntimeError("Cannot open the RTX source layer")
+    session = Sdf.Layer.CreateAnonymous("dynanav-rtx-scene-session.usda")
+    stage = Usd.Stage.Open(root, session)
+    if stage is None:
+        raise RuntimeError("Cannot prepare the RTX source scene")
+    expanded = []
+    with Usd.EditContext(stage, stage.GetSessionLayer()):
+        # Expanding an outer instance can expose nested instance roots.
+        while True:
+            instances = [str(prim.GetPath()) for prim in stage.Traverse() if prim.IsInstance()]
+            if not instances:
+                break
+            if any(path in expanded for path in instances):
+                raise RuntimeError("RTX scene instance expansion made no progress")
+            for path in instances:
+                # Editing an outer instance can rebuild descendant prim handles.
+                prim = stage.GetPrimAtPath(path)
+                if not prim or not prim.SetInstanceable(False):
+                    raise RuntimeError(f"Cannot expand RTX scene instance {path}")
+                expanded.append(path)
+    after_hash = hashlib.sha256(Path(scene).read_bytes()).hexdigest()
+    if after_hash != source_hash:
+        raise RuntimeError("RTX scene source changed during session preparation")
+    stage_id = UsdUtils.StageCache.Get().Insert(stage).ToLongInt()
+    return stage_id, {
+        "method": "expand source scene instances in anonymous session before renderer attachment",
+        "expanded_instance_count": len(expanded),
+        "expanded_instance_paths": expanded,
+        "remaining_instance_count": 0,
+        "source_sha256_before": source_hash,
+        "source_sha256_after": after_hash,
+        "source_saved": False,
+        "geometry_authored": False,
+        "collision_attributes_authored": False,
+        "robot_and_sensor_instances_included": False,
+    }
+
+
+def attach_prepared_rtx_stage(context, stage_id, *, update=None, timeout_s=120.0):
+    """Wait for the SDK's asynchronous attachment completion, not acceptance.
+
+    Clean up only this preparation's cache entry if attachment fails. Never
+    clear the global cache or close a stage belonging to another caller.
+    """
+    from pxr import Usd, UsdUtils
+
+    completed = []
+    def on_finish(success, error):
+        completed.append((bool(success), str(error)))
+
+    try:
+        if not context.attach_stage_with_callback(stage_id, on_finish):
+            raise RuntimeError("Cannot request attachment of the prepared RTX scene")
+        if update is None:
+            import omni.kit.app
+            update = omni.kit.app.get_app().update
+        deadline = time.monotonic() + timeout_s
+        while not completed:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Timed out attaching the prepared RTX scene")
+            update()
+        success, error = completed[0]
+        if not success:
+            raise RuntimeError(f"Prepared RTX scene attachment failed: {error}")
+        if context.get_stage_id() != stage_id:
+            raise RuntimeError("Prepared RTX scene stage is not the active stage")
+    except BaseException:
+        try:
+            if context.get_stage_id() == stage_id:
+                context.close_stage()
+        finally:
+            UsdUtils.StageCache.Get().Erase(Usd.StageCache.Id.FromLongInt(stage_id))
+        raise
+
+
 def open_stage(scene, experiment, result, save):
     """Open the USD scene and establish Z-up metre world axes."""
     import omni.usd
     from pxr import UsdGeom
 
-    assert omni.usd.get_context().open_stage(scene)
-    stage = omni.usd.get_context().get_stage()
+    context = omni.usd.get_context()
+    if experiment.get("point_cloud_source", "rgbd") == "rtx_lidar":
+        stage_id, preparation = prepare_rtx_scene_stage(scene)
+        attach_prepared_rtx_stage(context, stage_id)
+        result["rtx_scene_preparation"] = preparation
+        save()
+    else:
+        assert context.open_stage(scene)
+    stage = context.get_stage()
     UsdGeom.Xform.Define(stage, "/World")
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
@@ -320,7 +430,7 @@ class ContactMonitor:
                 )
 
 
-def setup_physics(roots, use_fabric, app, result, save):
+def setup_physics(roots, use_fabric, app, result, save, *, rtx_lidar=False):
     """Create the articulation/physics views and install the 0.005 s clock."""
     from isaacsim.core.experimental.prims import Articulation
     from isaacsim.core.simulation_manager import SimulationManager
@@ -333,19 +443,28 @@ def setup_physics(roots, use_fabric, app, result, save):
     import carb.settings
 
     settings = carb.settings.get_settings()
+    if rtx_lidar:
+        # RTX uses Fabric motion history. Keep the native USD result mirror
+        # current too for the existing RGB render-product pipeline.
+        settings.set_bool("/physics/updateToUsd", True)
     result["runtime_render_path"] = {
         "requested": "fabric" if use_fabric else "usd",
         "physics_fabric_enabled": SimulationManager.is_fabric_enabled(),
         "fabric_scene_delegate": settings.get("/app/useFabricSceneDelegate"),
         "physics_update_to_usd": settings.get("/physics/updateToUsd"),
         "physics_suppress_readback": settings.get("/physics/suppressReadback"),
+        "support_multi_tick_rate": settings.get("/rtx/hydra/supportMultiTickRate"),
+        "per_sensor_tick_tlas": settings.get("/rtx/rendering/perSensorTickTlas"),
     }
     from isaacsim.core.rendering_manager import RenderingManager
 
     RenderingManager.set_dt(0.005)
     au.play()
     app.update()
-    rep.orchestrator.step(rt_subframes=1, delta_time=0.0, pause_timeline=True)
+    rep.orchestrator.step(rt_subframes=1, delta_time=0.0, pause_timeline=True, wait_for_render=not rtx_lidar)
+    if rtx_lidar:
+        RenderingManager.render()
+        RenderingManager.render()
     result["dof_names"] = art.dof_names
     result["link_names"] = art.link_names
     save()

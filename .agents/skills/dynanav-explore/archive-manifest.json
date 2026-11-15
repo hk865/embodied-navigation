@@ -1,0 +1,13 @@
+{
+  "archived_on": "2026-11-11",
+  "source": "/home/hyh001/.codex/skills/dynanav-explore",
+  "purpose": "Project-local reusable snapshot. Runtime outputs remain on PROJECT_DATA_ROOT. Installed personal skill was not changed.",
+  "files": {
+    "SKILL.md": "1da86369d17413861eff5cfe83568739b50dda49457b93967c30de73779e5ff6",
+    "agents/openai.yaml": "154a2e9e5ac3ceac2b22ded2e2d9e3bb7b713fe4a7e94210210baea073ea910e",
+    "references/native-interface.md": "0ca879447a5858ffd1aad717f2a5f21347a6412c10b6015329f9dab352c1bfbb",
+    "scripts/dynanav_sop.py": "23f8ba3ea20dbe15103c130672a7b102cfbd9aa40dc4b7534b2a85313b389295",
+    "scripts/record_current_lio_cloud.py": "029d991d3100bf82852df6ece262b1c94916179cd4b1a8d31c3cda1a5536147b",
+    "scripts/render_live_3d_views.py": "d8077cca8c233dbe2a6165a23f354806945e8de12a65e64e5869f14a5223842f"
+  }
+}

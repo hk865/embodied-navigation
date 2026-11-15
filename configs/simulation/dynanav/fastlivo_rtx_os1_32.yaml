@@ -1,0 +1,27 @@
+# Sensor override for Isaac's official OS1_REV6_32ch10hz1024res RTX model.
+# This is a rotating 32-channel 10 Hz Ouster scan, not Livox and not RGB-D.
+# The publisher preserves true per-return time: scan-start header + uint32 t ns.
+# Returns are transformed only by the static mount into go2_imu, with no
+# ground-truth motion compensation. FAST-LIVO2 performs IMU-based deskew.
+# Rcl/Pcl are intentionally absent: existing capture camera calibration remains.
+/**:
+  ros__parameters:
+    common:
+      allow_ouster_lidar: true
+      require_complete_imu: true
+      same_pair_vio_handoff: true
+      # Conservative count hard limits, not freshness/latency targets. Overflow
+      # fails the owned run rather than dropping unconsumed sensor evidence.
+      max_buffered_images: 32
+      max_buffered_imu: 8192
+      max_buffered_prop_imu: 8192
+    preprocess:
+      lidar_type: 3
+      scan_line: 32
+      feature_extract_enabled: false
+      point_filter_num: 1
+    extrin_calib:
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    evo:
+      seq_name: DynaNav_RTX_OS1_REV6_32ch10hz1024res_observer
