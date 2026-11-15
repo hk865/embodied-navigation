@@ -4,6 +4,7 @@ import copy
 import math
 import time
 import numpy as np
+from embodied_navigation.common.geometry import wrap_angle
 from embodied_navigation.planning.reference.global_route_reference import direction_check
 from embodied_navigation.planning.admission.replan_ack import enabled as _early_request_ack_enabled
 
@@ -214,9 +215,8 @@ def preview(self, samples, value, metadata):
         position=pose,
     )
     new = candidate.preview_reference(pose)
-    wrap = lambda x: math.atan2(math.sin(x), math.cos(x))
-    body_error = wrap(new["heading_rad"] - yaw)
-    change = wrap(new["heading_rad"] - old["heading_rad"])
+    body_error = wrap_angle(new["heading_rad"] - yaw)
+    change = wrap_angle(new["heading_rad"] - old["heading_rad"])
     if not all(map(math.isfinite, (yaw, body_error, change))):
         raise ValueError("Nonfinite handoff heading")
     limit = self.profile["teacher_transition"]["drive_heading_max_rad"]

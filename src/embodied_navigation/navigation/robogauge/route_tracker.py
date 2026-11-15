@@ -11,7 +11,8 @@ state and recorded evidence events.
 
 import math
 
-wrap = lambda a: math.atan2(math.sin(a), math.cos(a))
+from embodied_navigation.common.geometry import wrap_angle as wrap
+
 clip = lambda x, b: max(-b, min(b, x))
 
 

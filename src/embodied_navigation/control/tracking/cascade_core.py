@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import numpy as np
+from embodied_navigation.common.geometry import wrap_angle as wrap
 from embodied_navigation.control.parking.ordinary_parking import OrdinaryParking
 from embodied_navigation.control.parking.parking_zero_contract import validate_zero_ack
 from embodied_navigation.planning.reference.spatial_reference import (
@@ -192,11 +193,6 @@ def canonical(value):
 def sha(value):
     """SHA256 of ``canonical(value)``; used as evidence identity, not security."""
     return hashlib.sha256(canonical(value).encode()).hexdigest()
-
-
-def wrap(angle):
-    """Wrap radians with atan2(sin, cos); either signed pi endpoint is possible."""
-    return math.atan2(math.sin(angle), math.cos(angle))
 
 
 def vector(value, n):

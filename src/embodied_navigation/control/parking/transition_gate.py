@@ -25,6 +25,7 @@ import copy
 import math
 from numbers import Real
 from embodied_navigation.control.parking.navigation_stop_window import NavigationStopWindow, SPEC
+from embodied_navigation.common.geometry import wrap_angle
 from embodied_navigation.common.input_freshness import enabled as minimal_baseline_enabled
 
 
@@ -290,7 +291,7 @@ class TeacherHeadingGate:
     @staticmethod
     def error(target, yaw):
         """返回 target - yaw 的归一化角度差，单位 rad，落在闭区间 [-pi, pi]。"""
-        return math.atan2(math.sin(target - yaw), math.cos(target - yaw))
+        return wrap_angle(target - yaw)
 
     def reset(self):
         """回到 pre_turn 并清空本相位的观测与握手状态。

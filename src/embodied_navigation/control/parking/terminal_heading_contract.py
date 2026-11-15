@@ -7,6 +7,7 @@ r85_auto_reference_contract.terminal_heading_from_pct_approach。
 """
 
 import copy, math
+from embodied_navigation.common.geometry import wrap_angle
 
 FLAG = "terminal_heading_from_pct_approach"
 
@@ -104,6 +105,6 @@ def validate_reference_heading(profile, doc):
     if (
         type(value) not in (int, float)
         or not math.isfinite(value)
-        or abs(math.atan2(math.sin(value - expected), math.cos(value - expected))) > 1e-9
+        or abs(wrap_angle(value - expected)) > 1e-9
     ):
         raise ValueError("Terminal heading does not match current route")

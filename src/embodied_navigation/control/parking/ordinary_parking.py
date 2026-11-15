@@ -4,8 +4,8 @@ owner 只使用新鲜的实测导航位姿/运动，不改变路线成功判定�
 窗口；失败的零保持不会重试。原生物理运动仍由 acceptance 独立检查。
 """
 
-import math
 import json
+from embodied_navigation.common.geometry import wrap_angle
 from embodied_navigation.control.parking.source_hold import (
     PREQUALIFICATION_SOURCE_HOLD_ENABLED,
     UNSPECIFIED_ZERO_EVENT,
@@ -455,7 +455,7 @@ class OrdinaryParking:
             # 零保持漂移/运动上限：xy 0.05 m、yaw 0.1 rad、平面速度 0.08 m/s、
             # yawdot/body_wz 0.1 rad/s（硬编码）。
             xy = float(np.linalg.norm(np.asarray(position)[:2] - self.origin[:2]))
-            dyaw = abs(math.atan2(math.sin(yaw - self.origin_yaw), math.cos(yaw - self.origin_yaw)))
+            dyaw = abs(wrap_angle(yaw - self.origin_yaw))
             if (
                 xy > 0.05
                 or dyaw > 0.1

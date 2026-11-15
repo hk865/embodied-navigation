@@ -11,6 +11,7 @@ ordinary_parking 与 transition_gate。
 
 import copy
 import math
+from embodied_navigation.common.geometry import wrap_angle as wrap
 
 # 10 Hz 栅格周期，单位纳秒（硬编码）。
 PERIOD_NS = 100_000_000
@@ -47,11 +48,6 @@ def configuration(value):
     from embodied_navigation.control.safety.safety_configuration import pose
 
     return pose(value)
-
-
-def wrap(value):
-    """把角度归一到闭区间 [-pi, pi]，单位 rad；只用于差值，不改绝对朝向。"""
-    return math.atan2(math.sin(value), math.cos(value))
 
 
 def from_feedback(feedback):

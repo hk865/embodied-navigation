@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import numpy as np
+from embodied_navigation.common.geometry import wrap_angle
 
 MAX_TURN_RATE = 0.12
 MAX_WALK_YAW_RATE = 0.08
@@ -211,7 +212,7 @@ def follow_trajectory(
 
     if exhausted:
         return result(np.zeros(2), 0.0)
-    yaw_error = math.atan2(math.sin(desired - yaw), math.cos(desired - yaw))
+    yaw_error = wrap_angle(desired - yaw)
     yaw_rate = float(np.clip(1.3 * yaw_error, -MAX_TURN_RATE, MAX_TURN_RATE))
     if gate_translation and abs(yaw_error) > 0.20:
         return result(np.zeros(2), yaw_rate)
@@ -269,7 +270,7 @@ class HeadingGate:
 
     @staticmethod
     def error(target, yaw):
-        return math.atan2(math.sin(target - yaw), math.cos(target - yaw))
+        return wrap_angle(target - yaw)
 
     def resume_after_stop(self, yaw, fresh_path_heading, stopped_duration):
         """A measured aligned new SCAN path may resume after a full actual stop.

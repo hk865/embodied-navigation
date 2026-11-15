@@ -7,6 +7,7 @@ terrain. All distances are horizontal arc length; projection stays in 3D.
 
 import math
 import numpy as np
+from embodied_navigation.common.geometry import wrap_angle
 
 
 DEFAULTS = dict(
@@ -146,11 +147,10 @@ def reference(points, cumulative, s, position, projected_point, raw_tangent, con
         and right["curvature_valid"]
         and hi - lo > 1e-8
     ):
-        wrap = lambda value: math.atan2(math.sin(value), math.cos(value))
-        result["curvature_per_m"] = wrap(right["heading_rad"] - left["heading_rad"]) / (hi - lo)
+        result["curvature_per_m"] = wrap_angle(right["heading_rad"] - left["heading_rad"]) / (hi - lo)
         if s - lo > 1e-8 and hi - s > 1e-8:
-            kl = wrap(result["heading_rad"] - left["heading_rad"]) / (s - lo)
-            kr = wrap(right["heading_rad"] - result["heading_rad"]) / (hi - s)
+            kl = wrap_angle(result["heading_rad"] - left["heading_rad"]) / (s - lo)
+            kr = wrap_angle(right["heading_rad"] - result["heading_rad"]) / (hi - s)
             result["curvature_rate_per_m2"] = 2.0 * (kr - kl) / (hi - lo)
     else:
         result["curvature_valid"] = False

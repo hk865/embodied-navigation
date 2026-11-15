@@ -21,6 +21,7 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool
 from sensor_msgs_py import point_cloud2
 from scan_planner_msgs.msg import Bspline
+from embodied_navigation.common.geometry import wrap_angle as wrap
 from embodied_navigation.control.parking.parking_pose10hz import CaptureGrid, PoseGrid
 from embodied_navigation.control.safety.contact_mailbox import ContactMailbox
 from embodied_navigation.control.tracking.terrain_speed import StairSpeedLimit
@@ -50,10 +51,6 @@ def stamp(ns):
     from builtin_interfaces.msg import Time
 
     return Time(sec=ns // 1000000000, nanosec=ns % 1000000000)
-
-
-def wrap(x):
-    return math.atan2(math.sin(x), math.cos(x))
 
 
 def atomic(p, obj):

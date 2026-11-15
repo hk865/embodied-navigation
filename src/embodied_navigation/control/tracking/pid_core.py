@@ -1,11 +1,8 @@
 """Header-event PID of measured SLAM XY/yaw into bounded body velocity only."""
 
-import math
 import numpy as np
 
-
-def wrap(value):
-    return math.atan2(math.sin(value), math.cos(value))
+from embodied_navigation.common.geometry import wrap_angle as wrap
 
 
 def slew(previous, desired, dt, acceleration):

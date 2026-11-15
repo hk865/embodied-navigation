@@ -39,6 +39,8 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.geometry import wrap_angle as wrap
+
 PROTOCOL_VERSION = 1
 # Match the existing lockstep perception-file ingress limit.
 MAX_PERCEPTION_FILE_BYTES = 2 * 1024 * 1024
@@ -73,11 +75,6 @@ LOCAL_ACTION_BOUNDS = {
 MAX_GOAL_ABS_XY_M = 100.0
 MAX_GOAL_ABS_Z_M = 8.0
 MAX_VERTICAL_STEP_M = 4.0
-
-
-def wrap(angle):
-    """Wrap an angle to (-pi, pi]."""
-    return math.atan2(math.sin(angle), math.cos(angle))
 
 
 def clip(value, bound):
