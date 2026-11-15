@@ -22,7 +22,8 @@ class RouteTracker:
     ``points`` are measured XYZ waypoints in metres (z is checked separately, so a
     wrong floor cannot fake arrival), ``start_xy`` is the initial XY pose used as
     the origin of stage 0, ``speed`` is the maximum forward command in m/s,
-    ``motion_end`` is the deadline compared with ``t`` in seconds, and ``stop_on_stall``
+    ``motion_end`` is the deadline compared with ``t`` in seconds (None disables
+    the total budget), and ``stop_on_stall``
     chooses whether an observed low-progress stall becomes a failure. Capture
     bounds default to the original 0.20/0.30 m; optional final-only overrides
     inherit those bounds when None and never alter intermediate stages.
@@ -135,7 +136,7 @@ class RouteTracker:
         command = [0.0, 0.0, 0.0]
         if self.failure or self.arrived:
             return command
-        if t >= self.motion_end:
+        if self.motion_end is not None and t >= self.motion_end:
             self.failure = "route_motion_budget"
             return command
         # No command before t=7 s or when the caller says the inputs are not

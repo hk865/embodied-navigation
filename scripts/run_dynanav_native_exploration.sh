@@ -2,6 +2,12 @@
 # Live RTX + post-VIO + measured PCT global / native SCAN local planning.
 # The operator supplies sparse goals; RoboGauge still executes body commands.
 set -Eeo pipefail
+for argument in "$@"; do
+    if [[ "$argument" == --help || "$argument" == -h ]]; then
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY]"
+        exit 0
+    fi
+done
 cd "$(dirname "$0")/.."
 source /opt/ros/jazzy/setup.bash
 set -a; source .env.local; set +a
@@ -14,7 +20,26 @@ export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-219}"
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp FASTDDS_BUILTIN_TRANSPORTS=UDPv4
 export PYTHONDONTWRITEBYTECODE=1 DYNANAV_RTX_COMPLETE_SCAN=1
 BUILD="${BUILD_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_complete_scan_20261110T231145Z}"
-RUN="${1:-$PROJECT_DATA_ROOT/embodied-navigation/experiments/native_exploration_$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN=""
+UNTIL_STOPPED=false
+ISAAC_ROOT="$HOME/isaacsim"
+SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
+while (($#)); do
+    case "$1" in
+        --until-stopped) UNTIL_STOPPED=true; shift ;;
+        --scan-prefix)
+            (($# >= 2)) || { echo "Missing value for --scan-prefix"; exit 2; }
+            SCAN_PREFIX=$2; shift 2 ;;
+        --isaac-root)
+            (($# >= 2)) || { echo "Missing value for --isaac-root"; exit 2; }
+            ISAAC_ROOT=$2; shift 2 ;;
+        --*) echo "Unknown argument: $1"; exit 2 ;;
+        *)
+            [[ -z "$RUN" ]] || { echo "Only one run directory may be supplied"; exit 2; }
+            RUN=$1; shift ;;
+    esac
+done
+RUN="${RUN:-$PROJECT_DATA_ROOT/embodied-navigation/runs/native-exploration/$(date -u +%Y%m%dT%H%M%SZ)}"
 CAL="${CAPTURE_CALIBRATION:-$PROJECT_DATA_ROOT/embodied-navigation/experiments/rtx_lidar_integration_20261110T213000Z/capture14/result.json}"
 SCENE="${SIMULATION_SCENE:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/offline_office_freeze_20261111T030623Z/office_deinstanced_flattened.usdc}"
 DURATION="${DURATION_SIM_S:-300}"
@@ -41,7 +66,6 @@ PY_CAMERA_CAL
         EXTRA_CAPTURE_ARGS+=(--multicamera-horizontal-fov "$MULTICAMERA_HORIZONTAL_FOV")
     fi
 fi
-SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
 # Nominal Go2 base-support height plus the recorded go2_imu mount z. This is
 # a robot offset, not a measured floor elevation or a scene-map input.
 PCT_BODY_SUPPORT_OFFSET_M="${PCT_BODY_SUPPORT_OFFSET_M:-0.3148910446837544}"
@@ -51,9 +75,15 @@ PCT_START_BLIND_RADIUS_M="${PCT_START_BLIND_RADIUS_M:-1.5}"
 [[ "$NAVIGATION_BACKEND" == pct_scan || "$NAVIGATION_BACKEND" == native_route ]] || {
     echo "NAVIGATION_BACKEND must be pct_scan or native_route"; exit 2;
 }
-# Keep the finite renderer and measured-map wall budgets aligned with the
-# requested simulation duration. The default 300 s still receives 900 wall s.
-WALL_TIMEOUT_S="$(python3 - "$DURATION" <<'PY_BUDGET'
+# Finite captures retain their original renderer/map budgets. An interactive
+# until-stopped capture ends through the native stop/failure/cancellation path.
+WALL_TIMEOUT_S=0
+CAPTURE_PREFIX=()
+if $UNTIL_STOPPED; then
+    EXTRA_CAPTURE_ARGS+=(--until-stopped)
+else
+    EXTRA_CAPTURE_ARGS+=(--duration "$DURATION")
+    WALL_TIMEOUT_S="$(python3 - "$DURATION" <<'PY_BUDGET'
 import math
 import sys
 
@@ -63,13 +93,20 @@ if not math.isfinite(duration) or not 8 <= duration <= 1800:
 print(max(900, math.ceil(3 * duration)))
 PY_BUDGET
 )"
+    CAPTURE_PREFIX=(timeout --signal=TERM --kill-after=20s "$WALL_TIMEOUT_S")
+fi
 [[ ! -e "$RUN" ]] || { echo "Use a new run directory"; exit 2; }
 mkdir -p "$RUN"
 exec 9>/tmp/embodied-navigation-isaac-exclusive.lock
 flock -n 9 || { echo "An experiment already owns the simulator"; exit 3; }
-if pgrep -f '^(/home/hyh001/isaacsim/kit/python/bin/python3|/home/hyh001/isaacsim/kit/kit|.*/fastlivo_mapping)' >/dev/null; then
+if pgrep -f '^([^[:space:]]*/kit/python/bin/python3|[^[:space:]]*/kit/kit|[^[:space:]]*/fastlivo_mapping)([[:space:]]|$)' >/dev/null; then
     echo "A simulator or estimator is already running; left it unchanged"; exit 4
 fi
+# Freeze the observer's configuration before starting any owned process.
+mkdir "$RUN/configuration"
+cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
+    configs/simulation/dynanav/camera_rgbd.yaml \
+    configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
 export PYTHONPATH="$BUILD/install/ros/lib/python3.12/site-packages:$PYTHONPATH"
 export LD_LIBRARY_PATH="$BUILD/install/ros/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export AMENT_PREFIX_PATH="$BUILD/install/ros${AMENT_PREFIX_PATH:+:$AMENT_PREFIX_PATH}"
@@ -93,9 +130,10 @@ fi
 printf '%s\n' "$RUN" > /tmp/embodied-navigation-native-exploration-current
 # The same override file also enables the bounded native keyframe export that
 # the SLAM backend node consumes (and deletes) below.
-printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    backend.snapshot_directory: "%s"\n' \
+printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    imu:\n      ba_bg_est_en: true\n      gravity_est_en: true\n    backend.snapshot_directory: "%s"\n' \
     "$RUN/observer/native_keyframes" > "$RUN/handoff_parameters.yaml"
 bash scripts/run_dynanav_lio.sh --binary-prefix "$BUILD" --mode livo \
+    --config-dir "$RUN/configuration" \
     --capture-result "$CAL" --observer-namespace /dynanav/rtx_livo \
     --output-dir "$RUN/observer" --lidar-topic /dynanav/lidar_rtx \
     --parameter-override "$RUN/handoff_parameters.yaml" > "$RUN/observer.log" 2>&1 &
@@ -119,12 +157,12 @@ python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS
 BACKEND=$!; PIDS+=("$BACKEND")
 # This process renders the world as sensor physics only. No scene geometry or
 # simulator truth is passed to the waypoint chooser or route follower.
-timeout --signal=TERM --kill-after=20s "$WALL_TIMEOUT_S" /home/hyh001/isaacsim/python.sh \
+"${CAPTURE_PREFIX[@]}" "$ISAAC_ROOT/python.sh" \
     scripts/run_dynanav_experiment.py --output "$RUN/capture" --scene "$SCENE" \
     --point-cloud-source rtx_lidar --semantic-provider none --interactive \
     --interactive-pose-source livo_post_vio --interactive-controller "$NAVIGATION_BACKEND" \
     --odometry-topic /dynanav/rtx_livo/post_vio_odometry --render-backend fabric \
-    --spawn-yaw "${SPAWN_YAW_RAD:-0}" --speed "$SPEED" --duration "$DURATION" "${EXTRA_CAPTURE_ARGS[@]}" \
+    --spawn-yaw "${SPAWN_YAW_RAD:-0}" --speed "$SPEED" "${EXTRA_CAPTURE_ARGS[@]}" \
     > "$RUN/capture.log" 2>&1 &
 CAP=$!; PIDS=("$CAP" "${PIDS[@]}")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"

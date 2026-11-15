@@ -40,7 +40,7 @@ class ContinuousScanFollower:
         self.identity = dict(identity)
         self.goal = np.asarray(goal, dtype=float)
         self.speed = float(speed)
-        self.motion_end = float(motion_end)
+        self.motion_end = None if motion_end is None else float(motion_end)
         self.stop_on_stall = stop_on_stall
         self.lookahead_m = float(lookahead_m)
         self.capture_distance_m = float(capture_distance_m)
@@ -138,7 +138,7 @@ class ContinuousScanFollower:
         zero = [0., 0., 0.]
         if self.failure or self.arrived:
             return zero
-        if t >= self.motion_end:
+        if self.motion_end is not None and t >= self.motion_end:
             self.failure = "route_motion_budget"
             return zero
         if not ready or t < 7:

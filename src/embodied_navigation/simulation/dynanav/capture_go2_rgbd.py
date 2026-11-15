@@ -23,6 +23,7 @@ script read them from ``sys.argv``; every assertion, threshold, cadence, ROS
 topic/type/QoS, receipt key and cleanup order is preserved.
 """
 
+from itertools import count
 import json
 import os
 import pathlib
@@ -479,7 +480,9 @@ def run_capture(config):
         from isaacsim.core.simulation_manager import SimulationManager
 
         last_clock_published_wall = None
-        for i in range(int(os.environ.get("PROBE_STEPS", "4400"))):
+        iterations = (count() if config.experiment.get("duration_s", 0) is None
+                      else range(int(os.environ.get("PROBE_STEPS", "4400"))))
+        for i in iterations:
             cancellation.check()
             q = art.get_dof_positions().numpy()[0]
             qd = art.get_dof_velocities().numpy()[0]

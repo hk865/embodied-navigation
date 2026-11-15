@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.time import float32_time_half_ulp
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
 from embodied_navigation.simulation.dynanav.slam_route import _number, pose_transform
 
@@ -37,7 +38,9 @@ class NativeWaypointTracker:
         self.speed = _number(experiment["speed_mps"] if speed_mps is None else speed_mps, "speed", positive=True)
         if self.speed > 1:
             raise ValueError("speed exceeds native command ceiling")
-        self.motion_end = _number(experiment["motion_end_s"], "motion_end", positive=True)
+        motion_end = experiment["motion_end_s"]
+        self.motion_end = (None if motion_end is None
+                           else _number(motion_end, "motion_end", positive=True))
         self.parameters = {
             "command_bounds": {"forward_mps": self.speed, "lateral_mps": .05, "yaw_rate_rps": .15},
             "controller": "embodied_navigation.navigation.robogauge.route_tracker.RouteTracker",
@@ -254,7 +257,7 @@ class NativeWaypointTracker:
             if self._last_wall is not None and now < self._last_wall:
                 return hold("nonmonotonic_wall_time")
             self._last_sim, self._last_wall = sim, now
-            if sim >= self.motion_end:
+            if self.motion_end is not None and sim >= self.motion_end:
                 return self._fail_run("route_motion_budget", evidence)
             if ready is not True:
                 return hold("not_ready")
@@ -262,7 +265,13 @@ class NativeWaypointTracker:
             arrival = _number(arrival_wall, "arrival_wall", nonnegative=True)
             age, wall_age = sim - stamp, now - arrival
             evidence.update(odom_stamp_s=stamp, sim_age_s=max(0., age), wall_age_s=wall_age)
-            if age < -self.parameters["future_tolerance_s"]:
+            # RTX source time is float32; sim time is float64. Bound same-tick
+            # rounding by half the existing 0.005 s physical tick.
+            future_tolerance = min(max(self.parameters["future_tolerance_s"],
+                                       float32_time_half_ulp(sim) + 1e-7), 0.0025)
+            evidence.update(raw_sim_age_s=age,
+                            odometry_future_tolerance_s=future_tolerance)
+            if age < -future_tolerance:
                 return hold("future_odometry")
             if age > self.parameters["max_sim_age_s"]:
                 return hold("stale_sim_odometry")

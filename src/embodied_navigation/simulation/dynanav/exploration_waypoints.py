@@ -39,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.time import float32_time_half_ulp
 from embodied_navigation.common.geometry import quaternion_matrix
 from embodied_navigation.common.geometry import wrap_angle as wrap
 
@@ -2245,7 +2246,7 @@ class InteractiveWaypointTracker:
         instead of being accepted as the same tick. The source stamp is never rounded
         or rewritten and the signed age stays in the receipt.
         """
-        half_ulp = math.ldexp(1.0, math.frexp(float(sim))[1] - 25)
+        half_ulp = float32_time_half_ulp(sim)
         uncapped = max(self.config["future_tolerance_s"], half_ulp + 1e-7)
         return min(uncapped, ODOMETRY_PHYSICAL_TICK_S / 2.0)
 

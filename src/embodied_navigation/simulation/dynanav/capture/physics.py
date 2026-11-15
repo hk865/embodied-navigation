@@ -8,6 +8,8 @@
 
 from dataclasses import dataclass
 
+from embodied_navigation.common.time import float32_sensor_time_tolerance
+
 import numpy as np
 
 
@@ -325,9 +327,7 @@ class PhysicsStepper:
         }
         # IMU 时间戳来自 float32，容差按 float32 在当前时间值上的量化间距
         # 取一半（至少 2e-6 s），再加 1e-7 s 余量；不能用固定容差替代。
-        time_tolerance = (
-            max(2e-6, 0.5 * float(abs(np.spacing(np.float32(actual_time))))) + 1e-7
-        )
+        time_tolerance = float32_sensor_time_tolerance(actual_time)
         result["last_imu_clock_check"]["quantization_aware_tolerance_s"] = (
             time_tolerance
         )

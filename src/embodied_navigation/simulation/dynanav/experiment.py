@@ -12,14 +12,7 @@ import sys
 from pathlib import Path
 
 from embodied_navigation.project import data_root
-
-
-def float32_sensor_time_tolerance(duration_s):
-    """Half a float32 clock ULP at the run horizon plus the existing numeric margin."""
-    if not math.isfinite(duration_s) or duration_s <= 0:
-        raise ValueError("A positive finite sensor clock horizon is required")
-    half_ulp = math.ldexp(1.0, math.frexp(duration_s)[1] - 25)
-    return max(2e-6, half_ulp) + 1e-7
+from embodied_navigation.common.time import float32_sensor_time_tolerance
 
 
 def joint_speed_observation(
@@ -53,15 +46,18 @@ def joint_speed_observation(
     }
 
 
-def make_profile(speed_mps=1.0, duration_s=90.0, *, interactive=False):
+def make_profile(speed_mps=1.0, duration_s=90.0, *, interactive=False, until_stopped=False):
     """First physical stair flight; speed is a command ceiling, not achieved speed."""
     if not math.isfinite(speed_mps) or not 0 <= speed_mps <= 1.0:
         raise ValueError("Diagnostic speed must be finite and within 0..1 m/s")
+    if until_stopped and not interactive:
+        raise ValueError("Unbounded duration requires interactive exploration")
     maximum_duration_s = 1800.0 if interactive else 300.0
     if not math.isfinite(duration_s) or not 8 <= duration_s <= maximum_duration_s:
         raise ValueError(
             f"Diagnostic duration must be finite and within 8..{maximum_duration_s:g} s"
         )
+    duration_s = None if until_stopped else duration_s
     return {
         "schema": "dynanav-diagnostic/v1",
         "policy": "robogauge",
@@ -70,7 +66,7 @@ def make_profile(speed_mps=1.0, duration_s=90.0, *, interactive=False):
         "spawn_yaw": math.pi,
         "waypoints_xyz": [[-22.0, -7.5, -1.1441]],
         "speed_mps": speed_mps,
-        "motion_end_s": duration_s - 5.0,
+        "motion_end_s": None if duration_s is None else duration_s - 5.0,
         "duration_s": duration_s,
         "basement_collision": True,
         "minimum_base_z_m": -3.15,
@@ -184,7 +180,10 @@ def main(argv=None):
         default=1.0,
         help="Body command ceiling; no stair-specific reduction",
     )
-    parser.add_argument("--duration", type=float, default=90.0)
+    duration = parser.add_mutually_exclusive_group()
+    duration.add_argument("--duration", type=float, default=90.0)
+    duration.add_argument("--until-stopped", action="store_true",
+                          help="Interactive exploration without a total time budget")
     parser.add_argument("--rtf", type=float, default=1.0)
     parser.add_argument("--multicamera-observation", action="store_true",
                         help="Independent native RGB/depth views for DSH; primary single-camera SLAM unchanged")
@@ -372,7 +371,10 @@ def main(argv=None):
             "--interactive cannot be combined with --slam-reference; the explorer "
             "accepts operator waypoints, not a prerecorded route"
         )
-    profile = make_profile(args.speed, args.duration, interactive=interactive_requested)
+    if args.until_stopped and not interactive_requested:
+        parser.error("--until-stopped requires --interactive")
+    profile = make_profile(args.speed, args.duration, interactive=interactive_requested,
+                           until_stopped=args.until_stopped)
     if args.spawn_yaw is not None:
         if not math.isfinite(args.spawn_yaw):
             parser.error("--spawn-yaw must be finite")
@@ -707,6 +709,7 @@ def main(argv=None):
 
     root = project_root()
     sources = [
+        "src/embodied_navigation/common/time/__init__.py",
         "src/embodied_navigation/simulation/dynanav/experiment.py",
         "src/embodied_navigation/simulation/dynanav/capture_go2_rgbd.py",
         "src/embodied_navigation/simulation/dynanav/capture/__init__.py",
@@ -779,10 +782,11 @@ def main(argv=None):
     (output / "source_manifest.json").write_text(json.dumps(manifest, indent=2))
     os.environ.update(
         DYNANAV_EXPERIMENT=str(profile_path),
-        PROBE_STEPS=str(round(args.duration / 0.005)),
         PROBE_RTF=str(args.rtf),
         NAV_STOP_REQUEST=str(output / "stop_request.json"),
     )
+    if profile["duration_s"] is not None:
+        os.environ["PROBE_STEPS"] = str(round(profile["duration_s"] / 0.005))
     sys.argv = ["capture_go2_rgbd", str(output), str(scene)]
     runpy.run_module(
         "embodied_navigation.simulation.dynanav.capture_go2_rgbd", run_name="__main__"

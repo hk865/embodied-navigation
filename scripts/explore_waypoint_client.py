@@ -2326,7 +2326,7 @@ def _cmd_map(args):
             PointCloud2, args.cloud_topic, on_cloud, qos_profile_sensor_data
         )
         node.create_subscription(Clock, args.clock_topic, on_clock, qos_profile_sensor_data)
-        deadline = time.perf_counter() + args.duration
+        deadline = None if args.duration == 0 else time.perf_counter() + args.duration
         out_dir = Path(args.out) if args.out else run_dir / "operator_map"
         # The final-consumption receipt log lives here and may be written before the
         # first snapshot on a brand-new output directory, so create it up front and
@@ -2337,7 +2337,7 @@ def _cmd_map(args):
         state["pump_callbacks"] = lambda: _bounded_map_callback_pump(
             state, spin_once=rclpy.spin_once, node=node, clock=time.perf_counter,
         )
-        while time.perf_counter() < deadline:
+        while deadline is None or time.perf_counter() < deadline:
             state["last_main_pump"] = state["pump_callbacks"]()
             if not pending and not state["last_main_pump"]["callback_count"]:
                 # Only wait when the nonblocking pump found no work. Geometry
@@ -2549,7 +2549,8 @@ def build_parser():
         "for sensor_imu; LIO rays/both are refused without a physical ray-origin contract",
     )
     mapping.add_argument("--resolution", type=float, default=0.05)
-    mapping.add_argument("--duration", type=float, default=10.0)
+    mapping.add_argument("--duration", type=float, default=10.0,
+                         help="Wall seconds to collect; 0 runs until launcher cleanup")
     mapping.add_argument(
         "--snapshot-interval",
         type=float,
