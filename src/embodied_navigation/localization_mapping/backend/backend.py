@@ -8,11 +8,12 @@ Mapping mode (no prior map): world equals the first keyframe's odom frame and
 C starts as identity. Every keyframe becomes a pose-graph node linked to its
 predecessor by the odometry delta. ScanContext proposes loop candidates outside
 the recent window, each with a yaw guess; coarse-then-fine ICP against the
-candidate's world submap verifies them. A verified loop adds a robust edge and
-re-optimises the graph; ``C = T_world_body(latest) @ inv(T_odom_body(latest))``
-is then offered to ``CorrectionAdmission`` on every keyframe. ``lost_after``
-jump rejections in a row reset the admission so a persistent correction is
-still adopted.
+candidate's world submap verifies them. The ICP body pose must then agree with
+the graph's current estimate of the query within an odometry budget that grows
+with the odom path ``d`` travelled since the candidate (rejects symmetric
+false matches). An accepted loop adds a robust edge and re-optimises the
+graph; ``C = T_world_body(latest) @ inv(T_odom_body(latest))`` is then offered
+to ``CorrectionAdmission`` on every keyframe, always behind its jump gate.
 
 Relocalization mode (prior map): ScanContext global search over the prior
 keyframes, ICP against the prior submap, and two confirmations adopt C. After
@@ -33,7 +34,7 @@ import numpy as np
 from .correction import CorrectionAdmission
 from .keyframes import Keyframe
 from .map_store import MapStore
-from .pose_graph import PoseGraph, invert
+from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
 
@@ -55,6 +56,11 @@ class BackendConfig:
     icp_candidates: int = 3
     exclude_recent: int = 10
     min_loop_gap_s: float = 20.0
+    # Loop odometry-consistency budget at the body: base + per metre of odom path.
+    loop_budget_translation_m: float = 0.5
+    loop_budget_translation_per_m: float = 0.05
+    loop_budget_rotation_rad: float = 0.2
+    loop_budget_rotation_per_m: float = 0.01
     odometry_sigma_m: float = 0.2
     odometry_sigma_rad: float = 0.02
     loop_sigma_m: float = 0.05
@@ -97,6 +103,7 @@ class SlamBackend:
         self.loop_count = 0
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
+        self._path_m: dict = {}  # key -> cumulative odom path length
         self._correction: np.ndarray | None = None
         self._tracking = False
         self._failures = 0
@@ -133,7 +140,7 @@ class SlamBackend:
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
         self._add_node(keyframe)
-        loop_key = self._find_loop(keyframe, desc)
+        loop_key, rejected = self._find_loop(keyframe, desc)
         self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
         self.index.add(keyframe.key, desc)
         if loop_key is not None:
@@ -143,23 +150,49 @@ class SlamBackend:
         if self._correction is None:
             self._correction = np.eye(4)
         status = self._propose(self.graph.pose(keyframe.key) @ invert(keyframe.T_odom_body), keyframe)
-        self._count_failure(status == "rejected")
-        return {"loop": loop_key is not None, "loop_key": loop_key, "adopted": status == "adopted"}
+        event = {"loop": loop_key is not None, "loop_key": loop_key, "adopted": status == "adopted"}
+        if rejected is not None:
+            event["loop_rejected"] = rejected
+        return event
 
     def _add_node(self, keyframe: Keyframe) -> None:
         """Node at the previous optimised pose composed with the odometry delta."""
         previous = self._previous
         if previous is None:
             self.graph.add_node(keyframe.key, keyframe.T_odom_body)
+            self._path_m[keyframe.key] = 0.0
         else:
             delta = invert(previous.T_odom_body) @ keyframe.T_odom_body
             self.graph.add_node(keyframe.key, self.graph.pose(previous.key) @ delta)
             odometry = information(self.config.odometry_sigma_m, self.config.odometry_sigma_rad)
             self.graph.add_edge(previous.key, keyframe.key, delta, odometry)
+            self._path_m[keyframe.key] = self._path_m[previous.key] + float(np.linalg.norm(delta[:3, 3]))
         self._previous = keyframe
 
+    def _odometry_inconsistency(self, key, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
+        """Reason why a loop match disagrees with the graph estimate, or None.
+
+        Compares the ICP body pose with the graph's current pose of the query
+        at the body; the budget grows with the odom path ``d`` since ``key``.
+        """
+        c = self.config
+        d = self._path_m[keyframe.key] - self._path_m[key]
+        translation, rotation = pose_difference(self.graph.pose(keyframe.key), T_world_body)
+        max_translation = c.loop_budget_translation_m + c.loop_budget_translation_per_m * d
+        max_rotation = c.loop_budget_rotation_rad + c.loop_budget_rotation_per_m * d
+        if translation <= max_translation and rotation <= max_rotation:
+            return None
+        return (
+            f"odometry inconsistent with {key}: {translation:.2f} m / {rotation:.2f} rad "
+            f"exceeds {max_translation:.2f} m / {max_rotation:.2f} rad over {d:.1f} m"
+        )
+
     def _find_loop(self, keyframe: Keyframe, desc: np.ndarray):
-        """Add one verified loop edge to the newest keyframe; return its partner key."""
+        """Add one verified loop edge to the newest keyframe.
+
+        Returns ``(partner key, None)`` for an added loop, ``(None, reason)``
+        when a geometric match failed the odometry check, else ``(None, None)``.
+        """
         recent = set(list(self.map.keyframes)[-self.config.exclude_recent :])
         gap_ns = self.config.min_loop_gap_s * 1e9
         excluded = {
@@ -171,16 +204,19 @@ class SlamBackend:
             self.map, keyframe, desc, lambda key: key in excluded, lambda key: self._loop_submap(key, excluded)
         )
         if match is None:
-            return None
+            return None, None
         key, result = match
         T_world_new = result.T_target_source
+        rejected = self._odometry_inconsistency(key, keyframe, T_world_new)
+        if rejected is not None:
+            return None, rejected
         anchor = min(
             self._loop_window(key, excluded),
             key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
         )
         loop = information(self.config.loop_sigma_m, self.config.loop_sigma_rad)
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
-        return anchor
+        return anchor, None
 
     def _loop_window(self, key, excluded: set) -> list:
         """The candidate's temporal neighbours that are not excluded.
@@ -241,11 +277,11 @@ class SlamBackend:
         return self.prior.submap(self.prior.poses[key][:3, 3], self.config.submap_radius_m)
 
     def _count_failure(self, failed: bool) -> None:
-        """After ``lost_after`` failures in a row, drop tracking and the jump reference.
+        """Relocalization only: after ``lost_after`` local failures in a row, go lost.
 
-        A fresh admission lets a persistently proposed correction be confirmed
-        again (relocalization: through global search) while the last adopted
-        C stays published until then.
+        Global search resumes with a fresh admission (no jump reference) while
+        the last adopted C stays published. Mapping mode never resets its
+        admission, so every graph correction stays behind the jump gate.
         """
         self._failures = self._failures + 1 if failed else 0
         if self._failures >= self.config.lost_after:
