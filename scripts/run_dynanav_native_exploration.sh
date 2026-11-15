@@ -91,7 +91,10 @@ if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     set -u
 fi
 printf '%s\n' "$RUN" > /tmp/embodied-navigation-native-exploration-current
-printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n' > "$RUN/handoff_parameters.yaml"
+# The same override file also enables the bounded native keyframe export that
+# the SLAM backend node consumes (and deletes) below.
+printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    backend.snapshot_directory: "%s"\n' \
+    "$RUN/observer/native_keyframes" > "$RUN/handoff_parameters.yaml"
 bash scripts/run_dynanav_lio.sh --binary-prefix "$BUILD" --mode livo \
     --capture-result "$CAL" --observer-namespace /dynanav/rtx_livo \
     --output-dir "$RUN/observer" --lidar-topic /dynanav/lidar_rtx \
@@ -103,6 +106,17 @@ for _ in $(seq 1 200); do
     sleep .1
 done
 [[ -f "$RUN/observer/ready.json" ]] || { echo "Estimator startup timed out"; exit 6; }
+# Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
+# map->camera_init and /dynanav/backend/corrected_odometry. Navigation below
+# still consumes the raw odometry. PRIOR_MAP is an optional saved map directory.
+BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
+    --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map")
+if [[ -n "${PRIOR_MAP:-}" ]]; then
+    BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
+fi
+python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS[@]}" \
+    > "$RUN/backend.log" 2>&1 &
+BACKEND=$!; PIDS+=("$BACKEND")
 # This process renders the world as sensor physics only. No scene geometry or
 # simulator truth is passed to the waypoint chooser or route follower.
 timeout --signal=TERM --kill-after=20s "$WALL_TIMEOUT_S" /home/hyh001/isaacsim/python.sh \
