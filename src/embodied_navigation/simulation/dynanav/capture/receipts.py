@@ -59,15 +59,15 @@ class Receipts:
         self._journals = {}
 
     def save(self, force=False):
-        # 收据 I/O 不能按 200 Hz 物理频率写数据卷：非强制调用在 0.25 s 内
-        # 直接返回。force 用于失败收尾与终态，保证最后一次写入不被限频吞掉。
+        # 收据 I/O 不能按 200 Hz 物理频率写数据卷：非强制调用在上次保存完成后
+        # 0.25 s 内直接返回。force 用于失败收尾与终态，不受限频影响。
         now = time.perf_counter()
         if not force and now - self._last_receipt_wall < 0.25:
             return
         temporary = self.out / "result.json.tmp"
         temporary.write_text(json.dumps(self.result, indent=2))
         temporary.replace(self.out / "result.json")
-        self._last_receipt_wall = now
+        self._last_receipt_wall = time.perf_counter()
 
     def journal(self, name, payload, *, flush=False):
         # 每个 journal 是独立追加流，按 name 懒打开；payload 必须可 JSON 序列化，

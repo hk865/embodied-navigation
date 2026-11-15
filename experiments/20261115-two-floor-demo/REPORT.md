@@ -29,3 +29,9 @@ vendor 逻辑仅通过 `third_party/scan/patches/reference_feedback.patch` 应�
 ## 后续指定参数对照
 
 用户最新指定两处 `max_acc` 设为 2.0 m/s²。保留 `acc_tolerance=1.0`、原发布前加速度硬拒绝、速度和碰撞检查，最终加速度阈值为 3.0 m/s²。此配置覆盖下次仿真；上一 1.5 参数代次首航点明确失败（末次 2.592 > 2.500），失败反馈正确，原生停车并退出 0。放弃的加速度诊断补丁不进入本版本；对应部分构建已取消，不能使用。
+
+## 收据热路径修复：等待新代仿真
+
+完整 SCAN provenance 现在按实际消费的 revision 只追加一次到 `planner_provenance.jsonl`；事件和逐 tick 收据保留轻量字段及可回读的偏移、长度和 SHA256。`result.json` 的 0.25 秒非强制保存间隔从原子替换完成时计算，强制终态保存不变。本次不改规划或控制决策，也不改 `manager.max_acc=2.0`、`optimization.max_acc=2.0`、`optimization.acc_tolerance=1.0`。
+
+独立 LF 克隆验收：1160 项单测保留原 5 项失败（1 failure、4 errors、3 skipped），81 项回归通过（9 skipped），无新增失败；新增 3 项验收通过。两份实现和三份测试已与验收候选逐字节比对，并逐行审查差异。CPU 验收只证明记录可追溯、节流语义及原控制输出保持；实际 RTF 和长运行开销尚待下一仿真代次，不把取消前后的整体 A/B 差异归因为单一保存路径。
