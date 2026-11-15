@@ -108,7 +108,6 @@ def main():
         from embodied_navigation.robot.unitree.policy import student as adapter
 
         student = adapter.StudentRuntime(run, scope, binding, limits)
-    provider = None
     recording.install_height_path(legacy)
     observation_builder = legacy.build_observation
 
@@ -170,8 +169,6 @@ def main():
             clock = round(float(native_state[0]) * 1e9)
             if student is not None:
                 student.native_frame(native_state)
-            if provider is not None:
-                provider.observe_state(native_state)
             latest["clock_ns"] = clock
             pending = latest["pending_ack"]
             if pending is not None and clock > pending["stamp_ns"]:
@@ -208,19 +205,7 @@ def main():
             return reader.reject_frame(latest["clock_ns"], type(error).__name__ + ": " + str(error))
 
     def request(test, t):
-        changed = []
         cmd, rejected, attempt = read_command()
-        if provider is not None and not changed:
-            if provider.check_switch():
-                cmd = np.zeros(3)
-                rejected = True
-                reader.revoke()
-                attempt.update(
-                    execution_override="actor_terrain_switch_protection",
-                    reason="Actor terrain switch refused: " + provider.failure
-                    if provider.failure
-                    else "Waiting for causal original connector arrival clock",
-                )
         evidence = {
             "sim_time": float(t),
             "physics_clock_ns": latest["clock_ns"],
@@ -231,8 +216,6 @@ def main():
             "actual_original_envelope": attempt.get("decoded_envelope"),
             "navigation_ground_truth_used": False,
         }
-        if provider is not None:
-            evidence["actor_terrain_provider"] = provider.evidence()
         latest["evidence"] = evidence
         log.write(canonical(recording.project_evidence(evidence)) + "\n")
         # Completion/hold is declared by actual SLAM/IMU source, never native
@@ -254,10 +237,8 @@ def main():
                 if complete and latest["completion_elapsed_s"] is None:
                     latest["completion_elapsed_s"] = float(t)
             else:
-                terrain_ready = provider is None or (provider.switched and provider.failure is None)
                 if (
-                    terrain_ready
-                    and status.get("state") == "succeeded"
+                    status.get("state") == "succeeded"
                     and park.get("mode") == "active_hold"
                     and latest["completion_elapsed_s"] is None
                 ):
@@ -298,8 +279,6 @@ def main():
                 outer_navigation_ground_truth_used=False,
                 privileged_actor_observations=True,
             )
-            if provider is not None:
-                obj["actor_terrain_provider"] = provider.evidence()
             latest["pending_ack"] = {
                 "stamp_ns": round(obj["world_sim_time"] * 1e9),
                 "applied_command_body": obj["command"],
@@ -351,8 +330,6 @@ def main():
             if student is not None:
                 obj.update(student.metadata())
             latest["metadata"] = obj
-            if provider is not None:
-                obj["actor_terrain_layer_switch"] = provider.contract()
         if path.name == "worker_result.json":
             obj.update(
                 controller_hold_observed_worker_elapsed_s=latest["completion_elapsed_s"],
@@ -372,11 +349,6 @@ def main():
                     student_pid_new_reset_count=student.pid.new_reset_count,
                     student_pid_old_would_reset_count=student.pid.old_would_reset_count,
                 )
-        if path.name == "worker_result.json" and provider is not None:
-            obj.update(
-                actor_terrain_provider=provider.evidence(),
-                actor_terrain_switch_failed=provider.failure is not None,
-            )
         original_atomic(path, obj)
 
     sys.argv = [
@@ -415,8 +387,6 @@ def main():
             student.close()
         log.close()
         ack_log.close()
-        if provider is not None:
-            provider.close()
         recording.close()
 
 
