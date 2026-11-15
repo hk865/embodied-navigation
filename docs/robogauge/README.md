@@ -85,14 +85,12 @@ docs/robogauge/
 
 Set `PROJECT_DATA_ROOT` to your global external data directory. The shared project helper adds `embodied-navigation`; put the verified export at `embodied-navigation/runtime_assets/models/robogauge_policy.pt` below the global root. It must have SHA256 `bde5210a8114aa08bb0c611e49def1482faa1b2441673e5681374c30b935e32e`. Weights are excluded from Git. A data-only symlink to an existing copy is sufficient; no duplication is required. An explicit `--model` can select the same verified export elsewhere. Loading a different export is rejected, not silently accepted.
 
-The optional CPU fixture needs public PyTorch. Base NumPy tests do not import PyTorch:
+Base NumPy tests do not import PyTorch:
 
 ```sh
 PYTHONPATH=src OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python3 -m unittest discover -s tests/regression -p 'test_robogauge*.py' -v
-PYTHONPATH=src python3 -m embodied_navigation.robot.unitree.robogauge.cpu_fixture
 ```
 
-The fixture compares thirty stateful frames with an independent raw TorchScript instance and verifies reset. It is not a physics or navigation test.
 
 ## Native Gazebo actuator build
 
@@ -135,13 +133,11 @@ PYTHONPATH=src python3 -m embodied_navigation.navigation.robogauge.benchmark --c
 PYTHONPATH=src python3 -m embodied_navigation.navigation.robogauge.benchmark --check
 # Explicit ROS/Gazebo start, only after building dependencies and supplying assets.
 PYTHONPATH=src python3 -m embodied_navigation.navigation.robogauge.benchmark --case single_floor_turn --label ANOTHER_UNIQUE_NAME --run
-# Offline same-time policy exchange, target and motor-envelope audit.
-PYTHONPATH=src python3 -m embodied_navigation.navigation.robogauge.analyze "$RUN_DIRECTORY"
 ```
 
 This entry preserves the real-SLAM process chain: CPU policy actor, sensor bridge, camera parameters, LiDAR filter, FAST-LIVO2, global backend, localization publication, existing Building navigation, SCAN and Gazebo. It requires the repository's own compiled libraries plus public ROS/Gazebo dependencies. `NAVIGATION_ACTOR_PYTHON` or `--actor-python` selects a Python with public CPU Torch; system ROS Python is used separately. The optional historical camera recorder/video encoder and resource monitor are not necessary navigation dependencies and are not started here.
 
-Route JSON, world template and sensor configuration are real tracked files in `configs/robogauge`. Large meshes, point clouds, numeric mesh caches, models and logs remain outside Git. `BUILDING_SOURCE.json` and associated notices preserve the recorded Building/PCT provenance. The prepared process plan is not proof that any process ran. `analyze` will not pass empty logs or pre-send inference receipts without a matching actuator exchange and physics step.
+Route JSON, world template and sensor configuration are real tracked files in `configs/robogauge`. Large meshes, point clouds, numeric mesh caches, models and logs remain outside Git. `BUILDING_SOURCE.json` and associated notices preserve the recorded Building/PCT provenance. The prepared process plan is not proof that any process ran.
 
 `isaac_closure_audit.json` lists the actual recovered runner imports and missing historical integration edges. `configs/robogauge/isaac_first_flight_reference.json` contains only the relevant archived scenario values and explicitly does not advertise a live runner. The pure `RouteTracker` is GT diagnostic logic, separate from the real-SLAM benchmark and from the main relative-SLAM navigation task.
 
