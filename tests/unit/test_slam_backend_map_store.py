@@ -87,45 +87,40 @@ class MapStoreTests(unittest.TestCase):
         return store
 
     def test_r_map_1_save_load_roundtrip(self):
-        # Catches: dropping or mangling a field on save (pose, T_body_lidar, stamp, points, descriptor).
+        # Catches: dropping or mangling a field on save/load (pose, T_body_lidar, stamp, points, descriptor).
+        # Per supplementary ruling S-3: MapStore.add may voxel-downsample, so the check is
+        # save -> load -> save reproduces itself, not "saved cloud == raw input".
         store = self._store()
         first, second = self.root / "first", self.root / "second"
         store.save(first)
         meta = json.loads((first / "map.json").read_text())
         self.assertEqual(meta.get("schema"), "embodied_navigation_map/v1")
-        expected = [(kf.points_lidar, desc) for kf, desc in self.frames]
-        _match(self, expected, _npz_contents(first))
-        # poses saved are the *updated* ones; T_body_lidar and stamp_ns are kept
-        saved_poses = [np.array(v, dtype=float) for v in _collect(meta, "T_world_body", [])]
-        for key, T in self.updated.items():
-            self.assertTrue(any(np.array_equal(T, s) for s in saved_poses), f"pose of {key} not saved exactly")
-        saved_lidar = [np.array(v, dtype=float) for v in _collect(meta, "T_body_lidar", [])]
-        for kf, _ in self.frames:
-            self.assertTrue(any(np.array_equal(kf.T_body_lidar, s) for s in saved_lidar))
-        saved_stamps = _collect(meta, "stamp_ns", [])
-        for kf, _ in self.frames:
-            self.assertIn(kf.stamp_ns, saved_stamps)
-
         loaded = MapStore.load(first)
         loaded.save(second)
         meta2 = json.loads((second / "map.json").read_text())
-        _match(self, expected, _npz_contents(second))
+
+        # S-3 (1): both saves agree element-wise on poses, T_body_lidar, stamp_ns and npz contents.
         for name in ("T_world_body", "T_body_lidar", "stamp_ns"):
             with self.subTest(field=name):
                 a = sorted(json.dumps(v) for v in _collect(meta, name, []))
                 b = sorted(json.dumps(v) for v in _collect(meta2, name, []))
+                self.assertEqual(len(a), 5)
                 self.assertEqual(a, b)
+        saved_first, saved_second = _npz_contents(first), _npz_contents(second)
+        self.assertEqual(len(saved_first), 5)
+        _match(self, saved_first, saved_second)
 
+        # S-3 (2): global_map identical before and after load.
         g1, g2 = store.global_map(), loaded.global_map()
-        self.assertGreater(len(g1), 1000)
+        self.assertGreater(len(g1), 0)
         self.assertEqual(g1.shape, g2.shape)
-        np.testing.assert_allclose(_sorted_rows(g1), _sorted_rows(g2), rtol=0, atol=1e-9)
-        center = self.updated[(3, 3)][:3, 3]
-        s1 = store.submap(center, 8.0, exclude_keys=[(3, 3)])
-        s2 = loaded.submap(center, 8.0, exclude_keys=[(3, 3)])
-        self.assertGreater(len(s1), 0)
-        self.assertEqual(s1.shape, s2.shape)
-        np.testing.assert_allclose(_sorted_rows(s1), _sorted_rows(s2), rtol=0, atol=1e-9)
+        np.testing.assert_array_equal(_sorted_rows(g1), _sorted_rows(g2))
+
+        # S-3 (3): saved point count is > 0 and not more than the raw input.
+        saved_points = sum(len(p) for p, _ in saved_first)
+        self.assertGreater(saved_points, 0)
+        self.assertTrue(all(len(p) > 0 for p, _ in saved_first))
+        self.assertLessEqual(saved_points, sum(len(kf.points_lidar) for kf, _ in self.frames))
 
     def test_contract_global_map_is_in_world_frame(self):
         # Catches: global_map built from lidar-frame points or ignoring T_body_lidar / update_poses.

@@ -2,8 +2,8 @@
 
 Only frozen surface is used: BackendConfig() defaults, SlamBackend(config,
 prior_map=...), ingest() -> dict, T_world_odom, save_map(), MapStore.load().
-The event record's key names are not frozen except "error"; loop detection is
-read from any record key containing "loop" (see _mentions_loop).
+Frozen event-record keys used here: "error", and "loop" (bool) per the
+supplementary ruling (answer b).
 
 Ground truth: the mapping world frame is the body frame of the first mapping
 keyframe (= the odom frame of the mapping run), as the rulings define.
@@ -32,7 +32,8 @@ def _truthy(value):
 
 
 def _mentions_loop(record):
-    return any("loop" in str(key).lower() and _truthy(value) for key, value in record.items())
+    # Frozen key (supplementary ruling, answer b): "loop" is a bool.
+    return record.get("loop") is True
 
 
 def _has_error(record):
