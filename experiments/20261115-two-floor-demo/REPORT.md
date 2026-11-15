@@ -35,3 +35,9 @@ vendor 逻辑仅通过 `third_party/scan/patches/reference_feedback.patch` 应�
 完整 SCAN provenance 现在按实际消费的 revision 只追加一次到 `planner_provenance.jsonl`；事件和逐 tick 收据保留轻量字段及可回读的偏移、长度和 SHA256。`result.json` 的 0.25 秒非强制保存间隔从原子替换完成时计算，强制终态保存不变。本次不改规划或控制决策，也不改 `manager.max_acc=2.0`、`optimization.max_acc=2.0`、`optimization.acc_tolerance=1.0`。
 
 独立 LF 克隆验收：1160 项单测保留原 5 项失败（1 failure、4 errors、3 skipped），81 项回归通过（9 skipped），无新增失败；新增 3 项验收通过。两份实现和三份测试已与验收候选逐字节比对，并逐行审查差异。CPU 验收只证明记录可追溯、节流语义及原控制输出保持；实际 RTF 和长运行开销尚待下一仿真代次，不把取消前后的整体 A/B 差异归因为单一保存路径。
+
+## 用户指定的终检加速度容差
+
+按最新请求，`optimization.acc_tolerance` 从 1.0 改为 2.0 m/s²，`manager.max_acc` 与 `optimization.max_acc` 均保持 2.0 m/s²。真实终检来自 `third_party/scan/plan_manage/src/planner_manager.cpp` 的 `checkDynamicFeasibility()`：`acc_limit = pp_.max_acc_ + pp_.acc_tolerance_`，比较样条加速度三维范数，因此新阈值为 4.0 m/s²；此参数由同文件的 `optimization.acc_tolerance` 读取项加载。
+
+本次提交只调整该容差及报告，不改终检逻辑、速度或碰撞检查，也不改轨迹时间分配。构造参数验证与 23 项针对性测试已通过；联合独立全量验收尚待与时间分配补丁一并完成，实际运动仍以新代仿真为准。

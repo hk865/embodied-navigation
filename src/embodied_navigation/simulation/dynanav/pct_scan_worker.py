@@ -147,7 +147,7 @@ class OwnedScan:
             'grid_map.cloud_is_world': True, 'grid_map.need_extrinsic': False,
             'manager.max_vel': speed, 'optimization.max_vel': speed,
             'manager.max_acc': 2.0, 'optimization.max_acc': 2.0,
-            'optimization.acc_tolerance': 1.0,
+            'optimization.acc_tolerance': 2.0,
         })
         # Wildcard matches the namespaced native node without changing native source.
         filename = Path(mailbox) / ('scan_parameters_%s.yaml' % request['seq'])
