@@ -1,0 +1,36 @@
+# Text files are stored and checked out with LF on every platform, so shell
+# scripts keep working from a Windows checkout (core.autocrlf would add CR).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pt binary
+*.npz binary
+*.npy binary
+*.so binary
+
+# Vendored upstream files that are stored with CRLF keep their original bytes.
+/third_party/livox_ros_driver2/CHANGELOG.md -text
+/third_party/livox_ros_driver2/src/comm/ldq.cpp -text
+/third_party/livox_ros_driver2/src/include/livox_ros_driver2.h -text
+/third_party/livox_ros_driver2/src/lddc.cpp -text
+/third_party/livox_ros_driver2/src/lds.cpp -text
+/third_party/livox_ros_driver2/src/lds_lidar.cpp -text
+/third_party/livox_ros_driver2/src/livox_ros_driver2.cpp -text
+/third_party/scan/bspline_opt/include/bspline_opt/bspline_optimizer.h -text
+/third_party/scan/bspline_opt/include/bspline_opt/gradient_descent_optimizer.h -text
+/third_party/scan/bspline_opt/include/bspline_opt/lbfgs.hpp -text
+/third_party/scan/bspline_opt/include/bspline_opt/uniform_bspline.h -text
+/third_party/scan/bspline_opt/src/bspline_optimizer.cpp -text
+/third_party/scan/bspline_opt/src/gradient_descent_optimizer.cpp -text
+/third_party/scan/bspline_opt/src/uniform_bspline.cpp -text
+/third_party/scan/path_searching/include/path_searching/dyn_a_star.h -text
+/third_party/scan/path_searching/src/dyn_a_star.cpp -text
+/third_party/scan/plan_env/include/plan_env/grid_map.h -text
+/third_party/scan/plan_env/include/plan_env/raycast.h -text
+/third_party/scan/plan_env/src/grid_map.cpp -text
+/third_party/scan/plan_env/src/raycast.cpp -text
+/third_party/scan/plan_env/test/original_grid_map.cpp -text
+/third_party/scan/plan_env/test/original_raycast.cpp -text
+/third_party/scan/traj_utils/include/traj_utils/planning_visualization.h -text
+/third_party/scan/traj_utils/src/polynomial_traj.cpp -text
