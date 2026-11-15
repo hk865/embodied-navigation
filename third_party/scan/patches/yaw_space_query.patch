@@ -67,11 +67,13 @@
      void initMap(rclcpp::Node *node);
  
      void publishMap();
-@@ -206,22 +218,30 @@
+@@ -206,22 +218,32 @@
  
    private:
      friend class GridMapTestPeer;
 +    void rotationQueryCallback(const std_msgs::msg::String::ConstSharedPtr &message);
++    void completePendingRotationQuery();
++    std_msgs::msg::String::ConstSharedPtr rotation_pending_request_;
 +    void traceVoxelRejection(const VoxelQuery &query, const char *stage, double candidate_t,
 +                             double interval, const Eigen::MatrixXd &control_points,
 +                             const Eigen::Vector3d &pos_next,
@@ -174,7 +176,15 @@
      // t3 = ros::Time::now();
  
      // t4 = ros::Time::now();
-@@ -866,17 +869,17 @@
+@@ -783,6 +786,7 @@
+ 
+     md_.occ_need_update_ = false;
+     md_.use_cloud_update_ = false;
++    completePendingRotationQuery();
+ }
+ 
+ void GridMap::depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr &img,
+@@ -866,20 +870,21 @@
      md_.ray_pos_ = ray_pos;
      md_.ray_q_ = ray_q;
      md_.has_ray_pose_ = true;
@@ -198,7 +208,11 @@
      }
      const geometry_msgs::msg::Point &pos = pose->pose.pose.position;
      md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
-@@ -940,12 +943,12 @@
++    completePendingRotationQuery();
+ }
+ 
+ void GridMap::cloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &img) {
+@@ -940,12 +945,12 @@
      if (md_.proj_points_cnt == 0)
          return;
  
@@ -217,7 +231,7 @@
      }
      md_.use_cloud_update_ = true;
      md_.occ_need_update_ = true;
-@@ -1200,6 +1203,19 @@
+@@ -1200,6 +1205,19 @@
  void GridMap::traceRejectedOccupancy(const VoxelQuery &query, const char *stage, double candidate_t,
                                      double interval, const Eigen::MatrixXd &control_points,
                                      const Eigen::Vector3d &pos_next) noexcept {
@@ -237,7 +251,7 @@
      if (!voxel_trace_ || !voxel_trace_->enabled()) return;
      try {
          const double sim_s = node_->now().seconds();
-@@ -1249,7 +1265,7 @@
+@@ -1249,7 +1267,7 @@
              return q;
          };
          TraceJson event = {{"schema", "scan_voxel_rejection"}, {"stage", stage},
@@ -246,7 +260,7 @@
              {"monotonic_ns", std::chrono::duration_cast<std::chrono::nanoseconds>(
                  std::chrono::steady_clock::now().time_since_epoch()).count()},
              {"candidate", {{"t",candidate_t},{"interval",interval},{"position",traceVector(query.position)},
-@@ -1257,6 +1273,11 @@
+@@ -1257,6 +1275,11 @@
              {"front",probe(query.front,true,query.front_result)},
              {"rear",probe(query.rear,query.rear_evaluated,query.rear_result)},
              {"returned", query.front_result != 0 ? query.front_result : query.rear_result}};
@@ -258,7 +272,7 @@
          event["candidate"]["first_control_points"] = TraceJson::array();
          for (int i=0;i<std::min<int>(6,control_points.cols());++i)
              event["candidate"]["first_control_points"].push_back(traceVector(control_points.col(i)));
-@@ -1269,17 +1290,17 @@
+@@ -1269,17 +1292,17 @@
              {"cylinder_radius",mp_.double_cylinder_radius_},{"inflation_z_up",mp_.obstacles_inflation_z_up},
              {"inflation_z_down",mp_.obstacles_inflation_z_down},{"cloud_is_world",mp_.cloud_is_world_},
              {"need_extrinsic",mp_.need_extrinsic_}};
@@ -287,10 +301,15 @@
              {"raw_cell_lineage","current_buffer_only; source stamps describe latest fusion, not per-cell history"}};
          for (const char *name : {"fsm.reference_run_id", "fsm.reference_epoch"})
              if (node_->has_parameter(name)) event["identity"][name] = node_->get_parameter(name).value_to_string();
-@@ -1289,3 +1310,92 @@
+@@ -1289,3 +1312,103 @@
                              "[VoxelTrace] snapshot failed: %s", e.what());
      }
  }
++
++void GridMap::completePendingRotationQuery() {
++    const auto pending = rotation_pending_request_;
++    if (pending) rotationQueryCallback(pending);
++}
 +
 +void GridMap::rotationQueryCallback(const std_msgs::msg::String::ConstSharedPtr &message) {
 +    TraceJson response = {{"version",1},{"status","failed"},{"reason","invalid_request"}};
@@ -317,13 +336,19 @@
 +            seq != node_->get_parameter("fsm.reference_epoch").as_int() ||
 +            nonce != node_->get_parameter("fsm.child_odometry_ack_nonce").as_string())
 +            throw std::invalid_argument("scope_mismatch");
++        // Keep the accepted snapshot fixed until its actual inputs are consumed.
++        if (rotation_pending_request_ && rotation_pending_request_ != message) return;
 +        const auto &body = input_body_pose_;
 +        const int64_t body_stamp = rclcpp::Time(body.header.stamp).nanoseconds();
 +        const int64_t cloud_stamp = rclcpp::Time(input_fusion_cloud_header_.stamp).nanoseconds();
-+        response.update({{"status","pending"},{"reason","waiting_for_consumed_inputs"}});
-+        if (input_has_body_ && input_has_cloud_ && input_map_revision_ > 0 &&
++        if (!(input_has_body_ && input_has_cloud_ && input_map_revision_ > 0 &&
 +            body_stamp >= request.at("body_stamp_ns").get<int64_t>() &&
-+            cloud_stamp >= request.at("minimum_cloud_stamp_ns").get<int64_t>()) {
++            cloud_stamp >= request.at("minimum_cloud_stamp_ns").get<int64_t>())) {
++            rotation_pending_request_ = message;
++            return;
++        }
++        rotation_pending_request_.reset();
++        {
 +            const std::string frame = request.at("frame_id").get<std::string>();
 +            const std::string child = request.at("child_frame_id").get<std::string>();
 +            if (frame != body.header.frame_id || child != body.child_frame_id ||
