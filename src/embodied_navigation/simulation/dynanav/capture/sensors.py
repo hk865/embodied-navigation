@@ -11,6 +11,10 @@ from dataclasses import dataclass
 import numpy as np
 
 
+OVERVIEW_EYE_BASE = (-1.8, -1.35, 1.15)
+OVERVIEW_FOCUS_BASE = (0.15, 0.0, -0.1)
+
+
 def _reference_pair(value):
     import numbers
     if (not isinstance(value, (tuple, list)) or len(value) != 2 or
@@ -663,18 +667,31 @@ def create_rgbd_annotators(rig, *, include_depth=True, recover_invalid_native_fr
     return result
 
 
-def create_overview(rig, stage, rep):
+def overview_camera_view(experiment):
+    """Validate file/CLI eye and focus in base coordinates for video only."""
+    eye = np.asarray(experiment.get("overview_eye_base", OVERVIEW_EYE_BASE), dtype=float)
+    focus = np.asarray(experiment.get("overview_focus_base", OVERVIEW_FOCUS_BASE), dtype=float)
+    if eye.shape != (3,) or focus.shape != (3,) or not np.isfinite([eye, focus]).all():
+        raise ValueError("Overview eye and focus must be finite XYZ vectors")
+    # SetLookAt requires a view direction independent of its fixed Z-up vector.
+    if np.array_equal(eye[:2], focus[:2]):
+        raise ValueError("Overview view direction must not be parallel to Z-up")
+    return eye, focus
+
+
+def create_overview(rig, stage, rep, *, eye_base=OVERVIEW_EYE_BASE, focus_base=OVERVIEW_FOCUS_BASE):
     """创建录像用的第三人称 overview 渲染产品。
 
-    相机的位置/朝向（eye/focus）、焦距 22 与 aperture 35 是硬编码常量，
-    只影响录像视角，不参与导航或标定计算；分辨率同为 512×512。
+    base 系下的 eye/focus 可由冻结的实验配置指定，默认位置保持原值。
+    焦距 22、aperture 35 与 512×512 分辨率不变；只用于录像，不参与导航或标定。
     """
     from pxr import Gf, UsdGeom
 
     base_path = rig.base_path
     spectator = UsdGeom.Camera.Define(stage, base_path + "/PIDOverviewCamera")
-    eye = np.array([-1.8, -1.35, 1.15])
-    focus = np.array([0.15, 0.0, -0.1])
+    eye, focus = overview_camera_view({
+        "overview_eye_base": eye_base, "overview_focus_base": focus_base,
+    })
     spectator.AddTransformOp().Set(
         Gf.Matrix4d()
         .SetLookAt(Gf.Vec3d(*eye), Gf.Vec3d(*focus), Gf.Vec3d(0, 0, 1))

@@ -43,6 +43,11 @@ from embodied_navigation.common.time import float32_time_half_ulp
 from embodied_navigation.common.geometry import quaternion_matrix
 from embodied_navigation.common.geometry import wrap_angle as wrap
 
+from embodied_navigation.navigation.yaw_action import (
+    LOCAL_ACTION_BOUNDS, finite_number as _finite, yaw_action_step, yaw_config,
+    yaw_request_parameters,
+)
+
 PROTOCOL_VERSION = 1
 # Match the existing lockstep perception-file ingress limit.
 MAX_PERCEPTION_FILE_BYTES = 2 * 1024 * 1024
@@ -62,14 +67,7 @@ ALLOWED_ACTIONS = ("goto", "waypoint", "cancel", "stop", "yaw", "maneuver")
 # quantised at this tick, so the same-tick tolerance must stay below half of it.
 ODOMETRY_PHYSICAL_TICK_S = 0.005
 
-LOCAL_ACTION_BOUNDS = {
-    "lateral_mps": 0.05,
-    "yaw_rate_rps": 0.15,
-    "maneuver_max_duration_s": 2.0,
-    "yaw_max_delta_rad": 3.15,
-    "yaw_tolerance_rad": 0.05,
-    "yaw_gain": 1.2,
-}
+
 
 # Bound geometry of one operator segment. A segment is the straight leg between
 # consecutive waypoints; stairs are expected to be covered by several short
@@ -84,13 +82,6 @@ def clip(value, bound):
     return max(-bound, min(bound, value))
 
 
-def _finite(value, name):
-    """Return value as a finite float or raise ValueError."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a finite number")
-    if not math.isfinite(value):
-        raise ValueError(f"{name} must be a finite number")
-    return float(value)
 
 
 def _vec3(value, name):
@@ -232,64 +223,7 @@ def validate_interactive_profile(profile):
     )
     if not 0.2 <= min_clearance <= 2.0:
         raise ValueError("interactive_min_clearance_m must be within [0.2, 2.0] m")
-    yaw_mode = str(profile.get("interactive_yaw_completion_mode", "dwell"))
-    if yaw_mode not in ("dwell", "instant"):
-        raise ValueError(
-            "interactive_yaw_completion_mode must be 'dwell' or 'instant'"
-        )
-    if (
-        profile.get("interactive_yaw_completion_tolerance_rad") is not None
-        and profile.get("interactive_yaw_tolerance_rad") is not None
-    ):
-        raise ValueError(
-            "set either interactive_yaw_completion_tolerance_rad or the deprecated "
-            "interactive_yaw_tolerance_rad, not both"
-        )
-    # Legacy field maps to the completion tolerance only; the control deadband is
-    # a separate knob and never reuses it.
-    yaw_completion_tolerance = _finite(
-        profile.get(
-            "interactive_yaw_completion_tolerance_rad",
-            profile.get(
-                "interactive_yaw_tolerance_rad",
-                0.05 if yaw_mode == "dwell" else LOCAL_ACTION_BOUNDS["yaw_tolerance_rad"],
-            ),
-        ),
-        "interactive_yaw_completion_tolerance_rad",
-    )
-    if not 0.0 < yaw_completion_tolerance <= 0.10:
-        raise ValueError(
-            "interactive_yaw_completion_tolerance_rad must be within (0, 0.10]"
-        )
-    yaw_control_tolerance = _finite(
-        profile.get(
-            "interactive_yaw_control_tolerance_rad",
-            0.02 if yaw_mode == "dwell" else 0.0,
-        ),
-        "interactive_yaw_control_tolerance_rad",
-    )
-    if not 0.0 <= yaw_control_tolerance <= 0.10:
-        raise ValueError(
-            "interactive_yaw_control_tolerance_rad must be within [0, 0.10]"
-        )
-    if yaw_control_tolerance > yaw_completion_tolerance:
-        raise ValueError(
-            "interactive_yaw_control_tolerance_rad must not exceed the completion tolerance"
-        )
-    yaw_rate = _finite(
-        profile.get("interactive_yaw_settle_rate_radps", 0.03),
-        "interactive_yaw_settle_rate_radps",
-    )
-    if not 0.0 < yaw_rate <= 0.15:
-        raise ValueError(
-            "interactive_yaw_settle_rate_radps must be within (0, 0.15]"
-        )
-    yaw_dwell = _finite(
-        profile.get("interactive_yaw_dwell_sim_s", 0.5),
-        "interactive_yaw_dwell_sim_s",
-    )
-    if not 0.1 <= yaw_dwell <= 5.0:
-        raise ValueError("interactive_yaw_dwell_sim_s must be within [0.1, 5.0]")
+    yaw_settings = yaw_config(profile)
     return {
         "require_perception": require_perception,
         "forward_turn_mode": forward_turn_mode,
@@ -321,69 +255,7 @@ def validate_interactive_profile(profile):
             profile.get("interactive_future_tolerance_s", 2e-6),
             "interactive_future_tolerance_s",
         ),
-        "yaw_completion_mode": str(
-            profile.get("interactive_yaw_completion_mode", "dwell")
-        ),
-        "yaw_control_tolerance_rad": _finite(
-            profile.get(
-                "interactive_yaw_control_tolerance_rad",
-                0.02
-                if str(profile.get("interactive_yaw_completion_mode", "dwell"))
-                == "dwell"
-                else 0.0,
-            ),
-            "interactive_yaw_control_tolerance_rad",
-        ),
-        "yaw_completion_tolerance_rad": _finite(
-            profile.get(
-                "interactive_yaw_completion_tolerance_rad",
-                profile.get(
-                    "interactive_yaw_tolerance_rad",
-                    0.05
-                    if str(profile.get("interactive_yaw_completion_mode", "dwell"))
-                    == "dwell"
-                    else LOCAL_ACTION_BOUNDS["yaw_tolerance_rad"],
-                ),
-            ),
-            "interactive_yaw_completion_tolerance_rad",
-        ),
-        "yaw_tolerance_rad": _finite(
-            profile.get(
-                "interactive_yaw_completion_tolerance_rad",
-                profile.get(
-                    "interactive_yaw_tolerance_rad",
-                    0.05
-                    if str(profile.get("interactive_yaw_completion_mode", "dwell"))
-                    == "dwell"
-                    else LOCAL_ACTION_BOUNDS["yaw_tolerance_rad"],
-                ),
-            ),
-            "yaw_tolerance_rad",
-        ),
-        "yaw_settle_rate_radps": _finite(
-            profile.get("interactive_yaw_settle_rate_radps", 0.03),
-            "interactive_yaw_settle_rate_radps",
-        ),
-        "yaw_dwell_sim_s": _finite(
-            profile.get("interactive_yaw_dwell_sim_s", 0.5),
-            "interactive_yaw_dwell_sim_s",
-        ),
-        "yaw_eval_max_gap_sim_s": _finite(
-            profile.get("interactive_yaw_eval_max_gap_sim_s", 0.020001),
-            "interactive_yaw_eval_max_gap_sim_s",
-        ),
-        "imu_max_sim_age_s": _finite(
-            profile.get("interactive_imu_max_sim_age_s", 0.10),
-            "interactive_imu_max_sim_age_s",
-        ),
-        "imu_max_wall_age_s": _finite(
-            profile.get("interactive_imu_max_wall_age_s", 0.25),
-            "interactive_imu_max_wall_age_s",
-        ),
-        "imu_future_tolerance_s": _finite(
-            profile.get("interactive_imu_future_tolerance_s", 2e-6),
-            "interactive_imu_future_tolerance_s",
-        ),
+        **yaw_settings,
         "pose_source": pose_source,
         "mailbox": mailbox,
         "speed_mps": speed,
@@ -921,13 +793,8 @@ class InteractiveWaypointTracker:
         """Accept an in-place scan turn or a short bounded local manoeuvre."""
         try:
             if action == "yaw":
-                delta = _finite(payload.get("delta_yaw_rad"), "delta_yaw_rad")
-                if abs(delta) > LOCAL_ACTION_BOUNDS["yaw_max_delta_rad"]:
-                    raise ValueError("yaw delta out of bounds")
-                parameters = {
-                    "delta_yaw_rad": delta,
-                    "tolerance_rad": LOCAL_ACTION_BOUNDS["yaw_tolerance_rad"],
-                }
+                parameters = yaw_request_parameters(payload)
+                parameters["tolerance_rad"] = LOCAL_ACTION_BOUNDS["yaw_tolerance_rad"]
             else:
                 forward = _finite(payload.get("body_forward_mps", 0.0), "body_forward")
                 lateral = _finite(payload.get("body_lateral_mps", 0.0), "body_lateral")
@@ -1434,163 +1301,21 @@ class InteractiveWaypointTracker:
         action = self._action
         parameters = action["parameters"]
         if action["kind"] == "yaw":
-            if action["target_yaw_rad"] is None:
-                action["target_yaw_rad"] = wrap(
-                    yaw + parameters["delta_yaw_rad"]
-                )
-            target = action["target_yaw_rad"]
-            error = wrap(target - yaw)
-            mode = self.config["yaw_completion_mode"]
-            completion_tol = self.config["yaw_completion_tolerance_rad"]
-            control_tol = self.config["yaw_control_tolerance_rad"]
-            control_band_met = abs(error) <= control_tol
-            limit = LOCAL_ACTION_BOUNDS["yaw_rate_rps"]
-            if mode == "instant":
-                if abs(error) <= completion_tol:
-                    self._finish_local_action(
-                        {
-                            "achieved_yaw_rad": yaw,
-                            "yaw_error_rad": error,
-                            "completion_mode": "instant",
-                            "tolerance_rad": completion_tol,
-                            "completion_tolerance_rad": completion_tol,
-                            "control_tolerance_rad": control_tol,
-                            "control_band_met": control_band_met,
-                            "completion_band_met": True,
-                        }
-                    )
-                    return [0.0, 0.0, 0.0]
-            else:
-                ctx = self._yaw_context
-                settle = self.config["yaw_settle_rate_radps"]
-                dwell_target = self.config["yaw_dwell_sim_s"]
-                # A distinct sample already passed the tick's own odometry gates
-                # (including its float32-aware future tolerance); a fresh duplicate
-                # only has to stay inside the staleness window. No second, narrower
-                # future gate is imposed here.
-                pose_ok = (
-                    ctx is not None
-                    and (ctx.get("distinct") is True or (
-                        ctx.get("raw_age") is not None
-                        and 0.0 <= ctx["raw_age"] <= self.config["max_sim_age_s"]
-                    ))
-                    and ctx.get("wall_age") is not None
-                    and 0.0 <= ctx["wall_age"] <= self.config["max_wall_age_s"]
-                )
-                rate_measured = None if ctx is None else ctx.get("imu_yaw_rate")
-                gyro_age = None
-                gyro_wall_age = None
-                if ctx is not None and ctx.get("imu_source_stamp_s") is not None:
-                    gyro_age = ctx["sim"] - float(ctx["imu_source_stamp_s"])
-                if ctx is not None and ctx.get("imu_arrival_wall_s") is not None:
-                    gyro_wall_age = now_wall - float(ctx["imu_arrival_wall_s"])
-                gyro_ok = (
-                    ctx is not None
-                    and ctx.get("imu_valid") is not False
-                    and rate_measured is not None
-                    and math.isfinite(rate_measured)
-                    and abs(rate_measured) <= settle
-                    and gyro_age is not None
-                    and -self._odometry_future_tolerance(
-                        ctx["sim"] if ctx is not None else 0.0
-                    )
-                    <= gyro_age
-                    <= self.config["imu_max_sim_age_s"]
-                    and gyro_wall_age is not None
-                    and 0.0 <= gyro_wall_age <= self.config["imu_max_wall_age_s"]
-                )
-                valid = pose_ok and gyro_ok and abs(error) <= completion_tol
-                record = self._yaw_window
-                if valid:
-                    if record is not None:
-                        if ctx["distinct"]:
-                            record["distinct_since_start"] = True
-                            record["last_distinct_stamp_s"] = ctx["stamp"]
-                        record["last_gyro_stamp_s"] = max(
-                            record["last_gyro_stamp_s"] or ctx["imu_source_stamp_s"],
-                            float(ctx["imu_source_stamp_s"]),
-                        )
-                    continuous = (
-                        record is not None
-                        and ctx["sim"] > record["last_sim_s"]
-                        and ctx["sim"] - record["last_sim_s"]
-                        <= self.config["yaw_eval_max_gap_sim_s"]
-                    )
-                    if continuous:
-                        record["valid_sim_s"] += ctx["sim"] - record["last_sim_s"]
-                        record["last_sim_s"] = ctx["sim"]
-                    else:
-                        record = {
-                            "start_sim_s": ctx["sim"],
-                            "last_sim_s": ctx["sim"],
-                            "valid_sim_s": 0.0,
-                            "distinct_since_start": ctx["distinct"],
-                            "first_distinct_stamp_s": ctx["stamp"] if ctx["distinct"] else None,
-                            "last_distinct_stamp_s": ctx["stamp"] if ctx["distinct"] else None,
-                            "first_gyro_stamp_s": float(ctx["imu_source_stamp_s"]),
-                            "last_gyro_stamp_s": float(ctx["imu_source_stamp_s"]),
-                        }
-                self._yaw_window = record if valid else None
-                if valid and self._yaw_window is not None:
-                    record = self._yaw_window
-                    source_span = (
-                        None
-                        if record["last_distinct_stamp_s"] is None
-                        else record["last_distinct_stamp_s"] - record["start_sim_s"]
-                    )
-                    gyro_span = record["last_gyro_stamp_s"] - record["first_gyro_stamp_s"]
-                    if (
-                        record["valid_sim_s"] + 1e-12 >= dwell_target
-                        and record["distinct_since_start"]
-                        and source_span is not None
-                        and source_span + 1e-9 >= dwell_target - 0.05
-                        and gyro_span + 1e-9 >= 0.25
-                        and record["valid_sim_s"] <= self.config["yaw_dwell_sim_s"] + 1.0
-                    ):
-                        # Same deadband as the real command path: inside the control
-                        # band the released command is exactly zero, never a P value.
-                        correction = (
-                            0.0
-                            if control_band_met
-                            else max(
-                                -limit,
-                                min(limit, LOCAL_ACTION_BOUNDS["yaw_gain"] * error),
-                            )
-                        )
-                        record.update(
-                            completion_mode="dwell",
-                            target_yaw_rad=target,
-                            yaw_rad=yaw,
-                            yaw_error_rad=error,
-                            measured_yaw_rate_rps=rate_measured,
-                            yaw_rate_frame="body_imu_z_rate",
-                            imu_source_stamp_s=ctx["imu_source_stamp_s"],
-                            imu_source_age_s=gyro_age,
-                            imu_wall_age_s=gyro_wall_age,
-                            imu_frame=ctx["imu_frame"],
-                            pose_source_stamp_s=ctx["stamp"],
-                            pose_sim_age_s=ctx["raw_age"],
-                            pose_wall_age_s=ctx["wall_age"],
-                            tolerance_rad=completion_tol,
-                            completion_tolerance_rad=completion_tol,
-                            control_tolerance_rad=control_tol,
-                            control_band_met=control_band_met,
-                            completion_band_met=True,
-                            pre_release_wz=correction,
-                            settle_rate_radps=settle,
-                            dwell_target_sim_s=dwell_target,
-                            eval_max_gap_sim_s=self.config["yaw_eval_max_gap_sim_s"],
-                            completion_sim_s=ctx["sim"],
-                            completion_wall_s=now_wall,
-                            last_correction_wz=correction,
-                            released_wz=0.0,
-                        )
-                        self._finish_local_action(record)
-                        return [0.0, 0.0, 0.0]
-            if control_band_met:
+            if ("frame_id" in parameters
+                    and parameters["frame_id"] != self._frame_labels[0]):
+                self._reset_yaw_window("yaw_frame_mismatch", source="request")
+                self._action = None
+                self._write_receipt("yaw_failed", waypoint_result=True,
+                                    seq=action["seq"], reason="yaw_frame_mismatch")
                 return [0.0, 0.0, 0.0]
-            rate = LOCAL_ACTION_BOUNDS["yaw_gain"] * error
-            return [0.0, 0.0, max(-limit, min(limit, rate))]
+            command, self._yaw_window, completion = yaw_action_step(
+                action, self.config, self._yaw_context, self._yaw_window,
+                yaw=yaw, now_wall=now_wall,
+                future_tolerance_s=self._odometry_future_tolerance(sim),
+            )
+            if completion is not None:
+                self._finish_local_action(completion)
+            return command
         direction_reason = self._direction_reason(parameters, now_wall)
         if direction_reason == "perception_changed_during_tick":
             # A publication race is a one-tick hold, not an operator cancellation.

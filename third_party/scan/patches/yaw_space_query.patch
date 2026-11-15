@@ -1,0 +1,457 @@
+--- a/third_party/scan/plan_env/CMakeLists.txt
++++ b/third_party/scan/plan_env/CMakeLists.txt
+@@ -18,11 +18,12 @@
+ find_package(pcl_conversions REQUIRED)
+ find_package(rclcpp REQUIRED)
+ find_package(sensor_msgs REQUIRED)
++find_package(std_msgs REQUIRED)
+ find_package(tf2 REQUIRED)
+ find_package(tf2_ros REQUIRED)
+ find_package(visualization_msgs REQUIRED)
+ 
+-add_library(plan_env src/grid_map.cpp src/raycast.cpp src/voxel_trace.cpp)
++add_library(plan_env src/grid_map.cpp src/raycast.cpp src/voxel_trace.cpp src/rotation_space_query.cpp)
+ target_include_directories(plan_env PUBLIC
+   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+   $<INSTALL_INTERFACE:include>
+@@ -31,7 +32,7 @@
+ )
+ ament_target_dependencies(plan_env
+   cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp
+-  sensor_msgs tf2 tf2_ros visualization_msgs
++  sensor_msgs std_msgs tf2 tf2_ros visualization_msgs
+ )
+ target_link_libraries(plan_env Eigen3::Eigen nlohmann_json::nlohmann_json ${PCL_LIBRARIES} ${OpenCV_LIBS})
+ 
+@@ -40,7 +41,7 @@
+ add_executable(raycast_regression_baseline test/raycast_regression.cpp test/original_grid_map.cpp test/original_raycast.cpp)
+ target_include_directories(raycast_regression_baseline PRIVATE include ${PCL_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+ ament_target_dependencies(raycast_regression_baseline
+-  cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp sensor_msgs tf2 tf2_ros visualization_msgs)
++  cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp sensor_msgs std_msgs tf2 tf2_ros visualization_msgs)
+ target_link_libraries(raycast_regression_baseline Eigen3::Eigen ${PCL_LIBRARIES} ${OpenCV_LIBS})
+ install(TARGETS raycast_regression raycast_regression_baseline DESTINATION lib/${PROJECT_NAME})
+ 
+@@ -50,5 +51,5 @@
+ ament_export_targets(export_plan_env HAS_LIBRARY_TARGET)
+ ament_export_dependencies(
+   cv_bridge Eigen3 geometry_msgs message_filters nav_msgs nlohmann_json pcl_conversions
+-  rclcpp sensor_msgs tf2 tf2_ros visualization_msgs)
++  rclcpp sensor_msgs std_msgs tf2 tf2_ros visualization_msgs)
+ ament_package()
+--- a/third_party/scan/plan_env/include/plan_env/grid_map.h
++++ b/third_party/scan/plan_env/include/plan_env/grid_map.h
+@@ -31,6 +31,8 @@
+ 
+ #include <plan_env/raycast.h>
+ #include <plan_env/voxel_trace.h>
++#include <std_msgs/msg/string.hpp>
++#include <array>
+ 
+ #define logit(x) (log((x) / (1 - (x))))
+ 
+@@ -182,6 +184,16 @@
+     inline bool isKnownFree(const Eigen::Vector3i &id);
+     inline bool isKnownOccupied(const Eigen::Vector3i &id);
+ 
++    struct RotationSpaceResult {
++        int occupancy = 0, queries = 0;
++        double delta_yaw = 0.0, first_blocking_yaw = 0.0;
++        VoxelQuery blocking_query;
++    };
++    RotationSpaceResult queryRotationSpace(const Eigen::Vector3d &position,
++                                           double start_yaw, double target_yaw);
++    void traceRejectedRotation(const VoxelQuery &query, double start_yaw,
++                               double target_yaw) noexcept;
++
+     void initMap(rclcpp::Node *node);
+ 
+     void publishMap();
+@@ -206,22 +218,30 @@
+ 
+   private:
+     friend class GridMapTestPeer;
++    void rotationQueryCallback(const std_msgs::msg::String::ConstSharedPtr &message);
++    void traceVoxelRejection(const VoxelQuery &query, const char *stage, double candidate_t,
++                             double interval, const Eigen::MatrixXd &control_points,
++                             const Eigen::Vector3d &pos_next,
++                             const std::array<double,2> *rotation_bounds) noexcept;
++    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr rotation_query_sub_;
++    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr rotation_result_pub_;
++
+     MappingParameters mp_;
+     MappingData md_;
+     std::shared_ptr<VoxelTrace> voxel_trace_;
+-    nav_msgs::msg::Odometry trace_sensor_pose_, trace_body_pose_, trace_cloud_sensor_pose_;
+-    nav_msgs::msg::Odometry trace_fusion_sensor_pose_;
+-    std_msgs::msg::Header trace_cloud_header_, trace_fusion_cloud_header_;
+-    Eigen::Vector3d trace_cloud_ray_pos_ = Eigen::Vector3d::Zero();
+-    Eigen::Quaterniond trace_cloud_ray_q_ = Eigen::Quaterniond::Identity();
+-    Eigen::Vector3d trace_fusion_ray_pos_ = Eigen::Vector3d::Zero();
+-    Eigen::Quaterniond trace_fusion_ray_q_ = Eigen::Quaterniond::Identity();
+-    Eigen::Vector3d trace_fused_cloud_ray_pos_ = Eigen::Vector3d::Zero();
+-    Eigen::Quaterniond trace_fused_cloud_ray_q_ = Eigen::Quaterniond::Identity();
+-    nav_msgs::msg::Odometry trace_fused_cloud_sensor_pose_;
+-    uint64_t trace_map_revision_ = 0;
+-    double trace_fusion_sim_s_ = 0.0;
+-    bool trace_has_sensor_ = false, trace_has_body_ = false, trace_has_cloud_ = false;
++    nav_msgs::msg::Odometry input_sensor_pose_, input_body_pose_, input_cloud_sensor_pose_;
++    nav_msgs::msg::Odometry input_fusion_sensor_pose_;
++    std_msgs::msg::Header input_cloud_header_, input_fusion_cloud_header_;
++    Eigen::Vector3d input_cloud_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond input_cloud_ray_q_ = Eigen::Quaterniond::Identity();
++    Eigen::Vector3d input_fusion_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond input_fusion_ray_q_ = Eigen::Quaterniond::Identity();
++    Eigen::Vector3d input_fused_cloud_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond input_fused_cloud_ray_q_ = Eigen::Quaterniond::Identity();
++    nav_msgs::msg::Odometry input_fused_cloud_sensor_pose_;
++    uint64_t input_map_revision_ = 0;
++    double input_fusion_sim_s_ = 0.0;
++    bool input_has_sensor_ = false, input_has_body_ = false, input_has_cloud_ = false;
+ 
+     // get depth image and sensor pose
+     void depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr &img,
+--- /dev/null
++++ b/third_party/scan/plan_env/include/plan_env/rotation_space_query.h
+@@ -0,0 +1,9 @@
++#pragma once
++#include <Eigen/Core>
++#include <vector>
++
++// Query angles follow the signed shortest arc. Only the sample locations are
++// generated here; every occupancy decision remains GridMap's existing query.
++std::vector<double> rotationQueryAngles(const Eigen::Vector3d &position, double offset,
++    double resolution_inv, const Eigen::Vector3d &map_min, const Eigen::Vector3d &map_max,
++    double start_yaw, double target_yaw);
+--- a/third_party/scan/plan_env/package.xml
++++ b/third_party/scan/plan_env/package.xml
+@@ -15,6 +15,7 @@
+   <depend>pcl_conversions</depend>
+   <depend>rclcpp</depend>
+   <depend>sensor_msgs</depend>
++  <depend>std_msgs</depend>
+   <depend>tf2</depend>
+   <depend>tf2_ros</depend>
+   <depend>visualization_msgs</depend>
+--- a/third_party/scan/plan_env/src/grid_map.cpp
++++ b/third_party/scan/plan_env/src/grid_map.cpp
+@@ -48,6 +48,9 @@
+     load_parameter(node_, "diagnostics.voxel_trace_max_bytes", trace_bytes, 2097152);
+     load_parameter(node_, "diagnostics.voxel_trace_period_s", trace_period, 1.0);
+     voxel_trace_ = std::make_shared<VoxelTrace>(trace_path, trace_events, trace_bytes, trace_period);
++    rotation_result_pub_ = node_->create_publisher<std_msgs::msg::String>("rotation_result", 10);
++    rotation_query_sub_ = node_->create_subscription<std_msgs::msg::String>(
++        "rotation_query", 10, std::bind(&GridMap::rotationQueryCallback, this, std::placeholders::_1));
+ 
+     /* get parameter */
+     // Lengths/positions are metres; image margins/skip use pixels. The p_*
+@@ -755,18 +758,18 @@
+     if (!md_.use_cloud_update_)
+         projectDepthImage();
+     // t2 = ros::Time::now();
+-    if (voxel_trace_ && voxel_trace_->enabled()) {
+-        trace_fusion_sensor_pose_ = trace_sensor_pose_;
+-        trace_fusion_cloud_header_ = trace_cloud_header_;
+-        trace_fusion_ray_pos_ = md_.ray_pos_;
+-        trace_fusion_ray_q_ = md_.ray_q_;
+-        trace_fused_cloud_ray_pos_ = trace_cloud_ray_pos_;
+-        trace_fused_cloud_ray_q_ = trace_cloud_ray_q_;
+-        trace_fused_cloud_sensor_pose_ = trace_cloud_sensor_pose_;
+-        trace_fusion_sim_s_ = node_->now().seconds();
++    {
++        input_fusion_sensor_pose_ = input_sensor_pose_;
++        input_fusion_cloud_header_ = input_cloud_header_;
++        input_fusion_ray_pos_ = md_.ray_pos_;
++        input_fusion_ray_q_ = md_.ray_q_;
++        input_fused_cloud_ray_pos_ = input_cloud_ray_pos_;
++        input_fused_cloud_ray_q_ = input_cloud_ray_q_;
++        input_fused_cloud_sensor_pose_ = input_cloud_sensor_pose_;
++        input_fusion_sim_s_ = node_->now().seconds();
+     }
+     raycastProcess();
+-    ++trace_map_revision_;
++    ++input_map_revision_;
+     // t3 = ros::Time::now();
+ 
+     // t4 = ros::Time::now();
+@@ -866,17 +869,17 @@
+     md_.ray_pos_ = ray_pos;
+     md_.ray_q_ = ray_q;
+     md_.has_ray_pose_ = true;
+-    if (voxel_trace_ && voxel_trace_->enabled()) {
+-        trace_sensor_pose_ = *pose_msg;
+-        trace_has_sensor_ = true;
++    {
++        input_sensor_pose_ = *pose_msg;
++        input_has_sensor_ = true;
+     }
+     updateSlidingMap(md_.ray_pos_);
+ }
+ 
+ void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose) {
+-    if (voxel_trace_ && voxel_trace_->enabled()) {
+-        trace_body_pose_ = *pose;
+-        trace_has_body_ = true;
++    {
++        input_body_pose_ = *pose;
++        input_has_body_ = true;
+     }
+     const geometry_msgs::msg::Point &pos = pose->pose.pose.position;
+     md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
+@@ -940,12 +943,12 @@
+     if (md_.proj_points_cnt == 0)
+         return;
+ 
+-    if (voxel_trace_ && voxel_trace_->enabled()) {
+-        trace_cloud_header_ = img->header;
+-        trace_cloud_sensor_pose_ = trace_sensor_pose_;
+-        trace_cloud_ray_pos_ = ray_pos;
+-        trace_cloud_ray_q_ = md_.ray_q_;
+-        trace_has_cloud_ = true;
++    {
++        input_cloud_header_ = img->header;
++        input_cloud_sensor_pose_ = input_sensor_pose_;
++        input_cloud_ray_pos_ = ray_pos;
++        input_cloud_ray_q_ = md_.ray_q_;
++        input_has_cloud_ = true;
+     }
+     md_.use_cloud_update_ = true;
+     md_.occ_need_update_ = true;
+@@ -1200,6 +1203,19 @@
+ void GridMap::traceRejectedOccupancy(const VoxelQuery &query, const char *stage, double candidate_t,
+                                     double interval, const Eigen::MatrixXd &control_points,
+                                     const Eigen::Vector3d &pos_next) noexcept {
++    traceVoxelRejection(query,stage,candidate_t,interval,control_points,pos_next,nullptr);
++}
++
++void GridMap::traceRejectedRotation(const VoxelQuery &query, double start_yaw,
++                                    double target_yaw) noexcept {
++    const std::array<double,2> bounds{{start_yaw,target_yaw}};
++    traceVoxelRejection(query,"yaw_sweep",0.0,0.0,Eigen::MatrixXd(3,0),query.position,&bounds);
++}
++
++void GridMap::traceVoxelRejection(const VoxelQuery &query, const char *stage, double candidate_t,
++                                 double interval, const Eigen::MatrixXd &control_points,
++                                 const Eigen::Vector3d &pos_next,
++                                 const std::array<double,2> *rotation_bounds) noexcept {
+     if (!voxel_trace_ || !voxel_trace_->enabled()) return;
+     try {
+         const double sim_s = node_->now().seconds();
+@@ -1249,7 +1265,7 @@
+             return q;
+         };
+         TraceJson event = {{"schema", "scan_voxel_rejection"}, {"stage", stage},
+-            {"sim_s", sim_s}, {"pid", getpid()}, {"map_revision", trace_map_revision_},
++            {"sim_s", sim_s}, {"pid", getpid()}, {"map_revision", input_map_revision_},
+             {"monotonic_ns", std::chrono::duration_cast<std::chrono::nanoseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch()).count()},
+             {"candidate", {{"t",candidate_t},{"interval",interval},{"position",traceVector(query.position)},
+@@ -1257,6 +1273,11 @@
+             {"front",probe(query.front,true,query.front_result)},
+             {"rear",probe(query.rear,query.rear_evaluated,query.rear_result)},
+             {"returned", query.front_result != 0 ? query.front_result : query.rear_result}};
++        if (rotation_bounds) {
++            event["candidate"] = {{"kind","yaw_sweep"},
++                {"start_yaw_rad",(*rotation_bounds)[0]}, {"target_yaw_rad",(*rotation_bounds)[1]},
++                {"first_blocking_yaw_rad",query.yaw}, {"position",traceVector(query.position)}};
++        }
+         event["candidate"]["first_control_points"] = TraceJson::array();
+         for (int i=0;i<std::min<int>(6,control_points.cols());++i)
+             event["candidate"]["first_control_points"].push_back(traceVector(control_points.col(i)));
+@@ -1269,17 +1290,17 @@
+             {"cylinder_radius",mp_.double_cylinder_radius_},{"inflation_z_up",mp_.obstacles_inflation_z_up},
+             {"inflation_z_down",mp_.obstacles_inflation_z_down},{"cloud_is_world",mp_.cloud_is_world_},
+             {"need_extrinsic",mp_.need_extrinsic_}};
+-        event["sources"] = {{"body_pose_subscription",traceOdometry(trace_body_pose_)},
+-            {"has_body_pose",trace_has_body_},{"has_sensor_pose",trace_has_sensor_},{"has_cloud",trace_has_cloud_},
+-            {"latest_sensor_pose",traceOdometry(trace_sensor_pose_)},
+-            {"fusion_sensor_pose",traceOdometry(trace_fusion_sensor_pose_)},
+-            {"fusion_cloud_header",traceHeader(trace_fusion_cloud_header_)},
+-            {"fusion_ray_position",traceVector(trace_fusion_ray_pos_)},
+-            {"fusion_ray_quaternion_xyzw",traceQuaternion(trace_fusion_ray_q_)},
+-            {"cloud_projection_sensor_pose",traceOdometry(trace_fused_cloud_sensor_pose_)},
+-            {"cloud_projection_ray_position",traceVector(trace_fused_cloud_ray_pos_)},
+-            {"cloud_projection_ray_quaternion_xyzw",traceQuaternion(trace_fused_cloud_ray_q_)},
+-            {"fusion_sim_s",trace_fusion_sim_s_},
++        event["sources"] = {{"body_pose_subscription",traceOdometry(input_body_pose_)},
++            {"has_body_pose",input_has_body_},{"has_sensor_pose",input_has_sensor_},{"has_cloud",input_has_cloud_},
++            {"latest_sensor_pose",traceOdometry(input_sensor_pose_)},
++            {"fusion_sensor_pose",traceOdometry(input_fusion_sensor_pose_)},
++            {"fusion_cloud_header",traceHeader(input_fusion_cloud_header_)},
++            {"fusion_ray_position",traceVector(input_fusion_ray_pos_)},
++            {"fusion_ray_quaternion_xyzw",traceQuaternion(input_fusion_ray_q_)},
++            {"cloud_projection_sensor_pose",traceOdometry(input_fused_cloud_sensor_pose_)},
++            {"cloud_projection_ray_position",traceVector(input_fused_cloud_ray_pos_)},
++            {"cloud_projection_ray_quaternion_xyzw",traceQuaternion(input_fused_cloud_ray_q_)},
++            {"fusion_sim_s",input_fusion_sim_s_},
+             {"raw_cell_lineage","current_buffer_only; source stamps describe latest fusion, not per-cell history"}};
+         for (const char *name : {"fsm.reference_run_id", "fsm.reference_epoch"})
+             if (node_->has_parameter(name)) event["identity"][name] = node_->get_parameter(name).value_to_string();
+@@ -1289,3 +1310,92 @@
+                             "[VoxelTrace] snapshot failed: %s", e.what());
+     }
+ }
++
++void GridMap::rotationQueryCallback(const std_msgs::msg::String::ConstSharedPtr &message) {
++    TraceJson response = {{"version",1},{"status","failed"},{"reason","invalid_request"}};
++    try {
++        // External ROS ingress; bound parsing work and reject misrouted processes.
++        if (message->data.size() > 4096) throw std::invalid_argument("request_too_large");
++        const auto request = TraceJson::parse(message->data);
++        if (!request.is_object() || request.at("version") != 1 ||
++            !request.at("seq").is_number_integer() || !request.at("query_id").is_number_integer() ||
++            !request.at("sample_id").is_number_integer() ||
++            !request.at("body_stamp_ns").is_number_integer() ||
++            !request.at("minimum_cloud_stamp_ns").is_number_integer() ||
++            !request.at("target_yaw_rad").is_number()) throw std::invalid_argument("invalid_request");
++        const std::string run = request.at("run_id").get<std::string>();
++        const int64_t seq = request.at("seq").get<int64_t>();
++        const int64_t query_id = request.at("query_id").get<int64_t>();
++        const int64_t sample_id = request.at("sample_id").get<int64_t>();
++        const std::string nonce = request.at("startup_nonce").get<std::string>();
++        const double target = request.at("target_yaw_rad").get<double>();
++        if (!std::isfinite(target) || seq < 1 || query_id < 1 || sample_id < 1) throw std::invalid_argument("invalid_request");
++        response.update({{"run_id",run},{"seq",seq},{"query_id",query_id},{"sample_id",sample_id},{"target_yaw_rad",target},
++                         {"native_identity",{{"pid",getpid()},{"startup_nonce",nonce}}}});
++        if (run != node_->get_parameter("fsm.reference_run_id").as_string() ||
++            seq != node_->get_parameter("fsm.reference_epoch").as_int() ||
++            nonce != node_->get_parameter("fsm.child_odometry_ack_nonce").as_string())
++            throw std::invalid_argument("scope_mismatch");
++        const auto &body = input_body_pose_;
++        const int64_t body_stamp = rclcpp::Time(body.header.stamp).nanoseconds();
++        const int64_t cloud_stamp = rclcpp::Time(input_fusion_cloud_header_.stamp).nanoseconds();
++        response.update({{"status","pending"},{"reason","waiting_for_consumed_inputs"}});
++        if (input_has_body_ && input_has_cloud_ && input_map_revision_ > 0 &&
++            body_stamp >= request.at("body_stamp_ns").get<int64_t>() &&
++            cloud_stamp >= request.at("minimum_cloud_stamp_ns").get<int64_t>()) {
++            const std::string frame = request.at("frame_id").get<std::string>();
++            const std::string child = request.at("child_frame_id").get<std::string>();
++            if (frame != body.header.frame_id || child != body.child_frame_id ||
++                frame != input_fusion_cloud_header_.frame_id || frame != input_fusion_sensor_pose_.header.frame_id ||
++                child != input_fusion_sensor_pose_.child_frame_id || frame != mp_.frame_id_)
++                throw std::invalid_argument("consumed_frame_mismatch");
++            const auto &p = body.pose.pose.position;
++            const auto &q = body.pose.pose.orientation;
++            const Eigen::Vector3d position(p.x,p.y,p.z);
++            const double yaw = std::atan2(2.0*(q.w*q.z+q.x*q.y),1.0-2.0*(q.y*q.y+q.z*q.z));
++            const auto result = queryRotationSpace(position,yaw,target);
++            const auto &sensor = input_fusion_sensor_pose_;
++            const auto &sp = sensor.pose.pose.position; const auto &sq = sensor.pose.pose.orientation;
++            response.update({{"status",result.occupancy == 0 ? "clear" : "blocked"},
++                {"reason",result.occupancy < 0 ? "out_of_bounds" : (result.occupancy ? "occupied" : "clear")},
++                {"body_stamp_ns",body_stamp},{"frame_id",frame},{"child_frame_id",child},
++                {"position_xyz_m",traceVector(position)},{"yaw_rad",yaw},{"occupancy",result.occupancy},
++                {"checked_arc",{{"start_yaw_rad",yaw},{"target_yaw_rad",target},
++                    {"delta_yaw_rad",result.delta_yaw},{"queries",result.queries}}},
++                {"first_blocking_yaw_rad",nullptr},{"blocking_part",nullptr},
++                {"source",{{"body_stamp_ns",body_stamp},{"body_frame_id",body.header.frame_id},
++                    {"body_child_frame_id",body.child_frame_id},{"body_quaternion_xyzw",{q.x,q.y,q.z,q.w}},
++                    {"cloud_stamp_ns",cloud_stamp},{"cloud_frame_id",input_fusion_cloud_header_.frame_id},
++                    {"sensor_pose_stamp_ns",rclcpp::Time(sensor.header.stamp).nanoseconds()},
++                    {"sensor_frame_id",sensor.header.frame_id},{"sensor_child_frame_id",sensor.child_frame_id},
++                    {"sensor_pose_xyz_m",{sp.x,sp.y,sp.z}},{"sensor_quaternion_xyzw",{sq.x,sq.y,sq.z,sq.w}},
++                    {"fusion_ray_position_xyz_m",traceVector(input_fusion_ray_pos_)},
++                    {"fusion_ray_quaternion_xyzw",traceQuaternion(input_fusion_ray_q_)},
++                    {"fusion_sim_s",input_fusion_sim_s_},{"map_revision",input_map_revision_}}}});
++            if (result.occupancy != 0) {
++                const auto &detail = result.blocking_query;
++                const bool front = detail.front_result != 0;
++                const auto &point = front ? detail.front : detail.rear;
++                Eigen::Vector3i index; posToIndex(point,index);
++                response["first_blocking_yaw_rad"] = result.first_blocking_yaw;
++                response["blocking_part"] = front ? "front" : "rear";
++                response["query"] = {{"position_xyz_m",traceVector(point)},{"global_index",traceVector(index)},
++                    {"front_result",detail.front_result},{"rear_evaluated",detail.rear_evaluated},
++                    {"rear_result",detail.rear_evaluated ? TraceJson(detail.rear_result) : TraceJson(nullptr)},
++                    {"buffer_accessed",result.occupancy >= 0},{"map_min",traceVector(mp_.map_min_boundary_)},
++                    {"map_max",traceVector(mp_.map_max_boundary_)},{"resolution",mp_.resolution_}};
++                if (result.occupancy > 0) {
++                    const int address=toAddress(index);
++                    response["query"]["address"] = address;
++                    response["query"]["raw_logodds"] = md_.occupancy_buffer_[address];
++                    response["query"]["inflate_count"] = md_.occupancy_buffer_inflate_cnt_[address];
++                }
++                traceRejectedRotation(detail,yaw,target);
++            }
++        }
++    } catch (const std::exception &error) {
++        response["status"] = "failed"; response["reason"] = error.what();
++    }
++    std_msgs::msg::String result; result.data = response.dump();
++    rotation_result_pub_->publish(result);
++}
+--- /dev/null
++++ b/third_party/scan/plan_env/src/rotation_space_query.cpp
+@@ -0,0 +1,72 @@
++#include <plan_env/grid_map.h>
++#include <plan_env/rotation_space_query.h>
++#include <algorithm>
++#include <cmath>
++#include <limits>
++
++std::vector<double> rotationQueryAngles(const Eigen::Vector3d &position, double offset,
++    double resolution_inv, const Eigen::Vector3d &map_min, const Eigen::Vector3d &map_max,
++    double start_yaw, double target_yaw) {
++    const double delta = std::atan2(std::sin(target_yaw-start_yaw),std::cos(target_yaw-start_yaw));
++    const double end = start_yaw+delta;
++    const double low = std::min(start_yaw,end), high = std::max(start_yaw,end);
++    const double pi = std::acos(-1.0), period = 2.0*pi;
++    std::vector<double> boundaries{low,high};
++    auto add = [&](double root) {
++        const int first = static_cast<int>(std::floor((low-root)/period))-1;
++        const int last = static_cast<int>(std::ceil((high-root)/period))+1;
++        for (int k=first;k<=last;++k) {
++            const double angle = root+k*period;
++            if (angle < low || angle > high) continue;
++            boundaries.push_back(angle);
++            const double before = std::nextafter(angle,-std::numeric_limits<double>::infinity());
++            const double after = std::nextafter(angle,std::numeric_limits<double>::infinity());
++            if (before>=low) boundaries.push_back(before);
++            if (after<=high) boundaries.push_back(after);
++        }
++    };
++    // Extrema also cover tangencies; no sign-change assumption is used.
++    for (int k=0;k<4;++k) add(k*pi/2.0);
++    if (offset != 0.0) for (int sign : {-1,1}) for (int axis=0;axis<2;++axis) {
++        auto crossing = [&](double plane) {
++            const double value = (plane-position(axis))/(sign*offset);
++            if (value < -1.0 || value > 1.0) return;
++            if (axis==0) { const double a=std::acos(value); add(a);add(-a); }
++            else { const double a=std::asin(value);add(a);add(pi-a); }
++        };
++        const int first = static_cast<int>(std::floor((position(axis)-std::abs(offset))*resolution_inv))-1;
++        const int last = static_cast<int>(std::ceil((position(axis)+std::abs(offset))*resolution_inv))+1;
++        for (int k=first;k<=last;++k) crossing(k/resolution_inv);
++        crossing(map_min(axis)+1e-4);
++        crossing(map_max(axis)-1e-4);
++    }
++    std::sort(boundaries.begin(),boundaries.end());
++    boundaries.erase(std::unique(boundaries.begin(),boundaries.end()),boundaries.end());
++    std::vector<double> angles=boundaries;
++    for (size_t i=1;i<boundaries.size();++i)
++        angles.push_back(boundaries[i-1]+(boundaries[i]-boundaries[i-1])*0.5);
++    std::sort(angles.begin(),angles.end());
++    angles.erase(std::unique(angles.begin(),angles.end()),angles.end());
++    if (delta<0.0) std::reverse(angles.begin(),angles.end());
++    return angles;
++}
++
++GridMap::RotationSpaceResult GridMap::queryRotationSpace(const Eigen::Vector3d &position,
++                                                         double start_yaw, double target_yaw) {
++    RotationSpaceResult result;
++    result.delta_yaw = std::atan2(std::sin(target_yaw-start_yaw),std::cos(target_yaw-start_yaw));
++    const auto angles = rotationQueryAngles(position,mp_.double_cylinder_offset_,mp_.resolution_inv_,
++                                            mp_.map_min_boundary_,mp_.map_max_boundary_,start_yaw,target_yaw);
++    for (const double yaw : angles) {
++        VoxelQuery detail;
++        const int occupied = getInflateOccupancy(position,yaw,&detail);
++        ++result.queries;
++        if (occupied != 0) {
++            result.occupancy = occupied;
++            result.first_blocking_yaw = yaw;
++            result.blocking_query = detail;
++            break;
++        }
++    }
++    return result;
++}

@@ -1,6 +1,6 @@
 # Native exploration interface and executable SOP
 
-Use the actual checkout selected for the task (currently `/home/hyh001/projects/1.Project/embodied-navigation`), preserving unrelated work. The bundled scripts have no run directory, ROS domain or waypoint coordinates baked in. All examples below use explicit variables supplied from the current session; do not substitute a past run or route.
+Use the actual checkout selected for the task, preserving unrelated work. The bundled scripts have no run directory, ROS domain or waypoint coordinates baked in. All examples below use explicit variables supplied from the current session; do not substitute a past run or route.
 
 ## Set the generation once
 
@@ -92,7 +92,29 @@ python3 "$SOP" --repo "$REPO" --run-dir "$RUN" --evidence-dir "$EVIDENCE" \
 
 The official client's `goto --wait` and the SOP both recognize native `waypoint_failed` for the exact sequence. It reports the goal's failure, commands zero and returns idle while simulation/SLAM continue. Active/queued goals clear, with closing receipts for dropped queued choices; no automatic retry occurs. `waypoints.last_failure` and `failed_goals` retain the failed choice even after a newer request. Run `failure`/`terminal_reason` are not set by a single-goal failure. Explicit stop and the finite run budget still terminate. Neither a failed wait nor a CLI timeout authorizes an automatic repeat. If submission itself is uncertain, inspect `request.json`, `operator-state.json`, raw receipts and observation before deciding anything further.
 
-The adapter does not use heartbeat, legacy TTL, floor clearance, map/coverage/perception readiness or model proofs as waypoint admission. It still checks original measured source, frame, finite values and source freshness; stale input yields zero without a forged timestamp. RouteTracker keeps its original turn, arrival and stall logic. Do not add another direct velocity/yaw controller.
+Ordinary goto does not use heartbeat, legacy TTL, floor clearance, map/coverage/perception readiness or model proofs as waypoint admission. It still checks original measured source, frame, finite values and source freshness; stale input yields zero without a forged timestamp. RouteTracker keeps its original turn, arrival and stall logic. Use the shared native yaw action below for a separate heading adjustment; do not add another velocity or yaw controller.
+
+## Adjust heading independently
+
+Yaw is a separate action; ordinary goto still arrives by its existing XYZ and speed conditions without a required heading. Choose one relative or absolute request from this generation's measured observations. The SOP has no yaw subcommand; call the official client directly. These are alternatives, not a sequence to execute automatically:
+
+```sh
+PYTHONPATH="$REPO/src" python3 "$REPO/scripts/explore_waypoint_client.py" --run-dir "$RUN/capture" \
+  yaw --pose-source livo_post_vio --delta-deg "$DELTA_DEG" \
+  --ttl "$YAW_TTL_WALL_S" --wait --timeout "$WAIT_WALL_S"
+
+PYTHONPATH="$REPO/src" python3 "$REPO/scripts/explore_waypoint_client.py" --run-dir "$RUN/capture" \
+  yaw --pose-source livo_post_vio --target-deg "$TARGET_DEG" --frame-id "$POST_VIO_FRAME" \
+  --ttl "$YAW_TTL_WALL_S" --wait --timeout "$WAIT_WALL_S"
+```
+
+`--delta-deg` and `--target-deg` are mutually exclusive. The relative target freezes against the first admitted measured yaw; the relative delta is bounded by the existing 3.15 rad limit. The absolute target requires the actual current post-VIO map frame from observation, and follows the wrapped shortest angular error. The JSON request uses `action="yaw"` and exactly one of `delta_yaw_rad` or `target_yaw_rad`; the absolute form also requires `frame_id`.
+
+Yaw cancels prior yaw and drops active/queued goto work, with receipts; those goals do not resume automatically. Its own `ttl_s` defaults to 30 wall seconds and must be within 1..120 seconds. TTL expiration produces `yaw_failed` with reason `yaw_ttl_expired` and zero command while the sensing session continues. This is an action deadline, not an exploration limit. The client's wait timeout is separate and does not cancel or resubmit the action.
+
+The controller outputs zero forward/lateral velocity and reuses the original yaw gain, rate bound and measured IMU/source-time dwell. It waits for an owned native SCAN rotation-space query over the shortest arc at the native node's actually consumed body pose. Missing, pending or stale clearance holds zero; blocked/failed clearance closes the action. The original inflated-map query is preserved: a zero result means no hit in that query, not proof that all swept space was observed. A backend without the rotation-query worker cannot execute yaw and will remain at zero until cancellation or this action's TTL.
+
+Inspect `yaw_accepted`, then the same run/seq's `yaw_complete`, `yaw_failed` or `action_cancelled`. Completion includes target and actual/achieved yaw, frame/source stamp and the original dwell/IMU evidence. Rejected input produces `request_rejected`. Cancel/stop closes an active yaw before its own acknowledgement; stop still enters original terminal parking. Never treat acceptance or a pure-yaw command as measured completion or absence of physical drift. CPU acceptance tests do not establish a successful Isaac turn.
 
 ## Cancel, stop and close honestly
 

@@ -45,13 +45,51 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+def read_yaw_query(mailbox, run_id):
+    """Read the independent yaw mailbox; never synthesize a translation goal."""
+    query = read_json(Path(mailbox) / 'planner_yaw_query.json')
+    if not isinstance(query, dict) or query.get('version') != 1 or query.get('run_id') != run_id:
+        return None
+    if query.get('pose_source') != 'livo_post_vio' or not all(
+            isinstance(query.get(key), str) and query[key] for key in ('frame_id', 'child_frame_id')):
+        return None
+    if any(type(query.get(key)) is not int or query[key] < 1 for key in ('seq', 'query_id', 'body_stamp_ns')):
+        return None
+    angle = query.get('target_yaw_rad')
+    if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle):
+        return None
+    return query
+
+
+def rotation_response_matches(reply, request, child_pid, startup_nonce, last_sample_id):
+    """Associate a response with one owned process and increasing map query."""
+    if not isinstance(reply, dict) or reply.get('version') != 1:
+        return False
+    if any(reply.get(key) != request.get(key) for key in ('run_id', 'seq', 'query_id', 'target_yaw_rad')):
+        return False
+    identity = reply.get('native_identity', {})
+    if not isinstance(identity, dict) or identity.get('pid') != child_pid or identity.get('startup_nonce') != startup_nonce:
+        return False
+    return (type(reply.get('sample_id')) is int and reply['sample_id'] > last_sample_id and
+            reply.get('status') in ('clear', 'blocked', 'pending', 'failed'))
+
+
 def active_request(mailbox, run_id):
     """Observation, not a stale request file, owns cancellation/sequence state."""
     observation = read_json(Path(mailbox) / 'observation.json')
     request = read_json(Path(mailbox) / 'planner_request.json')
-    if not isinstance(observation, dict) or not isinstance(request, dict):
+    if not isinstance(observation, dict):
         return None
-    if observation.get('run_id') != run_id or request.get('run_id') != run_id:
+    if observation.get('run_id') != run_id:
+        return None
+    waypoints = observation.get('waypoints', {})
+    if waypoints.get('active_action') == 'yaw':
+        query = read_yaw_query(mailbox, run_id)
+        if query is None or query['seq'] != waypoints.get('active_seq'):
+            return None
+        return dict(version=1, action='yaw', **{key: query[key] for key in
+            ('run_id', 'seq', 'query_id', 'frame_id', 'child_frame_id', 'pose_source', 'target_yaw_rad')})
+    if not isinstance(request, dict) or request.get('run_id') != run_id:
         return None
     if observation.get('waypoints', {}).get('active_seq') != request.get('seq'):
         return None
@@ -148,6 +186,10 @@ class OwnedScan:
             'manager.max_vel': speed, 'optimization.max_vel': speed,
             'manager.max_acc': 2.0, 'optimization.max_acc': 2.0,
             'optimization.acc_tolerance': 2.0,
+            'diagnostics.voxel_trace_path': str(Path(mailbox) / ('scan_voxel_%s' % request['seq'])),
+            'diagnostics.voxel_trace_max_events': 8,
+            'diagnostics.voxel_trace_max_bytes': 2 * 1024 * 1024,
+            'diagnostics.voxel_trace_period_s': 1.0,
         })
         # Wildcard matches the namespaced native node without changing native source.
         filename = Path(mailbox) / ('scan_parameters_%s.yaml' % request['seq'])
@@ -218,19 +260,39 @@ def run(args):
     pool = ThreadPoolExecutor(max_workers=1)
     state = dict(request=None, child=None, revision=0, vio=None, pair=None, reference_stamp=None,
                  route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
-                 last_snapshot=0.0, terminal_failed=False, body_pose=None)
+                 last_snapshot=0.0, terminal_failed=False, body_pose=None,
+                 yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
+                 yaw_started_wall=None, yaw_last_cloud_sent=None)
     clouds, poses, splines, metadata = OrderedDict(), OrderedDict(), {}, {}
     namespace = '/dynanav/pct_scan/worker_%s' % os.getpid()
     sensor_pub = node.create_publisher(Odometry, namespace + '/sensor_pose', 10)
     body_pub = node.create_publisher(Odometry, namespace + '/body_pose', 10)
     cloud_pub = node.create_publisher(PointCloud2, namespace + '/cloud', 10)
     path_pub = node.create_publisher(RosPath, namespace + '/initial_path', 1)
+    rotation_pub = node.create_publisher(String, namespace + '/rotation_query', 10)
 
     def current():
         request = active_request(mailbox, run_id)
         return request is not None and state['request'] is not None and request == state['request']
 
+    def yaw_output(status, reason=None, **extra):
+        request = state['request']
+        if not current() or request is None or request.get('action') != 'yaw':
+            return
+        data = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
+                    target_yaw_rad=request['target_yaw_rad'], frame_id=request['frame_id'],
+                    child_frame_id=request['child_frame_id'], status=status, reason=reason,
+                    sample_id=state['yaw_last_response_id'], received_wall_s=time.monotonic())
+        data.update(extra)
+        data['received_wall_s'] = time.monotonic()
+        atomic_json(mailbox / 'planner_yaw_space.json', data)
+        if status in ('failed', 'blocked'):
+            state['terminal_failed'] = True
+
     def output(status, reason=None, **extra):
+        if state['request'] is not None and state['request'].get('action') == 'yaw':
+            yaw_output(status, reason, **extra)
+            return
         if not current() or state['terminal_failed']:
             return
         if status == 'failed':
@@ -249,9 +311,15 @@ def run(args):
 
     def publish_body_pose():
         message, handoff = state['body_pose'], state['handoff']
-        if message is None or handoff is None or state['terminal_failed']:
+        if message is None or state['terminal_failed']:
             return
         request = state['request']
+        if request is not None and request.get('action') == 'yaw':
+            if state['child'] is not None and (message.header.frame_id, message.child_frame_id) == (request['frame_id'], request['child_frame_id']):
+                body_pub.publish(message)
+            return
+        if handoff is None:
+            return
         if (message.header.frame_id, message.child_frame_id) != (request['frame_id'], request['child_frame_id']):
             return
         p = message.pose.pose.position
@@ -286,6 +354,16 @@ def run(args):
             state['body_pose'] = body
             publish_body_pose()
 
+    def publish_yaw_pair(paired):
+        cloud, pose = paired
+        stamp = message_stamp_ns(cloud)
+        if (stamp == state['yaw_last_cloud_sent'] or not sensor_pub.get_subscription_count() or
+                not cloud_pub.get_subscription_count()):
+            return
+        sensor_pub.publish(pose)
+        cloud_pub.publish(cloud)
+        state['yaw_last_cloud_sent'] = stamp
+
     def pair():
         nonlocal map_frames
         for stamp in sorted(set(clouds).intersection(poses)):
@@ -319,8 +397,11 @@ def run(args):
                 if state['child'] is not None:
                     # Native GridMap is latest-pose based, not message-filter synchronized.
                     # No claim of child-side exact-stamp consumption is made.
-                    sensor_pub.publish(pose)
-                    cloud_pub.publish(cloud)
+                    if state['request'].get('action') == 'yaw':
+                        publish_yaw_pair((cloud, pose))
+                    else:
+                        sensor_pub.publish(pose)
+                        cloud_pub.publish(cloud)
             except ValueError as error:
                 node.get_logger().warning(str(error))
         for cache in (clouds, poses):
@@ -423,6 +504,47 @@ def run(args):
                 handoff.receive_status(feedback_json(message))):
             output('failed', handoff.failure, native_feedback=handoff.failure_event)
 
+    def rotation_result_callback(message):
+        request, child = state['request'], state['child']
+        if (not current() or request is None or request.get('action') != 'yaw' or
+                child is None or state['terminal_failed']):
+            return
+        reply = feedback_json(message)
+        if not rotation_response_matches(reply, request, child.process.pid, child.ack_nonce,
+                                         state['yaw_last_response_id']):
+            return
+        state['yaw_last_response_id'] = reply['sample_id']
+        state['yaw_last_response_wall'] = time.monotonic()
+        yaw_output(reply['status'], reply.get('reason'), **{key: value for key, value in reply.items()
+            if key not in ('status', 'reason')})
+
+    def poll_yaw():
+        request, paired = state['request'], state['pair']
+        if state['child'] is None:
+            state['child'] = OwnedScan(binary, mailbox, request, namespace, args.speed)
+            state['yaw_started_wall'] = time.monotonic()
+        child = state['child']
+        if child.process.poll() is not None:
+            yaw_output('failed', 'native_scan_process_exited:%s' % child.process.returncode)
+            return
+        publish_body_pose()
+        publish_yaw_pair(paired)
+        now = time.monotonic()
+        last = state['yaw_last_response_wall'] or state['yaw_started_wall']
+        if now - last > args.reference_response_timeout_s:
+            yaw_output('failed', 'native_rotation_response_timeout')
+            return
+        body = state['body_pose']
+        if body is None or not rotation_pub.get_subscription_count():
+            return
+        state['yaw_sample_id'] += 1
+        query = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
+            sample_id=state['yaw_sample_id'], startup_nonce=child.ack_nonce,
+            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'],
+            target_yaw_rad=request['target_yaw_rad'], body_stamp_ns=message_stamp_ns(body),
+            minimum_cloud_stamp_ns=message_stamp_ns(paired[0]))
+        rotation_pub.publish(String(data=json.dumps(query, allow_nan=False)))
+
     def poll():
         if measured_voxels and time.monotonic() - state['last_snapshot'] >= 5.0:
             state['last_snapshot'] = time.monotonic()
@@ -445,7 +567,9 @@ def run(args):
                 state['child'].close()
             state.update(request=request, child=None, revision=0, reference_stamp=None,
                          route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
-                         last_snapshot=0.0, terminal_failed=False)
+                         last_snapshot=0.0, terminal_failed=False,
+                         yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
+                         yaw_started_wall=None, yaw_last_cloud_sent=None)
             splines.clear()
             metadata.clear()
             if request is not None:
@@ -457,6 +581,9 @@ def run(args):
             return
         if (vio.header.frame_id, vio.child_frame_id) != (request['frame_id'], request['child_frame_id']) or map_frames != (request['frame_id'], request['child_frame_id']):
             output('failed', 'post_vio_frame_mismatch')
+            return
+        if request.get('action') == 'yaw':
+            poll_yaw()
             return
         if state['route'] is None:
             future = state['future']
@@ -550,7 +677,8 @@ def run(args):
         node.create_subscription(String, namespace + '/planning/odometry_consumption_ack', odometry_ack_callback, 10),
         node.create_subscription(String, namespace + '/planning/route_definition', route_definition_callback,
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
-        node.create_subscription(String, namespace + '/planning/reference_status', reference_status_callback, 10)]
+        node.create_subscription(String, namespace + '/planning/reference_status', reference_status_callback, 10),
+        node.create_subscription(String, namespace + '/rotation_result', rotation_result_callback, 10)]
     timer = node.create_timer(0.05, poll)
     try:
         rclpy.spin(node)

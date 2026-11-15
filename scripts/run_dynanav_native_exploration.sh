@@ -4,7 +4,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
         exit 0
     fi
 done
@@ -24,6 +24,7 @@ RUN=""
 UNTIL_STOPPED=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
+EXTRA_CAPTURE_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
@@ -33,6 +34,9 @@ while (($#)); do
         --isaac-root)
             (($# >= 2)) || { echo "Missing value for --isaac-root"; exit 2; }
             ISAAC_ROOT=$2; shift 2 ;;
+        --overview-eye-base|--overview-focus-base)
+            (($# >= 4)) || { echo "Missing XYZ values for $1"; exit 2; }
+            EXTRA_CAPTURE_ARGS+=("$1" "$2" "$3" "$4"); shift 4 ;;
         --*) echo "Unknown argument: $1"; exit 2 ;;
         *)
             [[ -z "$RUN" ]] || { echo "Only one run directory may be supplied"; exit 2; }
@@ -45,7 +49,6 @@ SCENE="${SIMULATION_SCENE:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/of
 DURATION="${DURATION_SIM_S:-300}"
 SPEED="${SPEED_MPS:-1.0}"
 NAVIGATION_BACKEND="${NAVIGATION_BACKEND:-pct_scan}"
-EXTRA_CAPTURE_ARGS=()
 if [[ "${MULTICAMERA_OBSERVATION:-0}" == 1 ]]; then
     EXTRA_CAPTURE_ARGS+=(--multicamera-observation --multicamera-count "${MULTICAMERA_COUNT:-6}")
     if [[ -n "${MULTICAMERA_HORIZONTAL_FOV:-}" ]]; then
@@ -104,6 +107,8 @@ if pgrep -f '^([^[:space:]]*/kit/python/bin/python3|[^[:space:]]*/kit/kit|[^[:sp
 fi
 # Freeze the observer's configuration before starting any owned process.
 mkdir "$RUN/configuration"
+printf '%s\n' '{"head_bytes":4194304,"tail_bytes":29360128,"error_head_bytes":4194304,"error_tail_bytes":12582912}' \
+    > "$RUN/configuration/capture_log.json"
 cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
     configs/simulation/dynanav/camera_rgbd.yaml \
     configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
@@ -157,8 +162,11 @@ python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS
 BACKEND=$!; PIDS+=("$BACKEND")
 # This process renders the world as sensor physics only. No scene geometry or
 # simulator truth is passed to the waypoint chooser or route follower.
-"${CAPTURE_PREFIX[@]}" "$ISAAC_ROOT/python.sh" \
+/usr/bin/python3 scripts/run_with_bounded_log.py \
+    --config "$RUN/configuration/capture_log.json" --output-dir "$RUN/capture_logs" -- \
+    "${CAPTURE_PREFIX[@]}" "$ISAAC_ROOT/python.sh" \
     scripts/run_dynanav_experiment.py --output "$RUN/capture" --scene "$SCENE" \
+    --capture-log-config "$RUN/configuration/capture_log.json" \
     --point-cloud-source rtx_lidar --semantic-provider none --interactive \
     --interactive-pose-source livo_post_vio --interactive-controller "$NAVIGATION_BACKEND" \
     --odometry-topic /dynanav/rtx_livo/post_vio_odometry --render-backend fabric \

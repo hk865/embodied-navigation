@@ -173,6 +173,8 @@ def slam_odometry_topic(pose_source, requested=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--capture-log-config", type=Path,
+                        help="Frozen bounded-wrapper configuration; route Kit logs to stdout")
     parser.add_argument("--scene", type=Path)
     parser.add_argument(
         "--speed",
@@ -185,6 +187,10 @@ def main(argv=None):
     duration.add_argument("--until-stopped", action="store_true",
                           help="Interactive exploration without a total time budget")
     parser.add_argument("--rtf", type=float, default=1.0)
+    parser.add_argument("--overview-eye-base", type=float, nargs=3, metavar=("X", "Y", "Z"),
+                        help="Video-only camera position in base coordinates; default -1.8 -1.35 1.15")
+    parser.add_argument("--overview-focus-base", type=float, nargs=3, metavar=("X", "Y", "Z"),
+                        help="Video-only look-at point in base coordinates; default 0.15 0 -0.1")
     parser.add_argument("--multicamera-observation", action="store_true",
                         help="Independent native RGB/depth views for DSH; primary single-camera SLAM unchanged")
     parser.add_argument("--multicamera-count", type=int, choices=(3,4,5,6), default=6,
@@ -375,6 +381,22 @@ def main(argv=None):
         parser.error("--until-stopped requires --interactive")
     profile = make_profile(args.speed, args.duration, interactive=interactive_requested,
                            until_stopped=args.until_stopped)
+    if args.overview_eye_base is not None or args.overview_focus_base is not None:
+        from .capture.sensors import overview_camera_view
+        overview_config = {
+            key: value for key, value in (
+                ("overview_eye_base", args.overview_eye_base),
+                ("overview_focus_base", args.overview_focus_base),
+            ) if value is not None
+        }
+        try:
+            overview_eye, overview_focus = overview_camera_view(overview_config)
+        except ValueError as error:
+            parser.error(str(error))
+        profile.update(overview_eye_base=overview_eye.tolist(), overview_focus_base=overview_focus.tolist())
+    if args.capture_log_config is not None:
+        from embodied_navigation.common.process_log import read_log_config
+        profile["capture_log_config"] = read_log_config(args.capture_log_config)
     if args.spawn_yaw is not None:
         if not math.isfinite(args.spawn_yaw):
             parser.error("--spawn-yaw must be finite")
@@ -686,6 +708,9 @@ def main(argv=None):
             profile["sensor_lockstep_contract"] = validate_profile(profile)
         except ValueError as error:
             parser.error(str(error))
+    if interactive_requested:
+        from embodied_navigation.navigation.yaw_action import yaw_config
+        profile["yaw_action"] = yaw_config(profile)
     if args.check:
         print(
             json.dumps(
@@ -709,6 +734,10 @@ def main(argv=None):
 
     root = project_root()
     sources = [
+        "src/embodied_navigation/navigation/yaw_action.py",
+        "src/embodied_navigation/common/process_log.py",
+        "src/embodied_navigation/common/runtime_telemetry.py",
+        "scripts/run_with_bounded_log.py",
         "src/embodied_navigation/common/time/__init__.py",
         "src/embodied_navigation/simulation/dynanav/experiment.py",
         "src/embodied_navigation/simulation/dynanav/capture_go2_rgbd.py",
@@ -757,6 +786,8 @@ def main(argv=None):
         "src/embodied_navigation/planning/scan_child_consumption.py",
         "third_party/scan/plan_manage/config/planner.yaml",
         "third_party/scan/patches/reference_feedback.patch",
+        "third_party/scan/patches/voxel_collision_trace.patch",
+        "third_party/scan/patches/yaw_space_query.patch",
         "src/embodied_navigation/planning/pct/measured_tomogram.py",
         "src/embodied_navigation/planning/exploration/route_information.py",
         "src/embodied_navigation/planning/exploration/waypoint_candidates.py",

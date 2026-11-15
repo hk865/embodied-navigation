@@ -234,8 +234,10 @@ def run_capture(config):
             signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
         }
         rtx_lidar_enabled = config.experiment.get("point_cloud_source", "rgbd") == "rtx_lidar"
-        app = (start_simulation_app(config.use_fabric, rtx_lidar=True)
-               if rtx_lidar_enabled else start_simulation_app(config.use_fabric))
+        app_options = {"rtx_lidar": True} if rtx_lidar_enabled else {}
+        if config.experiment.get("capture_log_config") is not None:
+            app_options["log_to_stdout"] = True
+        app = start_simulation_app(config.use_fabric, **app_options)
         context.app = app
         # SimulationApp replaces SIGINT with a handler that shuts down the SDK
         # and exits zero. Reclaim both signals before any capture work starts.
@@ -271,7 +273,7 @@ def run_capture(config):
             stage, spawn, config.experiment, receipts.result, receipts.save
         )
         contact_monitor = ContactMonitor()
-        contact_monitor.install(stage)
+        receipts.result["contact_pair_summary"] = contact_monitor.install(stage)
         context.dynamic_contact_events = contact_monitor.dynamic_contact_events
 
         cancellation.check()
@@ -307,7 +309,14 @@ def run_capture(config):
             config.slam_control,
         )
         cancellation.check()
-        overview = create_overview(camera_rig, stage, rgbd_annotators.rep)
+        overview_view = {
+            argument: config.experiment[key]
+            for argument, key in (
+                ("eye_base", "overview_eye_base"),
+                ("focus_base", "overview_focus_base"),
+            ) if key in config.experiment
+        }
+        overview = create_overview(camera_rig, stage, rgbd_annotators.rep, **overview_view)
         video = OverviewVideo(config.output)
         context.video = video
         receipts.result["sensor_installation"] = sensor_installation_receipt(
