@@ -757,6 +757,7 @@ def main(argv=None):
         "src/embodied_navigation/planning/scan_child_consumption.py",
         "third_party/scan/plan_manage/config/planner.yaml",
         "third_party/scan/patches/reference_feedback.patch",
+        "third_party/scan/patches/global_boundary_time.patch",
         "src/embodied_navigation/planning/pct/measured_tomogram.py",
         "src/embodied_navigation/planning/exploration/route_information.py",
         "src/embodied_navigation/planning/exploration/waypoint_candidates.py",

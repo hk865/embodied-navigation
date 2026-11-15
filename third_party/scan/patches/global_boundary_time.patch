@@ -1,0 +1,22 @@
+--- a/third_party/scan/plan_manage/src/planner_manager.cpp
++++ b/third_party/scan/plan_manage/src/planner_manager.cpp
+@@ -405,8 +405,7 @@
+     }
+ 
+     time(0) *= 2.0;  // relax the boundary segments so start/end derivatives fit
+-    if (time.rows() > 1)
+-        time(time.rows() - 1) *= 2.0;
++    time(time.rows() - 1) *= 2.0;
+ 
+     PolynomialTraj gl_traj;
+     if (pos.cols() >= 3)
+@@ -470,8 +469,7 @@
+     }
+ 
+     time(0) *= 2.0;  // relax the boundary segments so start/end derivatives fit
+-    if (time.rows() > 1)
+-        time(time.rows() - 1) *= 2.0;
++    time(time.rows() - 1) *= 2.0;
+ 
+     PolynomialTraj gl_traj;
+     if (pos.cols() >= 3)

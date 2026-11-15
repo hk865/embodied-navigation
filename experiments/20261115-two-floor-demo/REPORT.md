@@ -41,3 +41,11 @@ vendor 逻辑仅通过 `third_party/scan/patches/reference_feedback.patch` 应�
 按最新请求，`optimization.acc_tolerance` 从 1.0 改为 2.0 m/s²，`manager.max_acc` 与 `optimization.max_acc` 均保持 2.0 m/s²。真实终检来自 `third_party/scan/plan_manage/src/planner_manager.cpp` 的 `checkDynamicFeasibility()`：`acc_limit = pp_.max_acc_ + pp_.acc_tolerance_`，比较样条加速度三维范数，因此新阈值为 4.0 m/s²；此参数由同文件的 `optimization.acc_tolerance` 读取项加载。
 
 本次提交只调整该容差及报告，不改终检逻辑、速度或碰撞检查，也不改轨迹时间分配。构造参数验证与 23 项针对性测试已通过；联合独立全量验收尚待与时间分配补丁一并完成，实际运动仍以新代仿真为准。
+
+## 独立参考路径的首尾时间
+
+按用户要求，在 `global_boundary_time.patch` 中恢复 `planGlobalTrajWaypoints()` 与 `planGlobalTraj()` 的首段、末段各自乘 2：单段累计乘 4，多段仅首尾乘 2；普通内部段和局部 rebound 重规划时间保持原实现。vendor 原文件不改，补丁纳入运行源码快照。官方对应依据为 SCAN-Planner 提交 `348e8a590a50a5a6bbab8d8c6dcfd171f009be26` 的 `src/planner/plan_manage/src/planner_manager.cpp`。
+
+独立冻结的实际 native 专项 4/4 通过：真实 FSM 参考预处理、两条 manager 入口及 PolynomialTraj 的单段、多段和自动插入段均符合时间规则；五段采样参考仅首末延长。真实 OwnedScan 冻结 YAML 为 2.0/2.0/2.0；实际动态终检允许 3.999、拒绝 4.001 m/s²。独立 LF 联合验收编译通过，1160 项单测仅原 5 项失败，81 项回归通过，无新增失败、旧断言或 skip 改动。
+
+此前 acc15 seq1 的捕获输入实际是 50 段，首末原本已分别延长，故本补丁不改变该输入的全局时间向量；其拒绝发生在局部 rebound 动态终检，不能将单段修改称为那次失败的根因修复。实际 2.0/2.0/2.0 联合运动与到达结果待新代验证。
