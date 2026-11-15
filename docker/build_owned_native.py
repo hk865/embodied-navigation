@@ -10,7 +10,6 @@ p.add_argument("--execute", action="store_true")
 p.add_argument("--jobs", type=int, default=2)
 a = p.parse_args()
 modules = [
-    ("localization_mapping/backend/native", "backend"),
     ("simulation/actuators", "actuators"),
     ("common/communication", "communication"),
 ]

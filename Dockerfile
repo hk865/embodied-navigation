@@ -46,7 +46,6 @@ RUN source /opt/ros/jazzy/setup.bash \
  && python3 docker/build_native.py --jobs "${BUILD_JOBS}" --execute
 
 
-COPY src/embodied_navigation/localization_mapping/backend/native /workspace/navigation/src/embodied_navigation/localization_mapping/backend/native
 COPY src/embodied_navigation/simulation/actuators /workspace/navigation/src/embodied_navigation/simulation/actuators
 COPY src/embodied_navigation/common/communication /workspace/navigation/src/embodied_navigation/common/communication
 RUN source /opt/ros/jazzy/setup.bash \
