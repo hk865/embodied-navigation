@@ -49,12 +49,11 @@ src/embodied_navigation/simulation/dynanav/
 | 配置 | `configs/simulation/dynanav_basement_collision.json` | `session_collision.py:15` 直接读（`CONFIG_PATH = project_root()/…`），也列在 `experiment.py` 的源码快照里。 |
 | 配置 | `configs/simulation/dynanav_basement_to_ground_collision.json` | `routes.py:33` 读路线点，`experiment.py` 快照里也有一份。 |
 | 配置 | `configs/simulation/dynanav/{camera_rgbd,fastlivo_lio,fastlivo_livo}.yaml` | **本包不读**：由 `scripts/run_dynanav_lio.sh` 读取（`fastlivo_${mode}.yaml` + `camera_rgbd.yaml`）来启动外部 LIO/LIVO 观测器（见 [LIO/LIVO README](../../../../configs/simulation/dynanav/README_LIO.md)）。 |
-| 配置 | `configs/simulation/dynanav/office.yaml`、`fastlivo_lio_gravity_estimation.yaml` | **本检出无读取点**（`grep -rn office.yaml src/ scripts/` 无命中）；不要把它们当成有效配置。 |
 
 ## 模块内文件耦合
 
 - 依赖方向（无 import 环，向上依赖都藏在函数内）：`experiment → {routes, pedestrian, slam_route}`；`routes → session_collision`；`learned_mapping → slam_route`（只 import `pose_transform`）；`capture_go2_rgbd → capture/*`；`capture.mapping → {oracle_mapping, learned_mapping, learned_scoring, rgb_archive}`；`capture.control/policy → experiment`（函数内）；`capture.scene → {pedestrian, session_collision, collision_bounds}`；`capture.frames → render_diagnostics`。
-- 与 `scripts/` 之间是"进程 + 环境变量 + sys.argv"契约：`run_dynanav_experiment.py` 调 `experiment.main`；`capture_dynanav.py` 直接 `runpy` 入口；`NAV_STOP_REQUEST`/`DYNANAV_EXPERIMENT`/`PROBE_STEPS`/`PROBE_RTF` 是字符串键。
+- 与 `scripts/` 之间是"进程 + 环境变量 + sys.argv"契约：`run_dynanav_experiment.py` 调 `experiment.main`；`NAV_STOP_REQUEST`/`DYNANAV_EXPERIMENT`/`PROBE_STEPS`/`PROBE_RTF` 是字符串键。
 - 无跨文件共享可变状态：每次 run 的 sink、Receipts、route tracker 都是实例级。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
@@ -96,7 +95,7 @@ src/embodied_navigation/simulation/dynanav/
 
 ## 入口与文件
 
-- [capture_go2_rgbd.py](capture_go2_rgbd.py)：DynaNav RGB-D 采集入口，显式 `run(argv)`/`main()`；200 Hz 物理、50 Hz 策略，真实 articulation 相机/IMU，独立流 JSONL。实现按职责拆到 [capture/](capture/) 包（`receipts`/`scene`/`sensors`/`ros_interface`/`mapping`/`policy`/`control`/`physics`/`frames`/`video`），入口只负责 argv/experiment 配置、编排与失败收据（失败收据与资源清理逐项尽力完成，单个 cleanup 失败不替换 primary 异常）。普通 `import` 无副作用（不读 `sys.argv`、不建目录、不导入 Isaac/ROS、不写文件）；入口仍由 [experiment.py](experiment.py) 与 [capture_dynanav.py](../../../../scripts/capture_dynanav.py) 用 `runpy.run_module(..., run_name="__main__")` 执行，`sys.argv = ["capture_go2_rgbd", <output>, <scene>]`（`argv[1]` 输出目录、`argv[2]` 场景）与 `DYNANAV_EXPERIMENT` 契约不变；已移除无条件 periodic Python traceback dump，保留标量遥测。
+- [capture_go2_rgbd.py](capture_go2_rgbd.py)：DynaNav RGB-D 采集入口，显式 `run(argv)`/`main()`；200 Hz 物理、50 Hz 策略，真实 articulation 相机/IMU，独立流 JSONL。实现按职责拆到 [capture/](capture/) 包（`receipts`/`scene`/`sensors`/`ros_interface`/`mapping`/`policy`/`control`/`physics`/`frames`/`video`），入口只负责 argv/experiment 配置、编排与失败收据（失败收据与资源清理逐项尽力完成，单个 cleanup 失败不替换 primary 异常）。普通 `import` 无副作用（不读 `sys.argv`、不建目录、不导入 Isaac/ROS、不写文件）；入口仍由 [experiment.py](experiment.py) 用 `runpy.run_module(..., run_name="__main__")` 执行，`sys.argv = ["capture_go2_rgbd", <output>, <scene>]`（`argv[1]` 输出目录、`argv[2]` 场景）与 `DYNANAV_EXPERIMENT` 契约不变；已移除无条件 periodic Python traceback dump，保留标量遥测。
 - [experiment.py](experiment.py)、[routes.py](routes.py)：RoboGauge 楼梯 profile、首段或地下室到地面层路线、资产/模型检查与新输出管理。入口为 [run_dynanav_experiment.py](../../../../scripts/run_dynanav_experiment.py)。
 - [slam_route.py](slam_route.py)：显式 live LIO 或最终 post-VIO 路线控制；[build_dynanav_slam_route.py](../../../../scripts/build_dynanav_slam_route.py) 从实际估计位姿构造参考。repeat-spawn、无全局配准假设须保留。
 - [session_collision.py](session_collision.py)：地下室碰撞会话修复与实际 PhysX 支撑射线 preflight，不改原场景资产；[collision_bounds.py](collision_bounds.py) 导出非机器人碰撞体包围盒。
@@ -105,14 +104,11 @@ src/embodied_navigation/simulation/dynanav/
 - [learned_scoring.py](learned_scoring.py)：可选person-only renderer身份评分sink，不向算法回传标签，也不提供全场动静真值；代表点和全部保留支持票分开评分。
 - [rgb_archive.py](rgb_archive.py)：`--archive-rgb` 保存叠字前原始 RGB 与源时间，ZIP_STORED NPZ；完成时核对 acquired/published/archive/video 计数。
 - [pedestrian.py](pedestrian.py)、[dynamic_hold.py](dynamic_hold.py)：可选 skeletal human 和 oracle cloud hold/resume；首段 live LIO 行进中单次穿越已测，重复穿越失败保留。
-- [replay_dynanav_imu.py](../../../../scripts/replay_dynanav_imu.py)、[replay_dynanav_rgb.py](../../../../scripts/replay_dynanav_rgb.py)：只按收到的 `/clock` 原序发布真实 source stamp 的 SDK IMU 或原始 RGB；不生成时间、不从视频伪造图像、不读取 GT 位姿。
 - [reconstruct_dynanav_slam_map.py](../../../../scripts/reconstruct_dynanav_slam_map.py)：用实际估计位姿与 exact 关键帧时间重建图；mask 仍 oracle。历史独立 LIO 图为 19,812 点、post-VIO 派生地图为 91,449 点；本轮live post-VIO地图92,846点（207exactKF、48跳过），均不代表完整办公室覆盖。
-- [view_dynanav_map.py](../../../../scripts/view_dynanav_map.py)：只发布归档静态点云供 RViz，`--check` 不启动 ROS；无机器人 TF 或控制，见 [visualization README](../../../../configs/visualization/README.md)。
 - [summarize_dynanav_experiment.py](../../../../scripts/summarize_dynanav_experiment.py)：只读计算实际非零命令时段的 native 速度、z 差、RGB-D 质量、到达与停车，不把进程退出 0 当导航成功。
 
 ## 控制路径与位姿来源
 
-旧 [capture 入口](../../../../scripts/capture_dynanav.py) 保留 Student/COM 速度 PID、`/dynanav/nav/approved_cmd` 和 `/aft_mapped_to_init` 新鲜度门。默认 4400×0.005 s（约22 s），0.5 m/s 策略档位、0.65 m/s 物理速度断言、`MAX_DISPLACEMENT=0.25` m XY 终止条件保留；它是采集探针。
 
 新 experiment 默认 RoboGauge 45D 本体策略和 Go2HV effort，GT native pose 驱动 RouteTracker，无 COM 速度 PID/slew，`ground_truth_navigation=true`。可给目标命令上界 1 m/s，没有按楼梯位置自动限速；倾倒、电机和时钟等物理保护仍会终止。新实验仅给关节读回比较加入 0.001 rad/s 数值容差，没有更改引擎 30 rad/s 上限、torque 或原始观测。实测速度从流记录计算，不能把命令上界写成全程实际速度。
 

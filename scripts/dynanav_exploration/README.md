@@ -1,6 +1,6 @@
 # DynaNav 探索工具：项目内可执行入口
 
-统一入口是 `scripts/dynanav_exploration.py`。代码只从当前 checkout 加载，不依赖 `Documents/Codex/.../task` 下的旧 Python 文件，也不调用个人安装目录里的 skill。历史原件留在 [archive_20261111](archive_20261111/README.md)，SHA 不变。
+统一入口是 `scripts/dynanav_exploration.py`。代码只从当前 checkout 加载，不依赖 `Documents/Codex/.../task` 下的旧 Python 文件，也不调用个人安装目录里的 skill。
 
 | 子命令 | 项目内实现 | 用途 |
 | --- | --- | --- |

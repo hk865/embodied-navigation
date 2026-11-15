@@ -1,8 +1,7 @@
 """Explicit-entry DynaNav Isaac RGB-D capture experiment.
 
 Importing this module has no side effects: it only defines the argv/environment
-contract plus ``run``/``main``. ``experiment.py`` and
-``scripts/capture_dynanav.py`` keep executing it through ``runpy`` as
+contract plus ``run``/``main``. ``experiment.py`` keeps executing it through ``runpy`` as
 ``__main__`` with ``sys.argv = ["capture_go2_rgbd", <output>, <scene>]``; the
 DYNANAV_EXPERIMENT environment variable still supplies the experiment profile.
 

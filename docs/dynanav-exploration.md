@@ -39,7 +39,6 @@ Isaac 场景/物理 → front RGB、物理 IMU、RTX 完整扫 → ROS 2 / Fast 
 | 目标接口 | `scripts/explore_waypoint_client.py` | 原子 request.json + 单调 seq；observe/goto/cancel/stop 及回执；exit0/accepted 不等于 reached。 |
 | 单目标状态与跟踪 | `simulation/dynanav/native_waypoints.py` → `navigation/robogauge/route_tracker.py` | adapter 只把当前估计 pose 和目标接入原跟踪器；保留原转向、到达、停车和 stall 判断，不新增 map-readiness、heartbeat、TTL 或 floor-clearance 的 goto 门禁。 |
 | 足式执行 | `simulation/dynanav/capture/control.py`、RoboGauge policy | 复用既有策略、本体观测和关节契约；没有训练新策略。1 m/s 是命令上限，不是持续实测速度。 |
-| 评分与复核 | run 的 control/policy/truth journals、`scripts/audit_dynanav_native_exploration.py` | 真值用于原策略本体观测、物理诊断及明确隔离的离线评分，不能回流为模型选点或导航位姿。CPU检查不代替路线验收。 |
 
 上述 `simulation/...` 等包内路径均以 `src/embodied_navigation/` 为前缀。生产主路径另有 SCAN/PCT、PID、任务/停车模块，见 [全工程架构](architecture.md)；它们不是本次 native 探索链中实际执行的规划器。在线行人/learned semantic 支路也不是本次 `semantic_provider=none` 的 static run。
 

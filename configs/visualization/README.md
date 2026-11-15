@@ -15,15 +15,12 @@ configs/visualization/
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
 | 配置 | [`dynanav_map.rviz`](dynanav_map.rviz) | RViz2 的 `rviz_common` 配置：`Fixed Frame=dynanav_lio_map`、PointCloud2 显示 `/dynanav/review/static_map`（Reliable + Transient Local、Keep Last、depth 1）、按 Z 轴着色、0.03 m Flat Squares，以及 Orbit 视角参数。消费者只有手动 `rviz2 -d`。 |
-| 代码 | 无 | 本目录没有 Python/C++ 代码，也没有 import 方。实际发布脚本是 [`scripts/view_dynanav_map.py`](../../scripts/view_dynanav_map.py)，它不读 `.rviz` 文件；两者的唯一契约是 topic 名、QoS 与 frame 名在脚本 `TOPIC` 常量、本 README 和 `.rviz` 里三处保持一致。 |
-| 日志/输出 | 无文件写入 | `view_dynanav_map.py` 只向 `/dynanav/review/static_map` 发布一条 PointCloud2 并保持进程存活，不写 run 目录、不写日志文件；输出仅为 stdout 与 ROS 话题。显示证据（截图、`review-receipt.json`）由外部 experiments 目录保存，不随仓库分发。 |
 
 本目录的“配置读取点”就是人工命令：没有代码在启动时自动加载 `dynanav_map.rviz`，不要把它当成自动生效的默认可视化。
 
 ## 模块内文件耦合
 
 - 依赖方向：本目录两个文件互不 import，也不被代码 import。`.rviz` 由 RViz2 解析，README 由人阅读。
-- 唯一耦合是**隐式契约**：`.rviz` 里的 topic `/dynanav/review/static_map`、QoS（Reliable / Transient Local / Keep Last / depth 1）和固定坐标系必须与 `scripts/view_dynanav_map.py` 的 `TOPIC` 常量及 `map_frame` 发布逻辑一致；改名时三处（脚本常量、`.rviz`、本文）要同步，目前没有任何自动校验。
 
 | 文件 | 行数 | 依赖 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
@@ -43,8 +40,6 @@ configs/visualization/
 
 | 优先级 | 动作 | 理由 | 风险 | 验证方式 |
 | --- | --- | --- | --- | --- |
-| P2 | 在本文加一张“契约表”：topic 名、QoS、`map_frame` 默认值、对应脚本常量位置 | 现在三处字符串靠人眼同步，改名后 RViz 静默空白 | 无（纯文档） | 人工比对 `scripts/view_dynanav_map.py` 的 `TOPIC` 与 `.rviz` 的 `Topic.Value` |
-| P2 | 给 `dynanav_map.rviz` 顶部加注释说明“人工查看配置，无代码读取者，topic/frame 需与 view_dynanav_map.py 对齐” | RViz 配置常被误当成运行默认值 | 无（注释不影响 RViz 解析） | 用 `rviz2 -d` 打开一次确认仍能加载 |
 | P3 | 若以后有多份地图配置，改为按地图命名（如 `dynanav_map_<run>.rviz`）并在 README 写选择规则 | 单一 `.rviz` 同时服务多个历史 run，容易看错地图 | 低；需同步更新命令 | 人工按 README 命令跑通一份 |
 
 没有 P0/P1：本目录无代码、无写操作，最坏后果是可视化看不到点云，不涉及导航正确性。
@@ -55,7 +50,6 @@ From the repository root, validate the estimated map without starting ROS:
 
 ```bash
 MAP='/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs/post-vio-static-map/static_map.npz'
-python3 scripts/view_dynanav_map.py --map "$MAP" --check
 ```
 
 Keep the publisher running in one terminal:
@@ -63,7 +57,6 @@ Keep the publisher running in one terminal:
 ```bash
 source /opt/ros/jazzy/setup.bash
 export ROS_DOMAIN_ID=119  # Use the same isolated review domain in both terminals.
-python3 scripts/view_dynanav_map.py --map "$MAP"
 ```
 
 Open RViz in another terminal from the same repository root:
@@ -86,7 +79,6 @@ The later actual closed-loop run has a separate map containing **92,846 points**
 
 ```bash
 MAP='/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/post-vio-map/static_map.npz'
-python3 scripts/view_dynanav_map.py --map "$MAP" --check
 ```
 
 Then use the same isolated publisher/RViz commands. Its actual screenshot is [rviz-closed-loop-map.png](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-closed-loop-map.png), with [rviz-review-receipt.json](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-review-receipt.json) recording the map hash, display scope and visual check. The earlier 91,449-point example and screenshot remain historical artifacts from a different run. This newer map uses estimated poses, retains `sim_oracle` semantic masks, and does not certify complete scene coverage; the screenshot itself is display evidence, separate from the run's [closed-loop audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/audit/independent-review.json).
