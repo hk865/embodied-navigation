@@ -24,7 +24,6 @@ src/embodied_navigation/robot/
 | 代码 | `__init__.py`（1 行） | 只有包 docstring “Robot observation and actuation contracts. No policy training code.”；无符号、无 import、无运行时代码 |
 | 代码 | `unitree/` | 唯一实现子模块，见 [unitree/README.md](unitree/README.md) |
 | 日志/输出 | 无 | 本包自身不写日志、不写文件；所有输出都在 `unitree/` 的进程内产生 |
-| 配置 | 无配置读取点 | `robot/` 不读 `configs/`；`configs/robot/unitree_usd_manifest.json` 当前无 Python 读取点（资产清单预留），读取顺序见 [configs/README.md](../../../configs/README.md) |
 
 证据：`__init__.py` 实测 1 行；事实包对该文件的 grep 统计（写文件 / getLogger / print / env / config）全部为 0。
 

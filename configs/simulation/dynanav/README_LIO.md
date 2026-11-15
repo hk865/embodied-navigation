@@ -19,9 +19,7 @@ configs/simulation/dynanav/
 ├── README_LIO.md                          # 本文件：观察器启动、标定契约与实验记录
 ├── camera_rgbd.yaml                       # 512×512 pinhole 内参基准（18 行）
 ├── fastlivo_lio.yaml                      # ONLY_LIO 模式参数（100 行）
-├── fastlivo_lio_gravity_estimation.yaml   # 单变量 gravity 对照覆盖（6 行）
 ├── fastlivo_livo.yaml                     # RGB 辅助 LIVO 模式参数（129 行）
-└── office.yaml                            # 历史场景/资产路径记录，无代码读取（5 行）
 ```
 
 ## 代码、日志与配置
@@ -31,8 +29,6 @@ configs/simulation/dynanav/
 | 配置 | [`fastlivo_lio.yaml`](fastlivo_lio.yaml) | 本文件默认 `--mode lio` 的参数文件：`img_en: 0`、`allow_lio_only: true`，post-VIO 输出关闭。由 [`scripts/run_dynanav_lio.sh`](../../../scripts/run_dynanav_lio.sh) 按 `fastlivo_${mode}.yaml` 选择并做模式/post-VIO 一致性 preflight。 |
 | 配置 | [`fastlivo_livo.yaml`](fastlivo_livo.yaml) | `--mode livo` 的参数文件：`img_en: 1`、post-VIO 输出开启、`/dynanav/camera`；视觉参数是本轮实验设置，不是精度结论。 |
 | 配置 | [`camera_rgbd.yaml`](camera_rgbd.yaml) | 相机内参基准。livo 分支读取它作为参数服务基线，再用 `--capture-result` 的 `sensor_installation` 覆盖并校验（`camera_parameter_ready.json` + `camera_parameters.log`）。lio 分支不使用该文件。 |
-| 配置 | [`fastlivo_lio_gravity_estimation.yaml`](fastlivo_lio_gravity_estimation.yaml) | 通过 `--parameter-override` 追加的单变量 gravity 对照；base 默认仍为关闭。 |
-| 配置（无读取点） | [`office.yaml`](office.yaml) | 历史路径记录，无代码读取；实际场景/机器人路径硬编码在 `simulation/dynanav/experiment.py` 的 `data_root()` 下。 |
 | 代码 | 本目录无代码 | 读取点是 shell 启动器 `scripts/run_dynanav_lio.sh`、回归测试 [`tests/regression/test_dynanav_lio_launcher.py`](../../../tests/regression/test_dynanav_lio_launcher.py)，以及被观察器消费的 native 二进制（`fastlivo_mapping`/`libfast_livo2_core.so`）。 |
 | 日志/输出 | 外部 `--output-dir`（必须新目录且在 `PROJECT_DATA_ROOT` 内） | 本目录不写日志。运行期产物：`preflight.json`、`launch.json`（含二进制/core/config 实际哈希）、`camera_parameter_ready.json`、`camera_parameters.log`、`runner.log`、native diagnostics、snapshot 的 `bridge_status.json` 等，全部属该次 run 的证据，不入 Git。 |
 
@@ -267,11 +263,9 @@ Earlier evidence remains in the historical report: the first complete standalone
 
 Capture `--archive-rgb` uses [rgb_archive.py](../../../src/embodied_navigation/simulation/dynanav/rgb_archive.py) to save each pre-overlay renderer RGB sample as ZIP_STORED `rgb8` NPZ with source_ns, frame_index, frame_id and encoding. At 512×512 this is about 0.75 MiB/frame, roughly 1.8 GB per route. Interrupted runs retain `capture_completed=false`. Video is not a source of original RGB.
 
-[replay_dynanav_rgb.py](../../../scripts/replay_dynanav_rgb.py) reads only the RGB/source metadata whitelist, verifies source files and original order, and publishes due original images on received `/clock`. It does not create time, decode video, load GT arrays or resample. `--source-received-stamps` optionally freezes an exact archived subset; that is a subset experiment, not full source coverage. Its `--check` hashes/validates without importing ROS, and writes only a new receipt:
 
 ```sh
 RGB_ARCHIVE="$PROJECT_DATA_ROOT/embodied-navigation/experiments/dynanav-no-timer-paired-full-20261109T052700Z/capture/rgb_raw"
-python3 scripts/replay_dynanav_rgb.py --archive-dir "$RGB_ARCHIVE" \
   --receipt "$PROJECT_DATA_ROOT/embodied-navigation/experiments/rgb-check-$(date -u +%Y%m%dT%H%M%SZ).json" --check
 ```
 
@@ -289,7 +283,6 @@ experiment, use:
 
 ```sh
 scripts/run_dynanav_lio.sh --check --parameter-override \
-  configs/simulation/dynanav/fastlivo_lio_gravity_estimation.yaml
 ```
 
 That file changes only `imu.gravity_est_en` to true. It is an explicit comparison

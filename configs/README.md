@@ -12,12 +12,10 @@ configs/
 ├── localization_mapping/  # 前端/后端 base：settings.json（80 行）+ fastlivo.yaml（128 行）+ camera.yaml（17 行）
 ├── planning/              # SCAN/PCT 与静态支撑：settings.json（53 行）+ static_support_limits.json（23 行）
 ├── robogauge/             # 策略/benchmark 契约与路线：14 文件、22,816 行（含 world.sdf.in 与 routes/）
-├── robot/                 # 资产清单预留：unitree_usd_manifest.json（47 行，无读取点）
 ├── scenarios/             # 场景/地形数据（4 文件、178 行），见 scenarios/README.md
 ├── simulation/            # 世界/物理/传感器与 DynaNav 场景（10 文件、4660 行）：settings.json（3294 行）+ 2 个 collision JSON + dynanav/ 子目录（7 文件、693 行，其中 2 篇 README 共 435 行）
 ├── visualization/         # RViz 配置（2 文件、181 行），见 visualization/README.md
 ├── README.md              # 本文件：读取顺序、pin、消费者与边界
-└── runtime_assets_manifest.json # 归档资产清单（232 行，当前无代码读取）
 ```
 
 合计 44 个文件（`find configs -type f | wc -l`，2026-11-09 实测）。
@@ -32,7 +30,6 @@ configs/
 | 代码（生成器） | [`launch/prepare.py`](../src/embodied_navigation/launch/prepare.py)、[`simulation/world/prepare.py`](../src/embodied_navigation/simulation/world/prepare.py)、[`perception/sensors/sampling.py`](../src/embodied_navigation/perception/sensors/sampling.py)、[`planning/scan_runtime_parameters.py`](../src/embodied_navigation/planning/scan_runtime_parameters.py) | `prepare.py` 深拷贝 profile、执行 pin（见“读取顺序”第 2 条），再生成 world/外参/SLAM 覆盖/SCAN 参数/路线并写 run 目录。 |
 | 代码（运行期消费者） | 见“读取顺序”第 4 条 | 分“只读 runtime_context 的业务 profile”和“仍直接重读 configs”两类，不能一概说“configs 不再生效”。 |
 | 日志/输出 | `runs/<run_id>/`（软链到外部数据卷） | 本目录**不写**任何文件。一次运行生成 `runtime_context.json`、`navigation_profile.json`、`navigation_scenario.json`、`navigation_fastlivo.yaml`、`navigation_camera.yaml`、`terrain_target_manifest.json`、`known_scene_reference.json`、`v34_scan_overrides.yaml`、`global_route.json`、`world.sdf` 等；这些是本次证据，不是可编辑配置。全局产物布局见 [readability 报告 §9](../docs/review/dsh-workflow-and-readability-20261109.md)。 |
-| 配置（本目录） | 见“目录”表 | 只有部分文件有代码读取点；无读取点的文件（`robot/unitree_usd_manifest.json`、`runtime_assets_manifest.json`、`scenarios/terrain_targets/lower12.json`、`simulation/dynanav/office.yaml`）是保留/归档数据，不能当作生效配置。 |
 
 ## 读取顺序
 
@@ -59,9 +56,6 @@ configs/
 | `scenarios/` | `launch/prepare.py` | 路线与地形数据；`terrain_targets/` 当前无代码读取（见该目录 README） |
 | `robogauge/` | `robot/unitree/robogauge`、`navigation/robogauge` | 策略/benchmark 契约；`contract.json` 是归档副本，权威常量在 `contract.py`；`routes/`、`world.sdf.in`、`deployment_profile.json` 由 `simulation/gazebo/robogauge/world.py` 读取 |
 | `visualization/` | 人工/脚本 | RViz 配置等可视化资源；`.rviz` 无 Python 读取者（人工 `rviz2 -d`） |
-| `robot/unitree_usd_manifest.json` | 当前无 Python 读取点 | 资产清单预留，启动检查不读它 |
-| `runtime_assets_manifest.json` | 当前无 Python 读取点 | 同上，归档数据 |
-| `simulation/dynanav/office.yaml` | 当前无 Python 读取点 | DynaNav 场景/资产历史记录；实际路径硬编码在 `simulation/dynanav/experiment.py`（见该目录 README） |
 
 ## 模块内文件耦合
 
@@ -91,7 +85,6 @@ configs/
 - `JSON/YAML` 配置文件：**可接受**。JSON 不能写注释，键名基本自解释（`duration_s`、`runtime_paths`、`features`、`control_clock_contract`）；问题是数值/开关的**含义**只能靠本 README 和源码，`features` 45 个键是否被读取、哪些被强制 `"0"` 需要 grep 才能确认。
 - `simulation/settings.json`：**需改进（规模）**。3294 行全仓最大配置，无 schema、无分区注释；读者很难判断某段是否还在用。
 - `fastlivo.yaml`/`camera.yaml`：**可接受**。128/17 行，ROS 参数结构清晰；`camera.yaml` 只有 17 行，容易核对。
-- 没有发现虚构键或过期读取点：本轮抽查了 `office.yaml`、`unitree_usd_manifest.json`、`runtime_assets_manifest.json`、`lower12.json` 的 grep 结果，均无 Python 读取点。
 
 ## 重构建议
 
@@ -113,5 +106,4 @@ configs/
 ## 边界
 
 - 本目录是 base 配置，**不是**本次运行的有效值；`runs/<id>/` 与 DynaNav `experiments/<name>/` 里的生成文件才是。
-- `robogauge/contract.json` 是归档副本，权威常量在 `robot/unitree/robogauge/contract.py`；两者需人工同步，当前无自动校验。
 - 本 README 的读取点清单是 2026-11-09 的 grep 结果，结构重构后可能漂移；改动前以源码为准。

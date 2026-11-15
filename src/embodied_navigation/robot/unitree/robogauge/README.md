@@ -21,7 +21,6 @@ src/embodied_navigation/robot/unitree/robogauge/
 | 代码 | `__init__.py`（1 行） | 包 docstring "Go2 joint contract, policy observation mapping and verified actor runtime." |
 | 日志/输出 | 无日志、无日志文件 | 本目录 4 个 py 文件 `getLogger` 均为 0（事实包 grep）；没有 ROS/仿真日志 |
 | 日志/输出 | `<PROJECT_DATA_ROOT>/embodied-navigation/runtime_assets/models/robogauge_policy.pt` | 只读：`Runtime` 启动时做 SHA256 校验并加载；权重不在 Git |
-| 配置 | 无 `configs/` 读取点 | 本目录不 import `common.config`、不读 `configs/`；`configs/robogauge/contract.json` 是**归档副本、无 Python 读取者**（见 [docs/robogauge/README.md](../../../../../docs/robogauge/README.md)），权威常量在 `contract.py` 里 |
 | 配置 | `PROJECT_DATA_ROOT` | 经 `project.data_root()` 解析权重路径；`--model` 可指定别处同一份导出，但 SHA256 必须等于 `MODEL_SHA256`，否则 `verify_model()` 拒绝加载 |
 
 补充：`configs/robogauge/` 目录里其它文件（`sensor_contract.json`、`world.sdf.in` 等）由 `simulation/gazebo/robogauge/world.py` 读取，**不属于本目录的配置读取点**，不要混为一谈。

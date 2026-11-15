@@ -79,7 +79,6 @@ docs/robogauge/
 - `navigation/robogauge`: fail-closed SLAM command admission and bounded Building benchmark orchestration.
 - `configs/robogauge`: readable policy and benchmark contracts.
 
-`robot/unitree/robogauge/contract.py` holds the frozen scales, ordering, history, motor and timing assumptions as code constants; `configs/robogauge/contract.json` is a readable archival copy with **no Python reader** (do not treat it as the authority, and keep the two in sync if either changes). The policy consumes body angular velocity, projected gravity, body commands, joints and last unscaled action. It does not consume COM linear velocity, height scans or camera input. Privileged Gazebo pose/clearance remains diagnostic and safety evidence. No COM velocity PID is inserted. Gazebo keeps the archived command slew and immediate zero-command behavior; Isaac used direct commands and is not silently assigned the Gazebo slew.
 
 ## Data and weights
 
@@ -139,7 +138,6 @@ This entry preserves the real-SLAM process chain: CPU policy actor, sensor bridg
 
 Route JSON, world template and sensor configuration are real tracked files in `configs/robogauge`. Large meshes, point clouds, numeric mesh caches, models and logs remain outside Git. `BUILDING_SOURCE.json` and associated notices preserve the recorded Building/PCT provenance. The prepared process plan is not proof that any process ran.
 
-`isaac_closure_audit.json` lists the actual recovered runner imports and missing historical integration edges. `configs/robogauge/isaac_first_flight_reference.json` contains only the relevant archived scenario values and explicitly does not advertise a live runner. The pure `RouteTracker` is GT diagnostic logic, separate from the real-SLAM benchmark and from the main relative-SLAM navigation task.
 
 ## Shared active simulation safety
 

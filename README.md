@@ -112,14 +112,12 @@ embodied-navigation/
 | P1 | 拆 `navigation/base_node.py`(1618) 与 `pid_*` mixin 家族 | 现役 controller 由 6 个 mixin 组合，隐式契约是 `self` 状态；单类难读、难单测 | 高：默认主路径 | `test_ros_shutdown_lifecycle`、`test_pid_navigation_compat` 与运行链路对照 |
 | P2 | 给 15 个 >800 行文件补模块级/函数级 docstring 与内部分段 | docstring 覆盖 0.25–0.57 与文件规模不匹配 | 低（纯注释） | 人工复核 diff；AST 行为不变 |
 | P2 | 统一"运行产物"口径：root/configs/docs 三处只保留一份权威描述，其余引用 | 当前 run 目录与 experiments 产物的说明分散在多处，容易不同步 | 低 | 交叉引用检查（本轮已做） |
-| P2 | 标注 2 个无 Python 读取点的配置（`robot/unitree_usd_manifest.json`、`runtime_assets_manifest.json`）为保留/归档 | 避免"改了没生效"被误判为 bug | 低 | `configs/README.md` 已列出，补删除/保留决策 |
 
 各项的模块级细节（含 P0/P1/P2 分文件建议）见对应模块 README 的"重构建议"节，以及 [模块结构与耦合总评](docs/review/module-structure-coupling-20261109.md)。
 
 ## 两个运行边界
 
 1. Native Gazebo 系统：start.py 装配已有导航模块。Dockerfile 从公开 ROS Jazzy、Gazebo Harmonic、CPU Torch 2.7.1 构建，必要自建源码均包含，FAST-LIVO2/SCAN/PCT 与补丁也在仓库中。
-2. Isaac / DynaNav：当前 static native 探索使用 `scripts/run_dynanav_native_exploration.sh`（见上方专项架构）；其他隔离实验的入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 是旧的采集探针：`--check` 只检查文件，普通参数（`--scene/--output/--steps`）仍会启动采集。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
 
 2026-11-09 阶段的 DynaNav 在线感知、速度阶梯与路线状态见 [在线行人实验记录](docs/experiments/dynanav-online-person-20261109.md)；此前的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
 
