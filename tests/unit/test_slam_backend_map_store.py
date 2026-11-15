@@ -95,6 +95,10 @@ class MapStoreTests(unittest.TestCase):
         store.save(first)
         meta = json.loads((first / "map.json").read_text())
         self.assertEqual(meta.get("schema"), "embodied_navigation_map/v1")
+        # poses saved are the *updated* ones (catches saving pre-optimisation poses)
+        saved_poses = [np.array(v, dtype=float) for v in _collect(meta, "T_world_body", [])]
+        for key, T in self.updated.items():
+            self.assertTrue(any(np.array_equal(T, s) for s in saved_poses), f"pose of {key} not saved exactly")
         loaded = MapStore.load(first)
         loaded.save(second)
         meta2 = json.loads((second / "map.json").read_text())
