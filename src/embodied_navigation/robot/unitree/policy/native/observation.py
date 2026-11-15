@@ -181,13 +181,7 @@ class TerrainHeightMap:
                                 )
                             )
                         elif geometry is not None and geometry.find("mesh") is not None:
-                            if full_name != "Building":
-                                raise ValueError("Unsupported experiment mesh " + full_name)
-                            from embodied_navigation.simulation.mesh_terrain import MeshSurface
-
-                            shapes.append(
-                                MeshSurface(collision_name, geometry.findtext("mesh/uri"))
-                            )
+                            raise ValueError("Unsupported experiment mesh " + full_name)
                         else:
                             raise ValueError(
                                 f"Unsupported static collision shape: {collision_name}"
