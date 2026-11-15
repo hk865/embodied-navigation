@@ -7,6 +7,8 @@ No angular cloud partition, scene geometry, renderer world pose, or oracle map.
 from __future__ import annotations
 import numpy as np
 
+from embodied_navigation.common.geometry import quaternion_matrix
+
 RESOLUTION = (512, 512)
 FOCAL_MM, APERTURE_MM = 24., 42.
 
@@ -70,9 +72,7 @@ def quaternion_rotation(xyzw):
     if q.shape != (4,) or not np.isfinite(q).all() or abs(np.linalg.norm(q) - 1.) > 1e-3:
         raise ValueError('Expected a finite unit estimator quaternion in xyzw order')
     x, y, z, w = q / np.linalg.norm(q)
-    return np.array([[1-2*(y*y+z*z), 2*(x*y-z*w), 2*(x*z+y*w)],
-                     [2*(x*y+z*w), 1-2*(x*x+z*z), 2*(y*z-x*w)],
-                     [2*(x*z-y*w), 2*(y*z+x*w), 1-2*(x*x+y*y)]])
+    return quaternion_matrix(w, x, y, z)
 
 
 def project_shared_map(points_map, pose_xyz_xyzw, calibration, depth, *, depth_tolerance_m=.15):

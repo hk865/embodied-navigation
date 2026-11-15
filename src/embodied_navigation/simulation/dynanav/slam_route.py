@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
+from embodied_navigation.simulation.dynanav.exploration_waypoints import pose_transform
 
 POSE_SOURCE = "lio_estimate"
 POSE_SOURCES = (POSE_SOURCE, "livo_post_vio")
@@ -48,24 +49,6 @@ def _vector(value, size, name):
     if result.shape != (size,) or not np.isfinite(result).all():
         raise ValueError(f"{name} must contain {size} finite numbers")
     return result.copy()
-
-
-def pose_transform(position, quat_wxyz):
-    """Validate measured XYZ and explicit WXYZ quaternion; return its SE(3)."""
-    xyz = _vector(position, 3, "position")
-    q = _vector(quat_wxyz, 4, "quaternion_wxyz")
-    norm = float(np.linalg.norm(q))
-    if abs(norm - 1.0) > 1e-3:
-        raise ValueError("quaternion_wxyz must be unit length within 1e-3")
-    w, x, y, z = q / norm
-    transform = np.eye(4)
-    transform[:3, :3] = [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
-    transform[:3, 3] = xyz
-    return transform
 
 
 def _reference_pose(pose, name):

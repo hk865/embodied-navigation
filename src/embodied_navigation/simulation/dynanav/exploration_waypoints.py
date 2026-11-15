@@ -39,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.geometry import quaternion_matrix
 from embodied_navigation.common.geometry import wrap_angle as wrap
 
 PROTOCOL_VERSION = 1
@@ -427,11 +428,7 @@ def pose_transform(position, quat_wxyz):
         raise ValueError("quaternion_wxyz must be unit length within 1e-3")
     w, x, y, z = quaternion / norm
     transform = np.eye(4)
-    transform[:3, :3] = [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
+    transform[:3, :3] = quaternion_matrix(w, x, y, z)
     transform[:3, 3] = xyz
     return transform
 

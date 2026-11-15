@@ -102,6 +102,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from embodied_navigation.common.geometry import quaternion_matrix
+
 __all__ = [
     "DEFAULT_BAND_WIDTH_M",
     "DEFAULT_EXTRINSIC_TOLERANCE",
@@ -449,11 +451,7 @@ def transform_from_position_quaternion(position, quaternion_xyzw):
         raise ValueError("quaternion_xyzw must be unit length within 1e-3")
     x, y, z, w = quaternion / norm
     transform = np.eye(4, dtype=float)
-    transform[:3, :3] = [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
+    transform[:3, :3] = quaternion_matrix(w, x, y, z)
     transform[:3, 3] = xyz
     return transform
 

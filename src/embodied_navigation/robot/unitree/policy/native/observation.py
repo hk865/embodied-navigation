@@ -14,6 +14,8 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from embodied_navigation.common.geometry import quaternion_matrix
+
 CONTRACT = json.loads(Path(__file__).with_name("contract.json").read_text())
 DEFAULT_Q = np.asarray(CONTRACT["default_joint_positions"], dtype=np.float32)
 JOINT_NAMES = tuple(CONTRACT["joint_names"])
@@ -25,13 +27,7 @@ def quaternion_rotation(quat_wxyz):
     if q.shape != (4,) or not np.isfinite(q).all() or np.linalg.norm(q) < 1e-8:
         raise ValueError("Invalid base quaternion")
     w, x, y, z = q / np.linalg.norm(q)
-    return np.asarray(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ]
-    )
+    return quaternion_matrix(w, x, y, z)
 
 
 def _pose(element):

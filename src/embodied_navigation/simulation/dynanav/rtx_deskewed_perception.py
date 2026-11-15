@@ -37,6 +37,8 @@ from collections import OrderedDict
 
 import numpy as np
 
+from embodied_navigation.common.geometry import quaternion_matrix
+
 # Raw rotating wire layout (capture/lidar.py OUSTER_DTYPE). A deskewed native
 # cloud must not carry any of these fields; the native PointXYZINormal publisher
 # emits x/y/z/normal_*/intensity/curvature instead.
@@ -240,14 +242,7 @@ def rotation_from_quaternion_xyzw(quat_xyzw):
     if norm <= 0.0:
         raise DeskewedCloudError("degenerate quaternion")
     x, y, z, w = x / norm, y / norm, z / norm, w / norm
-    return np.array(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ],
-        dtype=float,
-    )
+    return quaternion_matrix(w, x, y, z)
 
 
 def map_points_to_base(points_map, position_map, quat_xyzw, imu_mount_xyz):
