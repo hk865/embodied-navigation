@@ -25,3 +25,7 @@ vendor 逻辑仅通过 `third_party/scan/patches/reference_feedback.patch` 应�
 完整 native 构建、ROS 协议及后续仿真结果以数据卷收据为准，不由 CPU 检查推断。两层覆盖仍需实际到达、楼层证据和未访问区域记录。
 
 日志、视频、点云、原始 patch 和测试输出位于 `$PROJECT_DATA_ROOT/embodied-navigation/runs/20261115-two-floor-demo/`，不入仓库。未推送。
+
+## 后续指定参数对照
+
+用户最新指定两处 `max_acc` 设为 2.0 m/s²。保留 `acc_tolerance=1.0`、原发布前加速度硬拒绝、速度和碰撞检查，最终加速度阈值为 3.0 m/s²。此配置覆盖下次仿真；上一 1.5 参数代次首航点明确失败（末次 2.592 > 2.500），失败反馈正确，原生停车并退出 0。放弃的加速度诊断补丁不进入本版本；对应部分构建已取消，不能使用。
