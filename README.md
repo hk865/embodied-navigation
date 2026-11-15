@@ -21,8 +21,8 @@
 - planning：路线、SCAN 调度、PCT 以及路径交付。实际 SCAN/PCT 源码在 third_party。
 - control：单步跟踪/控制律、碰撞与支撑检查、parking停车执行、safety统一仿真门禁和定位反馈来源检查。
 - robot/unitree：Go2 观测、关节顺序、策略推理和执行桥。没有训练流程。
-- navigation：完整任务状态和模块协作。默认主路径的任务状态机是 base_node.py 的 `Navigation.control()`（ros_node.py 包装、pid_navigation.py 装配为现役 controller，准入/路由/控制拆在同目录 `pid_*.py`，进程入口 `pid_entrypoint.py`）；task.py 是独立 `relative-slam-navigation` 入口的状态机，不在 demo.launch.py 中；mission/state_machine.py 在本检出没有实例化点，默认 mission 角色是 mission_runtime.py；Building 任务在 building_navigation.py；ROS 适配位于 ros_node.py、relative_slam_node.py。
-- evaluation：轨迹长度/误差等离线指标及独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为生产 SLAM 定位输入；显式 DynaNav 真值控制诊断另行记录来源。
+- navigation：完整任务状态和模块协作。默认主路径的任务状态机是 base_node.py 的 `Navigation.control()`（ros_node.py 包装、pid_navigation.py 装配为现役 controller，准入/路由/控制拆在同目录 `pid_*.py`，进程入口 `pid_entrypoint.py`）；mission/state_machine.py 在本检出没有实例化点，默认 mission 角色是 mission_runtime.py；Building 任务在 building_navigation.py；ROS 适配位于 ros_node.py。
+- evaluation：独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为生产 SLAM 定位输入；显式 DynaNav 真值控制诊断另行记录来源。
 - launch：模块装配、环境、进程生命周期。业务任务状态不放在 launch。
 - configs、scripts、tests、docs：功能配置、少数可发现入口、回归测试和说明。配置读取顺序见 [配置入口](configs/README.md)，测试命令与边界见 [测试入口](tests/README.md)，实验与审查记录见 [文档索引](docs/README.md)。
 
@@ -33,7 +33,7 @@ embodied-navigation/
 ├── README.md                   # 本文档：结构、耦合、可读性、重构建议、验证状态
 ├── README_zh.md                # 中文简版入口
 ├── start.py                    # 11 行；唯一原生启动入口（检查/prepare/实际启动）
-├── pyproject.toml              # 包元数据与 console script `relative-slam-navigation`
+├── pyproject.toml              # 包元数据
 ├── requirements-cpu.lock       # CPU 依赖锁
 ├── compose.yaml                # Docker Compose 服务定义；默认命令是 --check，不是启动系统
 ├── Dockerfile                  # Native 镜像：ROS Jazzy + Gazebo Harmonic + CPU Torch 2.7.1
@@ -76,7 +76,6 @@ embodied-navigation/
 | 层次倒置 | 证据 | 为什么值得处理 |
 | --- | --- | --- |
 | 规划持有控制器子类 | `planning/reference/global_route_reference.py:11` import `control.tracking.cascade_core.Controller`；反向 `control/tracking/cascade_core.py:16` import `planning.reference.spatial_reference` | 规划与控制互相依赖，二者无法单独测试或替换 |
-| 定位使用导航层数据类 | `localization_mapping/relative_odometry.py:8` import `..navigation.task.Observation` | 定位层反向依赖导航层；`Observation` 是数据契约，应在 common/sensors 层 |
 | 传感适配层依赖控制内部 | `perception/sensors/feedback_mailbox.py` import `control.tracking.cascade_core`、`control.parking.parking_pose10hz` | 感知/传感层反向拉入控制实现，破坏"感知不依赖控制"的意图 |
 | 策略 ACK 与停车控制双向依赖 | `robot/unitree/policy/lower_loop_ack.py` ↔ `control/parking/integral_unload.py` | 执行桥与控制律互相引用，任一侧改动都要双侧回归 |
 | 安全门禁跨层直达 | `control/safety/duplicate_source.py` import `robot.unitree.bridge`、`planning.admission.physical_gate` | 安全模块同时依赖机器人和规划，边界难判定 |
@@ -99,7 +98,6 @@ embodied-navigation/
 | common | 20 | 1,616 | 100 | 0.27 | 无 |
 | launch | 9 | 1,314 | 23 | 0.57 | 无 |
 | evaluation | 3 | 95 | 4 | 0.50 | 无 |
-| sensors | 2 | 37 | 0 | — | 无 |
 
 结论：**模块级文档可读性好，代码级可读性不均**。边界、禁入项、未验证声明在每个模块 README 里写得比代码本身清楚；代码侧的主要负债是 15 个 >800 行文件（集中在 navigation/control/planning/robot/localization_mapping/perception）和 0.25–0.57 的函数 docstring 覆盖。"文档说清楚、代码靠单文件承载"是当前的主要可读性风险，而不是命名混乱。docstring 覆盖是 AST 粗计（含嵌套函数），不作为质量评分，只用于横向比较。
 
@@ -114,14 +112,14 @@ embodied-navigation/
 | P1 | 拆 `navigation/base_node.py`(1618) 与 `pid_*` mixin 家族 | 现役 controller 由 6 个 mixin 组合，隐式契约是 `self` 状态；单类难读、难单测 | 高：默认主路径 | `test_ros_shutdown_lifecycle`、`test_pid_navigation_compat` 与运行链路对照 |
 | P2 | 给 15 个 >800 行文件补模块级/函数级 docstring 与内部分段 | docstring 覆盖 0.25–0.57 与文件规模不匹配 | 低（纯注释） | 人工复核 diff；AST 行为不变 |
 | P2 | 统一"运行产物"口径：root/configs/docs 三处只保留一份权威描述，其余引用 | 当前 run 目录与 experiments 产物的说明分散在多处，容易不同步 | 低 | 交叉引用检查（本轮已做） |
-| P2 | 标注 4 个无 Python 读取点的配置（`control/relative_pid.yaml`、`navigation/relative_shuttle.yaml`、`robot/unitree_usd_manifest.json`、`runtime_assets_manifest.json`）为保留/归档 | 避免"改了没生效"被误判为 bug | 低 | `configs/README.md` 已列出，补删除/保留决策 |
+| P2 | 标注 2 个无 Python 读取点的配置（`robot/unitree_usd_manifest.json`、`runtime_assets_manifest.json`）为保留/归档 | 避免"改了没生效"被误判为 bug | 低 | `configs/README.md` 已列出，补删除/保留决策 |
 
 各项的模块级细节（含 P0/P1/P2 分文件建议）见对应模块 README 的"重构建议"节，以及 [模块结构与耦合总评](docs/review/module-structure-coupling-20261109.md)。
 
 ## 两个运行边界
 
 1. Native Gazebo 系统：start.py 装配已有导航模块。Dockerfile 从公开 ROS Jazzy、Gazebo Harmonic、CPU Torch 2.7.1 构建，必要自建源码均包含，FAST-LIVO2/SCAN/PCT 与补丁也在仓库中。
-2. Isaac / DynaNav：当前 static native 探索使用 `scripts/run_dynanav_native_exploration.sh`（见上方专项架构）；其他隔离实验的入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。navigation/relative_slam_node.py 是分离后的任务节点。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 是旧的采集探针：`--check` 只检查文件，普通参数（`--scene/--output/--steps`）仍会启动采集。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
+2. Isaac / DynaNav：当前 static native 探索使用 `scripts/run_dynanav_native_exploration.sh`（见上方专项架构）；其他隔离实验的入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。它们仍需匹配的 Isaac 安装、场景与机器人资产。scripts/capture_dynanav.py 是旧的采集探针：`--check` 只检查文件，普通参数（`--scene/--output/--steps`）仍会启动采集。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
 
 2026-11-09 阶段的 DynaNav 在线感知、速度阶梯与路线状态见 [在线行人实验记录](docs/experiments/dynanav-online-person-20261109.md)；此前的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
 

@@ -5,7 +5,7 @@
 ## 边界
 
 - 不训练、不采集数据、不导出模型；没有实机后端。本包自身不注册 ROS 节点，实际节点由子目录的 `bridge.py` 与各模块 `launch/components.py` 启动。
-- 顶层 [sensors/](../sensors/README.md) 只是跨感知/定位/控制的数据契约，[perception/sensors/](../perception/sensors/README.md) 是感知侧 ROS 适配；二者都不是本目录的策略输入。
+- [perception/sensors/](../perception/sensors/README.md) 是感知侧 ROS 适配；不是本目录的策略输入。
 - 当前有两条部署路径：Student 使用 exact45 推理，`unitree/policy/native` 保留历史 Teacher 247D 观测用于诊断/适配；`unitree/robogauge` 使用独立的 45D 直接观测接口。两条路径的输入和 actuator 契约不能混用；普通导航不加载 Teacher actor。
 
 ## 目录结构

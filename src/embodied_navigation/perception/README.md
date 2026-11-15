@@ -101,7 +101,7 @@ run 目录与产物布局不在本模块定义，读取顺序见 [configs/README
 - [person_geometry_tracking.py](person_geometry_tracking.py)：纯 NumPy 内部 person ID、可见几何 motion 与短时 AABB 隔离；不读 GT、不把背景变 STATIC，二维支持/因果 pose 范围显式保留。
 - [person_mask_propagation.py](person_mask_propagation.py)：暂停前新增的 opt-in 有界 RGB 光流 helper；只有 5 项注入 flow 纯测试，未接 capture/experiment、未跑真实 RGB 重放或在线效果/延迟验收，本轮基线未启用。
 - [temporal_geometry.py](temporal_geometry.py)：独立有界重复几何候选缓存，3 distinct 帧/≥0.5s、retention 300s/200k voxel/8 票；危险可撤销并导出 source/index ledger，不认证永久静态。
-- [sensors/](sensors/README.md)：感知侧 ROS 转发、自车过滤、健康门和反馈邮箱；跨层数据契约另见顶层 [sensors](../sensors/README.md)。
+- [sensors/](sensors/README.md)：感知侧 ROS 转发、自车过滤、健康门和反馈邮箱。
 
 ## 实际运行与调用
 
