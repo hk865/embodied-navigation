@@ -124,5 +124,6 @@ owner-only failure persistence, pending/raw gates, early-image cold startup and
 zero-return/fully-filtered recovery. It compares real sync/Process2/LIO/VIO state,
 covariance, source points/float curvature and IMU lists with the switch off/on.
 `COMPLETE_SCAN_REPLAY_BIN` additionally consumes an SHA-verified stored source
-fresh initial state and blank images, not the original full trajectory/map/VIO.
+fragment and starts from a fresh initial state with blank images, not the original
+full trajectory/map/VIO.
 See the dedicated complete-scan experiment document and isolated build manifests.

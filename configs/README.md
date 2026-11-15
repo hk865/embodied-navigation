@@ -30,6 +30,7 @@ configs/
 | 代码（生成器） | [`launch/prepare.py`](../src/embodied_navigation/launch/prepare.py)、[`simulation/world/prepare.py`](../src/embodied_navigation/simulation/world/prepare.py)、[`perception/sensors/sampling.py`](../src/embodied_navigation/perception/sensors/sampling.py)、[`planning/scan_runtime_parameters.py`](../src/embodied_navigation/planning/scan_runtime_parameters.py) | `prepare.py` 深拷贝 profile、执行 pin（见“读取顺序”第 2 条），再生成 world/外参/SLAM 覆盖/SCAN 参数/路线并写 run 目录。 |
 | 代码（运行期消费者） | 见“读取顺序”第 4 条 | 分“只读 runtime_context 的业务 profile”和“仍直接重读 configs”两类，不能一概说“configs 不再生效”。 |
 | 日志/输出 | `runs/<run_id>/`（软链到外部数据卷） | 本目录**不写**任何文件。一次运行生成 `runtime_context.json`、`navigation_profile.json`、`navigation_scenario.json`、`navigation_fastlivo.yaml`、`navigation_camera.yaml`、`terrain_target_manifest.json`、`known_scene_reference.json`、`v34_scan_overrides.yaml`、`global_route.json`、`world.sdf` 等；这些是本次证据，不是可编辑配置。全局产物布局见 [readability 报告 §9](../docs/review/dsh-workflow-and-readability-20261109.md)。 |
+| 配置（本目录） | 见“目录”表 | 只有部分文件有代码读取点；`scenarios/terrain_targets/lower12.json` 是当前无代码读取点的保留数据（见该目录 README），不能当作生效配置。 |
 
 ## 读取顺序
 

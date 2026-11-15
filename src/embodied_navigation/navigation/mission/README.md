@@ -123,7 +123,7 @@ src/embodied_navigation/navigation/mission/
 
 ## 测试
 
-本子包无专用测试：`grep -rln "goal_regions\|mission_runtime\|continuous_route\|state_machine\|route_regions|dynamic_stop_event" tests/ --include=*.py` **无命中**（`tests/` 下没有任何文件引用这 6 个模块名）。`mission_runtime.py` 由 `../../control/launch/components.py` 以 `mission` 角色启动、进入默认主路径；`state_machine.py` 与 `continuous_route.py` 当前未被任何运行链路实例化（`configs/planning/settings.json` 的 `continuous_route_contract.enabled=false`）。
+本子包无专用测试：`grep -rln "goal_regions\|mission_runtime\|continuous_route\|state_machine\|route_regions\|dynamic_stop_event" tests/ --include=*.py` **无命中**（`tests/` 下没有任何文件引用这 6 个模块名）。`mission_runtime.py` 由 `../../control/launch/components.py` 以 `mission` 角色启动、进入默认主路径；`state_machine.py` 与 `continuous_route.py` 当前未被任何运行链路实例化（`configs/planning/settings.json` 的 `continuous_route_contract.enabled=false`）。
 
 ## 限制
 

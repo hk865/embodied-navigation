@@ -138,6 +138,7 @@ This entry preserves the real-SLAM process chain: CPU policy actor, sensor bridg
 
 Route JSON, world template and sensor configuration are real tracked files in `configs/robogauge`. Large meshes, point clouds, numeric mesh caches, models and logs remain outside Git. `BUILDING_SOURCE.json` and associated notices preserve the recorded Building/PCT provenance. The prepared process plan is not proof that any process ran.
 
+`isaac_closure_audit.json` lists the actual recovered runner imports and missing historical integration edges. The pure `RouteTracker` is GT diagnostic logic, separate from the real-SLAM benchmark and from the main relative-SLAM navigation task.
 
 ## Shared active simulation safety
 

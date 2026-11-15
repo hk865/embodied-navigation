@@ -61,7 +61,7 @@ src/embodied_navigation/control/
 | `executor_command.py` | 220 | `common.observation`、`common.integration_limits`、`common.input_freshness`、`parking.parking_zero_contract`（模块级）、`parking.terminal_reference`（延迟） | `../robot/unitree/policy/worker.py`（函数内延迟） | 偏重：单函数 163 行 |
 | `publication_ledger.py` | 85 | 标准库 | `../navigation/pid_control.py`（函数内延迟） | 可疑：反射式读取调用方状态 |
 | `io.py` | 14 | `common.runtime_io`、`common.runtime_telemetry` | `../navigation/ros_node.py`、`../robot/unitree/bridge.py` | 清楚 |
-| `__init__.py` | 1 | 无 | 无 | 清楚（空文件） |
+| `__init__.py` | 0 | 无 | 无 | 清楚（空文件） |
 
 四类问题：
 

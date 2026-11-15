@@ -105,7 +105,7 @@ src/embodied_navigation/
 | --- | --- | --- | --- | --- |
 | P0 | 无 | 包级没有发现已知的正确性/安全缺陷（安全门禁有单测与原生集成测试；`common/state_contract.py` 拒绝非法 provenance） | — | — |
 | P1 | 拆分 2–3 个最大“上帝文件”：`control/tracking/cascade_core.py`（1851）、`control/parking/transition_gate.py`（1731）、`navigation/base_node.py`（1618） | 单文件过大，review/测试定位成本高；三者都在高频改动路径 | 高：涉及控制/状态机热路径，拆分可能改变 import 关系与测试 AST 断言 | 先补行为对照（现有 `tests/unit` + `tests/regression`），按“纯移动 + 重导出”分步拆；每步跑全量 CPU 测试并检查入口闭包测试 |
-| P1 | 消除 2 处真实层次倒置：① 把 `Controller` 基类/协议抽到 `control/tracking/controller_protocol.py`，规划只依赖协议；② 把 `navigation/task.Observation` 下沉到 `common` 契约模块 | 规划→控制、定位→导航的反向依赖让“数据流方向”失真，且会阻碍独立演进 | 中：涉及 import 面与兼容重导出；`sensors` 当前无调用者，需先确认契约归属 | 移动后全量 CPU 测试；`grep` 确认无新的反向边；保留旧路径重导出并加弃用注释 |
+| P1 | 消除 2 处真实层次倒置：① 把 `Controller` 基类/协议抽到 `control/tracking/controller_protocol.py`，规划只依赖协议；② 把 `navigation/task.Observation` 下沉到 `common` 契约模块 | 规划→控制、定位→导航的反向依赖让“数据流方向”失真，且会阻碍独立演进 | 中：涉及 import 面与兼容重导出 | 移动后全量 CPU 测试；`grep` 确认无新的反向边；保留旧路径重导出并加弃用注释 |
 | P1 | 加一个“包级 import 环/允许清单”检查脚本或单测（允许 9 组窄依赖白名单，新增环即失败） | 现在 9 组双向依赖只存在于报告里，新增反向依赖无人拦截 | 低：只加检查，不改业务代码 | 脚本对当前树输出 9 组白名单通过；人为加一条 import 验证会失败 |
 | P2 | 提高 `navigation`（0.27）/`localization_mapping`（0.25）的函数 docstring 覆盖，优先公共入口/状态机方法；补 9 个无模块 docstring 文件的模块头 | 文档缺口集中在这两个最大模块，补文档风险最低、收益直接 | 无（纯注释） | 重跑 repo_stats 的 docstring 统计，覆盖率上升；行为测试不变 |
 | P2 | 在 [architecture.md](../../docs/architecture.md) 或本文件登记“允许的窄依赖清单”（9 组 + 2 处待重构），并在代码处加一行注释 | 避免后来者把合法窄依赖当缺陷反复“修” | 无 | 人工对照 repo_stats.json 的 `cycles2` |

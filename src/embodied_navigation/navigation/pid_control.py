@@ -808,12 +808,11 @@ class ControlMixin:
 
     @_r96_cpu.observe("embodied_navigation.control.candidate")
     def _control_candidate(self, now):
-        """按固定顺序推进一个 tick：走廊 → 时钟保持 → 终端 → 准入 → 任务保持 → 基类状态机。
+        """按固定顺序推进一个 tick：走廊 → 时钟保持 → 终端 → 准入 → 基类状态机。
 
         顺序即安全语义：``control_clock_hold`` 在同一 ROS clock 重复 tick 时先发精确
         零，且要求新的实测几何检查后才能恢复非零命令；``_r105_terminal`` 与
-        ``path_admission_hold`` 可以各自先接管；``mission46_required`` 时按 mission
-        保持发零速（``succeeded`` 且已有 final_bundle 则转入停车）。最后才调用
+        ``path_admission_hold`` 可以各自先接管。最后才调用
         ``super().control(now)``（``base_node`` 的任务状态机）。
         """
         self.poll_corridor(now)

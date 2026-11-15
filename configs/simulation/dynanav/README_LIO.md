@@ -263,14 +263,6 @@ Earlier evidence remains in the historical report: the first complete standalone
 
 Capture `--archive-rgb` uses [rgb_archive.py](../../../src/embodied_navigation/simulation/dynanav/rgb_archive.py) to save each pre-overlay renderer RGB sample as ZIP_STORED `rgb8` NPZ with source_ns, frame_index, frame_id and encoding. At 512×512 this is about 0.75 MiB/frame, roughly 1.8 GB per route. Interrupted runs retain `capture_completed=false`. Video is not a source of original RGB.
 
-
-```sh
-RGB_ARCHIVE="$PROJECT_DATA_ROOT/embodied-navigation/experiments/dynanav-no-timer-paired-full-20261109T052700Z/capture/rgb_raw"
-  --receipt "$PROJECT_DATA_ROOT/embodied-navigation/experiments/rgb-check-$(date -u +%Y%m%dT%H%M%SZ).json" --check
-```
-
-The adapter also passed a real ROS-only [runtime audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/rgb-replay-runtime-20261109T055456Z/runtime-audit.json): 627 original prefix frames published and independently received, with original headers/layout/pixel SHA verified. Only the finalized bag's clock was played, at wall rate 4 without changing source stamps. All owned processes exited 0; no SDK or native estimator was started. This does not establish full-route estimator replay or closed-loop navigation.
-
 Recorders use explicit SQLite `write.pragmas` with WAL, synchronous NORMAL and busy_timeout 5000, as supported by [ROS 2 Jazzy rosbag2_storage_sqlite3](https://github.com/ros2/rosbag2/blob/jazzy/rosbag2_storage_sqlite3/README.md). These are recorded experiment settings, not permission to inspect an active writer; all bag validation waits for recorder shutdown.
 
 ## Single-variable observer parameters
@@ -278,15 +270,7 @@ Recorders use explicit SQLite `write.pragmas` with WAL, synchronous NORMAL and b
 `--parameter-override FILE` appends a second ROS parameter file, preserving the
 base file and command array. The launch receipt records the override's absolute
 path and SHA256. Input topics, selected LIO/LIVO mode, GPS-off selection, calibrated camera
-parameters and simulation clock cannot be contradicted by an override. For the existing gravity-state estimator
-experiment, use:
-
-```sh
-scripts/run_dynanav_lio.sh --check --parameter-override \
-```
-
-That file changes only `imu.gravity_est_en` to true. It is an explicit comparison
-profile; the default YAML remains false, and no accuracy improvement is implied.
+parameters and simulation clock cannot be contradicted by an override.
 
 ## Instantaneous point time correction
 

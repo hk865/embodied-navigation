@@ -104,6 +104,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 
 四类问题：
 
+1. **上帝文件（>800 行）**：无。最长的 `run_dynanav_online_person.py` 636 行、`reconstruct_dynanav_slam_map.py` 602 行，都在 600 量级但没有跨过 800。
 2. **重复实现**：**有，且是本目录最主要的复制点**——文件 sha256 助手写了 4 份（`build_dynanav_slam_route.py:281` 的 `sha256_file`、`evaluate_dynanav_person_segmentation.py:34`、`reconstruct_dynanav_learned_person_map.py:46`、`run_dynanav_person_worker.py:32` 的 `digest`，实现几乎一致）；`write_json` 写了 3 份（`evaluate_…:42`、`reconstruct_learned_…:54`、`run_dynanav_online_person.py:374`）；`ROOT = Path(__file__).resolve().parents[1]` 重复 9 份、`sys.path.insert(0, ROOT/"src")` 重复 7 份。没有 `scripts/_common.py` 之类的共享模块。
 3. **跨层直达**：脚本作为 CLI 必须 `sys.path.insert` 后直接 import `src/` 里的包（`perception.person_segmentation`、`localization_mapping.semantic_mapping`、`control.relative_pid` 等），这是"脚本层"的常态；需要注意的是它们直接依赖**内部**模块而不是稳定 API（如 `person_segmentation` 的私有函数、`semantic_mapping.query` 的 re-export）。
 4. **隐式契约**：三处按路径/文件名耦合——`load_script` 按文件路径加载同目录脚本（改名/搬家即断）、supervisor 以 `<observer>/ready.json` 的输入订阅握手作为 observer 就绪判据，并另查 `launch.json` 来源、worker 与 capture 之间以 `requests/`、`results/` 目录里的 `.npz` 文件名（request_id）交互。这些契约没有 schema 常量，只在 docstring 与 receipt 字段里体现。
@@ -132,7 +133,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 - `run_dynanav_person_worker.py`（436 行 / 5 函数 / docstring 0/5，`main()` 242 行，L191–432）：模型加载、IPC 轮询、响应写盘、信号与状态机全在一个函数里；`--max-requests` 的语义（0=常驻）只在 CLI help 里。
 - `reconstruct_dynanav_learned_person_map.py`（452 行 / 6 函数 / docstring 0/6，`reconstruct_mode` 232 行（L102–333）、2 个 >80）：逐帧重建 + 多层地图写盘压在一个函数里，与 `reconstruct_dynanav_slam_map.py` 的清晰分层形成对比。
 
-区分说明：`run_dynanav_person_worker.py`/`reconstruct_dynanav_learned_person_map.py` 是**结构问题**（超长函数）；`summarize_dynanav_experiment.py`/`view_dynanav_map.py` 只是**文档问题**（结构已足够小）；`audit_dynanav_speed_ladder.py` 是**风格问题**（压缩写法），不要误判成功能缺陷。
+区分说明：`run_dynanav_person_worker.py`/`reconstruct_dynanav_learned_person_map.py` 是**结构问题**（超长函数）；`summarize_dynanav_experiment.py` 只是**文档问题**（结构已足够小）。
 
 ## 重构建议
 

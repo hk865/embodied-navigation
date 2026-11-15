@@ -32,9 +32,9 @@ configs/visualization/
 ## 可读性评估
 
 - `dynanav_map.rviz`：**可接受**。69 行、无注释；`Class`/`Topic`/`QoS` 字段自解释，但读者无法从文件本身知道它对应哪次 run、哪个地图文件（同一 topic 名可被任何 NPZ 复用）。
-- `README.md`：**良好**。命令、域隔离（`ROS_DOMAIN_ID=119`）、QoS 语义、frame 来源、`--frame` 限制、TF 身份轴线的含义都写清了，且区分了“显示证据”与“导航/估计证据”。缺口是上面说的三处契约没有表格化。
+- `README.md`：**良好**。命令、域隔离（`ROS_DOMAIN_ID=119`）、QoS 语义、frame 来源、TF 身份轴线的含义都写清了，且区分了“显示证据”与“导航/估计证据”。缺口是 topic/QoS/frame 契约没有表格化。
 
-未发现结构问题；可读性缺口集中在“配置与脚本/文档的契约不可见”这一项。
+未发现结构问题；可读性缺口集中在“配置与文档的契约不可见”这一项。
 
 ## 重构建议
 
@@ -46,20 +46,9 @@ configs/visualization/
 
 ## 查看历史地图
 
-From the repository root, validate the estimated map without starting ROS:
+本目录只保留 RViz 配置；原先从 NPZ 发布静态点云的命令行查看器已删除。下面的命令只覆盖仍然存在的人工 RViz 查看与显示轴注册；若要显示某份历史地图，需自行提供向 `/dynanav/review/static_map` 发布 PointCloud2 的发布者。
 
-```bash
-MAP='/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-20261109-livo-dual-stairs/post-vio-static-map/static_map.npz'
-```
-
-Keep the publisher running in one terminal:
-
-```bash
-source /opt/ros/jazzy/setup.bash
-export ROS_DOMAIN_ID=119  # Use the same isolated review domain in both terminals.
-```
-
-Open RViz in another terminal from the same repository root:
+Open RViz from the repository root:
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -67,21 +56,9 @@ export ROS_DOMAIN_ID=119
 rviz2 -d configs/visualization/dynanav_map.rviz
 ```
 
-The publisher sends one PointCloud2 sample on `/dynanav/review/static_map` with reliable, transient-local, keep-last-depth-1 QoS. It stays alive so RViz can join later. Stop it with Ctrl-C, or supply a finite positive `--duration` in wall seconds. The viewer has no controller, TF publisher, simulator, arbitrary output-topic option, or GT pose reader. RViz includes viewing tools only.
+The historical example contains 91,449 points in `dynanav_lio_map`. Its measured bounds are `[-20.855167337, -23.484348744, -0.180133181]` to `[10.089567833, 3.554424299, 6.216008119]` metres. The RViz Orbit view uses their centre `[-5.382799752, -9.964962222, 3.017937469]`, distance 52 m, Z-axis colouring and 0.03 m flat squares.
 
-`map_frame` comes directly from the NPZ. Use `--frame` only for an archive that has no frame metadata; an existing frame cannot be overridden. The static aggregate uses header stamp zero because the file does not supply one acquisition timestamp. XYZ values are encoded as float32 without filtering or downsampling; values that would become nonfinite during conversion are rejected.
-
-This example contains 91,449 points in `dynanav_lio_map`. Its measured bounds are `[-20.855167337, -23.484348744, -0.180133181]` to `[10.089567833, 3.554424299, 6.216008119]` metres. The RViz Orbit view uses their centre `[-5.382799752, -9.964962222, 3.017937469]`, distance 52 m, Z-axis colouring and 0.03 m flat squares. For another map, set RViz's Fixed Frame to the frame reported by `--check`, then adjust the view to its reported bounds.
-
-The viewer reports metadata actually present in the NPZ, such as `pose_source`, `mask_source` and `semantic_oracle`. This file has no separate `provenance` array. Displaying it does not establish complete spatial coverage or turn semantic-oracle labels into learned perception.
-
-The later actual closed-loop run has a separate map containing **92,846 points**, also in `dynanav_lio_map`. To inspect that run, replace the historical `MAP` above with:
-
-```bash
-MAP='/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/post-vio-map/static_map.npz'
-```
-
-Then use the same isolated publisher/RViz commands. Its actual screenshot is [rviz-closed-loop-map.png](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-closed-loop-map.png), with [rviz-review-receipt.json](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-review-receipt.json) recording the map hash, display scope and visual check. The earlier 91,449-point example and screenshot remain historical artifacts from a different run. This newer map uses estimated poses, retains `sim_oracle` semantic masks, and does not certify complete scene coverage; the screenshot itself is display evidence, separate from the run's [closed-loop audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/audit/independent-review.json).
+The later actual closed-loop run has a separate map containing **92,846 points**, also in `dynanav_lio_map`. Its actual screenshot is [rviz-closed-loop-map.png](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-closed-loop-map.png), with [rviz-review-receipt.json](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/rviz-review-receipt.json) recording the map hash, display scope and visual check. The earlier 91,449-point example and screenshot remain historical artifacts from a different run. This newer map uses estimated poses, retains `sim_oracle` semantic masks, and does not certify complete scene coverage; the screenshot itself is display evidence, separate from the run's [closed-loop audit](/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-post-vio-final-capture-20261109T055946Z/audit/independent-review.json).
 
 If RViz reports that its fixed frame is absent from the TF registry, the map can still render because its header and fixed frame are identical. Optionally register an identity **presentation axis** in the same isolated review domain, from a separate terminal:
 
@@ -93,12 +70,12 @@ ros2 run tf2_ros static_transform_publisher \
   --frame-id dynanav_lio_map --child-frame-id dynanav_review_axes
 ```
 
-This only registers `dynanav_lio_map` and a child display axis for RViz. It is a mathematical identity for presentation, not a robot pose, localization transform, GT input, navigation result, or estimator evidence. Keep the RViz fixed frame as the map's actual `dynanav_lio_map`. The Python viewer itself continues to publish no TF or control messages. Stop only the review processes you started.
+This only registers `dynanav_lio_map` and a child display axis for RViz. It is a mathematical identity for presentation, not a robot pose, localization transform, GT input, navigation result, or estimator evidence. Keep the RViz fixed frame as the map's actual `dynanav_lio_map`. Stop only the review processes you started.
 
-On this host a new review RViz window can use `DISPLAY=:0`, `XAUTHORITY=/run/user/1000/gdm/Xauthority`, and `XDG_RUNTIME_DIR=/run/user/1000`; no Xvfb is required. A validated review screenshot is at `/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-rviz-review-20261109T053029Z/rviz-map-registered-frame.png`. Its `review-receipt.json` records the temporary display-axis scope. That review used domain109; use your own matching isolated domain in the commands above. Restart the map publisher to repopulate a newly opened RViz after its prior finite lifetime has ended.
+On this host a new review RViz window can use `DISPLAY=:0`, `XAUTHORITY=/run/user/1000/gdm/Xauthority`, and `XDG_RUNTIME_DIR=/run/user/1000`; no Xvfb is required. A validated review screenshot is at `/media/hyh001/新加卷/6.project_data/embodied-navigation/experiments/dynanav-rviz-review-20261109T053029Z/rviz-map-registered-frame.png`. Its `review-receipt.json` records the temporary display-axis scope. That review used domain109; use your own matching isolated domain in the commands above. Restart your map publisher to repopulate a newly opened RViz after its prior finite lifetime has ended.
 
 ## 限制
 
 - 显示成功不等于空间覆盖完整，也不等于语义标签是 learned 感知；oracle 掩码仍只是 oracle 掩码。
-- 同一 `/dynanav/review/static_map` topic 可被不同 run 的发布者复用，看图前先确认 `MAP` 与 `ROS_DOMAIN_ID`，否则可能把历史地图当成当前结果。
-- 本文命令在本轮文档任务中未重新执行；已验证事实来自原 README 与脚本源码。
+- 同一 `/dynanav/review/static_map` topic 可被不同 run 的发布者复用，看图前先确认地图来源与 `ROS_DOMAIN_ID`，否则可能把历史地图当成当前结果。
+- 本文命令在本轮文档任务中未重新执行；已验证事实来自原 README 与 RViz 配置。
