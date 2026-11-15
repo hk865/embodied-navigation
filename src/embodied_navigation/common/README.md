@@ -45,7 +45,7 @@ src/embodied_navigation/common/
 | 文件 | 行数 | 依赖谁 | 被谁依赖（文件数） | 判断 |
 | --- | ---: | --- | --- | --- |
 | `config.py` | 90 | `project` | 18 | 清楚（单一配置入口） |
-| `geometry.py` | 19 | 无 | 12 | 清楚（共享纯函数，无状态） |
+| `geometry.py` | 19 | 无 | 16 | 清楚（共享纯函数，无状态） |
 | `input_freshness.py` | 79 | 无 | 13（含 `time/clock_groups.py`） | 清楚（纯直通，不解释参数） |
 | `integration_limits.py` | 14 | 无 | 7 | 清楚（只读常量） |
 | `observation.py` | 88 | 无 | 23 | 清楚但接口面大（空端口模拟历史 observer API） |
