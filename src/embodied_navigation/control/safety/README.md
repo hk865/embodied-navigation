@@ -18,7 +18,6 @@ src/embodied_navigation/control/safety/
 ├── bridge_safety_handoff.py     # 265 行，bridge 安全消息的固定交接（ingress 记录，默认组拥有控制）
 ├── clear_guard_window.py        # 32 行，障碍保持解除需要真实新鲜几何观测
 ├── clock_hold.py                # 318 行，墙钟/ROS 时钟边界，重复时钟只发精确零
-├── contact_mailbox.py           # 86 行，只传接触值的非阻塞 Unix datagram IPC
 ├── duplicate_source.py          # 425 行，一次新鲜短重复源上保留既有 R85 零字节
 ├── feedback_source.py           # 23 行，停车反馈的来源/时间门（无几何阈值）
 ├── gate_reasons.py              # 50 行，bridge veto 稳定原因码目录（不改判据）
@@ -37,11 +36,10 @@ src/embodied_navigation/control/safety/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 代码 | `simulation_gate.py` | 活代码，唯一"安全决策"模块；`latch_runtime_faults` / `evaluate` / `reject_state` 被 `../../robot/unitree/policy/native/worker.py` 与 `../../simulation/gazebo/robogauge/native_loop.py` 逐帧调用 |
+| 代码 | `simulation_gate.py` | 活代码，唯一"安全决策"模块；`latch_runtime_faults` / `evaluate` / `reject_state` 被 `../../robot/unitree/policy/native/worker.py` 逐帧调用 |
 | 代码 | `clock_hold.py` | 活代码；`../../navigation/pid_navigation.py:182` 构造 `ControlClockHold()`，`before_control` 在到达/航向/PI/native guard 之前拦截 |
 | 代码 | `duplicate_source.py` | 活代码；被 `clock_hold`（延迟 import）与 `../../navigation/pid_control.py` 调用 |
 | 代码 | `clear_guard_window.py`、`guard_audit.py`、`bridge_safety_handoff.py` | 活代码；都在 `../../navigation/ros_node.py` 里构造，`bridge_safety_handoff` 处理 `/demo/control/safety` 话题 |
-| 代码 | `contact_mailbox.py` | 活代码，IPC；`ContactPublisher` 被 `../../navigation/building_navigation.py`、`../../simulation/gazebo/robogauge/worker.py`、`../../simulation/truth_worker.py` 使用 |
 | 代码 | `imu_causal_buffer.py` | 活代码；`CausalImuBuffer` 由 `pid_navigation.py:120` 在 `r85_imu_source_buffer.enabled` 时构造 |
 | 代码 | `imu_mailbox.py` | 活代码，但只被 `imu_causal_buffer.py` 使用（`SafetyIntake`）；开关 `R103_IMU_SAFETY_INTAKE` |
 | 代码 | `handoff_stop_policy.py`、`launch_command_policy.py` | 活代码；被 `../../navigation/pid_support.py` 调用 |
@@ -56,7 +54,6 @@ src/embodied_navigation/control/safety/
   - `runs/<run>/imu_source_timing_receipt.json`，schema `same_source_causal_imu_timing_receipt/v1`，字段含 `fifo_depth=64`、`history_depth=128`、`event_cap=64`、`recorded_events`、`counters`、`last_pairing_event`、`pair_max_ns=20 ms`、`navigation_ground_truth_used=False`。
   - `runs/<run>/r103_imu_safety_intake.json`，来自 `SafetyIntake.receipt()`（`counts`、`windows`、`latest`、`pending_peak`、`last_consumed_mailbox_version` 等）。
 - `imu_causal_buffer` 的事件行（schema `same_source_causal_imu_timing/v1`：`phase`、`pose_stamp_ns`、`control_clock_ns`、`observed_wall_ns`、`original_pair_max_ns`、`source_topic="/livox/imu"`、`paired_stamp_ns`、`recent_callbacks`、`counters`）与 `clock_hold` 的 `navigation_control_clock_hold.jsonl`（schema `teacher_control_clock_exact_zero_hold/v1`：`sequence`、`compute_ros_clock_ns`、`compute_monotonic_wall`、`publish_ros_clock_ns`、`command_publication_sequence`、`previous_control_clock_ns`、`previous_actual_guard_clock_ns`）都走 `node.evidence.append`，默认 `RuntimeTelemetry.append` 是空操作，**默认运行不落盘**。
-- `contact_mailbox.py` 不走文件：`socket.socket(AF_UNIX, SOCK_DGRAM)`，定长报文 `struct "<Q5dQ"`（`stamp_ns` + 5 个接触标量 + 故障标志）。
 - 其余 11 个文件无写盘调用（`grep "write_text\|open("` 无命中）。
 
 **配置**
@@ -82,8 +79,7 @@ src/embodied_navigation/control/safety/
 | `bridge_safety_handoff.py` | 265 | 标准库（`os`/`threading`/`time`） | `../../navigation/ros_node.py` | 可接受 |
 | `imu_mailbox.py` | 218 | 标准库（`collections`/`math`/`os`/`threading`） | `imu_causal_buffer.py` | 可接受：`consume` 95 行 |
 | `imu_causal_buffer.py` | 203 | `imu_mailbox`、`../parking/causal_join`（均延迟） | `../../navigation/{pid_navigation,pid_support,ros_node}`（`pid_ingress`/`pid_entrypoint` 只经 `node.imu_source_buffer` 属性使用） | 可接受：0/7 docstring |
-| `simulation_gate.py` | 119 | `common.state_contract` | `../../robot/unitree/policy/native/worker.py`、`../../simulation/gazebo/robogauge/native_loop.py` | 清楚 |
-| `contact_mailbox.py` | 86 | 标准库 socket | `../../navigation/building_navigation.py` 等 3 处 | 清楚（IPC 边界显式） |
+| `simulation_gate.py` | 119 | `common.state_contract` | `../../robot/unitree/policy/native/worker.py` | 清楚 |
 | `safety_configuration.py` | 86 | 标准库 `math` | `../parking/{parking_contract,parking_pose10hz,navigation_stop_window}` | 清楚；`clock()` 是死函数 |
 | `launch_command_policy.py` | 70 | numpy | `../../navigation/pid_support.py` | 清楚 |
 | `handoff_stop_policy.py` | 61 | 标准库 `math` | `../../navigation/pid_support.py` | 清楚 |
@@ -100,7 +96,7 @@ src/embodied_navigation/control/safety/
 - **跨层直达**：`duplicate_source.py` 同时 import `parking` 契约与 `robot/unitree/bridge`（模块级），使 safety 依赖 parking 与 robot 两个上层/邻接子包；`imu_causal_buffer.py` 反向依赖 `parking/causal_join`。包级没有 import 环错误（control 下 39 个非 launch 模块均可单独 import），但依赖方向是网状的。
 - **隐式契约**：`duplicate_source` 依赖 24 个字符串键的 `SOURCE_KEYS` 与 `bridge` 的 envelope 一致；`imu_causal_buffer` 依赖 `node.raw_imu`、`node.run`、`node.evidence` 三个属性名；`guard_audit` 依赖传入函数 `__globals__["obstacle_ahead"]` 存在。
 
-结论：耦合**偏重但可解释**。`simulation_gate`/`feedback_source`/`gate_reasons`/`clear_guard_window`/`contact_mailbox` 是干净的纯判定或纯 IPC 叶子；成本集中在 `duplicate_source.py`（372 行单函数 + 跨层 import）与 `clock_hold.before_control`（205 行），这两处是本子包唯一的结构性债务。
+结论：耦合**偏重但可解释**。`simulation_gate`/`feedback_source`/`gate_reasons`/`clear_guard_window` 是干净的纯判定叶子；成本集中在 `duplicate_source.py`（372 行单函数 + 跨层 import）与 `clock_hold.before_control`（205 行），这两处是本子包唯一的结构性债务。
 
 ## 可读性评估
 
@@ -111,7 +107,6 @@ src/embodied_navigation/control/safety/
 | `clear_guard_window.py` | 良好 | 32 行、`observe` 23 行 docstring 说明 10 样本 / 1 s / 300 ms 间隔 / 1.35 s 尾窗 |
 | `gate_reasons.py` | 良好 | 50 行、`GATE_SPECS` 是数据表，`GateReasons.append/reject` 各 4 行 |
 | `simulation_gate.py` | 可接受 | 119 行、docstring 比 0.4；阈值（1.5 s/0.8 rad/0.15 m 观测，2 s/1.1 rad/0.10 m 持续，4 s 观察窗）在 `evaluate` 里是裸数字，只有模块 docstring 说明"保留原阈值" |
-| `contact_mailbox.py` | 可接受 | 86 行、docstring 比 0.429、最长 19 行；线格式 `<Q5dQ` 有行内注释 |
 | `guard_audit.py` | 可接受 | 54 行、4 个函数（最长 `__init__` 13 行，`__call__` 8 行）；用 `FunctionType` 重建函数命名空间，机制在模块 docstring 里解释 |
 | `handoff_stop_policy.py` | 可接受 | 61 行、1 函数 56 行、docstring 1.0 |
 | `launch_command_policy.py` | 可接受 | 70 行、1 函数 62 行、docstring 1.0 |
@@ -144,7 +139,7 @@ src/embodied_navigation/control/safety/
 - `../../../../tests/unit/test_simulation_safety.py`：门禁的故障优先级、宽限与来源拒绝（直接 import `SimulationSafetyGate`）。
 - `../../../../tests/regression/test_native_safety_integration.py`：AST 检查两个原生循环都 import 共享门禁；装 Torch 时用真实观测构造 + 假 socket 跑完 Student/Teacher 与 RoboGauge 两个循环，验证逐帧调用门禁、动作不变（Torch 缺失时该组 skip）。
 - `../../../../tests/regression/test_navigation_safety.py`：障碍解除窗口的真实样本与缓存拒绝（`ClearGuardWindow`）。
-- 未覆盖（`grep -rln <模块名> tests/` 无 import 命中）：`clock_hold.py`、`duplicate_source.py`、`imu_causal_buffer.py`、`imu_mailbox.py`、`bridge_safety_handoff.py`、`guard_audit.py`、`gate_reasons.py`、`handoff_stop_policy.py`、`launch_command_policy.py`、`contact_mailbox.py`、`feedback_source.py`、`safety_configuration.py`。
+- 未覆盖（`grep -rln <模块名> tests/` 无 import 命中）：`clock_hold.py`、`duplicate_source.py`、`imu_causal_buffer.py`、`imu_mailbox.py`、`bridge_safety_handoff.py`、`guard_audit.py`、`gate_reasons.py`、`handoff_stop_policy.py`、`launch_command_policy.py`、`feedback_source.py`、`safety_configuration.py`。
 
 ## 限制
 

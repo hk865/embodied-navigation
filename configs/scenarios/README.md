@@ -1,12 +1,11 @@
 # configs/scenarios：场景与地形 base 资源
 
-本目录保存场景配置与地形目标等base资源。普通入口先读[configs/launch/navigation.json](../launch/navigation.json)列出的模块配置，再由生成器写本次参数到`runs/`；不要把base文件、旧profile或字段旁注当作最终有效值。
+本目录保存地形目标等base资源。普通入口先读[configs/launch/navigation.json](../launch/navigation.json)列出的模块配置，再由生成器写本次参数到`runs/`；不要把base文件、旧profile或字段旁注当作最终有效值。
 
 ## 目录结构
 
 ```text
 configs/scenarios/
-├── building/              # 子目录：SCAN 参数 scan.json（30 行）与学生 profile（45 行），无独立 README
 ├── terrain_targets/       # 子目录：地形目标数据 lower12.json（14 行，当前无代码读取）
 └── README.md              # 本文件：配置层次、当前覆盖与调试边界
 ```
@@ -17,23 +16,17 @@ configs/scenarios/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 配置（本目录） | [`building/scan.json`](building/scan.json) | `scan_planner_node.ros__parameters`：`fsm.navi_mode`、`planning_horizon=0.65`、`grid_map.frame_id=camera_init` 等。消费点有两处：[`simulation/gazebo/robogauge/world.py`](../../src/embodied_navigation/simulation/gazebo/robogauge/world.py) 直接 `json.loads`，[`launch/building.py`](../../src/embodied_navigation/launch/building.py) 读取字节并写入 run 目录。 |
-| 配置（本目录） | [`building/student_profile.json`](building/student_profile.json) | `actor_kind`/`controller_kind`、`max_speed_mps`/横移/偏航界、`cascade`、`navigation_ground_truth_used` 等 profile 字段。消费点：[`launch/building.py`](../../src/embodied_navigation/launch/building.py) 在启动前 `json.loads` 并作为 Building 的 profile。 |
 | 配置（本目录，无读取点） | [`terrain_targets/lower12.json`](terrain_targets/lower12.json) | 地形目标数据（`include_models`、`scope`、`training_target` 等）。**当前无代码读取**。 |
-| 代码（读取点） | 不在本目录 | 见上：`launch/building.py`、`simulation/gazebo/robogauge/world.py`，以及 [tests/unit/test_building_entry_closure.py](../../tests/unit/test_building_entry_closure.py) 对这两个配置存在性的断言。 |
 | 日志/输出 | `runs/<run_id>/`（外部数据卷） | 本目录不写文件。`launch/prepare.py` 把本次参数派生到 run 目录（`navigation_profile.json`、`navigation_scenario.json`、`navigation_fastlivo.yaml`、`navigation_camera.yaml`、`terrain_target_manifest.json`、`known_scene_reference.json`、`v34_scan_overrides.yaml`、`global_route.json`、`runtime_context.json` 与 `world.sdf`）；本目录的 base 值不等于这些生成值。 |
 | 其它配置（本文引用的全局项） | `configs/launch/`、`configs/localization_mapping/` 等 | 见下方“配置层次”表；读取顺序与 pin 的权威说明在 [configs/README.md](../README.md)。 |
 
 ## 模块内文件耦合
 
-- 依赖方向：本目录文件之间**没有 include 或互相引用**；`building/scan.json` 与 `building/student_profile.json` 由不同代码路径各自读取（SCAN 参数 vs Student profile），`terrain_targets/lower12.json` 与任何代码都不相连。
-- 与代码的耦合是**字段名契约**：`scan.json` 的 ROS 参数键必须与 C++ `scan_planner_node` 的参数声明一致；`student_profile.json` 的键必须被 `launch/building.py` 的 profile 解析逻辑识别。改键名/类型不会在本目录报错，只会让读取方失败或静默使用默认值。
+- 依赖方向：本目录文件之间**没有 include 或互相引用**；`terrain_targets/lower12.json` 与任何代码都不相连。
 - 反向依赖不存在：没有代码回写本目录；`prepare.py` 只读取/派生，写入目标是 run 目录。
 
 | 文件 | 行数 | 依赖 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `building/scan.json` | 30 | C++ SCAN 参数契约 | `world.py`、`launch/building.py` | 清楚：单一职责 |
-| `building/student_profile.json` | 45 | Building profile 契约 | `launch/building.py` | 清楚：字段多但分组明确 |
 | `terrain_targets/lower12.json` | 14 | 无 | 无代码读取点 | 可疑（孤儿数据） |
 | `README.md` | 本文件 | 上述文件 + 全局配置 | 人 | 清楚：索引与覆盖说明 |
 
@@ -42,7 +35,6 @@ configs/scenarios/
 ## 可读性评估
 
 - `README.md`（原 32 行）：**可接受偏低**。配置层次表、当前覆盖清单、使用与调试三段都在，事实已核实；问题是行内代码与中文之间没有空格（如“普通入口先读[configs/launch/navigation.json]列出的”），长句密度高（“当前重要覆盖”单段 6 条），新手需要读两遍。本轮没有删改任何数值/命令，只补结构与分类。
-- `building/scan.json` / `building/student_profile.json`：**可接受**。JSON 无注释，但字段名可读、层级浅；`scan.json` 的参数名直接对应 ROS 参数，`student_profile.json` 的键与 `launch/building.py` 用法一致。
 - `terrain_targets/lower12.json`：**需改进（语义）**。14 行数据本身可读，但“无读取点 + 与 mission46 引用路径不一致”这一关键事实只在 README 里，文件本身没有任何注释/`_comment` 字段。
 - 没有发现魔法数滥用：数值（0.65 m horizon、speed 界等）都在“当前重要覆盖”里逐条解释。
 
@@ -68,8 +60,6 @@ configs/scenarios/
 | [embodied_navigation.launch.prepare.prepare](../../src/embodied_navigation/launch/prepare.py) | 生成world、外参/SLAM覆盖、解析定位地图、SCAN参数和路线 |
 | [embodied_navigation.perception.sensors.sampling.override_sensors](../../src/embodied_navigation/perception/sensors/sampling.py) | 当前LiDAR/RGB采样覆盖 |
 | [embodied_navigation.planning.scan_runtime_parameters.parameters](../../src/embodied_navigation/planning/scan_runtime_parameters.py) | 当前原生planner覆盖 |
-
-`configs/scenarios/building/scan.json` 与 `student_profile.json` 是 Building 路径的两份显式输入，不经过上面六个模块配置的合并链；它们的消费点见“代码、日志与配置”表。
 
 ## 当前重要覆盖
 

@@ -7,7 +7,7 @@
 - 纯 NumPy 部分（`depth.py`、`person_segmentation.py`、`person_tiling.py`、`person_worker.py`、`temporal_geometry.py` 等）不导入 Torch/SDK/ROS、不下载权重、不读 GT 位姿；GPU 推理只在 `scripts/` 的独立入口，见下文"实际运行与调用"。
 - 离线评分器明确读取同批 cloud sample 的 oracle states 和 pedestrian instance paths 作标签，STATIC 为负例、UNKNOWN 不评分，且不读取归档位姿。它与 RGB-only 模型推理是不同数据边界，不能宣称评测过程完全无真值。二维 ID 不是三维 re-ID 或长期对象身份。
 - 本模块不认证永久静态：`temporal_geometry.py` 与 `person_geometry_tracking.py` 的输出是临时、可撤销的几何证据。
-- 跨模块边界与四条执行路径见 [docs/architecture.md](../../../docs/architecture.md)。
+- 跨模块边界与两条执行路径见 [docs/architecture.md](../../../docs/architecture.md)。
 
 ## 目录结构
 

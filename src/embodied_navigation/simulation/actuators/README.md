@@ -24,7 +24,7 @@ src/embodied_navigation/simulation/actuators/
 | 配置 | 生成的 `world.sdf` 插件元素 | 插件参数从 SDF 读取：`kp`（默认 25）、`kd`（0.5）、`effort_limit`（23.5）、`saturation_effort`（23.5）、`velocity_limit`（30）、`decimation`（4）、`fault_damping`。`../world/prepare.py` 只显式写入 `kp/kd/effort_limit/velocity_limit` 四项，其余走代码默认值。 |
 | 配置 | `configs/launch/settings.json` | `runtime_paths.actuator = "install/actuators/lib/libteacher_actuator.so"`；`launch/prepare.py` 据此把生成世界里的 `libteacher_actuator.so` 改写成 install 下的绝对路径。本目录自身不读任何配置文件。 |
 
-`TEACHER_ACTUATOR_LOG` 的三个注入点（`grep -rn TEACHER_ACTUATOR_LOG src/` 实测）：`launch/main.py:52` 设 `/dev/null`（主路径不落盘）；`launch/building.py:188` 与 `navigation/robogauge/benchmark.py:223` 设 `<run>/actuator_physics.jsonl`。后两者的 `.so` 由不同世界文件加载（RoboGauge 用 motor_src 的产物），但环境键与日志格式同源。
+`TEACHER_ACTUATOR_LOG` 的三个注入点（`grep -rn TEACHER_ACTUATOR_LOG src/` 实测）：`launch/main.py:52` 设 `/dev/null`（主路径不落盘）。
 
 插件要求 `TEACHER_SOCKET` 与 `TEACHER_ACTUATOR_LOG` 都非空；任一缺失、socket 路径超长、日志打不开都在 Configure 抛 `std::runtime_error`，不会静默降级成"无日志/无通信"。
 
@@ -39,7 +39,7 @@ src/embodied_navigation/simulation/actuators/
 | `CMakeLists.txt` | 8 | gz-sim8、gz-plugin2 | `docker/build_owned_native.py` 的 `actuators` 模块 | 清楚：只产出 `.so`，不装头文件 |
 | `README.md` | 本文件 | — | 人 | — |
 
-四类问题：**上帝文件无**（442 行单类，未超 800）；**重复实现有**：`gazebo/robogauge/motor_src/go2hv_actuator.cpp` 与本文件结构同源，`diff` 实测差异集中在"request64/response16 字段索引注释（Go2HV 侧缺失）"与"力矩包络计算块"（Teacher 用 DCMotor 饱和公式，Go2HV 用 20.2/23.4 分段限幅）以及几行注释，其余逻辑逐行一致；**跨层直达无**（插件不读 Python 配置，只读 SDF 参数）；**隐式契约有**：request/response 字段索引、`decimation` 与策略侧控制频率的配对，都靠注释和顺序维持，没有编译期检查。
+四类问题：**上帝文件无**（442 行单类，未超 800）；**重复实现无**；**跨层直达无**（插件不读 Python 配置，只读 SDF 参数）；**隐式契约有**：request/response 字段索引、`decimation` 与策略侧控制频率的配对，都靠注释和顺序维持，没有编译期检查。
 
 ## 可读性评估
 

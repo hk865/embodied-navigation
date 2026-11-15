@@ -11,7 +11,7 @@
 - 项目内可复用 skill/SOP：`.agents/skills/dynanav-explore/`；代码和说明留仓库，点云、地图、视频、日志与构建产物留外部项目数据卷。
 - 已有 frontier 仅提供实测 FREE/UNKNOWN 边界候选；自动目标派发、多 agent 分工及完整覆盖验收尚未实现；新工具只提供显式模型代理量建议。32 次 reached 回执不代表全楼覆盖或无接触。
 
-各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，src 下 47 个模块 README（另有包索引，共 48 个 README 文件）均从该索引进入。易混术语（四条执行路径、provenance、raw/corrected 位姿、45D/247D、时钟域）见 [术语对照](docs/glossary.md)。
+各自有模块的职责、入口和边界见 [源码模块索引](src/embodied_navigation/README.md)，src 下 38 个模块 README（另有包索引，共 39 个 README 文件）均从该索引进入。易混术语（A/D 两条执行路径、provenance、raw/corrected 位姿、45D/247D、时钟域）见 [术语对照](docs/glossary.md)。
 
 **本轮起每个模块 README 都包含**：当前目录结构、代码/日志/配置的含义、模块内文件耦合评估、可读性评估、按优先级排序的重构建议。跨模块汇总与全部重构建议见 [模块结构与耦合总评](docs/review/module-structure-coupling-20261109.md)。此前 589 个代码/配置目标的可读性报告见 [全量可读性总入口](docs/review/full-readability/README.md)（DSH 全量实现，Codex 独立事实复核，DSH 串行合入）。此前的 [本轮验证记录](docs/review/readability-verification.md)、[审计明细](docs/review/validation-and-threshold-audit.md) 与各模块 README 索引保留为历史记录。
 
@@ -21,7 +21,7 @@
 - planning：路线、SCAN 调度、PCT 以及路径交付。实际 SCAN/PCT 源码在 third_party。
 - control：单步跟踪/控制律、碰撞与支撑检查、parking停车执行、safety统一仿真门禁和定位反馈来源检查。
 - robot/unitree：Go2 观测、关节顺序、策略推理和执行桥。没有训练流程。
-- navigation：完整任务状态和模块协作。默认主路径的任务状态机是 base_node.py 的 `Navigation.control()`（ros_node.py 包装、pid_navigation.py 装配为现役 controller，准入/路由/控制拆在同目录 `pid_*.py`，进程入口 `pid_entrypoint.py`）；mission/state_machine.py 在本检出没有实例化点，默认 mission 角色是 mission_runtime.py；Building 任务在 building_navigation.py；ROS 适配位于 ros_node.py。
+- navigation：完整任务状态和模块协作。默认主路径的任务状态机是 base_node.py 的 `Navigation.control()`（ros_node.py 包装、pid_navigation.py 装配为现役 controller，准入/路由/控制拆在同目录 `pid_*.py`，进程入口 `pid_entrypoint.py`）；mission/state_machine.py 在本检出没有实例化点，默认 mission 角色是 mission_runtime.py；ROS 适配位于 ros_node.py。
 - evaluation：独立进程资源采样。仿真真值还用于现有策略本体观测和 COM 速度内环，不作为生产 SLAM 定位输入；显式 DynaNav 真值控制诊断另行记录来源。
 - launch：模块装配、环境、进程生命周期。业务任务状态不放在 launch。
 - configs、scripts、tests、docs：功能配置、少数可发现入口、回归测试和说明。配置读取顺序见 [配置入口](configs/README.md)，测试命令与边界见 [测试入口](tests/README.md)，实验与审查记录见 [文档索引](docs/README.md)。
@@ -64,7 +64,7 @@ embodied-navigation/
 | 代码 | `docker/`、`Dockerfile`、`compose.yaml` | 构建与启动装配；`docker/verify_native_sources.py` 校验原生源码 pin，`docker/build_*.py` 生成本地 `install/`。 |
 | 日志/运行产物 | `runs/<UTC>_<label>_<hex>/` | 一次原生运行的**全部**输入与输出：`runtime_context.json`、`navigation_profile.json`、`processes.json`、`ros_logs/`、`*.log`、`component_exit.jsonl`、`exit.json`、`navigation_command.json`、`navigation_status.json`、`navigation_anchor.json`、生成的 `world.sdf`/`navigation_*.yaml` 等。`runs/` 是外部数据卷软链，Git 忽略。 |
 | 日志/运行产物 | `$PROJECT_DATA_ROOT/embodied-navigation/experiments/<run>/` | DynaNav/Isaac 实验产物：`capture/`、LIO observer、person-worker、RGB/bag 与各 `*.json` 回执；由 `scripts/run_dynanav_*` 写入，代码强制位于数据根目录下。 |
-| 日志/运行产物 | 进程级遥测与证据 | **默认不落盘**：`common/runtime_telemetry.py` 的 `RuntimeTelemetry.append/enqueue` 是空操作（只有 `.atomic()` 真写实时状态），所以各模块里 `evidence.append(...)` 的历史 `.jsonl` 默认不产生；例外是显式同步写盘（如 `control/parking/causal_join.finish()` 的 `r104_parking_causal_join.json`）与 `evaluation/process_resources.py` 的 `process_resources.csv`。判断某个产物是否真的存在，以 run 目录实际文件为准，不看代码里的 `append` 调用。 |
+| 日志/运行产物 | 进程级遥测与证据 | **默认不落盘**：`common/runtime_telemetry.py` 的 `RuntimeTelemetry.append/enqueue` 是空操作（只有 `.atomic()` 真写实时状态），所以各模块里 `evidence.append(...)` 的历史 `.jsonl` 默认不产生；例外是显式同步写盘（如 `control/parking/causal_join.finish()` 的 `r104_parking_causal_join.json`）。判断某个产物是否真的存在，以 run 目录实际文件为准，不看代码里的 `append` 调用。 |
 | 配置 | `configs/` | base 配置与契约数据，**不是**每次运行的有效值：`launch/navigation.json` 列出六个模块配置，`launch/prepare.py` 生成本次参数并 pin 若干键，运行期消费者分"读 `runtime_context`"与"直接重读 configs"两类。完整读取顺序、pin 与无读取点配置见 [配置入口](configs/README.md)。 |
 
 "日志"在本仓库统一指**运行产物**（run 目录、实验目录、遥测/证据 JSON、ROS 日志），不是指仓库内某个日志文件夹；仓库不提交任何日志。各模块 README 只写自己产出的那部分，全局布局以 [配置入口](configs/README.md) 与 [数据与产物布局](docs/review/dsh-workflow-and-readability-20261109.md) 为准。
@@ -155,8 +155,6 @@ Git不包含运行数据、原始日志、地图、权重、USD/纹理、图片�
 - 最终自足镜像45秒隔离软件栈通过：只挂本项目assets、models和新runs，不挂源码或其它工程的install；全部关键源码SHA匹配。1330次CPU策略推理、798帧相机、797帧LiDAR、57580个地图点；SCAN接受2条轨迹，22个健康非零命令样本及25个native执行确认样本。103条仿真安全门禁来源遥测全部有效，无物理fault；末段原有命令新鲜度门禁因来源超时拒绝并置零。15个组件全部退出0，日志无Traceback或未取回异常。详见docs/verification/software-startup.json。
 - 此前发现的SIGINT关停竞态已修复：共用信号生命周期先退出spin和排空回调，最后关闭ROS context；真实callback异常仍传播，子组件非零退出会使主入口失败。48项单元包含6项生命周期测试、4项退出汇总测试及7项Building入口测试。
 - 真实记录驾驶层回放1052/1052个样本通过：按目标点、航向误差和距航点距离独立唯一选帧，不用待检命令选帧，最大命令差异1.91e-14。它不是任务状态机或整栈证明。
-
-可选Building Student入口的资源记录脚本与SCAN配置路径已实际补齐，仅允许SLAM模式；真实prepare-only通过，尚未运行Building分支，详见docs/dependencies/BUILDING-ENTRYPOINT.md。
 
 仍未验收：生产导航整栈的完整路线、实机、策略训练和完整 Isaac 生产链路。docs/robogauge/isaac_closure_audit.json 记录较早的策略闭包审计；本轮 DynaNav 已补齐显式会话碰撞、RoboGauge 执行与采集诊断，并分别记录真值控制路线、首段 LIO 动态闭环和视觉旁路定位证据，不能据此声称生产链路已完整复现。
 

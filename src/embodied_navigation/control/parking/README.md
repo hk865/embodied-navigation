@@ -64,7 +64,7 @@ src/embodied_navigation/control/parking/
 环境开关（**模块导入时读一次**，非法值直接 `raise ValueError`，不会静默降级）：
 
 - `R104_PARKING_CAUSAL_JOIN`（`causal_join.py:14`）、`R105_TERMINAL_PARKING_OWNER`（`terminal_owner.py:8`）、`R106_PREQUALIFICATION_SOURCE_HOLD`（`source_hold.py:5`），代码缺省 `"0"`。
-- `configs/launch/settings.json` 的 `features` 当前把这三项都设为 `"1"`（与 `R103_IMU_SAFETY_INTAKE` 一起由启动器注入）；"模块内默认 0、launch features 为 1"成立，但**只在 A. Native 主路径**经启动器启动时成立。`demo.launch.py` 之外（Building / 独立入口）这些环境变量不会自动注入。
+- `configs/launch/settings.json` 的 `features` 当前把这三项都设为 `"1"`（与 `R103_IMU_SAFETY_INTAKE` 一起由启动器注入）；"模块内默认 0、launch features 为 1"成立，但**只在 A. Native 主路径**经启动器启动时成立。`demo.launch.py` 之外（独立入口）这些环境变量不会自动注入。
 
 ## 模块内文件耦合
 
@@ -82,7 +82,7 @@ src/embodied_navigation/control/parking/
 | `causal_join.py` | 467 | `parking_zero_contract`、`robot/unitree/bridge`（模块级） | `../../navigation/pid_support.py`、`localization_mapping/known_scene_inputs.py`、`../safety/imu_causal_buffer.py` | 偏重：`prepare` 113 行 |
 | `integral_unload.py` | 425 | 无（纯标准库 + 延迟 import） | `transition_gate`、`../tracking/cascade_core`、`robot/unitree/policy/{lower_loop_ack,yaw_measurement_feedback}` | 可接受 |
 | `parking_zero_contract.py` | 410 | 无（延迟 `terminal_reference`） | `executor_command`、`causal_join`、`parking_contract`、`../safety/duplicate_source`、`../tracking/cascade_core`、`../../navigation/pid_support`、`robot/unitree/bridge` | 清楚（纯校验） |
-| `parking_pose10hz.py` | 279 | `../safety/{feedback_source,safety_configuration}`（延迟） | `ordinary_parking`、`parking_contract`、`../tracking/cascade_core`、`../../navigation/building_navigation`、`perception/sensors/feedback_mailbox` | 清楚 |
+| `parking_pose10hz.py` | 279 | `../safety/{feedback_source,safety_configuration}`（延迟） | `ordinary_parking`、`parking_contract`、`../tracking/cascade_core`、`perception/sensors/feedback_mailbox` | 清楚 |
 | `navigation_stop_window.py` | 228 | `../safety/safety_configuration`（延迟） | `transition_gate`、`../../navigation/{base_node,pid_support,ros_node}` | 可接受 |
 | `terminal_owner.py` | 208 | `terminal_reference`、`localization_mapping/known_scene_hold_guard`（模块级）；`../tracking/cascade_core`、`parking_contract`、`common.input_freshness`（延迟） | `../safety/duplicate_source`、`localization_mapping/known_scene_inputs`、`../../navigation/pid_support` | 可疑：control 顶层依赖 localization_mapping |
 | `terminal_reference.py` | 133 | 无 | `executor_command`、`parking_zero_contract`、`terminal_owner`、`../safety/duplicate_source`、`../tracking/cascade_core`、`../../navigation/pid_control`、`robot/unitree/bridge` | 清楚 |
@@ -138,7 +138,7 @@ src/embodied_navigation/control/parking/
 
 ## 输入输出与调用
 
-输入是 canonical SLAM 反馈、paired IMU、实际零输入 ACK、route/goal 与 profile；输出是停车阶段判定、零命令与证据字典；通过当前默认 `RuntimeTelemetry` 调用的历史 JSONL 写入为空操作（例外是 `causal_join.finish()` 的同步 `r104_parking_causal_join.json`）。主要调用方为 `../../navigation/pid_control.py`、`../../navigation/building_navigation.py` 与 `../tracking/cascade_core.py`。`R105_TERMINAL_PARKING_OWNER`、`R106_PREQUALIFICATION_SOURCE_HOLD` 等环境开关在模块内默认 0，launch 的 features 中为 1。
+输入是 canonical SLAM 反馈、paired IMU、实际零输入 ACK、route/goal 与 profile；输出是停车阶段判定、零命令与证据字典；通过当前默认 `RuntimeTelemetry` 调用的历史 JSONL 写入为空操作（例外是 `causal_join.finish()` 的同步 `r104_parking_causal_join.json`）。主要调用方为 `../../navigation/pid_control.py` 与 `../tracking/cascade_core.py`。`R105_TERMINAL_PARKING_OWNER`、`R106_PREQUALIFICATION_SOURCE_HOLD` 等环境开关在模块内默认 0，launch 的 features 中为 1。
 
 ## 测试
 

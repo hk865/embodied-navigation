@@ -102,7 +102,7 @@ src/embodied_navigation/control/
 
 输入是 `/demo/slam/body_odom` 的 canonical SLAM 反馈（`pose_producer=fast_livo2_async_backend`、`navigation_ground_truth_used=false`）、IMU、点云、SCAN 轨迹与路线/目标；输出是有界速度、零命令与实时状态。代码保留 JSONL 证据接口，但当前默认 `RuntimeTelemetry` 不写这些历史记录。`launch/components.py` 用 `pid_navigation`、`robot.unitree.bridge`、`mission_runtime` 三个受管进程组成控制组：bridge 把 `/demo/cmd_vel` 落成 `navigation_command.json`，策略 worker 再读取执行。
 
-术语（canonical SLAM 反馈、provenance、时钟域）见 [docs/glossary.md](../../../docs/glossary.md)；四条执行路径与默认状态机见 [docs/architecture.md](../../../docs/architecture.md)。
+术语（canonical SLAM 反馈、provenance、时钟域）见 [docs/glossary.md](../../../docs/glossary.md)；两条执行路径与默认状态机见 [docs/architecture.md](../../../docs/architecture.md)。
 
 ## 测试
 
@@ -113,4 +113,4 @@ src/embodied_navigation/control/
 
 ## 限制
 
-控制律与门禁都是仿真/离线可用代码；完整路线、Building 实际运行与实机未验证。子包中仍有大量 profile/环境变量扩展（模块内默认关闭，部分由 launch 的 features 打开），改动前先确认对应配置项。本目录的 JSONL 证据在默认运行下大多不落盘，不能用"文件不存在"反推"没有发生"。
+控制律与门禁都是仿真/离线可用代码；完整路线与实机未验证。子包中仍有大量 profile/环境变量扩展（模块内默认关闭，部分由 launch 的 features 打开），改动前先确认对应配置项。本目录的 JSONL 证据在默认运行下大多不落盘，不能用"文件不存在"反推"没有发生"。

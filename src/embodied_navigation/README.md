@@ -8,7 +8,6 @@
 src/embodied_navigation/
 ├── common/                 # 跨模块基础：配置、状态/时间契约、I/O、路径、关停（20 文件 / 1616 行）
 ├── control/                # 跟踪律、停车契约、仿真安全门禁与进程入口（46 文件 / 9718 行）
-├── evaluation/             # 独立进程资源采样（2 文件 / 55 行）
 ├── launch/                 # 系统入口与装配层：prepare、环境构造、ros2 launch、关停（9 文件 / 1314 行）
 ├── localization_mapping/   # 定位建图层：前端接入、已知场景、地图归档、后端配准（40 文件 / 8429 行）
 ├── navigation/             # 导航任务层：状态机、航点、停车、RoboGauge 编排（27 文件 / 11634 行）
@@ -21,7 +20,7 @@ src/embodied_navigation/
 └── project.py              # 22 行：仓库/数据根发现（PROJECT_DATA_ROOT、EMBODIED_NAV_ROOT）
 ```
 
-行数为 facts 包文本口径（`read_text().count("\n")+1`，2026-11-09；每文件比 `wc -l` 多 1，空文件记 1 行，模块 README 多用 `wc -l`）；全包 **259 个 Python 文件 / 60,546 行**（`wc -l` 为 60,287）。11 个一级子模块各自有 README，细节以子 README 为准，本文件不重复。
+行数为 facts 包文本口径（`read_text().count("\n")+1`，2026-11-09；每文件比 `wc -l` 多 1，空文件记 1 行，模块 README 多用 `wc -l`）；全包 **244 个 Python 文件 / 71,820 行**。9 个一级子模块各自有 README，细节以子 README 为准，本文件不重复。
 
 ## 代码、日志与配置
 
@@ -29,27 +28,26 @@ src/embodied_navigation/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 代码 | 11 个一级子模块 | 自有实现：仿真/传感适配、定位建图接入、规划/准入、导航任务、跟踪/停车/安全、机器人策略与执行、离线评测。第三方算法（FAST-LIVO2、SCAN、PCT、Vikit、Livox 驱动、FastDDS 补丁）在 `third_party`，本包只做接入与装配。 |
+| 代码 | 9 个一级子模块 | 自有实现：仿真/传感适配、定位建图接入、规划/准入、导航任务、跟踪/停车/安全、机器人策略与执行。第三方算法（FAST-LIVO2、SCAN、PCT、Vikit、Livox 驱动、FastDDS 补丁）在 `third_party`，本包只做接入与装配。 |
 | 代码（包根） | [`project.py`](project.py)、[`__init__.py`](__init__.py) | `project.py` 只解析仓库根与外部数据根（`EMBODIED_NAV_ROOT`、`PROJECT_DATA_ROOT`），被 25 个模块/脚本导入；`__init__.py` 仅包 docstring。 |
-| 代码（入口） | [`launch/main.py`](launch/main.py)、`start.py`、[`launch/building.py`](launch/building.py)、[`navigation/robogauge/benchmark.py`](navigation/robogauge/benchmark.py)、[`evaluation/process_resources.py`](evaluation/process_resources.py) | 四条执行路径的入口（见 [architecture.md](../../docs/architecture.md)）；具体进程图不在本文件展开。 |
+| 代码（入口） | [`launch/main.py`](launch/main.py)、`start.py` | A/D 两条执行路径的入口（见 [architecture.md](../../docs/architecture.md)）；具体进程图不在本文件展开。 |
 | 日志/输出（默认主路径） | `runs/<UTC>_<label>_<4hex>/`（软链到外部数据卷） | `launch/main.py` 创建 run 目录；[`launch/prepare.py`](launch/prepare.py) 写入 `runtime_context.json`、`navigation_profile.json`、`navigation_fastlivo.yaml`、`v34_scan_overrides.yaml`、`world.sdf` 等；受管进程把日志/收据写在同一 run 目录。`runs` 是外部数据软链，内容不入 Git。 |
-| 日志/输出（DynaNav） | 外部 `experiments/<name>/` | DynaNav 实验路径由 `scripts/` 与 [`simulation/dynanav/`](simulation/dynanav/README.md) 写入外部数据卷；`evaluation/process_resources.py` 的 `process_resources.csv` 也是 run 目录内的人工证据。 |
+| 日志/输出（DynaNav） | 外部 `experiments/<name>/` | DynaNav 实验路径由 `scripts/` 与 [`simulation/dynanav/`](simulation/dynanav/README.md) 写入外部数据卷。 |
 | 日志/输出（构建） | `install/` | 原生库/ROS 包安装目录（本机构建产物，不入 Git）；缺文件通常表示尚未构建，不代表缺源码。 |
 | 配置 | `configs/`（包外） | 本包不内嵌配置：入口经 [`common/config.py`](common/config.py) 的 `read()` 合并 `configs/launch/navigation.json` 的六个模块文件，运行期部分进程重读 configs 或读 run 内 `runtime_context.json`；读取顺序、pin 与无读取点数据见 [configs/README.md](../../configs/README.md)。 |
-| 配置（包内例外） | [`common/communication/dds_transport.xml`](common/communication/dds_transport.xml) | 唯一放在 `src/` 下的运行配置文件（DDS loopback UDP+SHM）；由 `launch/main.py`、`launch/building.py`、`navigation/robogauge/benchmark.py` 通过环境变量 `FASTRTPS_DEFAULT_PROFILES_FILE` 指向。 |
+| 配置（包内例外） | [`common/communication/dds_transport.xml`](common/communication/dds_transport.xml) | 唯一放在 `src/` 下的运行配置文件（DDS loopback UDP+SHM）；由 `launch/main.py` 通过环境变量 `FASTRTPS_DEFAULT_PROFILES_FILE` 指向。 |
 
 本包根目录本身**不写日志、不建线程、不启动进程**：副作用集中在各 `main()`/入口模块；导入 `embodied_navigation` 只执行 `__init__.py` 的 docstring。
 
 ## 模块内文件耦合（包级模块间）
 
-**数据流方向（意图）**：`simulation`（世界/真值/传感）→ `perception`（图像/深度/行人）→ `localization_mapping`（定位建图）→ `planning`（参考/准入）→ `navigation`（任务状态）→ `control`（跟踪/停车/安全）→ `robot`（策略/执行）；`common` 是所有模块的基础，`evaluation` 是离线旁支。
+**数据流方向（意图）**：`simulation`（世界/真值/传感）→ `perception`（图像/深度/行人）→ `localization_mapping`（定位建图）→ `planning`（参考/准入）→ `navigation`（任务状态）→ `control`（跟踪/停车/安全）→ `robot`（策略/执行）；`common` 是所有模块的基础。
 
 **实际 import 方向（AST 解析，repo_stats.json）**：这是“意图”不是强制分层——包级有 **9 组 A↔B 双向依赖**，不是严格 DAG：
 
 | 模块 | 出边（import 谁） | 入边（被谁 import） | 判断 |
 | --- | --- | --- | --- |
 | `common` | 仅包根 `project`（2） | 8 个模块（control/launch/loc/nav/perception/planning/robot/simulation） | 清楚：基础层，不反向依赖业务 |
-| `evaluation` | 无 | 无（仅 `launch/building.py` 以 `-m` 子进程启动） | 孤立：离线工具，符合定位 |
 | `navigation` | 7 个（common/control/loc/perception/planning/robot/simulation） | `localization_mapping`、`simulation` | 偏重：任务层聚合了几乎所有下层 |
 | `simulation` | 7 个（common/control/launch/loc/navigation/perception/robot） | `navigation`、`robot` | 偏重：仿真同时依赖导航/机器人（DynaNav/RoboGauge 集成） |
 | `control` | 5 个（common/launch/loc/planning/robot） | 6 个 | 偏重：控制层被多数层反向引用 |
@@ -59,7 +57,7 @@ src/embodied_navigation/
 | `perception` | 3 个（common/control/loc） | 4 个 | 可接受：`perception→control` 是单向反向依赖（见下） |
 | `launch` | 4 个（common/loc/perception/planning） | 4 个（control/loc/planning/simulation） | 可接受但角色重叠：装配层同时被当作运行期 helper |
 
-**谁不依赖谁（重要负向结论）**：`common` 不 import 任何业务模块；`control`/`planning`/`robot`/`perception` 不 import `navigation`；`navigation` 不 import `launch`；`evaluation` 不被任何一级模块 import。
+**谁不依赖谁（重要负向结论）**：`common` 不 import 任何业务模块；`control`/`planning`/`robot`/`perception` 不 import `navigation`；`navigation` 不 import `launch`。
 
 **9 组双向依赖（repo_stats.json `cycles2`）**：control↔planning、control↔robot、control↔localization_mapping、localization_mapping↔navigation、localization_mapping↔perception、navigation↔simulation、robot↔simulation、launch↔planning、launch↔localization_mapping。多数是 1–2 条窄依赖（共享小工具/数据结构），**不应直接当作架构缺陷**；但下列几处是真正的“层次倒置”，建议列入允许清单并加注释/测试（本轮不改代码）：
 
@@ -84,7 +82,6 @@ src/embodied_navigation/
 | 模块 | 文件/行数 | 函数 docstring 覆盖 | 无模块 docstring 文件 | 分级与证据 |
 | --- | --- | ---: | ---: | --- |
 | `launch` | 9 / 1314 | 0.57 | 2 | **良好**：小模块、覆盖率最高；入口/装配职责集中 |
-| `evaluation` | 2 / 55 | 0 | 0 | **良好**：见其 README，独立进程资源采样 |
 | `simulation` | 43 / 9095 | 0.40 | 3 | **可接受**：模块 docstring 覆盖较好，但 43 文件/9k 行、含 Isaac/Gazebo/DynaNav 三类路径 |
 | `robot` | 17 / 4591 | 0.39 | 2 | **可接受**：契约/策略分层清楚，`bridge.py` 1069 行偏大 |
 | `planning` | 32 / 9361 | 0.34 | 4 | **可接受**：准入/参考/PCT 拆分合理，但 `async_admission.py` 1200 行 |
@@ -121,7 +118,7 @@ src/embodied_navigation/
 5. **规划**：[planning](planning/README.md) 提供参考路线、SCAN 调度和 PCT 路线生成（PCT 真实算法在 `third_party/pct`）；admission 负责路径准入与交付。
 6. **任务与跟踪控制**：[navigation](navigation/README.md) 维护任务状态与既有 PID 导航；[control](control/README.md) 计算跟踪/停车命令，并包含仿真安全门禁与定位反馈来源检查。
 7. **机器人执行**：[robot](robot/README.md) 下的 [robot/unitree](robot/unitree/README.md) 负责 Go2 观测、策略推理和执行桥。当前 Student 用 exact45 推理，历史 Teacher 247D 观测保留作诊断；RoboGauge 使用另一套独立 45D 接口，观测与 actuator 契约不能混用。
-8. **离线与横切**：[evaluation](evaluation/README.md) 提供独立进程资源采样；[common](common/README.md) 提供配置、路径、时钟、通信与运行遥测等公共件。
+8. **横切公共件**：[common](common/README.md) 提供配置、路径、时钟、通信与运行遥测等公共件。
 
 ## 包边界与实现归属
 

@@ -25,11 +25,11 @@
 - `common/__init__.py`
 - `common/input_freshness.py`
 
-`observation.py` 导入时读取相邻 `contract.json`，因此 JSON 不是可忽略的历史记录。恢复的 Isaac 脚本使用 `exact_student45`、`CorrectionOnlyPID`、`PID_SPEC` 和 `quaternion_rotation`，不会执行训练。`TerrainHeightMap` 才会延迟导入 `simulation.mesh_terrain`；完整 Gazebo/替代策略流程还需要各自的调用闭包，不能只沿用以上最小清单。
+`observation.py` 导入时读取相邻 `contract.json`，因此 JSON 不是可忽略的历史记录。恢复的 Isaac 脚本使用 `exact_student45`、`CorrectionOnlyPID`、`PID_SPEC` 和 `quaternion_rotation`，不会执行训练。完整 Gazebo/替代策略流程还需要各自的调用闭包，不能只沿用以上最小清单。
 
 系统 Python 依赖包括 NumPy、SciPy、PyYAML、Pillow、Torch 和 ROS Jazzy 的 rclpy、sensor_msgs_py、nav_msgs、geometry_msgs、sensor_msgs、std_msgs、rosgraph_msgs。`scan_planner_msgs` 必须从本工程 ROS 包生成，不能把旧安装目录当作源码。
 
-## 完整 Building 流程的其它自有 C++
+## 完整部署流程的其它自有 C++
 
 这些是主工程功能模块，不属于第三方库；应保留实际源文件和 CMake：
 

@@ -4,7 +4,7 @@
 
 ## 边界
 
-- 做：任务状态与节点适配（`task.py`、`pid_navigation.py` 及其 `pid_*` 职责模块、`ros_node.py`、`base_node.py`、`building_navigation.py`），以及到达区域与任务运行时（`mission/`、`robogauge/`）。
+- 做：任务状态与节点适配（`task.py`、`pid_navigation.py` 及其 `pid_*` 职责模块、`ros_node.py`、`base_node.py`），以及到达区域与任务运行时（`mission/`、`robogauge/`）。
 - 不做：控制律（在 `../control/tracking/`）、参考路线与准入（在 `../planning/`）、进程装配（在 `../control/launch/` 等 launch 组）。
 - 不把仿真真值当作 SLAM 输入；真值只出现在明确标注的评测与仿真安全边界。
 
@@ -17,7 +17,6 @@ src/embodied_navigation/navigation/
 ├── README.md                           # 本文件（模块说明；行数随改写变化，不标注）
 ├── __init__.py                         # 1 行，只重导出 task 的 NavigationTask/Observation/TaskConfig
 ├── base_node.py                        # 1617 行，measured-pose SCAN 基类；默认任务状态机 Navigation.control() 在此
-├── building_navigation.py              # 650 行，Building SLAM-only 分支节点；import 即读 run 目录并 rclpy.init()
 ├── pid_admission.py                    # 616 行，准入生命周期 mixin（AdmissionMixin）
 ├── pid_admission_apply.py              # 891 行，准入决策应用 mixin（单个方法 _admit_matched_spline 852 行）
 ├── pid_control.py                      # 1173 行，cascade/PID 速度选择、ACK、停车与命令发布 mixin
@@ -43,7 +42,6 @@ src/embodied_navigation/navigation/
 | `base_node.py` | 活代码 | `class Navigation(Node)`（L108）+ `control()`（L1077–1493，417 行）；`main()` 在 L1594 |
 | `ros_node.py` | 活代码 | `TeacherNavigation(base.Navigation)`（L134）+ `RecordedPublisher`（L58）；`control()` 在 L600 |
 | `task.py` | 活代码（无 console 入口） | 与 ROS 解耦的状态机；原 console script `relative-slam-navigation` 已删除 |
-| `building_navigation.py` | 活代码（仅子进程） | L28 起模块级 `run = Path(os.environ["DEMO_RUN_DIR"])`、读 `experiment_setup.json`/`PCT_route.json`/`sensor_contract.json`，L47 `rclpy.init()`；只由 `../../launch/building.py:354` 与 `robogauge/benchmark.py:118` 以 `-m` 启动 |
 | `__init__.py` | 重导出 | 58 字节，只有 `from .task import NavigationTask, Observation, TaskConfig` |
 
 ### 日志与输出（默认大多不落盘）
@@ -77,8 +75,6 @@ src/embodied_navigation/navigation/
 | `pid_entrypoint.py` | `r88_async_physical_exit.json` | ✅（仅收据非 None） | `write_text()`（`pid_entrypoint.py:225`） |
 | `pid_entrypoint.py` | `corridor_worker_receipt.jsonl`、`corridor_certificates.jsonl`、`corridor_input_rejections.jsonl` | — | `append()`：exit 前 flush 的走廊收据 |
 | `base_node.py` | `scan_route_definitions.jsonl`、`r85_reference_attempts.jsonl`、`r85_reference_holds.jsonl` | — | `append()`：路线定义与 r85 参考尝试/保持证据 |
-| `building_navigation.py`（Building 路径） | `navigation_history.jsonl`、`navigation_slam_poses.jsonl`、`accepted_SCAN_curves.jsonl`、`actual_command_ack.jsonl`、`native_pose_source.jsonl` | ✅ | 真实文件句柄（`open("w")`/`open()`），只在 Building run 目录出现 |
-| `building_navigation.py`（Building 路径） | `parking_10Hz_result.json`、`truth_navigation_status.json` | ✅ | 模块内 `atomic()`（临时文件 + `replace`） |
 
 两份常见但**不是本目录写**的文件：`mission46_status.json` 与 `closed_loop_executor_ack.json` 在本包只有读点（`pid_control.py:571`、`:209`）；前者在本检出的 Python 源码里没有写入点（推测由原生 SCAN 侧产生，未核实），后者由 `robot/unitree/policy/worker.py:250` 的 `atomic_ack_rows` 写。`navigation_anchor.json` / `navigation_request.json` / `global_reference.json` 也不是本目录写的：由 `mission/mission_runtime.py` 冻结/发布（见 `mission/README.md`）。
 
@@ -115,12 +111,11 @@ src/embodied_navigation/navigation/
 | `pid_route.py` | 301 | `pid_support` | `pid_navigation` | 清楚 |
 | `pid_control.py` | 1173 | `pid_support`、`control.parking.*`、`control.safety.*`、`control.publication_ledger` | `pid_navigation` | 偏重 |
 | `pid_navigation.py` | 249 | 5 个 `*Mixin` + `pid_support` + `pid_entrypoint` + `planning.admission.physical_gate` | `pid_entrypoint`（延迟） | 清楚（门面职责单一） |
-| `building_navigation.py` | 650 | `control.parking.*`、`control.safety.contact_mailbox`、`control.tracking.*`、`common.project` | 无（子进程 `-m`） | 可疑（import 即执行） |
 
 四类问题：
 
-1. **上帝文件（>800 行）**：本目录 5 个 —— `base_node.py` 1617、`pid_control.py` 1173、`pid_support.py` 1030、`pid_admission_apply.py` 891、`ros_node.py` 874；另有 `building_navigation.py` 650 行，虽未过 800 线，但它是单文件单类的模块级脚本（见第 3 类）。行数来自 `wc -l`。
-2. **重复实现**：两处同名 `class Navigation`（`base_node.py:108` 与 `building_navigation.py:68`）——同名不同类，靠文档区分，容易误读；`main()` 有 4 份（`base_node.py:1594`、`ros_node.py:829`、`pid_entrypoint.py:294`、`pid_navigation.py:243`），但语义不同（前两个是独立历史入口）。
+1. **上帝文件（>800 行）**：本目录 5 个 —— `base_node.py` 1617、`pid_control.py` 1173、`pid_support.py` 1030、`pid_admission_apply.py` 891、`ros_node.py` 874。行数来自 `wc -l`。
+2. **重复实现**：`main()` 有 4 份（`base_node.py:1594`、`ros_node.py:829`、`pid_entrypoint.py:294`、`pid_navigation.py:243`），但语义不同（前两个是独立历史入口）。
 3. **跨层直达**：`pid_support` 直接 import 节点层 `ros_node`（向上依赖）；`pid_ingress` 直接读 `localization_mapping.feedback_state`（本地化内部状态）而不是走公共 observation 契约；`base_node.py:139` 直接按路径读 `src/embodied_navigation/simulation/scenario.json`。
 4. **隐式契约**：run 目录文件名/JSON 键是主要跨进程契约（`navigation_request.json` 被 `ros_node.py:581` 读，`navigation_anchor.json` 被 `planning/admission/path_admission.py:93` 读），没有 schema 版本常量集中定义；`base_node` 与 `ros_node` 各自写 `navigation_guard_history.jsonl`（同名文件两个写入方）。
 
@@ -149,13 +144,12 @@ src/embodied_navigation/navigation/
 - `pid_admission_apply.py`：`_admit_matched_spline`（L40–891）**单函数 852 行**、0 docstring；这是全目录最长的单个可执行单元，任何准入改动都要在一个函数里定位。
 - `pid_control.py`：12 函数 0 docstring，`publish_command`（L852–1173）322 行、`select_pid_velocity`（L237–515）279 行；4 个 >80 行函数。
 - `pid_support.py`：导入枢纽，且**文件中部还有 import**——import 分成三段：L9–108（主体）、L255（单独一条 `import sys`）、L1011–1029（`goal_regions`/`continuous_route`/`path_commit`/`pending_path_commit`/`navigation_stop_window`）；读者很难一眼判断完整依赖面。
-- `building_navigation.py`：`import` 即执行（模块级读 4 个 run 文件、`rclpy.init()`、`os.environ["DEMO_RUN_DIR"]` 无兜底），因此无法在无 run 目录的进程里导入做静态检查或单测；`tick()`（L435–635）201 行。
 
 区分说明：`base_node.py`/`pid_admission_apply.py`/`pid_control.py`/`pid_support.py` 的问题是**结构**（长函数、导入枢纽、门面之外没有稳定边界）；`task.py`、`pid_ingress.py`、`pid_admission.py` 的问题是**文档**（函数规模可接受但缺 docstring），不要混为一谈。
 
 ## 重构建议
 
-本轮只写建议、不改代码；任何一条都要"先有对照/回归再动"。**没有 P0**：默认主路径的关键开关是 fail-closed（例如 `pid_navigation.py:188-192` 对未验证走廊控制权直接 `ValueError`，`building_navigation.py:42-45` 拒绝非 SLAM 模式），且未发现 `except: pass` 静默吞异常（grep 无命中）。
+本轮只写建议、不改代码；任何一条都要"先有对照/回归再动"。**没有 P0**：默认主路径的关键开关是 fail-closed（例如 `pid_navigation.py:188-192` 对未验证走廊控制权直接 `ValueError`，），且未发现 `except: pass` 静默吞异常（grep 无命中）。
 
 | 优先级 | 动作 | 理由 | 风险 | 验证方式 |
 | --- | --- | --- | --- | --- |
@@ -165,7 +159,6 @@ src/embodied_navigation/navigation/
 | P1 | 把 `pid_support.py` 中部的 import（L255、L1011–1029）移到文件头 | 两段 import 区让模块依赖面不可一眼确认，也会放大循环 import 风险 | 低（纯移动） | `python3 -c "import embodied_navigation.navigation.pid_navigation"` + `tests/unit/test_pid_navigation_compat.py` |
 | P2 | 给 `pid_ingress`/`pid_admission`/`pid_control`/`pid_route` 的公开方法补一行 docstring | 目前 0–26% docstring 比；方法名已较直白，补文档性价比高 | 无 | 只改文档，不跑行为测试 |
 | P2 | 把走廊观察者字面量（`pid_navigation.py` L203–L221）移进 profile 或常量块 | 19 个魔法数散在 `__init__`；当前仅 `shadow` 模式可用，风险有限 | 低（需确认无 pin 冲突） | `grep` 确认唯一读取点 + 启动一次 shadow 模式对照 |
-| P2 | 把两处同名 `class Navigation` 之一改名（`building_navigation.Navigation` → `BuildingNavigation`） | 同名不同类是两个入口最易混的点，改名零行为风险 | 低 | 同步 `launch/building.py:354`、`robogauge/benchmark.py:118` 的 `-m` 路径（仅注释/文档）+ 全仓 grep |
 
 ## 入口、节点类与进程角色
 
@@ -173,7 +166,6 @@ src/embodied_navigation/navigation/
 | --- | --- | --- | --- |
 | `controller` 角色 | `pid_navigation.PIDNavigation`（由 `pid_ingress`/`pid_admission`/`pid_admission_apply`/`pid_route`/`pid_control` 组合）→ `TeacherNavigation` → `base_node.Navigation`；进程入口 `pid_entrypoint` | `../control/launch/components.py` | 是；任务状态机是 `base_node.Navigation.control()` |
 | `mission` 角色 | `mission.mission_runtime.Mission`（文件内定义，非 `mission/state_machine.py`） | `../control/launch/components.py` | 是；只冻结/发布目标与参考，不产生速度 |
-| Building 节点 | `building_navigation.Navigation`（同名不同类） | `../launch/building.py`、`robogauge/benchmark.py` | 否 |
 
 注意 `state_machine.py`（`mission/`）在本检出中没有实例化点；`continuous_route_contract.enabled=false`。四条路径的总览见 [`../../../docs/architecture.md`](../../../docs/architecture.md)，术语见 [`../../../docs/glossary.md`](../../../docs/glossary.md)。
 
@@ -190,17 +182,15 @@ src/embodied_navigation/navigation/
 - `ros_node.py`：`TeacherNavigation(base.Navigation)`，Teacher 的有限包装，拒绝重复或倒退的来源 header，并要求实测 SLAM/点云。
 - `base_node.py`：`Navigation` 基类，做 measured-pose SCAN 执行、freshness watchdog 与 LiDAR 停/恢复；自身不设仿真位姿、不订阅真值。
 - `task.py`：现有 shuttle 任务状态机（等待、跟随、settle、转向、停止/失败），与 ROS、仿真解耦；**不在 `demo.launch.py` 中**；驾驶指令来自 `../control/relative_pid.py`。
-- `building_navigation.py`：Building 分支节点（canonical FAST-LIVO2，只允许 SLAM），读 run 目录的 `PCT_route.json`，由 `../launch/building.py` 与 `robogauge/benchmark.py` 启动。
 - `mission/` 见 `mission/README.md`；`robogauge/` 见 `robogauge/README.md`。
 
 ## 测试
 
-`../../../tests/unit/test_navigation.py` 只覆盖 `task.py` 的状态与失败条件；`../../../tests/unit/test_building_entry_closure.py` 覆盖 Building 入口只接受 SLAM 的准备逻辑。facade 的导入/脚本入口兼容由 `../../../tests/unit/test_pid_navigation_compat.py` 覆盖（27 个 helper 可导入 + 直接脚本与 `-m` 两种 `--help`）；`pid_entrypoint.py` 的关停路径由 `../../../tests/unit/test_ros_shutdown_lifecycle.py` 解析源码验证；`building_navigation.py` 的 SLAM 模式门由 `../../../tests/unit/test_production_slam_mode.py` 用 AST 抽片段 `exec` 验证（**改这个文件的结构可能先影响测试而不是行为**）。`base_node.py`、`ros_node.py`、`pid_*.py` 的控制器行为没有专用单测，只随运行链路使用。测试入口见 [`../../../tests/README.md`](../../../tests/README.md)。
+`../../../tests/unit/test_navigation.py` 只覆盖 `task.py` 的状态与失败条件。facade 的导入/脚本入口兼容由 `../../../tests/unit/test_pid_navigation_compat.py` 覆盖（27 个 helper 可导入 + 直接脚本与 `-m` 两种 `--help`）；`pid_entrypoint.py` 的关停路径由 `../../../tests/unit/test_ros_shutdown_lifecycle.py` 解析源码验证。`base_node.py`、`ros_node.py`、`pid_*.py` 的控制器行为没有专用单测，只随运行链路使用。测试入口见 [`../../../tests/README.md`](../../../tests/README.md)。
 
 ## 限制
 
-完整路线、Building 实际运行与实机均未验证。完整原生闭环依赖 SCAN/FAST-LIVO2 构建产物；仓库根 install 缺产物时仍可阅读源码并运行不依赖这些产物的单元测试，不能据此验证完整闭环。此外：
+完整路线与实机均未验证。完整原生闭环依赖 SCAN/FAST-LIVO2 构建产物；仓库根 install 缺产物时仍可阅读源码并运行不依赖这些产物的单元测试，不能据此验证完整闭环。此外：
 
 - `base_node.Navigation.control()` 是默认任务状态机，但本目录没有它的行为级单测（见上节），改动它只能靠运行链路观察。
-- `building_navigation.py` 无法被安全导入（模块级 `rclpy.init()` + 必需 `DEMO_RUN_DIR`），其行为只能通过 `-m` 子进程或源码级测试验证。
 - 走廊控制权当前只有 `off`/`shadow` 两种模式可用，`retain_valid_plan` 会被拒绝（`pid_navigation.py:188-192`）；不要把它当作已验证的控制通道。

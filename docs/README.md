@@ -17,7 +17,7 @@ docs/
 ├── verification/          # 独立复核与启动/容器/原生构建回执（8 文件）
 ├── README.md              # 本文件：文档索引与职责分类
 ├── dynanav-exploration.md # 当前 native 探索功能架构、选型、接口与时序
-├── architecture.md        # 权威：系统边界、四条执行路径、默认状态机、安全门禁（51 行）
+├── architecture.md        # 权威：系统边界、两条执行路径（A/D）、默认状态机、安全门禁（51 行）
 ├── control_provenance.json # 控制公式来源与 1000 例等价性测试记录（7 行）
 └── glossary.md            # 权威：术语与易混概念对照（43 行）
 ```
@@ -28,7 +28,7 @@ docs/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 权威说明 | [`architecture.md`](architecture.md)、[`glossary.md`](glossary.md) | 当前系统边界、四条执行路径、默认任务状态机、安全门禁与术语。代码/配置文档引用它们，而不是反过来；两者都声明“行号会漂移，按文件与符号查找”。 |
+| 权威说明 | [`architecture.md`](architecture.md)、[`glossary.md`](glossary.md) | 当前系统边界、两条执行路径（A/D）、默认任务状态机、安全门禁与术语。代码/配置文档引用它们，而不是反过来；两者都声明“行号会漂移，按文件与符号查找”。 |
 | 历史报告 | [`experiments/`](experiments/)、[`review/`](review/) | 实验过程与审查结论：可读性改造、结构重构、独立复核、DynaNav 各阶段实验。报告里的行号/计数是当时快照，引用前需按当前磁盘复核。 |
 | 证据回执 | [`control_provenance.json`](control_provenance.json)、[`verification/`](verification/)、[`review/readability-verification.json`](review/readability-verification.json) | 机器可读的历史回执：控制公式来源与 1000 例等价性、CPU/容器/原生构建、独立复核、可读性验证。它们是“当时验证过什么”的证据，不是当前状态。 |
 | 配置说明（非配置源） | 全目录 | 文档引用 [configs/](../configs/README.md) 的读取顺序与 pin，但本目录**没有配置读取点**，也不写配置；`grep -rn "docs/" src scripts` 只命中一处脚本注释（`scripts/run_dynanav_online_person.py` 指向实验文档），没有代码加载 `docs/`。 |
@@ -57,7 +57,7 @@ docs/
 ## 可读性评估
 
 - `README.md`（原 20 行）：**可改进（索引完整性）**。原文件只是 18 条链接列表，没有区分“权威说明 / 历史报告 / 证据回执”，新人无法判断哪份是当前事实；且遗漏了 `docs/review/validation-and-threshold-audit.md` 与 `docs/verification/` 下除独立复核外的回执（本次重写已补分类并在下方索引补齐链接）。优点是所有链接原本就能打开，没有死链。
-- `architecture.md`：**良好**。51 行覆盖代码/数据边界、四条执行路径、状态机与安全门禁，且明确“不要从 `navigation/task.py` 或 `mission/state_machine.py` 推断默认行为”这类易错点；信息密度高。
+- `architecture.md`：**良好**。51 行覆盖代码/数据边界、两条执行路径（A/D）、状态机与安全门禁，且明确“不要从 `navigation/task.py` 或 `mission/state_machine.py` 推断默认行为”这类易错点；信息密度高。
 - `glossary.md`：**良好**。43 行、按运行/定位/状态机/观测/时间分组，每条给出“别把它当成什么”的对照；明确“数值与契约以源码/配置为准”。
 - `control_provenance.json`：**可接受**。7 行、4 个字段，能看懂来源与测试，但字段没有 schema/单位说明，需结合引用它的文档读。
 - `review/`：**可接受偏低**。报告真实但长（可读性报告 802 行），且混有“当时行号”；作为历史记录可以接受，作为现状依据不可靠。没有发现空话或未标注的推测。
@@ -75,7 +75,7 @@ docs/
 
 ## 文档索引（原有链接保留）
 
-- [系统模块与开发入口](architecture.md)：源码职责、数据边界、四条执行路径、默认任务状态机、运行与测试入口。
+- [系统模块与开发入口](architecture.md)：源码职责、数据边界、两条执行路径（A/D）、默认任务状态机、运行与测试入口。
 - [术语与易混概念对照](glossary.md)：四条路径、provenance、raw/corrected 位姿、native64/247D/exact45、RoboGauge 45D、时钟域与分层的速度上限。
 - [动静态语义地图与环境编译器：历史原话、研究目标及实现边界](research/dynamic-semantic-mapping-agreement.md)：已核实用户原话、消息出处、未定参数与 DynaNav 工作基线。
 - [DynaNav 楼梯、分层地图与 LIO 观察器实验](experiments/dynanav-20261109.md)：2026-11-09 首段 live LIO/移动中行人闭环、完整 GT 路线、SDK 200 Hz 对照、多层精度边界及 LIVO smoke 更新保留、单组VIO评分、录包/两次SDK阻碍及前缀对比边界。
@@ -95,7 +95,7 @@ docs/
 - [验证阈值与判据审计](review/validation-and-threshold-audit.md)：阈值/判据清单与审计结论（补充索引）。
 - [可读性验证回执](review/readability-verification.json)：可读性改造的机器可读验证记录（补充索引）。
 - [独立复核回执](verification/independent-review-2026-11-09.json)：独立复核的 JSON 版本（补充索引）。
-- [CPU 容器回执](verification/cpu-container.json)、[原生 Docker 回执](verification/native-docker.json)、[软件启动回执](verification/software-startup.json)、[clean-export 回执](verification/clean-export.json)、[parking-layering 回执](verification/parking-layering.json)、[production-slam-only 回执](verification/production-slam-only.json)：启动/容器/分层验证的机器可读证据（补充索引）。
+- [CPU 容器回执](verification/cpu-container.json)、[原生 Docker 回执](verification/native-docker.json)、[软件启动回执](verification/software-startup.json)、[clean-export 回执](verification/clean-export.json)、[parking-layering 回执](verification/parking-layering.json)：启动/容器/分层验证的机器可读证据（补充索引）。
 
 模块级职责与入口见[源码模块索引](../src/embodied_navigation/README.md)。大型场景、地图、日志、模型和视频保存于外部项目数据目录；工程文档引用其证据，不将这些数据纳入 Git。
 

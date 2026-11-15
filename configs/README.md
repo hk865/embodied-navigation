@@ -11,14 +11,13 @@ configs/
 ├── launch/                # 模块清单与特性开关：navigation.json（10 行）+ settings.json（70 行）
 ├── localization_mapping/  # 前端/后端 base：settings.json（80 行）+ fastlivo.yaml（128 行）+ camera.yaml（17 行）
 ├── planning/              # SCAN/PCT 与静态支撑：settings.json（53 行）+ static_support_limits.json（23 行）
-├── robogauge/             # 策略/benchmark 契约与路线：14 文件、22,816 行（含 world.sdf.in 与 routes/）
-├── scenarios/             # 场景/地形数据（4 文件、178 行），见 scenarios/README.md
+├── scenarios/             # 场景/地形数据（2 文件、103 行），见 scenarios/README.md
 ├── simulation/            # 世界/物理/传感器与 DynaNav 场景（10 文件、4660 行）：settings.json（3294 行）+ 2 个 collision JSON + dynanav/ 子目录（7 文件、693 行，其中 2 篇 README 共 435 行）
 ├── visualization/         # RViz 配置（2 文件、181 行），见 visualization/README.md
 ├── README.md              # 本文件：读取顺序、pin、消费者与边界
 ```
 
-合计 44 个文件（`find configs -type f | wc -l`，2026-11-09 实测）。
+合计 24 个文件（`find configs -type f | wc -l`，2026-11-09 实测）。
 
 ## 代码、日志与配置
 
@@ -39,7 +38,7 @@ configs/
 3. **本次 profile 写入 run 目录**：`profiles` 写进 `runtime_context.json`（含 `profile`、`run_dir`；`experiment="navigation"`、`navigation_ground_truth_used=false` 等固定字段）与 `navigation_profile.json`。
 4. **运行期消费者分两类，不能一概说"configs 不再生效"**：
    - 读 **runtime_context** 的进程：`navigation/ros_node.py`、`robot/unitree/bridge.py`、`navigation/mission/mission_runtime.py`、`localization_mapping/localization_runtime.py`、`localization_mapping/launch/components.py`、`perception/sensors/sensor_gate.py`。这些模块的业务 profile 来自本次 run 的 context；这不表示全部配置读取都被冻结，例如 localization launch 仍通过 `path("ros_prefix")` 重读资产路径配置。
-   - 仍**直接重读 configs** 的运行期消费者：`robot/unitree/policy/student.py` 的 `read()["student_runtime"]`；`launch/building.py` 与 `navigation/robogauge/benchmark.py` 的 profile/环境构造；`common/runtime_environment.py` 及部分 planning/simulation/localization launch 组件通过 `path()` 重新读取路径配置。
+   - 仍**直接重读 configs** 的运行期消费者：`robot/unitree/policy/student.py` 的 `read()["student_runtime"]`；`common/runtime_environment.py` 及部分 planning/simulation/localization launch 组件通过 `path()` 重新读取路径配置。
    - 另有 `planning/scan_epoch_supervisor.py` 直接读 run 里的 `navigation_profile.json`。
 
 因此"改了配置却没变化"的常见原因依次是：该键被 prepare pin、被 `launch/main.py` 的环境构造覆盖、只有读 runtime_context 的进程不读它、或该键根本没有读取点。
@@ -55,7 +54,6 @@ configs/
 | `simulation/settings.json`、`simulation/dynanav_*.json` | `simulation` | 世界/物理/传感器与 DynaNav 碰撞场景 |
 | `common/settings.json` | `common` | 运行目录、通信、遥测 |
 | `scenarios/` | `launch/prepare.py` | 路线与地形数据；`terrain_targets/` 当前无代码读取（见该目录 README） |
-| `robogauge/` | `robot/unitree/robogauge`、`navigation/robogauge` | 策略/benchmark 契约；`contract.json` 是归档副本，权威常量在 `contract.py`；`routes/`、`world.sdf.in`、`deployment_profile.json` 由 `simulation/gazebo/robogauge/world.py` 读取 |
 | `visualization/` | 人工/脚本 | RViz 配置等可视化资源；`.rviz` 无 Python 读取者（人工 `rviz2 -d`） |
 
 ## 模块内文件耦合
@@ -65,7 +63,6 @@ configs/
 - 隐式契约（已核实的典型）：
   - `launch/navigation.json` 的六个模块必须是 JSON object 且顶层键不重复；entry 自身其它顶层键最后覆盖（会静默赢过模块值）。
   - `prepare.py` 的 pin 覆盖 profile；`runtime_context.write()` 固定写 `experiment="navigation"`、`navigation_ground_truth_used=false`。
-  - `configs/robogauge/world.sdf.in` 的 `${ASSET_ROOT}`/`${ROBOGAUGE_ACTUATOR}` 占位符由 `simulation/gazebo/robogauge/world.py` 替换；`contract.json` 与 `contract.py` 需人工同步。
 
 | 文件/目录 | 行数/规模 | 读取点 | 判断 |
 | --- | ---: | --- | --- |
@@ -75,7 +72,6 @@ configs/
 | `localization_mapping/*` | 225 | 前端/后端 + prepare | 清楚：base 与生成覆盖分离 |
 | `planning/*` | 76 | planning | 清楚 |
 | `common/settings.json` | 39 | common/启动器 | 清楚 |
-| `robogauge/*` | 14 文件 / 22,816 行 | `world.py` 等 | 可接受：大文件是 SDF 模板与路线数据 |
 | 6 个无读取点文件 | 8–232 | 无 | 可疑（孤儿配置）：易被误当生效值 |
 
 结论：配置层**没有循环依赖**，但“文件多、读取点散、无 schema”使隐式契约偏多；这是配置系统的固有成本，不是结构错误。最大的可维护性风险是 `simulation/settings.json`（3294 行）与 6 个无读取点文件。

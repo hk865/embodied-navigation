@@ -4,7 +4,7 @@
 
 ## 运行与入口
 
-- **四条执行路径**：A `start.py`/`demo.launch.py` 原生主路径；B `launch/building.py` SLAM-only；C `navigation/robogauge/benchmark.py`；D DynaNav/Isaac 实验。共享代码但不共享进程图与话题，见 [architecture.md](architecture.md)。
+- **两条执行路径**：A `start.py`/`demo.launch.py` 原生主路径；D DynaNav/Isaac 实验。共享代码但不共享进程图与话题，见 [architecture.md](architecture.md)。
 - **run 目录**：一次运行生成的目录（`runs/<id>/` 或 DynaNav 的 `experiments/<name>/`）。里面是本次有效参数、日志与收据；`configs/` 中的 base 值不等于本次有效值。
 - **`navigation_profile.json`**：`launch/prepare.py` 把 profile 深拷贝后写出的本次参数快照。启动器有几处 pin（强制覆盖），现在会在 stderr 报告与配置不一致的值。
 - **`supervision.json`**（DynaNav）：`scripts/run_dynanav_online_person.py` 写出的进程级监督记录，只证明进程启动/退出顺序与退出码，不代表导航或感知通过。

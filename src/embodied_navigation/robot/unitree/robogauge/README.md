@@ -23,25 +23,24 @@ src/embodied_navigation/robot/unitree/robogauge/
 | 日志/输出 | `<PROJECT_DATA_ROOT>/embodied-navigation/runtime_assets/models/robogauge_policy.pt` | 只读：`Runtime` 启动时做 SHA256 校验并加载；权重不在 Git |
 | 配置 | `PROJECT_DATA_ROOT` | 经 `project.data_root()` 解析权重路径；`--model` 可指定别处同一份导出，但 SHA256 必须等于 `MODEL_SHA256`，否则 `verify_model()` 拒绝加载 |
 
-补充：`configs/robogauge/` 目录里其它文件（`sensor_contract.json`、`world.sdf.in` 等）由 `simulation/gazebo/robogauge/world.py` 读取，**不属于本目录的配置读取点**，不要混为一谈。
 
 ## 模块内文件耦合
 
 - 依赖方向：`contract.py` → [policy/native/observation.py](../policy/native/observation.py) 的 `quaternion_rotation()`（唯一跨子目录依赖）；`runtime.py` → `contract.py` + `project.data_root()`。依赖单向，**无环**。
-- 反向依赖：`runtime.py` 被 `navigation/robogauge/benchmark.py`、`simulation/gazebo/robogauge/worker.py`、`simulation/dynanav/capture/policy.py`、`simulation/dynanav/experiment.py` 复用；`contract.py` 被 `simulation/gazebo/robogauge/worker.py`、`simulation/dynanav/capture/policy.py` 复用。本目录是被依赖的库，不 import 上层。
+- 反向依赖：`runtime.py` 被 `simulation/dynanav/capture/policy.py`、`simulation/dynanav/experiment.py` 复用；`contract.py` 被 `simulation/dynanav/capture/policy.py` 复用。本目录是被依赖的库，不 import 上层。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `contract.py` | 76 | `policy.native.observation.quaternion_rotation` | `runtime`、`navigation.robogauge.benchmark`（间接）、`simulation.gazebo.robogauge.worker`、`dynanav.capture.policy` | 清楚：纯函数 + 常量 |
-| `runtime.py` | 99 | `project.data_root`、`contract` | `navigation.robogauge.benchmark`、`simulation.gazebo.robogauge.worker`、`dynanav.capture.policy`、`dynanav.experiment` | 清楚 |
+| `contract.py` | 76 | `policy.native.observation.quaternion_rotation` | `runtime`、`dynanav.capture.policy` | 清楚：纯函数 + 常量 |
+| `runtime.py` | 99 | `project.data_root`、`contract` | `dynanav.capture.policy`、`dynanav.experiment` | 清楚 |
 | `__init__.py` | 1 | 无 | 无 | 清楚 |
 
 四类问题：
 
 - **上帝文件**：没有（最大文件 99 行）。
-- **重复实现**：有（跨目录、有测试守护）——Go2 关节名与默认姿态在 `contract.py`（`OFFICIAL_NAMES`/`NATIVE_NAMES`/`Q0`）与 [policy/native/contract.json](../policy/native/contract.json)（`joint_names`/`default_joint_positions`）各存一份；`tests/regression/test_robogauge_contract.py` 断言 `NATIVE_NAMES == CONTRACT["joint_names"]` 且 `QDEFAULT == CONTRACT["default_joint_positions"]`。另外 `simulation/gazebo/robogauge/native_loop.py` 也自带一份 `QDEFAULT`，不在本目录守护范围内。
+- **重复实现**：有（跨目录、有测试守护）——Go2 关节名与默认姿态在 `contract.py`（`OFFICIAL_NAMES`/`NATIVE_NAMES`/`Q0`）与 [policy/native/contract.json](../policy/native/contract.json)（`joint_names`/`default_joint_positions`）各存一份；`tests/regression/test_robogauge_contract.py` 断言 `NATIVE_NAMES == CONTRACT["joint_names"]` 且 `QDEFAULT == CONTRACT["default_joint_positions"]`。
 - **跨层直达**：轻微——`contract.py` 直接从 `policy/native/observation.py` 取 `quaternion_rotation`，两个子目录共用同一旋转实现（好处是不重复实现、坏处是 robogauge 依赖 policy 内部文件）。
-- **隐式契约**：有——`MODEL_SHA256` 必须与权重文件匹配（不匹配直接拒绝，不静默接受）；official/native 两套关节顺序靠 `joint_indices()` 显式映射；模型输入固定 `(1, 45)` float32；内部历史帧固定 10 帧（`runtime.py:45-46` 预热 10 次，`metadata()` 里 `internal_history_frames=10` 是同一数字的第二处出现）；`action_scale=0.25` 只写在 metadata，真正的 `QDEFAULT + 0.25*action` 在 `simulation/gazebo/robogauge/native_loop.py` 里执行。
+- **隐式契约**：有——`MODEL_SHA256` 必须与权重文件匹配（不匹配直接拒绝，不静默接受）；official/native 两套关节顺序靠 `joint_indices()` 显式映射；模型输入固定 `(1, 45)` float32；内部历史帧固定 10 帧（`runtime.py:45-46` 预热 10 次，`metadata()` 里 `internal_history_frames=10` 是同一数字的第二处出现）；`action_scale=0.25` 只写在 metadata，
 
 结论：**耦合清楚**，是本层里最小、最内聚的目录；唯一可议的是 `contract.py → policy/native/observation.py` 的跨子目录依赖与 Go2 常量的两处保存。
 
@@ -59,10 +58,9 @@ src/embodied_navigation/robot/unitree/robogauge/
 
 | 优先级 | 动作 | 理由 | 风险 | 验证方式 |
 | --- | --- | --- | --- | --- |
-| P2 | 把 `runtime.py` 里的 10 帧预热提为命名常量，并复用到 `metadata()` 的 `internal_history_frames` | 同一魔法数出现两处，改一处漏一处会让 metadata 与实际行为不一致 | 无（纯常量） | `tests/regression/test_robogauge_contract.py`、`test_robogauge_native_loop.py` |
+| P2 | 把 `runtime.py` 里的 10 帧预热提为命名常量，并复用到 `metadata()` 的 `internal_history_frames` | 同一魔法数出现两处，改一处漏一处会让 metadata 与实际行为不一致 | 无（纯常量） | `tests/regression/test_robogauge_contract.py` |
 | P2 | 给 `Runtime.__call__/reset/metadata` 补 docstring | 运行时是外部使用者最先读的入口 | 无 | 静态检查 |
 | P2 | 在 `contract.py` 顶部注释说明“Go2 常量与 `policy/native/contract.json` 必须一致，由 `test_robogauge_contract` 守护”；`contract.py:9` 的跨子目录 import 也加一句理由 | 现在防漂移只靠测试，代码里没有提示 | 无 | 已有测试断言 |
-| P2 | `QDEFAULT` 在 `simulation/gazebo/robogauge/native_loop.py` 的第三份副本：改为 import 本目录常量（跨模块改动，需与该目录负责人协调） | 三份 Go2 默认姿态里只有两份被测试守护 | 低—中：涉及 simulation 目录，超出本 README scope | `grep -rn "QDEFAULT" src` + `test_robogauge_native_loop` |
 
 没有 P0/P1：本目录最大文件 99 行、无配置读取、无日志写入、依赖单向、权重有 SHA256 硬校验（fail closed）。本轮只写建议、不改代码；涉及 simulation 的建议需要先有测试与对齐。
 
@@ -73,7 +71,7 @@ src/embodied_navigation/robot/unitree/robogauge/
 
 ## 调用与依赖
 
-实际 45D native 循环在 [simulation/gazebo/robogauge/native_loop.py](../../../simulation/gazebo/robogauge/native_loop.py)，基准编排在 [navigation/robogauge/benchmark.py](../../../navigation/robogauge/benchmark.py)；本目录只提供契约与运行时。权重不在 Git，由 `PROJECT_DATA_ROOT` 指向的数据目录提供；更完整的部署与权重说明见 [docs/robogauge/README.md](../../../../../docs/robogauge/README.md)。
+本目录只提供契约与运行时。权重不在 Git，由 `PROJECT_DATA_ROOT` 指向的数据目录提供；更完整的部署与权重说明见 [docs/robogauge/README.md](../../../../../docs/robogauge/README.md)。
 
 ## 与 247D 的区别
 
@@ -81,4 +79,4 @@ src/embodied_navigation/robot/unitree/robogauge/
 
 ## 测试与限制
 
-[tests/regression/test_robogauge_contract.py](../../../../../tests/regression/test_robogauge_contract.py)（NumPy 契约）、[test_robogauge_native_loop.py](../../../../../tests/regression/test_robogauge_native_loop.py)（可选 torch + 假 socket）、[test_robogauge_benchmark.py](../../../../../tests/regression/test_robogauge_benchmark.py)、[test_native_safety_integration.py](../../../../../tests/regression/test_native_safety_integration.py) 覆盖。CPU fixture 不是物理或导航测试；仿真部署与训练环境不宣称等价。`test_robogauge_native_loop.py` 在未安装可选 CPU Torch 时会被 skip（见 [tests/README.md](../../../../../tests/README.md) 的 skip 记录），skip 不等于通过。
+[tests/regression/test_robogauge_contract.py](../../../../../tests/regression/test_robogauge_contract.py)（NumPy 契约）、[test_native_safety_integration.py](../../../../../tests/regression/test_native_safety_integration.py) 覆盖。CPU fixture 不是物理或导航测试；仿真部署与训练环境不宣称等价。

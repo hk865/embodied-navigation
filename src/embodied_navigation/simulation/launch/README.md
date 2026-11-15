@@ -59,6 +59,6 @@ src/embodied_navigation/simulation/launch/
 
 ## 测试与限制
 
-- 注意：这里启动的是当前普通 Student/native 链（协议仍有 Teacher 历史命名）；Building 的 `truth_worker` 由 `launch/building.py` 单独启动，RoboGauge 的 `worker` 由 `navigation/robogauge/benchmark.py` 启动。
+- 注意：这里启动的是当前普通 Student/native 链（协议仍有 Teacher 历史命名）。
 - 屏障自身不 import ROS（`ros=False`），最多等 30 秒；它检查运行目录下 `worker_ready` 文件中的 PID 是否仍存活，以及 socket 是否已是 Unix socket，两者都满足才放行 Gazebo。
 - 本目录无直接验证组件编排或就绪屏障的专用测试。上层 CLI 参数检查见 [tests/unit/test_launch_cli.py](../../../../tests/unit/test_launch_cli.py)；`sensor_gate`、`pid_entrypoint` 节点的信号与 executor/context 关停测试见 [tests/unit/test_ros_shutdown_lifecycle.py](../../../../tests/unit/test_ros_shutdown_lifecycle.py)。这些测试不验证本目录组件实际可启动；本次核对没有启动 launch、Gazebo 或 ROS，端到端启动未验证。

@@ -7,8 +7,8 @@
 ```text
 tests/
 ├── native/          # C++/原生构建 fixture（dynanav_lio/），独立 CMake/CTest，不在 unittest 内
-├── regression/      # 16 个 test_*.py、2520 行：定位/规划/停车/策略契约、CLI 与入口闭包、原生安全集成
-├── unit/            # 45 个 test_*.py、8913 行：控制律、导航状态机、传感几何、来源/时钟、安全边界与纯逻辑
+├── regression/      # 10 个 test_*.py、2475 行：定位/规划/停车/策略契约、CLI 与入口闭包、原生安全集成
+├── unit/            # 71 个 test_*.py、21951 行：控制律、导航状态机、传感几何、来源/时钟、安全边界与纯逻辑
 └── README.md        # 本文件：命令、环境/输出语义与边界
 ```
 
@@ -18,10 +18,10 @@ tests/
 
 | 类别 | 位置 | 含义 |
 | --- | --- | --- |
-| 代码（测试） | `tests/unit/test_*.py`（45 个）、`tests/regression/test_*.py`（16 个） | 纯 CPU、离线运行；没有生产代码、没有共享 helper 模块（`find -name '*.py' ! -name 'test_*.py'` 为空）。部分文件用 `tempfile`/`TemporaryDirectory`（32 个文件）写临时目录，不写仓库内文件。 |
+| 代码（测试） | `tests/unit/test_*.py`（71 个）、`tests/regression/test_*.py`（10 个） | 纯 CPU、离线运行；没有生产代码、没有共享 helper 模块（`find -name '*.py' ! -name 'test_*.py'` 为空）。部分文件用 `tempfile`/`TemporaryDirectory`（32 个文件）写临时目录，不写仓库内文件。 |
 | 代码（原生） | [`native/dynanav_lio/`](native/dynanav_lio/README.md) | 真实 C++ `LIVMapper`/`ImuProcess` fixture，由独立 CMake 构建、CTest 执行；需要本机 ROS Jazzy 与已编译 core，不在两条 unittest 命令内。 |
 | 日志/输出 | unittest stdout/stderr | 唯一输出。成功形态 `Ran <N> tests ... OK (skipped=<K>)`；失败为 traceback + 非零退出。测试会在 stdout 打印预期内的 traceback（如 capture 编排的 sentinel 异常），**有 traceback 不等于失败**，以最终 `OK/FAILED` 与退出码为准。 |
-| 日志/输出（skip 语义） | `skipped '<reason>'` | `skipped` 既不是通过也不是失败：表示本机缺少可选依赖/资产。`unit` 的 USD 用例（3 项，`LocalHumanUSDTests`）与 `regression` 的可选 CPU Torch 用例（5 项）按此处理；若 `rclpy` 不可导入，PID 兼容测试类会额外整类 skip。 |
+| 日志/输出（skip 语义） | `skipped '<reason>'` | `skipped` 既不是通过也不是失败：表示本机缺少可选依赖/资产。`unit` 的 USD 用例（3 项，`LocalHumanUSDTests`）与 `regression` 的可选 CPU Torch 用例（4 项）按此处理；若 `rclpy` 不可导入，PID 兼容测试类会额外整类 skip。 |
 | 日志/输出（原生） | 外部 `TEST_BUILD` 目录 | CTest 结果写在 `PROJECT_DATA_ROOT/.../build_cache/native-lio-check-<UTC>/`，不入 Git；仓库内无测试产物。 |
 | 配置 | 环境变量 + 测试内 patch | 本目录不读 `configs/`。运行配置是 `PYTHONPATH=src`、`-B`（不写 `__pycache__`）与少量测试内 `unittest.mock.patch.dict(os.environ, …)`；回归测试的可选资产/权重通过环境或跳过处理，不在仓库内配置。 |
 | 数据/fixture | 无独立 fixture 文件 | `find tests -name '*.json'` 为空；JSON/fixture 内容以内联字符串或临时文件构造，避免把外部数据卷变成测试依赖。 |
@@ -33,13 +33,13 @@ tests/
 - 依赖方向：`tests/unit`、`tests/regression`、`tests/native` 是三个**互不 import** 的发现根；测试文件之间不共享 helper（无 support 模块），只共享标准库/第三方库与被测包。
 - 与生产代码的耦合有两类：
   1. 行为耦合：正常 `import` 被测模块并断言输入/输出。
-  2. 结构与源码文本耦合：**24 个测试文件**使用 `ast.parse(...read_text())` 或直接读源码文件（如 [`test_dynanav_source_snapshot.py`](unit/test_dynanav_source_snapshot.py)、[`test_dynanav_odometry_source.py`](unit/test_dynanav_odometry_source.py)、[`test_production_slam_mode.py`](unit/test_production_slam_mode.py)、[`test_building_entry_closure.py`](unit/test_building_entry_closure.py)）。移动/拆分函数或改文件路径会先让这类测试失败，而不一定是行为变了。
-- 隐式契约：测试通过 `subprocess`/`-m` 启动的生产入口模块名、`configs/` 中少量被读取的文件路径（如 `test_building_entry_closure.py` 断言 `configs/scenarios/building/{scan,student_profile}.json` 存在）、以及 skip 条件中的可选依赖名，都是字符串级约定；改入口/路径时要同步测试。
+  2. 结构与源码文本耦合：**35 个测试文件**使用 `ast.parse(...read_text())` 或直接读源码文件（如 [`test_dynanav_source_snapshot.py`](unit/test_dynanav_source_snapshot.py)、[`test_dynanav_odometry_source.py`](unit/test_dynanav_odometry_source.py)）。移动/拆分函数或改文件路径会先让这类测试失败，而不一定是行为变了。
+- 隐式契约：测试通过 `subprocess`/`-m` 启动的生产入口模块名、`configs/` 中少量被读取的文件路径、以及 skip 条件中的可选依赖名，都是字符串级约定；改入口/路径时要同步测试。
 
 | 目录/文件 | 规模 | 依赖 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `unit/` | 45 文件 / 8913 行 | NumPy/SciPy/PyYAML、被测包、少量源码文本 | 无 | 清楚：独立发现根；少数文件偏大 |
-| `regression/` | 16 文件 / 2520 行 | 同上 + 可选 CPU Torch/编译器/资产 | 无 | 清楚：契约与入口闭包为主 |
+| `unit/` | 71 文件 / 21951 行 | NumPy/SciPy/PyYAML、被测包、少量源码文本 | 无 | 清楚：独立发现根；少数文件偏大 |
+| `regression/` | 10 文件 / 2475 行 | 同上 + 可选 CPU Torch/编译器/资产 | 无 | 清楚：契约与入口闭包为主 |
 | `unit/test_dynanav_slam_route.py` | 903 | 被测包 + 内联 fixture | 无 | **偏重**：单文件最大，读改成本高 |
 | `regression/test_dynanav_lio_launcher.py` | 545 | shell 启动器/外部 prefix 约定 | 无 | 可接受：命令组合多，需长文件覆盖 |
 | `native/dynanav_lio/` | 4 文件 / 451 行（含本 README） | ROS Jazzy + 已编译 core | `ctest` | 清楚：见其 README |
@@ -49,8 +49,8 @@ tests/
 ## 可读性评估
 
 - 命名与组织：**良好**。文件统一 `test_*.py`，类名表达被测主题（如 `QueryCliTests`、`NativeSafetyLoopIntegration`）；用例名是完整句子，失败时无需读代码即可定位。测试不写 docstring 是常规约定，不按“文档覆盖率低”扣分。
-- `unit/`：**可接受**。45 文件/8913 行，最长 [`test_dynanav_slam_route.py`](unit/test_dynanav_slam_route.py) 903 行、[`test_dynanav_capture_orchestration.py`](unit/test_dynanav_capture_orchestration.py) 542 行；编排类测试用 fake stepper/monkeypatch，读起来比断言密集的纯函数测试更重。unit 内 `@unittest.skipUnless` 1 处；全 `tests/` 共 5 处（unit 1、regression 4：`regression/test_navigation_safety.py` 2、`regression/test_robogauge_native_loop.py` 1、`regression/test_native_safety_integration.py` 1、`unit/test_dynanav_pedestrian.py` 1），条件都直接可读。
-- `regression/`：**可接受**。16 文件/2520 行，入口闭包与 CLI 测试需要构造 `subprocess`/假 socket；`test_native_safety_integration.py` 用真实观测构造 + 假 peer，属于刻意的集成测试。
+- `unit/`：**可接受**。71 文件/21951 行，最长 [`test_dynanav_slam_route.py`](unit/test_dynanav_slam_route.py) 903 行、[`test_dynanav_capture_orchestration.py`](unit/test_dynanav_capture_orchestration.py) 542 行；编排类测试用 fake stepper/monkeypatch，读起来比断言密集的纯函数测试更重。unit 内 `@unittest.skipUnless` 1 处；全 `tests/` 共 4 处（unit 1、regression 3：`regression/test_navigation_safety.py` 2、`regression/test_native_safety_integration.py` 1），条件都直接可读。
+- `regression/`：**可接受**。10 文件/2475 行，入口闭包与 CLI 测试需要构造 `subprocess`/假 socket；`test_native_safety_integration.py` 用真实观测构造 + 假 peer，属于刻意的集成测试。
 - `native/dynanav_lio/`：**可接受**，见其 README 的分级（C++ fixture 的断言组与 native 契约一一对应，但单 `main()` 承载多组断言）。
 - 没有发现空断言或只测 mock 的“假测试”；测试普遍校验具体值/结构，而不是仅 `assertTrue(mock.called)`。
 
@@ -59,7 +59,7 @@ tests/
 | 优先级 | 动作 | 理由 | 风险 | 验证方式 |
 | --- | --- | --- | --- | --- |
 | P2 | 把 [`unit/test_dynanav_slam_route.py`](unit/test_dynanav_slam_route.py)（903 行）按主题拆成 2–3 个 `test_*.py` | 单文件接近千行，失败定位与 review 成本高 | 低：只移动用例，不改断言；注意模块级常量/helper 也要显式共享 | 拆分前后 `unittest discover` 的用例数与结果一致 |
-| P2 | 给 24 个“读源码/AST”测试加统一注释头，写明“这是结构契约测试，重构需同步”，并在本文列出清单/模式 | 现在只能从代码看出，重构者容易误判为普通行为测试 | 无（纯注释/文档） | 抽查 5 个文件有注释；行为断言不变 |
+| P2 | 给 35 个“读源码/AST”测试加统一注释头，写明“这是结构契约测试，重构需同步”，并在本文列出清单/模式 | 现在只能从代码看出，重构者容易误判为普通行为测试 | 无（纯注释/文档） | 抽查 5 个文件有注释；行为断言不变 |
 | P2 | 在本文补“环境相关 skip 矩阵”：依赖（USD/Torch/rclpy）→ 影响文件/类 → 预期 skip 数 | skip 数随环境变化，容易被当成回归 | 无 | 与本机 `unittest -v` 的 `skipped` 行对照 |
 | P3 | 若后续引入测试 helper，放到显式包（如 `tests/support/`）而不是各文件复制；当前复制量小，暂不必动 | 现无共享 helper，复制尚可接受 | 低；需改 import 路径 | `discover` 通过、无 `__init__` 冲突 |
 
@@ -88,7 +88,7 @@ PYTHONPATH=src:tests/unit python3 -B -m unittest test_layered_mapping.QueryCliTe
 | 目录 | 覆盖内容 | 依赖 |
 | --- | --- | --- |
 | `tests/unit/` | 控制律、导航状态机、传感几何、来源/时钟、安全边界、配置解析、离线查询与脚本纯逻辑 | NumPy、SciPy、PyYAML 与标准库；`LocalHumanUSDTests` 需要本机 USD 运行时/人形资产，缺失时 skip（3 项） |
-| `tests/regression/` | 定位/规划/停车/策略契约、CLI 与入口闭包、原生安全集成（假 socket） | NumPy、SciPy、PyYAML 与标准库；部分用例另需可选 CPU Torch、C++ 编译器或私有测量资产，缺失时按用例 skip（本次 5 项均因 Torch 缺失） |
+| `tests/regression/` | 定位/规划/停车/策略契约、CLI 与入口闭包、原生安全集成（假 socket） | NumPy、SciPy、PyYAML 与标准库；部分用例另需可选 CPU Torch、C++ 编译器或私有测量资产，缺失时按用例 skip（本次 4 项均因 Torch 缺失） |
 | `tests/native/` | C++/原生构建与 fixtures 测试（`dynanav_lio/` 含 README 与夹具） | 需要本机构建产物；不在上面两条命令内 |
 
 ## 编写与阅读注意

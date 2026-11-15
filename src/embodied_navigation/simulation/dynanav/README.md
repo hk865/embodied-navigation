@@ -6,7 +6,7 @@
 
 本目录负责办公室 DynaNav 场景、Go2 RGB-D/IMU 采集、显式楼梯实验与 oracle 分层地图适配。定位算法、语义地图数据结构和控制器仍属于各自模块。已完成的完整 GT 路线旁路 LIO/LIVO 对照与实际视觉闭环须分别看待，2026-11-09阶段结果见[实验续篇](../../../../docs/experiments/dynanav-20261109-continuation.md)；先前失败保留于[历史报告](../../../../docs/experiments/dynanav-20261109.md)。
 
-本目录是**隔离的 Isaac/DynaNav 实验路径**（`docs/architecture.md` 的四条执行路径 D），与默认主路径/RoboGauge benchmark 不共享进程图与 ROS 话题；产物写外部数据卷 `experiments/<run>/`，**不写 `runs/`**。
+本目录是**隔离的 Isaac/DynaNav 实验路径**（`docs/architecture.md` 的两条执行路径 D），与默认主路径不共享进程图与 ROS 话题；产物写外部数据卷 `experiments/<run>/`，**不写 `runs/`**。
 
 ## 目录结构
 

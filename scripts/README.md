@@ -151,7 +151,7 @@ Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` �
 
 - 手工三终端（路径 D 原始形态）与统一 supervisor 两种用法、以及每步的参数，见 [`../docs/experiments/dynanav-online-person-20261109.md`](../docs/experiments/dynanav-online-person-20261109.md)（第 127 行起"从仓库入口复跑相同配置"给的是实际命令）。
 - 重建地图的完整命令与输出说明见 [`../docs/experiments/reconstruct_dynanav_slam_map.md`](../docs/experiments/reconstruct_dynanav_slam_map.md)。
-- 路径 D 在四条执行路径中的定位见 [`../docs/architecture.md`](../docs/architecture.md)。
+- 路径 D 在两条执行路径中的定位见 [`../docs/architecture.md`](../docs/architecture.md)。
 
 ## 测试
 

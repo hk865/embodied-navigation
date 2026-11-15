@@ -18,11 +18,8 @@ src/embodied_navigation/control/tracking/
 ├── cascade_core.py         # 1850 行，actual-SLAM/IMU/SCAN cascade 核心（Controller）
 ├── control_core.py         # 407 行，轨迹跟随/倾角/航向门/障碍走廊等共享几何策略
 ├── pid_core.py             # 26 行，角度归一化与 slew 限幅
-├── planned_step_filter.py  # 74 行，只在原始 body 障碍门里解释计划上坡/地面
 ├── policy_selection.py     # 70 行，策略源码与模型路径选择（读配置与文件存在性）
 ├── replan_policy.py        # 26 行，区分保护性零命令与 SCAN 几何耗尽
-├── route_progress.py       # 127 行，连续 3D 折线上的单调弧长进度
-└── terrain_speed.py        # 20 行，计划楼梯几何附近的巡航速度压制
 ```
 
 实测合计：9 个 Python 文件 2600 行；最大文件 `cascade_core.py` 1850 行，占本子包 71%。
@@ -33,8 +30,8 @@ src/embodied_navigation/control/tracking/
 | --- | --- | --- |
 | 代码 | `cascade_core.py` | 活代码；`Controller` 是现役控制核心，`planning/reference/global_route_reference.py` 与 `navigation/mission/continuous_route.py` 都**继承**它（`StableProjectionController(Controller)`、`CausalHandoffProjectionController(StableProjectionController)`） |
 | 代码 | `control_core.py` | 活代码；`follow_trajectory`、`RawImuTilt`、`HeadingGate`、`obstacle_ahead` 被 `navigation/base_node.py`、`pid_support.py`、`ros_node.py` 直接调用 |
-| 代码 | `pid_core.py`、`replan_policy.py`、`route_progress.py`、`terrain_speed.py`、`planned_step_filter.py` | 活代码，小工具/几何判断，调用点见耦合表 |
-| 代码 | `policy_selection.py` | 活代码，但不是控制律：解析 Student worker 源码路径、模型路径并读 `common.config`；被 `robot/unitree/policy/worker.py` 与 `simulation/truth_worker.py` 使用 |
+| 代码 | `pid_core.py`、`replan_policy.py` | 活代码，小工具/几何判断，调用点见耦合表 |
+| 代码 | `policy_selection.py` | 活代码，但不是控制律：解析 Student worker 源码路径、模型路径并读 `common.config`；被 `robot/unitree/policy/worker.py` 使用 |
 | 代码 | `__init__.py` | 空文件，无逻辑 |
 
 **日志/输出**
@@ -65,7 +62,7 @@ src/embodied_navigation/control/tracking/
 
 ## 模块内文件耦合
 
-依赖方向（包内）：`cascade_core → control_core`？——**否**，两者互不 import；`planned_step_filter → route_progress` 是唯一的包内 import 边（相对 import `.route_progress`）。`pid_core`、`replan_policy`、`terrain_speed`、`policy_selection` 是叶子。
+依赖方向（包内）：`cascade_core → control_core`？——**否**，两者互不 import。`pid_core`、`replan_policy`、`policy_selection` 是叶子。
 
 跨包方向：`cascade_core.py` 模块级依赖 `../parking/ordinary_parking`、`../parking/parking_zero_contract`、`planning.reference.spatial_reference`，并延迟依赖 `../parking/{integral_unload,parking_pose10hz,terminal_reference}`、`robot/unitree/policy/lower_loop_ack`、`common.observation`。**`tracking` 是本 scope 里唯一模块级依赖 `parking` 状态机的子包**，反向边（`parking/terminal_owner`、`parking/transition_gate` → `cascade_core`）是延迟 import，所以包级双向但无导入期环（control 下 39 个非 launch 模块均可单独 import）。
 
@@ -74,11 +71,8 @@ src/embodied_navigation/control/tracking/
 | `cascade_core.py` | 1850 | `../parking/{ordinary_parking,parking_zero_contract}`、`planning.reference.spatial_reference`（模块级）；`../parking/{integral_unload,parking_pose10hz,terminal_reference}`、`robot/unitree/policy/lower_loop_ack`、`common.observation`（延迟） | `planning/reference/global_route_reference.py`（子类）、`navigation/mission/continuous_route.py`（子类）、`navigation/pid_support.py`、`perception/sensors/feedback_mailbox.py`、`../parking/{terminal_owner,transition_gate}.py` | 偏重：1594 行单类 + 1053 行单方法 |
 | `control_core.py` | 407 | 标准库 + numpy（无内部 import） | `navigation/{base_node,pid_support,ros_node}.py` | 可接受：`follow_trajectory` 86 行 |
 | `pid_core.py` | 26 | 标准库 + numpy | `navigation/pid_support.py` | 清楚 |
-| `route_progress.py` | 127 | numpy | `planned_step_filter.py` | 清楚 |
-| `planned_step_filter.py` | 74 | `.route_progress`（模块级）、numpy | `navigation/building_navigation.py` | 清楚 |
-| `policy_selection.py` | 70 | `common.config`、标准库 | `robot/unitree/policy/worker.py`、`simulation/truth_worker.py` | 可疑：控制包里的资产路径选择器 |
+| `policy_selection.py` | 70 | `common.config`、标准库 | `robot/unitree/policy/worker.py` | 可疑：控制包里的资产路径选择器 |
 | `replan_policy.py` | 26 | 无 | `navigation/base_node.py` | 清楚 |
-| `terrain_speed.py` | 20 | numpy | `navigation/building_navigation.py` | 清楚 |
 | `__init__.py` | 空 | 无 | 无 | 清楚 |
 
 四类问题：
@@ -88,22 +82,19 @@ src/embodied_navigation/control/tracking/
 - **跨层直达**：`cascade_core.py` 模块级 import `../parking/ordinary_parking`（状态机，不只是契约），并直接调用 `ordinary.update(...)`、`ordinary.capture_grid.evidence()`、`ordinary.observe_business_rejection(...)`；`Controller.__init__` 还直接 `copy.deepcopy(config)` 后自己解析 10+ 个 `cascade.*` 键，绕过任何配置层封装。
 - **隐式契约**：`Controller.update()` 的返回值是 `(ndarray[3], dict)`，mode 字符串 `drive`/`turn`/`brake`/`hold`/`capture` 与 `pre_turn`/`settle`/`path_end_hold`/`reference_constraint_hold` 都靠字符串比较；`ordinary_parking.update()` 的 8 个位置参数由 `cascade_core` 按顺序传；`feedback_mailbox.py` 直接 import `cascade_core.rotation/vector/wrap` 三个工具函数（跨子包复用私有工具）。
 
-结论：耦合**偏重**。`control_core`、`pid_core`、`route_progress`、`terrain_speed`、`replan_policy` 是清楚的纯计算叶子；债务全部集中在 `cascade_core.py` —— 它同时是控制律、模式调度器、停车状态机宿主和几何工具库，并且是 `tracking ↔ parking` 双向依赖的 tracking 侧端点。
+结论：耦合**偏重**。`control_core`、`pid_core`、`replan_policy` 是清楚的纯计算叶子；债务全部集中在 `cascade_core.py` —— 它同时是控制律、模式调度器、停车状态机宿主和几何工具库，并且是 `tracking ↔ parking` 双向依赖的 tracking 侧端点。
 
 ## 可读性评估
 
 | 文件 | 分级 | 证据 |
 | --- | --- | --- |
-| `route_progress.py` | 良好 | 127 行、1 类、docstring 比 1.0、22 行注释，类 docstring 说明 forward-prefix 搜索与 witness 阶段 |
 | `pid_core.py` | 良好 | 26 行、2 函数、docstring 比 0.5，`slew` 的 dt 钳位与"零请求吸附"写在 docstring 里 |
 | `replan_policy.py` | 良好 | 26 行、1 函数 docstring 1.0，明确"不授权运动/不延长新鲜度" |
-| `planned_step_filter.py` | 可接受 | 74 行、3 函数 docstring 比 0.0，最长 37 行，5 行注释解释"计划地面不是墙" |
-| `terrain_speed.py` | 可接受 | 20 行、2 函数 docstring 比 0.0，但只有 0.01/0.1/0.8/0.45 四个阈值，且模块 docstring 说明"只用计划几何" |
 | `policy_selection.py` | 可接受 | 70 行、6 函数 docstring 比 0.167，最长 13 行；返回纯 dict，但"哪些路径必须存在"分散在三个函数里 |
 | `control_core.py` | 可接受 | 407 行、20 函数 docstring 比 0.4、最长 `follow_trajectory` 86 行、14 行注释；`HeadingGate.update` 44 行无 docstring |
 | `cascade_core.py` | 需改进 | 1850 行、26 函数 docstring 比 0.654（模块函数有 docstring，14 个 `Controller` 方法大多没有）、最长 1053 行、3 个 >80 行函数；1053 行里混了模式分派、停车委托、积分卸载校验、捕获/保持 dwell、诊断行拼装 |
 
-- 结构问题 vs 文档问题：`cascade_core.py` 是**结构问题**（单方法 1053 行，改一行要在千行上下文里定位）；`control_core.py`、`policy_selection.py`、`planned_step_filter.py` 主要是文档问题（缺 docstring，函数本身不长）。
+- 结构问题 vs 文档问题：`cascade_core.py` 是**结构问题**（单方法 1053 行，改一行要在千行上下文里定位）；`control_core.py`、`policy_selection.py` 主要是文档问题（缺 docstring，函数本身不长）。
 - 抽查复核：`Controller.update` 实测 798–1850 行共 1053 行（等于文件尾），`control_core.follow_trajectory` 实测 144–229 行共 86 行，与事实包一致。
 
 ## 重构建议
@@ -117,20 +108,20 @@ src/embodied_navigation/control/tracking/
 | P1 | 把 `PARKING` 常量表与 `../parking/` 的 `CONFIG`/`SPEC` 去重：由 `parking` 侧导出唯一来源，`cascade_core` 引用它 | 同一组停车数值第 4 份副本，改一处不同步就不会报错 | 两处数值当前一致，但语义不同（一个是控制增益、一个是窗口契约），错误合并会混淆"捕获容差"与"控制死区" | 逐键比对两表交集数值，只把重复键改为引用，不合并语义不同的键 |
 | P2 | 把 8 个模块级纯工具函数（`canonical`/`sha`/`wrap`/`vector`/`integer`/`rotation`/`deadband`/`bounded`）移到 `common/`，与 `pid_core.wrap`、`relative_pid.wrap_angle` 合并 | 三处角度归一化 + 三处 `canonical` JSON 序列化 | `feedback_mailbox.py` 等外部模块直接 import 这些函数名，移动会破坏调用方 | 对 `[-3π, 3π]` 采样比对 wrap 逐位一致；`grep` 全部 import 点后一次性改 |
 | P2 | `Controller.__init__`（105 行）里的配置解析抽成 `CascadeConfig` dataclass（保留全部 raise 与边界） | 105 行构造 + 10+ 个 `config.get` 散落 | 构造期 raise 是"配置错误即失败"契约 | 对每类非法 `cascade.*` 各写 1 条断言 raise 的用例 |
-| P2 | `policy_selection.py` 移出 `control/`（放 `robot/unitree/` 或 `common/`） | 它是资产路径选择，不是控制计算，却让"控制包"带上文件系统 IO | 两个调用方的 import 路径会变 | 先确认调用方只有 `robot/unitree/policy/worker.py` 与 `simulation/truth_worker.py` |
+| P2 | `policy_selection.py` 移出 `control/`（放 `robot/unitree/` 或 `common/`） | 它是资产路径选择，不是控制计算，却让"控制包"带上文件系统 IO | 两个调用方的 import 路径会变 | 先确认调用方只有 `robot/unitree/policy/worker.py` |
 | P2 | 删掉 `Controller.ttl`（未读取的赋值）或在诊断行里真正使用它 | 死字段容易被误读成"TTL 可配" | 无 | `grep self.ttl` 为 0 处读取 |
 
 没有 P0：未发现会改变控制输出正确性的问题；但要注意 `cascade_core.py` 无测试覆盖，任何改动都属"高频风险区"，必须先建对照再动。
 
 ## 输入输出与调用
 
-输入是 SLAM 位姿/旋转/速度、IMU、SCAN 采样、点云、路线与目标；主要控制计算输出 `[vx, vy, wz]` 与诊断字典；路径选择等辅助接口另有本地文件访问。主要调用方是 `../../navigation/pid_control.py`/`pid_route.py`、`../../navigation/ros_node.py`、`../../navigation/building_navigation.py` 与 `../../planning/reference/`。时间参数全部是调用方给的原生整数纳秒（`Controller.update` 的 `clock_ns`/`wall_ns`），本模块不采样时钟。
+输入是 SLAM 位姿/旋转/速度、IMU、SCAN 采样、点云、路线与目标；主要控制计算输出 `[vx, vy, wz]` 与诊断字典；路径选择等辅助接口另有本地文件访问。主要调用方是 `../../navigation/pid_control.py`/`pid_route.py`、`../../navigation/ros_node.py` 与 `../../planning/reference/`。时间参数全部是调用方给的原生整数纳秒（`Controller.update` 的 `clock_ns`/`wall_ns`），本模块不采样时钟。
 
-术语见 [docs/glossary.md](../../../../docs/glossary.md)；四条执行路径与默认状态机见 [docs/architecture.md](../../../../docs/architecture.md)。
+术语见 [docs/glossary.md](../../../../docs/glossary.md)；两条执行路径与默认状态机见 [docs/architecture.md](../../../../docs/architecture.md)。
 
 ## 测试
 
-`../../../../tests/regression/test_planned_step_filter.py`、`test_route_progress.py`、`test_terrain_speed.py` 分别覆盖对应文件。`cascade_core.py` 与 `control_core.py` 没有专用单测，只随导航运行链路使用，改动需自行补测；`pid_core.py`、`replan_policy.py`、`policy_selection.py` 同样无直接 import 命中。
+`cascade_core.py` 与 `control_core.py` 没有专用单测，只随导航运行链路使用，改动需自行补测；`pid_core.py`、`replan_policy.py`、`policy_selection.py` 同样无直接 import 命中。
 
 ## 限制
 

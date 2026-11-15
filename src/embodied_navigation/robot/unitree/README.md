@@ -85,7 +85,6 @@ src/embodied_navigation/robot/unitree/
 | `cascade.command_limits`（控制器输出界的权威配置） | 0.6 | 0.2 | 0.6 | `configs/control/settings.json`，经 `bridge.command_limits(profile)` 读入 |
 | bridge 无 profile 时的 fallback | 0.3 | 0.2 | 0.3 | `bridge.py` 的 `LIMITS` |
 | Student 策略侧 `command_bounds` | 0.3 | 0.2 | 0.3 | `policy/student.py` |
-| RoboGauge benchmark 命令门 | 0.6 | 0.2 | 0.3 | [navigation/robogauge/commands.py](../../navigation/robogauge/commands.py) |
 | 控制器发布前 `max_speed` 参数（默认） | 0.12 | — | — | [navigation/base_node.py](../../navigation/base_node.py) |
 
 各层职责不同：cascade 限制控制器输出，bridge 限制写入命令文件，Student 限制策略动作，RoboGauge 是另一条部署；`configs/scenarios/README.md` 里写的 “student 有效命令界” 是运行档位摘要，不是 bridge fallback。

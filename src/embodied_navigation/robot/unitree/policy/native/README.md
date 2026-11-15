@@ -13,7 +13,7 @@ src/embodied_navigation/robot/unitree/policy/native/
 └── worker.py       # 379 行，native64 socket 关节控制循环（依赖注入）
 ```
 
-**更正一处常见误解**：本目录**没有** `CMakeLists.txt`，也没有 C++ 源文件；磁盘实测只有上表 5 个条目，`find src/embodied_navigation/robot -iname 'CMake*' -o -iname '*.cpp'` 为空。带 CMake 的原生模块在 RoboGauge 一侧（`simulation/gazebo/robogauge/motor_src`），构建命令见 [docs/robogauge/README.md](../../../../../../docs/robogauge/README.md) 的「Native Gazebo actuator build」。
+**更正一处常见误解**：本目录**没有** `CMakeLists.txt`，也没有 C++ 源文件；磁盘实测只有上表 5 个条目，`find src/embodied_navigation/robot -iname 'CMake*' -o -iname '*.cpp'` 为空。
 
 ## 代码、日志与配置
 
@@ -36,13 +36,13 @@ src/embodied_navigation/robot/unitree/policy/native/
 
 ## 模块内文件耦合
 
-- 依赖方向：`observation.py` → `simulation/mesh_terrain.py`（同仓库数值工具）；`worker.py` → `observation.py` + `common/state_contract.py` + `control/safety/simulation_gate.py` + `simulation/safety_state.py`。`contract.json` 只被 `observation.py` 读取。目录内是“数据 + 观测 + 循环”的单向依赖，**无环**。
-- 反向依赖：`observation.py` 被 `robogauge/contract.py`、`simulation/dynanav/capture/{control,physics}.py`、`simulation/gazebo/robogauge/native_loop.py` 复用；`worker.py` 被 `policy/worker.py`（复用循环）与 `simulation/truth_worker.py` 复用。即本目录是**被复用的底层库**，不 import 上层。
+- 依赖方向：`worker.py` → `observation.py` + `common/state_contract.py` + `control/safety/simulation_gate.py` + `simulation/safety_state.py`。`contract.json` 只被 `observation.py` 读取。目录内是“数据 + 观测 + 循环”的单向依赖，**无环**。
+- 反向依赖：`observation.py` 被 `robogauge/contract.py`、`simulation/dynanav/capture/{control,physics}.py` 复用；`worker.py` 被 `policy/worker.py`（复用循环）复用。即本目录是**被复用的底层库**，不 import 上层。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
-| `observation.py` | 322 | `simulation.mesh_terrain`；`contract.json` | robogauge.contract、dynanav capture×2、gazebo native_loop | 清楚：纯数值/几何，无 IO 副作用 |
-| `worker.py` | 379 | `observation`、`common.state_contract`、`control.safety.simulation_gate`、`simulation.safety_state` | `policy.worker`、`simulation.truth_worker` | 偏重：`main()` 314 行，但依赖是显式注入，边界可读 |
+| `observation.py` | 322 | `contract.json` | robogauge.contract、dynanav capture×2 | 清楚：纯数值/几何，无 IO 副作用 |
+| `worker.py` | 379 | `observation`、`common.state_contract`、`control.safety.simulation_gate`、`simulation.safety_state` | `policy.worker` | 偏重：`main()` 314 行，但依赖是显式注入，边界可读 |
 | `contract.json` | 414 | 无（数据） | `observation.py`（+ dynanav scene 硬编码路径） | 清楚：单一数值来源 |
 | `__init__.py` | 0 | 无 | 无 | 空包，可接受 |
 
@@ -50,7 +50,7 @@ src/embodied_navigation/robot/unitree/policy/native/
 
 - **上帝文件**：本目录没有（文件最大 379 行）；但 `worker.main()` 单函数 314 行。
 - **重复实现**：本目录内没有。跨目录有一处**有意的数值重复**：`contract.json` 的 `joint_names`/`default_joint_positions` 与 [robogauge/contract.py](../../robogauge/contract.py) 的 `NATIVE_NAMES`/`QDEFAULT` 是同一组 Go2 常量，靠 `tests/regression/test_robogauge_contract.py` 断言两者相等来防漂移（该测试同时校验 `QDEFAULT == CONTRACT["default_joint_positions"]`）。
-- **跨层直达**：有——`worker.py` 直接 import `control/safety` 与 `simulation/safety_state`（逐帧安全检查），`observation.py` 直接 import `simulation/mesh_terrain`。这是“底层库依赖同仓工具”而非反向调用，方向一致，风险可控。
+- **跨层直达**：有——`worker.py` 直接 import `control/safety` 与 `simulation/safety_state`（逐帧安全检查）。这是“底层库依赖同仓工具”而非反向调用，方向一致，风险可控。
 - **隐式契约**：有——`contract.json` 的键名/切片（`observations.concatenation_order`、`request64`）是隐式 schema；socket 二进制帧长固定（收 64×float64=512 字节、回 16×float64=128 字节），由对端 Gazebo actuator 决定；`state[55]/[56]` 的 iteration/fault 语义只在 contract 里说明。
 
 结论：**耦合清楚**。本目录是“数据契约 + 纯观测 + 注入式循环”的三层，依赖方向单一，主要成本在 `main()` 的长度与 `contract.json` 的隐式 schema。

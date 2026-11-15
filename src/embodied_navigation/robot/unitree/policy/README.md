@@ -40,12 +40,12 @@ src/embodied_navigation/robot/unitree/policy/
 ## 模块内文件耦合
 
 - 依赖方向：`worker.py`（组合根）→ `student.py`、`native/`、`lower_loop_ack.py`、`control/`；`student.py` → `speed_tiers.py`、`common/config`、`common/input_freshness`；`lower_loop_ack.py` → `speed_tiers.py`、`student_xy_stop_takeover_ack.py`、`yaw_measurement_feedback.py`、`control/parking/integral_unload`；`speed_tiers.py` 与 `student_xy_stop_takeover_ack.py` 是叶子。**目录内无 import 环**（`worker → native/worker` 是单向复用）。
-- 反向依赖（被谁用）：`lower_loop_ack.py` 被 `control/parking/transition_gate.py`、`control/tracking/cascade_core.py`、`navigation/base_node.py`、`navigation/pid_control.py`、`worker.py` 五处 import；`student.py` 被 `simulation/dynanav/capture/policy.py`、`simulation/truth_worker.py` 复用。即 robot 与 control/navigation 之间存在**包级双向依赖**，但文件级未成环。
+- 反向依赖（被谁用）：`lower_loop_ack.py` 被 `control/parking/transition_gate.py`、`control/tracking/cascade_core.py`、`navigation/base_node.py`、`navigation/pid_control.py`、`worker.py` 五处 import；`student.py` 被 `simulation/dynanav/capture/policy.py` 复用。即 robot 与 control/navigation 之间存在**包级双向依赖**，但文件级未成环。
 
 | 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
 | --- | ---: | --- | --- | --- |
 | `worker.py` | 479 | common×2、control×2、本目录×5（policy 包、lower_loop_ack、native 包、native.worker、student） | 无（进程入口，由 launch 启动） | 偏重：11 个内部 import 的组合根，`main()` 416 行 |
-| `student.py` | 837 | common×2、speed_tiers | worker、dynanav/capture/policy、simulation/truth_worker | 偏重：三件事（45D 计算 / COM 速度 PID / 运行时装配）在一个文件 |
+| `student.py` | 837 | common×2、speed_tiers | worker、dynanav/capture/policy | 偏重：三件事（45D 计算 / COM 速度 PID / 运行时装配）在一个文件 |
 | `lower_loop_ack.py` | 561 | speed_tiers、xy_stop_ack、yaw_feedback、control.parking.integral_unload | 5 处（见上） | 清楚但被跨层复用，改动影响面大 |
 | `speed_tiers.py` | 152 | 无 | lower_loop_ack、student、yaw_feedback、dynanav/capture/policy | 清楚（纯叶子） |
 | `student_xy_stop_takeover_ack.py` | 154 | 无 | lower_loop_ack | 清楚 |
@@ -80,7 +80,7 @@ src/embodied_navigation/robot/unitree/policy/
 | 优先级 | 动作 | 理由 | 风险 | 验证方式 |
 | --- | --- | --- | --- | --- |
 | P1 | 把 `worker.main()` 的嵌套闭包（`receive/read_command/request/metadata/finalize_actor_frame`）提成模块级函数，用显式小状态对象代替 `latest` dict | 416 行单函数 + 可变 dict 闭包是改错成本最高的地方 | 中高：ACK/计时/收据顺序不能变；**当前无该文件的直接测试** | 先补一个假 socket + 假 native 循环的 CPU 测试，再逐步搬；改动后跑 `tests/regression` |
-| P1 | 把 `CorrectionOnlyPID`（含 181 行 `update()`）拆到独立模块，`student.py` 只留 exact45 + Runtime | 837 行三合一，PID 与 45D 数值契约改动原因不同 | 中：数值行为必须逐位不变；`student.py` 被 capture/truth_worker 复用 | 拆前用现有回归 + 新增“同输入同输出”等价测试；确认 `grep -rn "student import"` 的 3 个消费者仍可用 |
+| P1 | 把 `CorrectionOnlyPID`（含 181 行 `update()`）拆到独立模块，`student.py` 只留 exact45 + Runtime | 837 行三合一，PID 与 45D 数值契约改动原因不同 | 中：数值行为必须逐位不变；`student.py` 被 capture 复用 | 拆前用现有回归 + 新增“同输入同输出”等价测试；确认 `grep -rn "student import"` 的 3 个消费者仍可用 |
 | P2 | 4 处可选扩展的动态加载加显式前置检查：`helper_path.is_file()` 不成立时抛带路径的可读错误（现在会得到 `FileNotFoundError`）；并补文档说明这些 helper 不在仓库、默认关闭 | 4 个扩展文件（`pre_zero_integral_unload.py`、`student_xy_stop_takeover.py`、`student_yaw_measurement_feedback.py`、`student_yaw_pd_fade.py`）都不在仓库内，启用配置时的失败信息不易定位；默认关闭所以不是 P0/P1 | 低 | 临时启用其中一个配置跑启动，确认错误信息含 helper 路径 |
 | P2 | `exact_student45()` 内联旋转矩阵与 `native/observation.py::quaternion_rotation()` 的重复：抽公共数值 helper，或在两处加注释说明为何保留两份 | 同一公式两份实现，改一处漏一处的风险 | 低（抽 helper 时注意 dtype/归一化） | `test_native_safety_integration` + `test_robogauge_contract`（都对比 `quaternion_rotation`） |
 | P2 | 把 `20_000_000`（20 ms ACK 时钟差）提为命名常量并补 docstring；给 `worker.py` 的闭包补 docstring | 魔法数与 0.053 的 docstring 覆盖率是纯文档成本 | 无行为风险 | 静态检查 + 跑 regression |
