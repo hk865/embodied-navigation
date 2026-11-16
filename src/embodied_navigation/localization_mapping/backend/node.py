@@ -48,6 +48,7 @@ from .trace import BackendTrace, graph_snapshot
 from .visual import VisualObservation, decode_image
 from .submaps import SubmapConfig
 from .surfaces import SurfaceConfig
+from .visual_retrieval import VisualRetrievalConfig
 from .scan_context import ScanContextConfig
 
 
@@ -214,7 +215,7 @@ def main(argv=None) -> int:
     prior = None if args.prior_map is None else MapStore.load(args.prior_map)
     evidence = {} if args.evidence_config is None else json.loads(args.evidence_config.read_text())
     row = dict(evidence.get('backend', {}))
-    for name, constructor in [('measured_submap', SubmapConfig), ('surface', SurfaceConfig), ('scan_context', ScanContextConfig)]:
+    for name, constructor in [('measured_submap', SubmapConfig), ('surface', SurfaceConfig), ('scan_context', ScanContextConfig), ('visual_retrieval', VisualRetrievalConfig)]:
         if name in row:
             row[name] = constructor(**row[name])
     config = BackendConfig(**row)

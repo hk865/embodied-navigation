@@ -35,6 +35,7 @@ from .correction import CorrectionAdmission
 from .keyframes import Keyframe, transform_points
 from .submaps import SubmapConfig, build_submap
 from .surfaces import SurfaceConfig
+from .visual_retrieval import VisualIndex, VisualRetrievalConfig
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
@@ -46,6 +47,8 @@ from .trace import graph_snapshot
 class BackendConfig:
     use_measured_submaps: bool = False
     use_visual_verification: bool = False
+    use_visual_retrieval: bool = False
+    visual_retrieval: VisualRetrievalConfig = field(default_factory=VisualRetrievalConfig)
     use_surface_verification: bool = False
     gravity_aligned: bool = False
     visual_agree_translation_m: float = 0.3
@@ -117,6 +120,7 @@ class SlamBackend:
         self.map = MapStore(config.map_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
         self.index = ScanContextIndex(config.scan_context)
+        self.visual_index = VisualIndex(config.visual_retrieval) if config.use_visual_retrieval else None
         self.admission = self._new_admission()
         self.loop_count = 0
         self.last_error: str | None = None
@@ -129,6 +133,8 @@ class SlamBackend:
         if prior_map is not None:
             for key, desc in prior_map.descriptors.items():
                 self.index.add(key, desc)
+                if self.visual_index is not None:
+                    self.visual_index.add(prior_map.keyframes[key])
 
     def _record(self, event_name, **fields):
         if self.trace is not None:
@@ -182,6 +188,8 @@ class SlamBackend:
         loop_key, rejected = self._find_loop(keyframe, desc)
         self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
         self.index.add(keyframe.key, desc)
+        if self.visual_index is not None:
+            self.visual_index.add(self.map.keyframes[keyframe.key])
         if loop_key is not None:
             self.loop_count += 1
             if self.trace is not None:
@@ -246,6 +254,7 @@ class SlamBackend:
             key
             for key, old in self.map.keyframes.items()
             if key in recent or keyframe.stamp_ns - old.stamp_ns < gap_ns
+            or (self.config.use_visual_retrieval and key[0] != keyframe.key[0])
         }
         if self.trace is not None:
             self._record("loop_exclusions", excluded=[{
@@ -363,6 +372,18 @@ class SlamBackend:
         self._record("search_candidates", query_key=keyframe.key,
                      candidates=[{"candidate_key": k, "distance": d, "yaw_rad": y}
                                  for k, d, y in candidates], icp_limit=self.config.icp_candidates)
+        # Keep modality scores separate: an image proposal has its own bounded
+        # quota and must not be truncated by a Scan Context distance or quota.
+        visual_candidates = [] if self.visual_index is None else self.visual_index.query(keyframe, exclude=exclude)
+        proposals = {key: [dist, yaw, False] for key, dist, yaw in candidates[:self.config.icp_candidates]}
+        for key, distance in visual_candidates:
+            if key in proposals:
+                proposals[key][2] = True
+            else:
+                proposals[key] = [None, 0., True]
+        if self.visual_index is not None:
+            self._record("visual_candidates", candidates=[{"candidate_key": key, "distance": distance}
+                         for key, distance in visual_candidates], merged_keys=list(proposals))
         best = None
         source = keyframe.points_body()
         source_keys = [keyframe.key] * len(source)
@@ -372,28 +393,33 @@ class SlamBackend:
             source_keys = measured.point_sources
             self._record("measured_source", source_keys=measured.source_keys, points=len(source))
         attempted, verified = [], []
-        for key, dist, yaw in candidates[: self.config.icp_candidates]:
+        rejection_reasons = {}
+        for key, (dist, yaw, visual_candidate) in proposals.items():
             self._trace_candidate = [keyframe.key, key]
-            if dist > self.config.max_scan_context_distance:
+            if not visual_candidate and dist > self.config.max_scan_context_distance:
                 self._record("candidate_skip", candidate_id=self._trace_candidate, reason="scan_context_distance", distance=dist)
-                break
+                rejection_reasons[key] = "scan_context_distance"
+                continue
             attempted.append(key)
             T_init = store.poses[key] @ yaw_pose(yaw)
-            if self.config.use_visual_verification:
+            requires_visual = self.config.use_visual_verification or visual_candidate
+            if requires_visual:
                 from .visual import verify_visual
                 visual = verify_visual(keyframe, store.keyframes[key])
                 self._record("visual_verification", candidate_key=key, status=visual.status)
                 if visual.status != "verified":
+                    rejection_reasons[key] = visual.status
                     continue
                 T_init = store.poses[key] @ visual.T_target_source
             self._target_point_sources = None
             target = submap(key)
             result = self._register(source, target, T_init)
-            if result is not None and self.config.use_visual_verification:
+            if result is not None and requires_visual:
                 translation, rotation = pose_difference(T_init, result.T_target_source)
                 if translation > self.config.visual_agree_translation_m or rotation > self.config.visual_agree_rotation_rad:
                     self._record("visual_icp_disagreement", candidate_key=key,
                                  translation_m=translation, rotation_rad=rotation)
+                    rejection_reasons[key] = "visual_icp_disagreement"
                     result = None
             if result is not None and self.config.use_surface_verification:
                 from .surfaces import model_surfaces, compare_surfaces
@@ -403,6 +429,7 @@ class SlamBackend:
                 self._record("surface_verification", candidate_key=key, accepted=surfaces.accepted,
                              reason=surfaces.reason, rmse_m=surfaces.rmse_m)
                 if not surfaces.accepted:
+                    rejection_reasons[key] = surfaces.reason
                     result = None
             self._record("candidate_verified", candidate_id=self._trace_candidate,
                          accepted=result is not None,
@@ -415,10 +442,18 @@ class SlamBackend:
             "candidate_key": key,
             "status": ("selected_best" if best is not None and key == best[0]
                        else "verified_not_selected" if key in verified
+                       else rejection_reasons[key] if key in rejection_reasons
                        else "icp_rejected" if key in attempted
                        else "not_run_icp_limit" if i >= self.config.icp_candidates
                        else "scan_context_distance"),
         } for i, (key, _, _) in enumerate(candidates)])
+        if self.visual_index is not None:
+            self._record("merged_search_outcome", candidates=[{
+                "candidate_key": key, "visual": visual_candidate, "scan_context_distance": dist,
+                "status": ("selected_best" if best is not None and key == best[0]
+                           else "verified_not_selected" if key in verified
+                           else rejection_reasons.get(key, "icp_rejected")),
+            } for key, (dist, _, visual_candidate) in proposals.items()])
         return best
 
     def _register(self, source_body, target_world, T_init) -> IcpResult | None:

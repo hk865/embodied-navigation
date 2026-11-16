@@ -4,7 +4,7 @@
 
 基于受控实验备份提交 `42fc6fa`，独立分支 `refactor/05-observed-loop-evidence`。
 原工作树未改动，不推送。本版改变后端的可选候选验证，不改变导航订阅的原始里程计。
-无配置时三个模块均关闭；配置通过启动器复制到 run/configuration 后读取，不新增环境变量开关。
+无配置时四个开关均关闭；配置通过启动器复制到 run/configuration 后读取，不新增环境变量开关。
 
 ## 实现
 
@@ -21,11 +21,11 @@
 - `backend/visual.py`：整流图像上的实测激光投影 patch，双向 ratio test、3D RANSAC 刚体拟合。
   返回 body 到 body 的 SE3 仅作 ICP 初始化，并检查视觉和 ICP 的位姿一致性；
   缺图、超时、无纹理、错误几何或退化时明确拒绝。外观相似度不生成图边。
-  当前仍由 Scan Context 提名候选，视觉尚无独立地点召回索引。
+  追加的 `visual_retrieval.py` 用图像独立提名候选，与 Scan Context 候选合并；细节见后文。
 - `keyframes.py` 接收可选 `visual.npz`；ROS 节点可订阅 Image/CameraInfo，按时间关联，
   要求显式 optical-frame 外参、整流声明、同图像 frame/尺寸和合法 pinhole 标定。
   不做时间插值，不隐含相机安装方向；地图 NPZ 保存/恢复视觉观测。
-- 三个模块独立开关；接受的回环仍只有一条原有 ICP 图边和原有信息矩阵，
+- 四个开关独立配置；接受的回环仍只有一条原有 ICP 图边和原有信息矩阵，
   不把重复点、视觉复核或表面复核当作额外独立信息。原运动一致性与修正准入门继续执行。
 
 ## 使用
@@ -110,11 +110,11 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 
 | 能力 | 生产路径与决策作用 | 尚未实现 |
 | --- | --- | --- |
-| 视觉 | `BackendNode.ingest → attach_visual → SlamBackend.ingest → _find_loop → _search`。`index.query` 先提名 Scan Context 候选，随后 `verify_visual` 验证；不足直接跳过该候选，通过后 `store.poses[key] @ visual.T_target_source` 初始化 ICP，ICP 与视觉不一致亦拒绝。 | 没有独立视觉候选索引；不能越过 Scan Context 召回限制，也不是视觉 bundle adjustment 或额外图边。 |
+| 视觉 | `BackendNode.ingest → attach_visual → SlamBackend.ingest → _find_loop → _search`。`index.query` 和 `visual_index.query` 独立提名，合并后视觉候选强制 `verify_visual`；不足直接跳过，通过后以视觉 SE3 初始化 ICP，ICP 与视觉不一致亦拒绝。 | 无视觉 bundle adjustment 或额外图边；轻量描述子无一般视角不变性保证。 |
 | 表面 | `ingest → model_surfaces` 的逐帧摘要是观察；另有 `_search → _register → model_surfaces/compare_surfaces`，后者失败会清空 ICP 结果，不能进入回环图。因此不是只有诊断。 | 不进入 ICP 残差/雅可比，不产生地面高度先验或独立图因子，不是持续楼梯地形优化。 |
 | 多帧 | `ingest` 缓存原始关键帧，`_search → build_submap` 生成查询 source；`_find_loop → _search` 的 target 回调 `_loop_submap → build_submap` 生成候选端 target，两者实际传入 `_register → icp_point_to_plane` 的粗/细配准。 | 没有相对位姿协方差或联合局部 BA；窗口运动预算只控制使用范围。 |
 
-生产模块的 `BackendConfig.use_measured_submaps/use_visual_verification/use_surface_verification`
+生产模块的 `BackendConfig.use_measured_submaps/use_visual_verification/use_surface_verification/use_visual_retrieval`
 均默认 false。启动器 `--backend-evidence-config` 复制 JSON 到新 run/configuration，
 `node.main` 加载并传给 `SlamBackend`。示例 overlay 仅打开多帧。
 无配置时保持原有算法；导航依然订阅原始前端里程计。
@@ -135,14 +135,37 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 这些集成测试用可控 ICP 返回值隔离接线行为，不能替代实测配准性能测试。
 原后端测试另覆盖真实合成点云的 ICP 和闭环图流程。
 
-## 下一轮最小独立视觉候选通路（本轮未实现）
+## 本轮追加：独立视觉候选通路
 
-下一轮先增加有界的轻量整流图像描述子索引，用于独立提名候选；
-`_search` 对视觉 top-k 与 Scan Context top-k 做 key 并集，并记录候选来源。
-视觉独立候选不能被 Scan Context 距离阈值提前截断；两类分数必须分别处理。
-两个来源都经过相同 epoch/近期/时间排除、真实激光支撑的视觉 3D 几何验证、
-ICP、运动预算和修正准入；图像相似度本身始终不产生图边。
-关键验收是 SC 无候选但视觉独立召回且几何通过的回环、重复楼梯/错误外观匹配拒绝、
-缺图不建立虚假候选、合并候选不重复加边、默认旁路图输出一致。
-这比改变现有描述子和历史地图格式更适合作为下一步独立可测增量。
-本轮没有添加该索引，不能将当前实现称为视觉独立回环检测。
+`visual_retrieval.py:image_descriptor` 仅使用整流图像的 16×16 均值网格，中心化并归一化；
+不使用点云、位姿、GT。它对亮度偏移/缩放有有限鲁棒性，没有普遍的视角或照明不变性。
+缺图、图像与关键帧超时、无纹理、小于16×16的图像或网格无对比度返回 None。
+`VisualIndex` 最多保存 2000 个描述子，按插入顺序淘汰；默认独立 top-3、余弦距离<=0.25，
+长路线可能因淘汰降低召回。没有训练模型或新依赖。
+
+生产接线：`_map_step` 在检索之后给视觉索引添加本帧；prior 模式从已保存视觉观测重建索引。
+`_search` 将 SC 的配准候选和视觉 top-k 按 key 合并，重叠候选只配准一次。
+视觉独立候选不受 SC 距离阈值或 `icp_candidates` 限制；没有把两种分数混为同一距离。
+视觉候选必须通过 `verify_visual` 的真实激光投影 patch + 3D RANSAC、粗细 ICP、
+视觉/ICP位姿一致性、原回环运动预算及原修正准入。相似度本身不增加图边或权重。
+`visual_candidates` 和 `merged_search_outcome` trace 保留视觉分数、合并key和拒绝状态。
+
+开启方式是在冻结 JSON 的 backend 字典中设置 `use_visual_retrieval:true`，
+可选 `visual_retrieval:{max_entries:2000,candidates:3,max_distance:0.25,max_time_delta_s:0.05,min_contrast:5}`。
+仍需配置前文的实时 `visual_input` 或提供带标定/时间的离线 visual.npz。
+`use_visual_retrieval` 与 `use_visual_verification` 都默认 false：前者增加独立提名且强制验证视觉候选；
+后者额外要求所有激光候选也通过视觉验证，两者可以独立设置。
+缺图时不提名视觉候选；若后者 false，激光候选仍按原ICP路径继续，不把“缺图”算作视觉通过；
+若后者 true，则激光候选缺图也拒绝。跨 epoch 的在线建图候选排除，prior 重定位允许不同epoch。
+近期/时间排除由同一回调作用于两种候选。prior `_track` 仍保持上节所述边界。
+
+验收：独立代理按事先 API 盲写 `test_visual_retrieval_acceptance.py`，18 项通过，覆盖
+SC空/高分/零名额的独立召回、候选去重、近期/epoch排除、prior跨epoch、缺图、过时、
+无纹理、错误几何、ICP失败、运动门和默认旁路。
+`test_visual_retrieval_flow.py` 另有1项端到端测试，仅将SC提名置空，
+保留真实视觉验证、真实ICP和图流程，最终成功添加且仅添加1条回环边。
+fixture 位于不以 test_ 开头的 `visual_retrieval_fixtures.py`。
+
+这是合成可测的独立召回基线。未在历史RGB上声称召回率或定位改善；已有录制的
+图像时间密度不足严格配准验证，本机也没有运行ROS/Isaac。下一步仍需同一录制对照，
+重点看重复楼梯错误候选、缺图率、几何拒绝原因、索引淘汰后召回和Z修正。
