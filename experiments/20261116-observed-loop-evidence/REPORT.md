@@ -180,3 +180,8 @@ fixture 位于不以 test_ 开头的 `visual_retrieval_fixtures.py`。
 `use_visual_verification:false`，保留SC原初值并仅跑一次ICP；检索模块不能仅因
 额外提名而否决合格激光候选。若开启强制视觉门，或SC距离/名额本就不合格，则仍拒绝。
 这条回退是明确的候选准入规则，不由诊断代码决定；trace记录 `visual_candidate_fallback`。
+
+最终复验（包含独立审阅修正 `ea85130`）：视觉召回专项23项通过，其中22项独立验收和
+1项真实ICP端到端；独立LF克隆全量1274项，48.719秒，仍为同样1 fail + 4 error、3 skip。
+回归81项，10.006秒，通过、原有9 skip。无新增失败。
+视觉灰度输入按ROS mono8/rgb8解码的0..255尺度，离线visual.npz应使用同一强度尺度。
