@@ -40,6 +40,7 @@ from tf2_ros import TransformBroadcaster
 from .backend import BackendConfig, SlamBackend
 from .keyframes import read_keyframe, ready_directories
 from .map_store import MapStore
+from .trace import BackendTrace, graph_snapshot
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -52,6 +53,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--world-frame", default="map")
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
+    parser.add_argument("--trace-dir", type=Path)
     return parser.parse_args(argv)
 
 
@@ -131,6 +133,7 @@ class BackendNode(Node):
             "loops": self.backend.loop_count,
             "keyframes": len(self.backend.map.keyframes),
             "last_error": self.backend.last_error,
+            "trace_error": self.backend.trace_error or (self.backend.trace.error if self.backend.trace else None),
         }
         self.status_pub.publish(String(data=json.dumps(status)))
 
@@ -138,7 +141,9 @@ class BackendNode(Node):
 def main(argv=None) -> int:
     args = parse_args(argv)
     prior = None if args.prior_map is None else MapStore.load(args.prior_map)
-    backend = SlamBackend(BackendConfig(), prior_map=prior)
+    config = BackendConfig()
+    trace = None if args.trace_dir is None else BackendTrace(args.trace_dir, config)
+    backend = SlamBackend(config, prior_map=prior, trace=trace)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -155,6 +160,9 @@ def main(argv=None) -> int:
         rclpy.shutdown()
         if args.save_map is not None:
             backend.save_map(args.save_map)
+        if trace is not None:
+            backend._record("final_graph", graph=graph_snapshot(backend.graph))
+            trace.close()
     return 0
 
 

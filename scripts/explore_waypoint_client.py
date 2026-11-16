@@ -216,6 +216,11 @@ def build_request(
         xyz = [float(value) for value in goal]
         if not all(math.isfinite(value) for value in xyz):
             raise ValueError("goal must be three finite numbers")
+        reverse = extra.get("reverse", False)
+        if type(reverse) is not bool:
+            raise ValueError("reverse must be boolean")
+        if reverse:
+            payload["reverse"] = True
         payload["goal_xyz_m"] = xyz
         payload["pose_source"] = pose_source
         payload["map_frame_note"] = "live estimator map frame; operator-selected"
@@ -646,6 +651,7 @@ def _cmd_goto(args):
         mailbox,
         action="goto",
         goal=[args.x, args.y, args.z],
+        extra={"reverse": getattr(args, "reverse", False)},
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
@@ -2469,6 +2475,7 @@ def build_parser():
     goto.add_argument("--x", type=float, required=True)
     goto.add_argument("--y", type=float, required=True)
     goto.add_argument("--z", type=float, required=True)
+    goto.add_argument("--reverse", action="store_true", help="native_route only: follow the segment backwards while facing away from its bearing")
     goto.add_argument("--ttl", type=float, default=30.0)
     goto.add_argument("--pose-source", default="lio_estimate")
     _add_wait_options(goto)

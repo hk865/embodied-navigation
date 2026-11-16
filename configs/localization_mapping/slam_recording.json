@@ -1,0 +1,8 @@
+{
+  "topics": {
+    "frontend_lio": "/dynanav/rtx_livo/aft_mapped_to_init",
+    "frontend_post_vio": "/dynanav/rtx_livo/post_vio_odometry",
+    "backend_online": "/dynanav/backend/corrected_odometry"
+  },
+  "status_topic": "/dynanav/backend/status"
+}
