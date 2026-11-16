@@ -32,7 +32,9 @@ from pathlib import Path
 import numpy as np
 
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe
+from .keyframes import Keyframe, transform_points
+from .submaps import SubmapConfig, build_submap
+from .surfaces import SurfaceConfig
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
@@ -42,6 +44,14 @@ from .trace import graph_snapshot
 
 @dataclass
 class BackendConfig:
+    use_measured_submaps: bool = False
+    use_visual_verification: bool = False
+    use_surface_verification: bool = False
+    gravity_aligned: bool = False
+    visual_agree_translation_m: float = 0.3
+    visual_agree_rotation_rad: float = 0.05
+    surface: SurfaceConfig = field(default_factory=SurfaceConfig)
+    measured_submap: SubmapConfig = field(default_factory=SubmapConfig)
     scan_context: ScanContextConfig = field(default_factory=ScanContextConfig)
     map_voxel_m: float = 0.2  # stored keyframe clouds and submaps
     icp_voxel_m: float = 0.25
@@ -95,7 +105,10 @@ def yaw_pose(yaw: float) -> np.ndarray:
 
 class SlamBackend:
     def __init__(self, config: BackendConfig, *, prior_map: MapStore | None = None, trace=None):
+        if config.use_surface_verification and not config.gravity_aligned:
+            raise ValueError("surface verification requires an explicitly gravity-aligned odom frame")
         self.config = config
+        self._source_frames = []
         self.trace = trace
         self.trace_error = None
         self._trace_context = {}
@@ -139,6 +152,17 @@ class SlamBackend:
         try:
             if len(keyframe.points_lidar) == 0:
                 raise ValueError(f"keyframe {keyframe.key} has no points")
+            if self.config.use_measured_submaps:
+                self._source_frames.append(keyframe)
+                self._source_frames = self._source_frames[-self.config.measured_submap.max_frames:]
+            if self.config.use_surface_verification:
+                from .surfaces import model_surfaces
+                model = model_surfaces(transform_points(keyframe.T_odom_body, keyframe.points_body()),
+                                       [keyframe.key] * len(keyframe.points_lidar), self.config.surface)
+                event["surfaces"] = {"unknown_points": model.unknown_points,
+                                     "patches": [{"kind": p.kind, "height_m": p.height_m,
+                                                  "support_count": p.support_count}
+                                                 for p in model.patches]}
             desc = descriptor(keyframe.points_body(), self.config.scan_context)
             if self.prior is None:
                 event.update(self._map_step(keyframe, desc))
@@ -240,7 +264,7 @@ class SlamBackend:
         if rejected is not None:
             self._record("loop_decision", accepted=False, candidate_key=key, reason=rejected)
             return None, rejected
-        anchor = min(
+        anchor = key if self.config.use_measured_submaps else min(
             self._loop_window(key, excluded),
             key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
         )
@@ -263,6 +287,13 @@ class SlamBackend:
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
         """World cloud of the candidate's ``_loop_window`` (the ICP target of a loop check)."""
+        if self.config.use_measured_submaps:
+            anchor = self.map.keyframes[key]
+            frames = [self.map.keyframes[k] for k in self._loop_window(key, excluded)]
+            measured = build_submap(frames, anchor, self.config.measured_submap)
+            self._target_point_sources = measured.point_sources
+            self._record("measured_target", source_keys=measured.source_keys, points=len(measured.points_body))
+            return transform_points(self.map.poses[key], measured.points_body)
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
@@ -333,6 +364,13 @@ class SlamBackend:
                      candidates=[{"candidate_key": k, "distance": d, "yaw_rad": y}
                                  for k, d, y in candidates], icp_limit=self.config.icp_candidates)
         best = None
+        source = keyframe.points_body()
+        source_keys = [keyframe.key] * len(source)
+        if self.config.use_measured_submaps:
+            measured = build_submap(self._source_frames, keyframe, self.config.measured_submap)
+            source = measured.points_body
+            source_keys = measured.point_sources
+            self._record("measured_source", source_keys=measured.source_keys, points=len(source))
         attempted, verified = [], []
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             self._trace_candidate = [keyframe.key, key]
@@ -341,7 +379,31 @@ class SlamBackend:
                 break
             attempted.append(key)
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init)
+            if self.config.use_visual_verification:
+                from .visual import verify_visual
+                visual = verify_visual(keyframe, store.keyframes[key])
+                self._record("visual_verification", candidate_key=key, status=visual.status)
+                if visual.status != "verified":
+                    continue
+                T_init = store.poses[key] @ visual.T_target_source
+            self._target_point_sources = None
+            target = submap(key)
+            result = self._register(source, target, T_init)
+            if result is not None and self.config.use_visual_verification:
+                translation, rotation = pose_difference(T_init, result.T_target_source)
+                if translation > self.config.visual_agree_translation_m or rotation > self.config.visual_agree_rotation_rad:
+                    self._record("visual_icp_disagreement", candidate_key=key,
+                                 translation_m=translation, rotation_rad=rotation)
+                    result = None
+            if result is not None and self.config.use_surface_verification:
+                from .surfaces import model_surfaces, compare_surfaces
+                surfaces = compare_surfaces(
+                    model_surfaces(transform_points(result.T_target_source, source), source_keys, self.config.surface),
+                    model_surfaces(target, self._target_point_sources, self.config.surface), self.config.surface)
+                self._record("surface_verification", candidate_key=key, accepted=surfaces.accepted,
+                             reason=surfaces.reason, rmse_m=surfaces.rmse_m)
+                if not surfaces.accepted:
+                    result = None
             self._record("candidate_verified", candidate_id=self._trace_candidate,
                          accepted=result is not None,
                          reason="icp_verified" if result is not None else "icp_verification_failed")

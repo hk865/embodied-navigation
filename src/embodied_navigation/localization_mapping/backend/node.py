@@ -23,6 +23,8 @@ import json
 import shutil
 import signal
 import threading
+from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -32,15 +34,21 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from rclpy.signals import SignalHandlerOptions
 from scipy.spatial.transform import Rotation
 from std_msgs.msg import String
+from sensor_msgs.msg import Image, CameraInfo
 from tf2_ros import TransformBroadcaster
 
 from .backend import BackendConfig, SlamBackend
 from .keyframes import read_keyframe, ready_directories
 from .map_store import MapStore
 from .trace import BackendTrace, graph_snapshot
+from .visual import VisualObservation, decode_image
+from .submaps import SubmapConfig
+from .surfaces import SurfaceConfig
+from .scan_context import ScanContextConfig
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -54,6 +62,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
     parser.add_argument("--trace-dir", type=Path)
+    parser.add_argument("--evidence-config", type=Path)
     return parser.parse_args(argv)
 
 
@@ -77,6 +86,22 @@ class BackendNode(Node):
         self.args = args
         self.backend = backend
         self.spool = args.spool.resolve()
+        self.visual_input = getattr(args, 'visual_input', None)
+        self.visual_images = deque(maxlen=32)
+        self.visual_lock = threading.Lock()
+        self.visual_calibration = None
+        self.visual_input_error = None
+        visual_group = MutuallyExclusiveCallbackGroup()
+        if self.visual_input:
+            if self.visual_input.get('rectified') is not True:
+                raise ValueError('visual input must explicitly declare rectified=true')
+            # Explicit optical-frame extrinsic and rectified image topics are
+            # required; no assumed mounting orientation or guessed calibration.
+            self.visual_extrinsic = np.asarray(self.visual_input['T_body_camera'], dtype=float)
+            VisualObservation(np.zeros((1, 1)), np.eye(3), self.visual_extrinsic, 0)
+            group = visual_group
+            self.create_subscription(Image, self.visual_input['image_topic'], self.on_image, qos_profile_sensor_data, callback_group=group)
+            self.create_subscription(CameraInfo, self.visual_input['camera_info_topic'], self.on_camera_info, qos_profile_sensor_data, callback_group=group)
         namespace = args.namespace.rstrip("/")
         self.odometry_pub = self.create_publisher(Odometry, f"{namespace}/corrected_odometry", 10)
         self.status_pub = self.create_publisher(String, f"{namespace}/status", 10)
@@ -85,6 +110,49 @@ class BackendNode(Node):
             Odometry, args.odometry_topic, self.on_odometry, 50, callback_group=MutuallyExclusiveCallbackGroup()
         )
         self.create_timer(args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup())
+
+    def on_image(self, message):
+        try:
+            gray = decode_image(message)
+            stamp = message.header.stamp.sec*1_000_000_000 + message.header.stamp.nanosec
+            with self.visual_lock:
+                self.visual_images.append((stamp, message.header.frame_id, gray))
+        except ValueError as error:
+            self.visual_input_error = str(error)
+
+    def on_camera_info(self, message):
+        # P is the rectified camera projection matrix; raw distortion is not
+        # silently ignored. Image and calibration optical frame must agree.
+        projection = np.asarray(message.p, dtype=float).reshape(3, 4)
+        if np.any(projection[:, 3] != 0):
+            self.visual_input_error = 'stereo projection offsets unsupported; provide monocular rectified optical frame'
+            with self.visual_lock:
+                self.visual_calibration = None
+            return
+        with self.visual_lock:
+            self.visual_calibration = (message.header.frame_id, message.height, message.width, projection[:, :3].copy())
+
+    def attach_visual(self, keyframe):
+        with self.visual_lock:
+            calibration = self.visual_calibration
+            images = list(self.visual_images)
+        if keyframe.visual is not None or calibration is None or not images:
+            return keyframe
+        stamp, frame, gray = min(images, key=lambda image: abs(image[0]-keyframe.stamp_ns))
+        calibration_frame, height, width, K = calibration
+        if frame != calibration_frame or gray.shape != (height, width):
+            self.visual_input_error = 'visual image/calibration frame or dimensions mismatch'
+            return keyframe
+        if abs(stamp-keyframe.stamp_ns) > self.visual_input.get('max_time_delta_s', .05)*1e9:
+            self.visual_input_error = 'visual image/keyframe time mismatch'
+            return keyframe
+        try:
+            observation = VisualObservation(gray, K, self.visual_extrinsic, stamp)
+        except ValueError as error:
+            self.visual_input_error = str(error)
+            return keyframe
+        self.visual_input_error = None
+        return replace(keyframe, visual=observation)
 
     def on_odometry(self, message: Odometry) -> None:
         C = self.backend.T_world_odom
@@ -108,6 +176,8 @@ class BackendNode(Node):
             self.backend.last_error = str(error)
             directory.rename(directory.with_name("rejected_" + directory.name))
             return
+        if self.visual_input:
+            keyframe = self.attach_visual(keyframe)
         event = self.backend.ingest(keyframe)
         if "error" in event:
             self.get_logger().warning(event["error"])
@@ -133,6 +203,7 @@ class BackendNode(Node):
             "loops": self.backend.loop_count,
             "keyframes": len(self.backend.map.keyframes),
             "last_error": self.backend.last_error,
+            "visual_input_error": self.visual_input_error,
             "trace_error": self.backend.trace_error or (self.backend.trace.error if self.backend.trace else None),
         }
         self.status_pub.publish(String(data=json.dumps(status)))
@@ -141,7 +212,13 @@ class BackendNode(Node):
 def main(argv=None) -> int:
     args = parse_args(argv)
     prior = None if args.prior_map is None else MapStore.load(args.prior_map)
-    config = BackendConfig()
+    evidence = {} if args.evidence_config is None else json.loads(args.evidence_config.read_text())
+    row = dict(evidence.get('backend', {}))
+    for name, constructor in [('measured_submap', SubmapConfig), ('surface', SurfaceConfig), ('scan_context', ScanContextConfig)]:
+        if name in row:
+            row[name] = constructor(**row[name])
+    config = BackendConfig(**row)
+    args.visual_input = evidence.get('visual_input')
     trace = None if args.trace_dir is None else BackendTrace(args.trace_dir, config)
     backend = SlamBackend(config, prior_map=prior, trace=trace)
     stop = threading.Event()

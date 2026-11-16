@@ -4,7 +4,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--record-slam-config FILE] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--record-slam-config FILE] [--backend-evidence-config FILE] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
         exit 0
     fi
 done
@@ -25,11 +25,15 @@ UNTIL_STOPPED=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
 RECORDING_CONFIG=""
+BACKEND_EVIDENCE_CONFIG=""
 EXTRA_CAPTURE_ARGS=()
 EXTRA_PLANNER_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
+        --backend-evidence-config)
+            (($# >= 2)) || { echo "Missing value for --backend-evidence-config"; exit 2; }
+            BACKEND_EVIDENCE_CONFIG=$2; shift 2 ;;
         --record-slam-config)
             (($# >= 2)) || { echo "Missing value for --record-slam-config"; exit 2; }
             RECORDING_CONFIG=$2; shift 2 ;;
@@ -219,6 +223,10 @@ BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/back
 if [[ -n "$RECORDING_CONFIG" ]]; then
     cp -- "$RECORDING_CONFIG" "$RUN/configuration/recording.json"
     BACKEND_ARGS+=(--trace-dir "$RUN/backend_trace")
+fi
+if [[ -n "$BACKEND_EVIDENCE_CONFIG" ]]; then
+    cp -- "$BACKEND_EVIDENCE_CONFIG" "$RUN/configuration/backend_evidence.json"
+    BACKEND_ARGS+=(--evidence-config "$RUN/configuration/backend_evidence.json")
 fi
 if [[ -n "${PRIOR_MAP:-}" ]]; then
     BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")

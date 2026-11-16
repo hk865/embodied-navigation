@@ -71,7 +71,13 @@ class MapStore:
         rows = []
         for key, keyframe in self.keyframes.items():
             name = f"kf_{key[0]}_{key[1]}.npz"
-            np.savez(directory / name, points_lidar=keyframe.points_lidar, descriptor=self.descriptors[key])
+            arrays = dict(points_lidar=keyframe.points_lidar, descriptor=self.descriptors[key])
+            if keyframe.visual is not None:
+                observation = keyframe.visual
+                arrays.update(visual_gray=observation.gray, visual_K=observation.K,
+                              visual_T_body_camera=observation.T_body_camera,
+                              visual_stamp_ns=np.int64(observation.stamp_ns))
+            np.savez(directory / name, **arrays)
             rows.append(
                 {
                     "key": list(key),
@@ -96,8 +102,13 @@ class MapStore:
             key = tuple(row["key"])
             with np.load(directory / Path(row["file"]).name) as arrays:
                 points, descriptor = arrays["points_lidar"], arrays["descriptor"]
+                visual = None
+                if "visual_gray" in arrays:
+                    from .visual import VisualObservation
+                    visual = VisualObservation(arrays["visual_gray"], arrays["visual_K"],
+                                               arrays["visual_T_body_camera"], int(arrays["visual_stamp_ns"]))
             keyframe = Keyframe(
-                key, row["stamp_ns"], np.array(row["T_odom_body"]), np.array(row["T_body_lidar"]), points
+                key, row["stamp_ns"], np.array(row["T_odom_body"]), np.array(row["T_body_lidar"]), points, visual
             )
             store.keyframes[key] = keyframe
             store.poses[key] = np.array(row["T_world_body"])

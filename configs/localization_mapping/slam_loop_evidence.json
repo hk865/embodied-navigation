@@ -1,0 +1,16 @@
+{
+  "backend": {
+    "use_measured_submaps": true,
+    "use_visual_verification": false,
+    "use_surface_verification": false,
+    "gravity_aligned": false,
+    "measured_submap": {
+      "max_frames": 5,
+      "max_translation_m": 2.0,
+      "max_height_m": 0.5,
+      "max_rotation_rad": 0.35,
+      "max_gap_s": 3.0,
+      "voxel_m": 0.15
+    }
+  }
+}

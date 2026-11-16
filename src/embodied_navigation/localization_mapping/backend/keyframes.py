@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .visual import VisualObservation
+
 SCHEMA = "livo_keyframe/v1"
 READY_NAME = re.compile(r"kf_(\d+)_(\d+)")
 
@@ -32,6 +34,7 @@ class Keyframe:
     T_odom_body: np.ndarray  # 4x4
     T_body_lidar: np.ndarray  # 4x4
     points_lidar: np.ndarray  # (N,3) float64, lidar frame
+    visual: VisualObservation | None = None
 
     def points_body(self) -> np.ndarray:
         """Cloud expressed in the body frame."""
@@ -69,12 +72,20 @@ def read_keyframe(path: Path) -> Keyframe:
     row = json.loads((path / "metadata.json").read_text())
     if row.get("schema") != SCHEMA:
         raise ValueError(f"{path}: schema is not {SCHEMA}")
+    visual = None
+    if (path / "visual.npz").is_file():
+        try:
+            with np.load(path / "visual.npz", allow_pickle=False) as data:
+                visual = VisualObservation(data["gray"], data["K"], data["T_body_camera"], int(data["stamp_ns"]))
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            raise ValueError(f"{path}: invalid visual observation: {error}") from error
     return Keyframe(
         key=(int(row["epoch"]), int(row["sequence"])),
         stamp_ns=int(row["stamp_ns"]),
         T_odom_body=_matrix(row["T_odom_body"], path),
         T_body_lidar=_matrix(row["T_body_lidar"], path),
         points_lidar=_read_ascii_pcd(path / "points_lidar.pcd"),
+        visual=visual,
     )
 
 
