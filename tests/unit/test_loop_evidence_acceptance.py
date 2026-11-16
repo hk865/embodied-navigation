@@ -142,5 +142,40 @@ class BackendEvidenceGateAcceptance(unittest.TestCase):
         np.testing.assert_array_equal(matrices[0],matrices[1])
 
 
+    def test_production_loop_registration_receives_measured_historical_target(self):
+        from unittest.mock import Mock
+        from embodied_navigation.localization_mapping.backend.registration import IcpResult
+        backend = SlamBackend(BackendConfig(use_measured_submaps=True, exclude_recent=1, min_loop_gap_s=0))
+        for i, point in enumerate([.1, .8, 1.4]):
+            backend.ingest(frame(i, points=[[point, point, point]]))
+        backend.index.query = Mock(return_value=[((1, 1), 0., 0.)])
+        backend._register = Mock(return_value=IcpResult(np.eye(4), 1., 0., True))
+        event = backend.ingest(frame(3, points=[[1.8, 1.8, 1.8]]))
+        self.assertNotIn('error', event)
+        self.assertTrue(event['loop'])
+        source, target, _ = backend._register.call_args.args
+        for point in [.1, .8]:
+            self.assertLess(np.linalg.norm(target - [point]*3, axis=1).min(), 1e-10)
+        self.assertGreater(np.linalg.norm(target - [1.4]*3, axis=1).min(), .1)
+        self.assertLess(np.linalg.norm(source - [1.8]*3, axis=1).min(), 1e-10)
+
+    def test_observed_surface_agreement_allows_original_icp_graph_edge(self):
+        from unittest.mock import Mock
+        from embodied_navigation.localization_mapping.backend.registration import IcpResult
+        backend = SlamBackend(BackendConfig(use_surface_verification=True, gravity_aligned=True,
+                                             exclude_recent=1, min_loop_gap_s=0, map_voxel_m=.02))
+        x, y = np.meshgrid(np.arange(.015, .59, .025), np.arange(.015, .59, .025))
+        cloud = np.column_stack([x.ravel(), y.ravel(), np.full(x.size, .05)])
+        backend.ingest(frame(0, points=cloud))
+        backend.ingest(frame(1, points=cloud))
+        backend.index.query = Mock(return_value=[((1, 0), 0., 0.)])
+        backend._register = Mock(return_value=IcpResult(np.eye(4), 1., 0., True))
+        event = backend.ingest(frame(2, points=cloud))
+        self.assertNotIn('error', event)
+        self.assertTrue(event['loop'])
+        self.assertTrue(event['surfaces']['patches'])
+        self.assertEqual(len(backend.graph.edges), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

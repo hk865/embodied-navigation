@@ -86,13 +86,49 @@ CameraInfo 与 optical 外参，在同一录制对照旁路/各模块启用后�
 
 ## 测试
 
-新增 33 项 evidence 测试覆盖多级台阶、平面/立面/未知、负高度、坐标/时间/外参、
+新增 35 项 evidence 测试覆盖多级台阶、平面/立面/未知、负高度、坐标/时间/外参、
 连续子图、来源去重、缺图和错误匹配拒绝、保存加载、默认旁路及图信息不膨胀。
 按 AGENTS 的难包规则，另一代理先按约定 API 独立编写验收，再做集成测试。
-全量 LF 克隆结果在交付时补记。命令：
+独立 LF 克隆 `8184b65` 全量单测 1249 项，48.731 秒，原有 1 fail + 4 error，
+跳过 3 项；失败名单未新增：`test_dynanav_rtx_deskewed_perception` 4 项、
+`test_dynanav_source_snapshot` 1 项。回归 81 项，10.093 秒，通过，原有跳过 9 项。
+重连后先检查进程与输出，确认原测试完成，未并发重复运行。
+本次另外增加 2 项生产调用链集成验收，专项共 35 项通过；全量复验结果见下。
+命令：
 
 ```bash
 PYTHONPATH=src python3 -B -m compileall -q src scripts
 PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
 PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 ```
+
+## 实际接线审计
+
+下表以 `git grep -n 'verify_visual\|compare_surfaces\|build_submap\|_register' -- src/embodied_navigation/localization_mapping/backend` 的实际调用为据。
+
+| 能力 | 生产路径与决策作用 | 尚未实现 |
+| --- | --- | --- |
+| 视觉 | `BackendNode.ingest → attach_visual → SlamBackend.ingest → _find_loop → _search`。`index.query` 先提名 Scan Context 候选，随后 `verify_visual` 验证；不足直接跳过该候选，通过后 `store.poses[key] @ visual.T_target_source` 初始化 ICP，ICP 与视觉不一致亦拒绝。 | 没有独立视觉候选索引；不能越过 Scan Context 召回限制，也不是视觉 bundle adjustment 或额外图边。 |
+| 表面 | `ingest → model_surfaces` 的逐帧摘要是观察；另有 `_search → _register → model_surfaces/compare_surfaces`，后者失败会清空 ICP 结果，不能进入回环图。因此不是只有诊断。 | 不进入 ICP 残差/雅可比，不产生地面高度先验或独立图因子，不是持续楼梯地形优化。 |
+| 多帧 | `ingest` 缓存原始关键帧，`_search → build_submap` 生成查询 source；`_find_loop → _search` 的 target 回调 `_loop_submap → build_submap` 生成候选端 target，两者实际传入 `_register → icp_point_to_plane` 的粗/细配准。 | 没有相对位姿协方差或联合局部 BA；窗口运动预算只控制使用范围。 |
+
+生产模块的 `BackendConfig.use_measured_submaps/use_visual_verification/use_surface_verification`
+均默认 false。启动器 `--backend-evidence-config` 复制 JSON 到新 run/configuration，
+`node.main` 加载并传给 `SlamBackend`。示例 overlay 仅打开多帧。
+无配置时保持原有算法；导航依然订阅原始前端里程计。
+
+重定位边界：`_relocalize_step` 的 global search 调 `_search`，因此其查询端也使用新模块；
+但 `_prior_submap` 仍是原有空间邻域，不是连续实测多帧窗口。
+进入 tracking 后的 `_track` 直接对单帧和 prior 空间子图调用 `_register`，
+不执行新视觉/表面门，也不使用新查询子图；不能宣称已覆盖整个先验跟踪链。
+本次目标是建图模式下的回环验证，保持上述 tracking 路径原行为。
+
+验收证据位于 `tests/unit/test_loop_evidence_acceptance.py`：
+`test_production_loop_registration_receives_measured_historical_target` 检查实际 ingest→回环路径
+传给 `_register` 的历史 target 含两个过去帧且不含近期排除帧；
+`test_measured_source_contains_historical_returns_without_information_inflation` 检查查询 source
+包含历史观测且信息矩阵不膨胀；`test_missing_visual_stops_before_icp_and_does_not_add_loop`
+确认视觉不足阻断 ICP；`test_unobservable_surface_rejects_even_successful_icp` 与
+`test_observed_surface_agreement_allows_original_icp_graph_edge` 分别确认表面门拒绝和接受。
+这些集成测试用可控 ICP 返回值隔离接线行为，不能替代实测配准性能测试。
+原后端测试另覆盖真实合成点云的 ICP 和闭环图流程。
