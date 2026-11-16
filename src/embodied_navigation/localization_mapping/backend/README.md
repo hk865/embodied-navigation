@@ -58,3 +58,12 @@ python -m embodied_navigation.localization_mapping.backend.node \
 - `tests/regression/test_snapshot_bridge.py`：编译并运行真实的 C++ `snapshot_bridge` 流程，用 `keyframes.read_keyframe` 解码其输出（需要 g++）。
 - `node.py` 本机只做语法检查（`compileall`），ROS 运行验证在服务器上进行。
 - 阈值（`BackendConfig`）在合成世界上标定，真实点云上需要按服务器结果调整。位姿图只有 odom 边和回环边：单个大回环闭合后，环中段仍会残留与漂移形态有关的误差。
+
+## 可选实测与视觉回环验证
+
+默认关闭。启动器的 `--backend-evidence-config` 将 JSON 冻结到 run/configuration。
+`use_visual_retrieval` 可独立提名图像候选，再经过真实激光支撑的视觉几何、ICP 和原准入；
+`use_visual_verification` 额外要求激光候选也有视觉支持。`use_measured_submaps` 将连续真实
+多帧点云用于回环两侧配准；`use_surface_verification` 仅做 ICP 后实测表面一致性门，
+不添加独立平面图因子。数据与标定要求、缺图行为、先验跟踪边界和复现命令见
+[实验报告](../../../../experiments/20261116-observed-loop-evidence/REPORT.md)。

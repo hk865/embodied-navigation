@@ -146,7 +146,7 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 生产接线：`_map_step` 在检索之后给视觉索引添加本帧；prior 模式从已保存视觉观测重建索引。
 `_search` 将 SC 的配准候选和视觉 top-k 按 key 合并，重叠候选只配准一次。
 视觉独立候选不受 SC 距离阈值或 `icp_candidates` 限制；没有把两种分数混为同一距离。
-视觉候选必须通过 `verify_visual` 的真实激光投影 patch + 3D RANSAC、粗细 ICP、
+视觉独立候选必须通过 `verify_visual` 的真实激光投影 patch + 3D RANSAC、粗细 ICP、
 视觉/ICP位姿一致性、原回环运动预算及原修正准入。相似度本身不增加图边或权重。
 `visual_candidates` 和 `merged_search_outcome` trace 保留视觉分数、合并key和拒绝状态。
 
@@ -169,3 +169,14 @@ fixture 位于不以 test_ 开头的 `visual_retrieval_fixtures.py`。
 这是合成可测的独立召回基线。未在历史RGB上声称召回率或定位改善；已有录制的
 图像时间密度不足严格配准验证，本机也没有运行ROS/Isaac。下一步仍需同一录制对照，
 重点看重复楼梯错误候选、缺图率、几何拒绝原因、索引淘汰后召回和Z修正。
+
+独立 LF 克隆 `d070be8` 验证：全量单测 1270 项，48.594 秒，原有 1 fail + 4 error，
+3 skip；失败名单仍为上述5项。回归81项，10.031秒，通过，原有9 skip。
+追加的原运动门断言加强后，视觉召回19项专项再次全过（0.111秒）；生产代码未再改动。
+`compileall` 与 `git diff --check` 通过；新增diff已逐行审读，未更改旧测试断言。
+
+
+独立审阅补充：视觉与合格SC候选重叠时，如果视觉几何不足且
+`use_visual_verification:false`，保留SC原初值并仅跑一次ICP；检索模块不能仅因
+额外提名而否决合格激光候选。若开启强制视觉门，或SC距离/名额本就不合格，则仍拒绝。
+这条回退是明确的候选准入规则，不由诊断代码决定；trace记录 `visual_candidate_fallback`。

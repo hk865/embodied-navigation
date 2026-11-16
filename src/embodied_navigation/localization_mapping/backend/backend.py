@@ -408,9 +408,16 @@ class SlamBackend:
                 visual = verify_visual(keyframe, store.keyframes[key])
                 self._record("visual_verification", candidate_key=key, status=visual.status)
                 if visual.status != "verified":
-                    rejection_reasons[key] = visual.status
-                    continue
-                T_init = store.poses[key] @ visual.T_target_source
+                    scan_eligible = dist is not None and dist <= self.config.max_scan_context_distance
+                    if self.config.use_visual_verification or not scan_eligible:
+                        rejection_reasons[key] = visual.status
+                        continue
+                    # Retrieval is additive. A failed optional image proposal
+                    # cannot veto an independently eligible LiDAR proposal.
+                    requires_visual = False
+                    self._record("visual_candidate_fallback", candidate_key=key, reason=visual.status)
+                else:
+                    T_init = store.poses[key] @ visual.T_target_source
             self._target_point_sources = None
             target = submap(key)
             result = self._register(source, target, T_init)

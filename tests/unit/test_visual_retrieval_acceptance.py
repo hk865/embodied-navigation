@@ -88,6 +88,44 @@ class VisualRetrievalBackendAcceptance(unittest.TestCase):
         self.assertTrue(event['loop'])
         backend._register.assert_called_once()
 
+    def test_overlap_with_insufficient_visual_geometry_keeps_admissible_lidar_path(self):
+        backend = self.backend()
+        backend.index.query.return_value = [((1,0),0.,.12)]
+        query = replace(visual_frame(2),points_lidar=np.array([[0.,0.,2.]]))
+        event = backend.ingest(query)
+        self.assertNotIn('error',event)
+        self.assertTrue(event['loop'])
+        backend._register.assert_called_once()
+        from embodied_navigation.localization_mapping.backend.backend import yaw_pose
+        np.testing.assert_allclose(backend._register.call_args.args[2],yaw_pose(.12))
+
+    def test_forced_visual_gate_still_rejects_overlap_without_geometry(self):
+        backend = self.backend(use_visual_verification=True)
+        backend.index.query.return_value = [((1,0),0.,0.)]
+        query = replace(visual_frame(2),points_lidar=np.array([[0.,0.,2.]]))
+        event = backend.ingest(query)
+        self.assertNotIn('error',event)
+        self.assertFalse(event['loop'])
+        backend._register.assert_not_called()
+
+    def test_bad_lidar_score_cannot_bypass_failed_visual_geometry(self):
+        backend = self.backend()
+        backend.index.query.return_value = [((1,0),.99,0.)]
+        query = replace(visual_frame(2),points_lidar=np.array([[0.,0.,2.]]))
+        event = backend.ingest(query)
+        self.assertNotIn('error',event)
+        self.assertFalse(event['loop'])
+        backend._register.assert_not_called()
+
+    def test_lidar_candidate_outside_quota_cannot_bypass_failed_visual_geometry(self):
+        backend = self.backend(icp_candidates=0)
+        backend.index.query.return_value = [((1,0),0.,0.)]
+        query = replace(visual_frame(2),points_lidar=np.array([[0.,0.,2.]]))
+        event = backend.ingest(query)
+        self.assertNotIn('error',event)
+        self.assertFalse(event['loop'])
+        backend._register.assert_not_called()
+
     def test_recent_candidate_is_excluded_from_visual_retrieval(self):
         backend = SlamBackend(BackendConfig(use_visual_retrieval=True,exclude_recent=1,min_loop_gap_s=0))
         backend.ingest(visual_frame(0))
@@ -152,12 +190,13 @@ class VisualRetrievalBackendAcceptance(unittest.TestCase):
         backend._register.assert_called_once()
 
     def test_visual_match_still_obeys_motion_consistency_gate(self):
-        backend = self.backend()
+        backend = self.backend(visual_agree_translation_m=100.)
         proposed = np.eye(4); proposed[2,3] = 20.
         backend._register.return_value = IcpResult(proposed,1.,0.,True)
         event = backend.ingest(visual_frame(2))
         self.assertNotIn('error',event)
         self.assertFalse(event['loop'])
+        self.assertIn('odometry inconsistent', event['loop_rejected'])
         self.assertEqual(len(backend.graph.edges),2)
 
     def test_default_bypass_does_not_nominate_visual_candidate(self):
