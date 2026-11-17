@@ -94,3 +94,7 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 本次不启动 ROS/Isaac，不干预其他对话的仿真与录制。
 服务器应重点对照误回环、候选拒绝原因、图像缺失率、表面可观测性、时间与内存成本、
 Z 修正和轨迹误差，并保留原始录制及每个新 run 的冻结配置。
+
+## 本分支选择
+
+本分支只开启独立视觉检索；视觉独立候选必须通过真实几何与 ICP，但合格激光候选不强制有图。在线使用前必须提供真实 visual_input，或离线提供带标定的 visual.npz。缺少图像时原 SC/ICP 仍会继续，不能将其算作视觉方案生效。
