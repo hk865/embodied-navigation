@@ -60,6 +60,7 @@
 
 - 重构按包叠加分支：`refactor/NN-<名字>`，后一个分支建在前一个之上，最顶端的分支就是全部改动的合集。
 - 每个包都要验收后才能交付。验收包括两步：在 LF 换行的克隆上独立重跑全量测试；逐行读完 diff。**由用户推送。** agent 不 push，也不 force-push。
+- 本次回环方案上传例外：用户于 2026-11-17 明确确认上传到 `hk865/embodied-navigation`，因此允许 agent 在该仓库新建 `refactor/05-loop-evidence-base`、`exp/loop-measured-submaps`、`exp/loop-surface-gate`、`exp/loop-visual-retrieval`。原因是交付按方案分开的可比较分支；不得覆盖已有分支、强推或夹带其他工作区的未提交改动。其他任务仍按上一条执行。
 - 难包（核心规则、跨模块）采用“一个 agent 施工、另一个 agent 同时按同一份裁定写验收测试，两边互相看不到”的做法。普通的删除包和返工交给 DSH。
 - 提交信息说明做了什么和为什么。不提交密钥，也不提交 `.env*`。
 

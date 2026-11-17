@@ -1,0 +1,9 @@
+{
+  "backend": {
+    "use_measured_submaps": false,
+    "use_surface_verification": false,
+    "gravity_aligned": false,
+    "use_visual_retrieval": false,
+    "use_visual_verification": false
+  }
+}
