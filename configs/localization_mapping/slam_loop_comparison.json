@@ -1,6 +1,6 @@
 {
   "backend": {
-    "use_measured_submaps": false,
+    "use_measured_submaps": true,
     "use_surface_verification": false,
     "gravity_aligned": false,
     "use_visual_retrieval": false,
