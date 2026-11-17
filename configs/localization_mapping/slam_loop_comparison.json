@@ -1,9 +1,10 @@
 {
   "backend": {
     "use_measured_submaps": false,
-    "use_surface_verification": false,
-    "gravity_aligned": false,
+    "use_surface_verification": true,
+    "gravity_aligned": true,
     "use_visual_retrieval": false,
-    "use_visual_verification": false
+    "use_visual_verification": false,
+    "map_voxel_m": 0.05
   }
 }

@@ -94,3 +94,7 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 本次不启动 ROS/Isaac，不干预其他对话的仿真与录制。
 服务器应重点对照误回环、候选拒绝原因、图像缺失率、表面可观测性、时间与内存成本、
 Z 修正和轨迹误差，并保留原始录制及每个新 run 的冻结配置。
+
+## 本分支选择
+
+本分支只启用 ICP 后表面门，地图体素为0.05 m。只适用于已独立验证重力对齐的数据。请用同分支 slam_loop_surface_control.json 做相同密度的关闭门对照，不要把密度变化也归因于表面门。
