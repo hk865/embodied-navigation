@@ -1,0 +1,52 @@
+--- a/third_party/scan/plan_manage/src/planner_manager.cpp
++++ b/third_party/scan/plan_manage/src/planner_manager.cpp
+@@ -123,6 +123,9 @@
+                               ? sqrt(dist / pp_.max_acc_)
+                               : (dist - pow(pp_.max_vel_, 2) / pp_.max_acc_) / pp_.max_vel_ +
+                                     2 * pp_.max_vel_ / pp_.max_acc_;
++            // Local initialization has its own clock, separate from the global
++            // reference. Relax the single segment, or both randomized halves.
++            time *= 2.0;
+ 
+             if (!flag_randomPolyTraj) {
+                 gl_traj = PolynomialTraj::one_segment_traj_gen(start_pt, start_vel, start_acc,
+@@ -151,16 +154,16 @@
+                                                       Eigen::Vector3d::Zero(), t);
+             }
+ 
+-            double t;
+             bool flag_too_far;
+-            ts *= 1.5; // ts will be divided by 1.5 in the next
+             do {
+-                ts /= 1.5;
++                const int intervals = std::max(6, static_cast<int>(std::ceil(time / ts)));
++                ts = time / intervals;
+                 point_set.clear();
+                 flag_too_far = false;
+                 Eigen::Vector3d last_pt = gl_traj.evaluate(0);
+-                for (t = 0; t < time; t += ts) {
+-                    Eigen::Vector3d pt = gl_traj.evaluate(t);
++                for (int sample = 0; sample <= intervals; ++sample) {
++                    const double sample_time = sample == intervals ? time : sample * ts;
++                    Eigen::Vector3d pt = gl_traj.evaluate(sample_time);
+                     if ((last_pt - pt).norm() > pp_.ctrl_pt_dist * 1.5) {
+                         flag_too_far = true;
+                         break;
+@@ -168,13 +171,12 @@
+                     last_pt = pt;
+                     point_set.push_back(pt);
+                 }
+-            } while (flag_too_far ||
+-                     point_set.size() < 7); // To make sure the initial path has enough points.
+-            t -= ts;
++                if (flag_too_far) ts /= 1.5;
++            } while (flag_too_far);
+             start_end_derivatives.push_back(gl_traj.evaluateVel(0));
+-            start_end_derivatives.push_back(local_target_vel);
++            start_end_derivatives.push_back(gl_traj.evaluateVel(time));
+             start_end_derivatives.push_back(gl_traj.evaluateAcc(0));
+-            start_end_derivatives.push_back(gl_traj.evaluateAcc(t));
++            start_end_derivatives.push_back(gl_traj.evaluateAcc(time));
+         } else // Initial path generated from previous trajectory.
+         {
+ 

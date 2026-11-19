@@ -41,3 +41,21 @@ def pose_transform(position, quat_wxyz):
     transform[:3, :3] = quaternion_matrix(w, x, y, z)
     transform[:3, 3] = xyz
     return transform
+
+
+def aabb_obb_disjoint(lo, hi, box, eps):
+    """Test whether an axis-aligned box [lo, hi] and oriented box {c, h, r} are disjoint."""
+    center = (lo + hi) / 2
+    half = (hi - lo) / 2
+    delta = box["c"] - center
+    axes = [*np.eye(3), *box["r"].T]
+    axes += [np.cross(a, b) for a in np.eye(3) for b in box["r"].T]
+    for axis in axes:
+        norm = np.linalg.norm(axis)
+        if norm < 1e-12:
+            continue
+        axis = axis / norm
+        radius = np.abs(axis) @ half + np.abs(axis @ box["r"]) @ box["h"]
+        if abs(axis @ delta) > radius + eps:
+            return True
+    return False

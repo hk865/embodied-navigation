@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Operator-side client for the simulation-only interactive waypoint explorer.
 
-The current static exploration entry uses NativeWaypointTracker and the
-existing RouteTracker, with goto/cancel/stop. In that mode the legacy ttl_s
-field is transport metadata, not an action deadline; no heartbeat or
-perception/floor admission is required. yaw/maneuver/scan belong to the older
-interactive controller and are not supported by the native-route adapter.
+The current static exploration entry accepts goto/cancel/stop and an independent
+yaw action. Goto keeps its original XYZ arrival and treats ttl_s as transport
+metadata. Yaw uses its own existing action TTL and requires an owned SCAN
+rotation-space reply; it accepts a relative delta or an absolute map heading.
+The native adapter does not require the legacy heartbeat or floor-admission
+protocol. Maneuver remains an older interactive-controller action.
 
 This is the DSH operator tool, not a controller. It publishes waypoints into the
 run mailbox, keeps the operator heartbeat alive, reads the observation bundle and
@@ -89,6 +90,7 @@ ACTION_COMPLETION_EVENTS = ("yaw_complete", "maneuver_complete", "waypoint_reach
 # for a local action it aborts, waypoint_dropped/waypoint_expired for follower
 # failures and action_expired for a local action whose TTL elapsed.
 ACTION_FAILURE_STATUS = {
+    "yaw_failed": "failed",
     "request_rejected": "rejected",
     "maneuver_rejected": "rejected",
     "waypoint_rejected": "rejected",
@@ -181,10 +183,8 @@ def build_request(
                 "a ground-truth waypoint frame is forbidden; the simulator rejects it too"
             )
     if action == "yaw":
-        delta = _number(extra.get("delta_yaw_rad"), "delta_yaw_rad")
-        if abs(delta) > 3.15:
-            raise ValueError("delta_yaw_rad must be within +/-3.15 rad")
-        payload["delta_yaw_rad"] = delta
+        from embodied_navigation.navigation.yaw_action import yaw_request_parameters
+        payload.update(yaw_request_parameters(extra))
         payload["pose_source"] = pose_source
         payload["map_frame_note"] = "live estimator map frame; operator-selected"
         return payload
@@ -214,6 +214,11 @@ def build_request(
         xyz = [float(value) for value in goal]
         if not all(math.isfinite(value) for value in xyz):
             raise ValueError("goal must be three finite numbers")
+        reverse = extra.get("reverse", False)
+        if type(reverse) is not bool:
+            raise ValueError("reverse must be boolean")
+        if reverse:
+            payload["reverse"] = True
         payload["goal_xyz_m"] = xyz
         payload["pose_source"] = pose_source
         payload["map_frame_note"] = "live estimator map frame; operator-selected"
@@ -644,6 +649,7 @@ def _cmd_goto(args):
         mailbox,
         action="goto",
         goal=[args.x, args.y, args.z],
+        extra={"reverse": getattr(args, "reverse", False)},
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
@@ -678,7 +684,7 @@ def _cmd_observe(args):
 
 
 def _cmd_yaw(args):
-    """Submit one in-place scan turn (relative to the live measured yaw)."""
+    """Submit an independent relative turn or absolute measured-map heading."""
     mailbox = mailbox_for(args.run_dir, args.mailbox)
     payload = submit(
         mailbox,
@@ -686,7 +692,9 @@ def _cmd_yaw(args):
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
-        extra={"delta_yaw_rad": math.radians(args.delta_deg)},
+        extra=({"delta_yaw_rad": math.radians(args.delta_deg)}
+               if args.delta_deg is not None else
+               {"target_yaw_rad": math.radians(args.target_deg), "frame_id": args.frame_id}),
     )
     print(json.dumps(payload, sort_keys=True))
     return _wait_for_submitted(args, payload)
@@ -2039,7 +2047,7 @@ def _cmd_map(args):
             PointCloud2, args.cloud_topic, on_cloud, qos_profile_sensor_data
         )
         node.create_subscription(Clock, args.clock_topic, on_clock, qos_profile_sensor_data)
-        deadline = time.perf_counter() + args.duration
+        deadline = None if args.duration == 0 else time.perf_counter() + args.duration
         out_dir = Path(args.out) if args.out else run_dir / "operator_map"
         # The final-consumption receipt log lives here and may be written before the
         # first snapshot on a brand-new output directory, so create it up front and
@@ -2050,7 +2058,7 @@ def _cmd_map(args):
         state["pump_callbacks"] = lambda: _bounded_map_callback_pump(
             state, spin_once=rclpy.spin_once, node=node, clock=time.perf_counter,
         )
-        while time.perf_counter() < deadline:
+        while deadline is None or time.perf_counter() < deadline:
             state["last_main_pump"] = state["pump_callbacks"]()
             if not pending and not state["last_main_pump"]["callback_count"]:
                 # Only wait when the nonblocking pump found no work. Geometry
@@ -2149,6 +2157,7 @@ def build_parser():
     goto.add_argument("--x", type=float, required=True)
     goto.add_argument("--y", type=float, required=True)
     goto.add_argument("--z", type=float, required=True)
+    goto.add_argument("--reverse", action="store_true", help="native_route only: follow the segment backwards while facing away from its bearing")
     goto.add_argument("--ttl", type=float, default=30.0)
     goto.add_argument("--pose-source", default="lio_estimate")
     _add_wait_options(goto)
@@ -2157,7 +2166,10 @@ def build_parser():
     yaw = subparsers.add_parser(
         "yaw", help="in-place scan turn", parents=[common]
     )
-    yaw.add_argument("--delta-deg", type=float, required=True)
+    heading = yaw.add_mutually_exclusive_group(required=True)
+    heading.add_argument("--delta-deg", type=float)
+    heading.add_argument("--target-deg", type=float)
+    yaw.add_argument("--frame-id", help="Required map frame for --target-deg")
     yaw.add_argument("--ttl", type=float, default=30.0)
     yaw.add_argument("--pose-source", default="lio_estimate")
     _add_wait_options(yaw)
@@ -2231,7 +2243,8 @@ def build_parser():
         "for sensor_imu; LIO rays/both are refused without a physical ray-origin contract",
     )
     mapping.add_argument("--resolution", type=float, default=0.05)
-    mapping.add_argument("--duration", type=float, default=10.0)
+    mapping.add_argument("--duration", type=float, default=10.0,
+                         help="Wall seconds to collect; 0 runs until launcher cleanup")
     mapping.add_argument(
         "--snapshot-interval",
         type=float,

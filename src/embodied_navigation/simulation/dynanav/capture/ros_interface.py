@@ -36,6 +36,7 @@ class RosInterface:
     publish_rgb: Callable
     destroy: Callable
     publish_rtx_cloud: Callable | None = None
+    publish_truth: Callable | None = None
 
 
 
@@ -69,7 +70,68 @@ def _publish_sensor(publisher, message, topic, journal=None, *, point_count=None
         "before_publish_monotonic_ns": before,
     })
 
-def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=None):
+_SHUTDOWN_ACK_BUDGET_NS = 5_000_000_000
+
+
+def _wait_for_recording_acknowledgments(node, publishers, receipt):
+    """Give DDS a shared, bounded wall-clock window to acknowledge queued data."""
+    from rclpy.duration import Duration
+    from rclpy.qos import ReliabilityPolicy
+
+    def subscribers(publisher):
+        return {
+            "matched_count": publisher.get_subscription_count(),
+            "discovered_reliable_nodes": sorted({
+                f"{endpoint.node_namespace.rstrip('/')}/{endpoint.node_name}"
+                for endpoint in node.get_subscriptions_info_by_topic(publisher.topic_name)
+                if endpoint.qos_profile.reliability == ReliabilityPolicy.RELIABLE
+            }),
+        }
+
+    started_ns = time.monotonic_ns()
+    deadline_ns = started_ns + _SHUTDOWN_ACK_BUDGET_NS
+    receipt.update(
+        status="running", budget_wall_s=_SHUTDOWN_ACK_BUDGET_NS / 1e9,
+        scope="DDS writer acknowledgments only; verifies neither recorder receipt nor bag persistence",
+        topics={},
+    )
+    for publisher in publishers:
+        if publisher is None:
+            continue
+        evidence = {"wait_called": False, "wait_wall_s": 0.0}
+        receipt["topics"][publisher.topic_name] = evidence
+        try:
+            before = subscribers(publisher)
+            evidence["subscribers_before"] = before
+            if before["matched_count"] == 0:
+                evidence["status"] = "no_matched_subscribers"
+                continue
+            wait_started_ns = time.monotonic_ns()
+            remaining_ns = max(0, deadline_ns - wait_started_ns)
+            evidence.update(wait_called=True, wait_timeout_wall_s=remaining_ns / 1e9)
+            try:
+                acknowledged = publisher.wait_for_all_acked(Duration(nanoseconds=remaining_ns))
+                evidence["wait_returned"] = acknowledged
+            finally:
+                evidence["wait_wall_s"] = (time.monotonic_ns() - wait_started_ns) / 1e9
+            after = subscribers(publisher)
+            evidence["subscribers_after"] = after
+            if not acknowledged:
+                evidence["status"] = "timeout"
+            elif after["matched_count"] == 0:
+                evidence["status"] = "no_matched_subscribers_after_wait"
+            elif not (before["discovered_reliable_nodes"] and after["discovered_reliable_nodes"]):
+                evidence["status"] = "no_reliable_subscriber_observed"
+            else:
+                evidence["status"] = "wait_succeeded"
+        except Exception as error:
+            evidence.update(status="error", error=repr(error))
+    receipt.update(status="finished", elapsed_wall_s=(time.monotonic_ns() - started_ns) / 1e9)
+
+
+def create_ros_interface(
+    experiment, learned_mapper, learned_scorer, *, journal=None, shutdown_receipt=None
+):
     """按原探针的语义创建采集 ROS 节点。
 
     ``experiment`` 是本次运行的配置映射：``odometry_topic`` 缺省为
@@ -94,6 +156,9 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     if reliable_recording:
         from rclpy.qos import QoSProfile, ReliabilityPolicy
         qos_profile_sensor_data = QoSProfile(depth=128, reliability=ReliabilityPolicy.RELIABLE)
+    if shutdown_receipt is None:
+        shutdown_receipt = {}
+    shutdown_receipt["status"] = "pending" if reliable_recording else "disabled"
 
     # 发布追踪是显式实验开关：开启后必须提供 journal，否则直接拒绝启动，
     # 避免把“未记录”误当成“已投递”。
@@ -194,6 +259,9 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
     latest_nav = [None]
     # /clock 使用默认可靠 QoS（depth=10），由采集循环按传感器时间戳发布。
     pub_clock = node.create_publisher(Clock, "/clock", 10)
+    pub_truth = (node.create_publisher(Odometry, "/dynanav/truth/base_odometry", 10)
+                 if (experiment.get("record_simulation_truth", False)
+                     and experiment.get("control_mode") == "native_pose_diagnostic") else None)
 
     def nav_callback(m):
         # 已批准指令按“导航请求”保存：request=[vx, vy, wz]（m/s、m/s、rad/s）。
@@ -334,9 +402,12 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         depth_msg.encoding, depth_msg.step = "32FC1", zz.shape[1] * 4
         depth_msg.data = np.ascontiguousarray(zz, dtype="<f4").tobytes()
         pub_depth.publish(depth_msg)
+        publish_camera_info(it, *zz.shape)
+
+    def publish_camera_info(it, height, width):
         info = CameraInfo()
         header(info, it, "go2_camera_optical")
-        info.height, info.width = zz.shape
+        info.height, info.width = height, width
         # 内参沿用原探针公式 focal = 512*24/42（约 292.57 px），主点固定在
         # 图像中心 (256, 256)，零畸变；这些常数对应的标定来源代码与文档均未说明。
         focal = 512 * 24 / 42
@@ -371,13 +442,46 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         msg.step = 1536
         msg.data = np.ascontiguousarray(rgb).tobytes()
         _publish_sensor(pub_img, msg, "/dynanav/camera", trace_journal)
+        if rtx_enabled:
+            publish_camera_info(it, msg.height, msg.width)
         published["rgb"] += 1
 
+    def publish_truth(
+        stamp, position, quaternion_wxyz, velocity_com_world, omega_world, com_local
+    ):
+        if pub_truth is None:
+            return
+        msg = Odometry()
+        header(msg, stamp, "simulation_world")
+        msg.child_frame_id = "go2_base_truth"
+        xyz, quat = msg.pose.pose.position, msg.pose.pose.orientation
+        xyz.x, xyz.y, xyz.z = map(float, position)
+        quat.w, quat.x, quat.y, quat.z = map(float, quaternion_wxyz)
+        from embodied_navigation.robot.unitree.policy.native.observation import quaternion_rotation
+
+        rotation = quaternion_rotation(quaternion_wxyz)
+        # PhysX reports COM velocity. Odometry twist is at the base origin in the child frame.
+        velocity_base_world = np.asarray(velocity_com_world) - np.cross(
+            omega_world, rotation @ com_local
+        )
+        linear = rotation.T @ velocity_base_world
+        angular = rotation.T @ omega_world
+        msg.twist.twist.linear.x, msg.twist.twist.linear.y, msg.twist.twist.linear.z = map(float, linear)
+        msg.twist.twist.angular.x, msg.twist.twist.angular.y, msg.twist.twist.angular.z = map(float, angular)
+        pub_truth.publish(msg)
+        published["truth"] = published.get("truth", 0) + 1
+
     def destroy():
-        # 顺序固定：先销毁节点再关闭 rclpy context，避免遗留订阅/发布者。
-        # 由采集编排在收尾时统一调用，本函数不判断是否已关闭。
-        node.destroy_node()
-        rclpy.shutdown()
+        # 正常及异常收尾都已退出采集循环，不再推进物理。DDS 仍可发送队列中的数据。
+        try:
+            if reliable_recording:
+                writers = (pub_img, pub_complete_rtx, pub_rtx, pub_info, pub_imu, pub_clock, pub_truth)
+                if not rtx_enabled:
+                    writers += (pub_depth, pub_cloud, pub_static_cloud, pub_perception_cloud)
+                _wait_for_recording_acknowledgments(node, writers, shutdown_receipt)
+        finally:
+            node.destroy_node()
+            rclpy.shutdown()
 
     return RosInterface(
         node=node,
@@ -393,4 +497,5 @@ def create_ros_interface(experiment, learned_mapper, learned_scorer, *, journal=
         publish_rgb=publish_rgb,
         destroy=destroy,
         publish_rtx_cloud=publish_rtx_cloud,
+        publish_truth=publish_truth,
     )

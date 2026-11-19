@@ -10,6 +10,7 @@ Usage: run_dynanav_lio.sh --output-dir NEW_DIRECTORY [--binary-prefix PREFIX] [-
        Optional: --observer-namespace /dynanav/lio_observer   # default
        Optional: --observer-transport auto|baseline   # DYNANAV_OBSERVER_TRANSPORT or auto
        Optional: --lidar-topic /dynanav/lidar_perception_filtered
+       Optional: --config-dir DIRECTORY   # default: configs/simulation/dynanav
 
 PREFIX contains install/ros. PROJECT_DATA_ROOT can supply the verified, fixed
 build-cache default. --parameter-override appends a second ROS parameter file
@@ -46,6 +47,7 @@ binary_prefix=""
 dependency_prefix=""
 output_dir=""
 parameter_override=""
+config_dir=""
 mode=lio
 observer_namespace=/dynanav/lio_observer
 lidar_topic=/dynanav/lidar_static
@@ -57,13 +59,14 @@ observer_transport_source=default
 check_only=false
 while (($#)); do
     case "$1" in
-        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--mode|--capture-result|--camera-blackboard|--observer-namespace|--lidar-topic|--observer-transport)
+        --binary-prefix|--dependency-prefix|--output-dir|--parameter-override|--config-dir|--mode|--capture-result|--camera-blackboard|--observer-namespace|--lidar-topic|--observer-transport)
             (($# >= 2)) || { printf 'Missing value for %s\n' "$1" >&2; exit 2; }
             case "$1" in
                 --binary-prefix) binary_prefix=$2 ;;
                 --dependency-prefix) dependency_prefix=$2 ;;
                 --output-dir) output_dir=$2 ;;
                 --parameter-override) parameter_override=$2 ;;
+                --config-dir) config_dir=$2 ;;
                 --mode) mode=$2 ;;
                 --observer-transport) observer_transport=$2; observer_transport_source=cli ;;
                 --observer-namespace) observer_namespace=$2 ;;
@@ -108,11 +111,12 @@ dependency_prefix=$(realpath -m -- "$dependency_prefix")
 install_prefix="$binary_prefix/install/ros"
 runner="$install_prefix/lib/fast_livo2_ros/fastlivo_mapping"
 core="$install_prefix/lib/libfast_livo2_core.so"
-parameters="$repo_dir/configs/simulation/dynanav/fastlivo_${mode}.yaml"
-camera="$repo_dir/configs/simulation/dynanav/camera_rgbd.yaml"
+config_dir=${config_dir:-"$repo_dir/configs/simulation/dynanav"}
+parameters="$config_dir/fastlivo_${mode}.yaml"
+camera="$config_dir/camera_rgbd.yaml"
 sensor_parameters=""
 if [[ $lidar_topic == /dynanav/lidar_rtx ]]; then
-    sensor_parameters="$repo_dir/configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml"
+    sensor_parameters="$config_dir/fastlivo_rtx_os1_32.yaml"
 fi
 if [[ -n $parameter_override ]]; then
     [[ -f $parameter_override && -r $parameter_override ]] || { printf 'Unreadable parameter override: %s\n' "$parameter_override" >&2; exit 2; }
@@ -387,7 +391,9 @@ if [[ -n $selected_profile ]]; then
 fi
 export DEMO_RUN_DIR="$output_dir"
 export ROS_LOG_DIR="$output_dir/ros_logs"
-export FASTLIVO_DIAGNOSTIC_DIR="$output_dir/diagnostics"
+# The native per-point binary has no total disk bound. Normal launches retain
+# ROS/status logs without enabling this unbounded diagnostic stream.
+unset FASTLIVO_DIAGNOSTIC_DIR
 export FASTLIVO_PIPELINE_MODE=serial
 export FASTLIVO_SERIAL_IMU_PRIORITY=0
 mkdir -- "$ROS_LOG_DIR"

@@ -9,6 +9,7 @@ the static support preflights. It is only called from the explicit ``run()``
 entry; importing it has no side effects.
 """
 
+from collections import OrderedDict
 import os
 import hashlib
 from pathlib import Path
@@ -19,7 +20,7 @@ import numpy as np
 from embodied_navigation.project import data_root
 
 
-def start_simulation_app(use_fabric, *, rtx_lidar=False):
+def start_simulation_app(use_fabric, *, rtx_lidar=False, log_to_stdout=False):
     """Create the legacy app, with required FSD/multi-tick only for explicit RTX."""
     from isaacsim import SimulationApp
 
@@ -36,6 +37,10 @@ def start_simulation_app(use_fabric, *, rtx_lidar=False):
             "sync_loads": False,
             "limit_cpu_threads": 8,
             "extra_args": [
+                # The native launcher owns the bounded stdout/stderr sink. Keep
+                # Info (the original Kit file threshold), without a second file.
+                *(["--/log/file=", "--/log/enableStandardStreamOutput=true",
+                   "--/log/outputStreamLevel=info"] if log_to_stdout else []),
                 "--/app/settings/persistent=0",
                 "--/app/extensions/registryEnabled=false",
                 "--/app/fastShutdown=true",
@@ -301,9 +306,22 @@ class ContactMonitor:
         self.dynamic_contact_events = []
         self.contact_paths = {}
         self.callback_count = 0
+        self.contact_pair_summary = {
+            "version": 1, "pair_capacity": 128, "pair_evictions": 0,
+            "robot_contact_headers": 0, "robot_contact_points": 0,
+            "evicted_contact_headers": 0, "evicted_contact_points": 0,
+            "observation_only": True,
+            "scope": "All pairs with a Go2 collider or actor and positive contact-data count",
+            "time_semantics": "First/last positive contact report, not contact start/end",
+            "pair_statistics_scope": "Since latest LRU retention; evicted pair history is not preserved",
+            "impulse_metric": "Maximum native point impulse Euclidean norm, not force",
+            "pairs": [],
+        }
+        self._contact_pairs = OrderedDict()
         self._subscription = None
 
     def install(self, stage):
+        """Subscribe and return the live bounded receipt for existing result saves."""
         from pxr import PhysxSchema, UsdPhysics
 
         self.stage = stage
@@ -319,6 +337,36 @@ class ContactMonitor:
             omni.physx.get_physx_simulation_interface()
             .subscribe_full_contact_report_events(self.on_contact)
         )
+        return self.contact_pair_summary
+
+    def _summarize_pair(self, paths, actors, header, data, physics_s):
+        # Sort associated collider/actor tuples so reversed reports share a pair.
+        pair = tuple(sorted(zip(paths, actors)))
+        summary = self.contact_pair_summary
+        summary["robot_contact_headers"] += 1
+        summary["robot_contact_points"] += int(header.num_contact_data)
+        if pair not in self._contact_pairs:
+            if len(self._contact_pairs) == summary["pair_capacity"]:
+                _, evicted = self._contact_pairs.popitem(last=False)
+                summary["pair_evictions"] += 1
+                summary["evicted_contact_headers"] += evicted["header_count"]
+                summary["evicted_contact_points"] += evicted["contact_point_count"]
+            self._contact_pairs[pair] = {
+                "colliders": [p[0] for p in pair], "actors": [p[1] for p in pair],
+                "first_physics_s": physics_s, "last_physics_s": physics_s,
+                "header_count": 0, "contact_point_count": 0,
+                "max_point_impulse_norm": 0.0,
+            }
+            summary["pairs"] = list(self._contact_pairs.values())
+        row = self._contact_pairs[pair]
+        self._contact_pairs.move_to_end(pair)
+        row["last_physics_s"] = physics_s
+        row["header_count"] += 1
+        row["contact_point_count"] += int(header.num_contact_data)
+        for point in data[header.contact_data_offset:
+                          header.contact_data_offset + header.num_contact_data]:
+            row["max_point_impulse_norm"] = max(
+                row["max_point_impulse_norm"], float(np.linalg.norm(point.impulse)))
 
     def begin_step(self):
         self.contact_state[:] = [0, 0, 0, 0, 0]
@@ -340,6 +388,9 @@ class ContactMonitor:
                 str(PhysicsSchemaTools.intToSdfPath(h.actor0)),
                 str(PhysicsSchemaTools.intToSdfPath(h.actor1)),
             ]
+            if any(path.startswith("/World/Go2") for path in paths + actors):
+                self._summarize_pair(paths, actors, h, data,
+                                     float(SimulationManager.get_simulation_time()))
             for j, path in enumerate(paths):
                 if not path.startswith("/World/Go2"):
                     continue
@@ -484,7 +535,13 @@ def initialize_articulation(art, stage, spawn, spawn_yaw, out, imu_mount, result
     art.set_dof_positions(target[None, :])
     art.set_dof_velocities(np.zeros((1, 12), np.float32))
     art.set_dof_max_efforts(np.full((1, 12), 23.5))
-    art.set_dof_max_velocities(np.full((1, 12), 30.0))
+    max_velocities = np.full((1, 12), 30.0)
+    art.set_dof_max_velocities(max_velocities)
+    result["dof_max_velocities_radps"] = {
+        "requested": max_velocities[0].tolist(),
+        "readback": art.get_dof_max_velocities().numpy()[0].tolist(),
+        "physics_tensor_view_valid": art.is_physics_tensor_entity_valid(),
+    }
     calf_views = [
         RigidPrim(
             "/World/Go2/Geometry/base/"

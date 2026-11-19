@@ -22,9 +22,13 @@ class RouteTracker:
     ``points`` are measured XYZ waypoints in metres (z is checked separately, so a
     wrong floor cannot fake arrival), ``start_xy`` is the initial XY pose used as
     the origin of stage 0, ``speed`` is the maximum forward command in m/s,
-    ``motion_end`` is the deadline compared with ``t`` in seconds, and ``stop_on_stall``
+    ``motion_end`` is the deadline compared with ``t`` in seconds (None disables
+    the total budget), and ``stop_on_stall``
     chooses whether an observed low-progress stall becomes a failure. Capture
-    bounds default to the original 0.20/0.30 m; optional final-only overrides
+    ``reverse=True`` keeps the body opposite the segment bearing and commands
+    negative longitudinal velocity; progress, arrival and stall use the same
+    segment geometry. Callers remain responsible for observed rear clearance.
+    Capture bounds default to the original 0.20/0.30 m; optional final-only overrides
     inherit those bounds when None and never alter intermediate stages.
     """
 
@@ -36,12 +40,16 @@ class RouteTracker:
         motion_end=230.0,
         stop_on_stall=True,
         *,
+        reverse=False,
         capture_remaining_m=0.20,
         capture_distance_m=0.30,
         final_capture_remaining_m=None,
         final_capture_distance_m=None,
     ):
         """Bind the route and initial controller state; performs no I/O."""
+        if type(reverse) is not bool:
+            raise ValueError("reverse must be boolean")
+        self.reverse = reverse
         self.points = points
         self.start = start_xy
         self.speed = speed
@@ -135,7 +143,7 @@ class RouteTracker:
         command = [0.0, 0.0, 0.0]
         if self.failure or self.arrived:
             return command
-        if t >= self.motion_end:
+        if self.motion_end is not None and t >= self.motion_end:
             self.failure = "route_motion_budget"
             return command
         # No command before t=7 s or when the caller says the inputs are not
@@ -153,7 +161,7 @@ class RouteTracker:
         length = math.hypot(dx, dy)
         u = (dx / length, dy / length)
         normal = (-u[1], u[0])
-        heading = math.atan2(dy, dx)
+        heading = math.atan2(dy, dx) + (math.pi if self.reverse else 0.)
         # error: wrapped bearing error, remaining: signed distance to go along
         # u, cross: signed lateral offset from the segment line, distance: 2D
         # distance to the waypoint, z_error: vertical distance to it.
@@ -216,7 +224,7 @@ class RouteTracker:
                 # .25 rad; otherwise forward command is zero while lateral
                 # correction and yaw command are still computed.
                 command[0] = (
-                    min(self.speed, max(0.04, 0.5 * max(remaining, 0.0)))
+                    (-1. if self.reverse else 1.) * min(self.speed, max(0.04, 0.5 * max(remaining, 0.0)))
                     if abs(error) < 0.25
                     else 0.0
                 )
@@ -229,7 +237,7 @@ class RouteTracker:
                     -math.sin(yaw) * world[0] + math.cos(yaw) * world[1], 0.05
                 )
                 command[2] = clip(0.8 * error, 0.15)
-                if command[0] > 0:
+                if command[0] != 0:
                     along = (p[0] - origin[0]) * u[0] + (p[1] - origin[1]) * u[1]
                     if self.stall is None:
                         self.stall = (t, along)
@@ -296,7 +304,7 @@ class RouteTracker:
             # In-place turn towards the next waypoint; the pose may not drift
             # more than .45 m from the captured waypoint.
             nextgoal = self.points[self.stage + 1]
-            nextheading = math.atan2(nextgoal[1] - goal[1], nextgoal[0] - goal[0])
+            nextheading = math.atan2(nextgoal[1] - goal[1], nextgoal[0] - goal[0]) + (math.pi if self.reverse else 0.)
             next_error = wrap(nextheading - yaw)
             if distance > 0.45:
                 self.failure = "corner_turn_drift"

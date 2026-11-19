@@ -7,7 +7,8 @@ No offline scene, truth map, direct-line fallback or waypoint admission gate.
 from __future__ import annotations
 
 import argparse
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -17,13 +18,33 @@ from pathlib import Path
 import signal
 import subprocess
 import time
+import uuid
 
 import numpy as np
+
+from embodied_navigation.perception.pose_velocity import update_pose_velocity
+from embodied_navigation.planning.pct.measured_tomogram import DEFAULT_MAX_GRID_CELLS
+from embodied_navigation.planning.scan_handoff import ReferenceHandoff, reference_waypoints
 
 ROOT = Path(__file__).resolve().parents[4]
 CLOUD = '/dynanav/rtx_livo/cloud_registered_full'
 LIO = '/dynanav/rtx_livo/aft_mapped_to_init'
 VIO = '/dynanav/rtx_livo/post_vio_odometry'
+
+
+def fit_current_stair_geometry(history_points, model_body_position, current_snapshot):
+    """Fit history first, then geometrically recheck the newest actual scan.
+
+    A slow fit must not age the points to which an exemption is attached. The
+    immutable snapshot is read after fitting; no old labels are retimestamped.
+    """
+    from embodied_navigation.planning.stair_geometry import detect_stair_voxels, match_stair_voxels
+    fitted = detect_stair_voxels(history_points, model_body_position)
+    stamp, current_points, body_position, frames = current_snapshot()
+    result = match_stair_voxels(current_points, body_position, fitted['models'])
+    result['source_stamp_ns'] = stamp
+    result['source_frames'] = frames
+    return result
 
 
 def read_json(path):
@@ -40,13 +61,51 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+def read_yaw_query(mailbox, run_id):
+    """Read the independent yaw mailbox; never synthesize a translation goal."""
+    query = read_json(Path(mailbox) / 'planner_yaw_query.json')
+    if not isinstance(query, dict) or query.get('version') != 1 or query.get('run_id') != run_id:
+        return None
+    if query.get('pose_source') != 'livo_post_vio' or not all(
+            isinstance(query.get(key), str) and query[key] for key in ('frame_id', 'child_frame_id')):
+        return None
+    if any(type(query.get(key)) is not int or query[key] < 1 for key in ('seq', 'query_id', 'body_stamp_ns')):
+        return None
+    angle = query.get('target_yaw_rad')
+    if isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle):
+        return None
+    return query
+
+
+def rotation_response_matches(reply, request, child_pid, startup_nonce, last_sample_id):
+    """Associate a response with one owned process and increasing map query."""
+    if not isinstance(reply, dict) or reply.get('version') != 1:
+        return False
+    if any(reply.get(key) != request.get(key) for key in ('run_id', 'seq', 'query_id', 'target_yaw_rad')):
+        return False
+    identity = reply.get('native_identity', {})
+    if not isinstance(identity, dict) or identity.get('pid') != child_pid or identity.get('startup_nonce') != startup_nonce:
+        return False
+    return (type(reply.get('sample_id')) is int and reply['sample_id'] > last_sample_id and
+            reply.get('status') in ('clear', 'blocked', 'pending', 'failed'))
+
+
 def active_request(mailbox, run_id):
     """Observation, not a stale request file, owns cancellation/sequence state."""
     observation = read_json(Path(mailbox) / 'observation.json')
     request = read_json(Path(mailbox) / 'planner_request.json')
-    if not isinstance(observation, dict) or not isinstance(request, dict):
+    if not isinstance(observation, dict):
         return None
-    if observation.get('run_id') != run_id or request.get('run_id') != run_id:
+    if observation.get('run_id') != run_id:
+        return None
+    waypoints = observation.get('waypoints', {})
+    if waypoints.get('active_action') == 'yaw':
+        query = read_yaw_query(mailbox, run_id)
+        if query is None or query['seq'] != waypoints.get('active_seq'):
+            return None
+        return dict(version=1, action='yaw', **{key: query[key] for key in
+            ('run_id', 'seq', 'query_id', 'frame_id', 'child_frame_id', 'pose_source', 'target_yaw_rad')})
+    if not isinstance(request, dict) or request.get('run_id') != run_id:
         return None
     if observation.get('waypoints', {}).get('active_seq') != request.get('seq'):
         return None
@@ -100,14 +159,15 @@ def build_scan(build_root, jobs=2):
     build_root = Path(build_root).resolve()
     if build_root.is_relative_to(ROOT):
         raise ValueError('SCAN build directory must be outside the checkout')
-    build_root.mkdir(parents=True, exist_ok=True)
     digest = scan_source_digest()
     receipt = build_root / 'source_receipt.json'
     binary = build_root / 'install/lib/scan_planner/scan_planner_node'
     if binary.exists() and read_json(receipt).get('source_sha256') == digest:
         return binary
+    from embodied_navigation.planning.scan_source import stage_scan_source
+    staged_source = stage_scan_source(ROOT / 'third_party/scan', build_root)
     command = ['colcon', '--log-base', str(build_root / 'log'), 'build', '--base-paths',
-               str(ROOT / 'third_party/scan'), '--build-base', str(build_root / 'build'),
+               str(staged_source), '--build-base', str(build_root / 'build'),
                '--install-base', str(build_root / 'install'), '--merge-install',
                '--executor', 'sequential', '--cmake-args', '-DCMAKE_BUILD_TYPE=Release',
                '-DBUILD_TESTING=OFF', '-DPython3_EXECUTABLE=/usr/bin/python3']
@@ -124,12 +184,15 @@ class OwnedScan:
         self.process = None
         self.log = None
         self.namespace = namespace
+        self.ack_nonce = uuid.uuid4().hex
         parameters = yaml.safe_load((ROOT / 'third_party/scan/plan_manage/config/planner.yaml').read_text())
         params = parameters['scan_planner_node']['ros__parameters']
         params.update({
             'use_sim_time': True, 'fsm.navi_mode': 3, 'fsm.external_reference_protocol': True,
             'fsm.reference_run_id': request['run_id'], 'fsm.reference_epoch': request['seq'],
             'fsm.localization_generation': 0, 'fsm.measured_max_speed': speed,
+            'fsm.child_odometry_consumption_ack': True,
+            'fsm.child_odometry_ack_nonce': self.ack_nonce,
             'fsm.planning_horizon': 0.65, 'manager.planning_horizon': 0.65,
             'fsm.thresh_replan': 0.35, 'grid_map.frame_id': request['frame_id'],
             'grid_map.sliding_map_frame_id': namespace.strip('/').replace('/', '_') + '_grid',
@@ -137,6 +200,12 @@ class OwnedScan:
             'grid_map.obstacles_inflation_z_up': 0.12, 'grid_map.obstacles_inflation_z_down': 0.12,
             'grid_map.cloud_is_world': True, 'grid_map.need_extrinsic': False,
             'manager.max_vel': speed, 'optimization.max_vel': speed,
+            'manager.max_acc': 2.0, 'optimization.max_acc': 2.0,
+            'optimization.acc_tolerance': 2.0,
+            'diagnostics.voxel_trace_path': str(Path(mailbox) / ('scan_voxel_%s' % request['seq'])),
+            'diagnostics.voxel_trace_max_events': 8,
+            'diagnostics.voxel_trace_max_bytes': 2 * 1024 * 1024,
+            'diagnostics.voxel_trace_period_s': 1.0,
         })
         # Wildcard matches the namespaced native node without changing native source.
         filename = Path(mailbox) / ('scan_parameters_%s.yaml' % request['seq'])
@@ -157,10 +226,10 @@ class OwnedScan:
             self.log.close()
 
 
-def run(args):
+def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import qos_profile_sensor_data, QoSProfile, DurabilityPolicy
     from nav_msgs.msg import Odometry, Path as RosPath
     from geometry_msgs.msg import PoseStamped
     from sensor_msgs.msg import PointCloud2
@@ -180,6 +249,15 @@ def run(args):
         raise RuntimeError('SCAN must be built from this checkout with --build-scan; source receipt missing/stale')
     rclpy.init()
     node = Node('dynanav_pct_scan_worker')
+    velocity_policy = dict(source='post_vio_pose_window', window_s=0.5,
+                           reset_gap_s=0.25, frame='estimator_map', input_topic=VIO,
+                           raw_odometry_twist_used=False)
+    parameters = dict(
+        reference_response_timeout_s=args.reference_response_timeout_s,
+        body_velocity=velocity_policy, speed=args.speed,
+        pct_max_grid_cells=pct_max_grid_cells)
+    atomic_json(mailbox / 'planner_worker_parameters.json', parameters)
+    velocity_history = deque()
     # All accumulations are process-local and begin empty for this run.
     measured_voxels = {}
     measured_stamps = {}
@@ -191,6 +269,7 @@ def run(args):
     def plan_snapshot(points, track, start, goal, source):
         planner = MeasuredPctPlanner(points, trajectory_body_xyz=track,
             body_support_offset_m=args.body_support_offset, start_blind_radius_m=args.pct_start_blind_radius, native_binary=args.pct_binary,
+            max_grid_cells=parameters['pct_max_grid_cells'],
             generation=run_id, source_metadata=source)
         result = planner.plan(start, goal)
         return dict(status=('ready' if result['found'] else
@@ -198,23 +277,120 @@ def run(args):
                     points_xyz_m=result['body_path_xyz'], reason=result.get('reason'),
                     provenance=result['provenance'])
     pool = ThreadPoolExecutor(max_workers=1)
+    stair_pool = ThreadPoolExecutor(max_workers=1)
+    stair_job = {"future": None, "identity": None, "stamp": None, "frames": None, "model_first_stamp": None}
+    stair_history = deque(maxlen=5)
+    stair_latest = [None]
     state = dict(request=None, child=None, revision=0, vio=None, pair=None, reference_stamp=None,
-                 route_sent=False, future=None, route=None, last_attempt=0.0, prepared_at=None,
-                 last_snapshot=0.0, planning_started=None)
+                 route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
+                 last_snapshot=0.0, terminal_failed=False, body_pose=None,
+                 yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
+                 yaw_started_wall=None, yaw_last_cloud_sent=None)
     clouds, poses, splines, metadata = OrderedDict(), OrderedDict(), {}, {}
     namespace = '/dynanav/pct_scan/worker_%s' % os.getpid()
     sensor_pub = node.create_publisher(Odometry, namespace + '/sensor_pose', 10)
     body_pub = node.create_publisher(Odometry, namespace + '/body_pose', 10)
     cloud_pub = node.create_publisher(PointCloud2, namespace + '/cloud', 10)
     path_pub = node.create_publisher(RosPath, namespace + '/initial_path', 1)
+    rotation_pub = node.create_publisher(String, namespace + '/rotation_query', 10)
+    stair_pub = node.create_publisher(String, namespace + '/stair_labels', 1)
+    stair_status_log = (mailbox / 'planner_stair_label_status.jsonl').open('a', buffering=1)
+
+    def collect_stair_labels():
+        future = stair_job['future']
+        if future is None or not future.done():
+            return
+        stair_job['future'] = None
+        request, child = state['request'], state['child']
+        if request is None or child is None or state['terminal_failed'] or not current():
+            return
+        if stair_job['frames'] != (request['frame_id'], request['child_frame_id']):
+            return
+        identity = (request['seq'], child.ack_nonce)
+        if identity != stair_job['identity']:
+            return  # Never transfer old labels to another native process.
+        try:
+            result = future.result()
+        except Exception as error:
+            node.get_logger().warning('stair_geometry_failed:' + str(error))
+            return  # The native freshness lease restores the original inflation.
+        stamp = result['source_stamp_ns']
+        frames = result['source_frames']
+        if frames != (request['frame_id'], request['child_frame_id']):
+            return
+        latest = source_interval[1]
+        if latest is None or not 0 <= latest - stamp <= 300_000_000:
+            return
+        indices = result['voxel_indices']
+        if len(indices) > 4096:
+            indices = np.empty((0, 3), dtype=int)
+        payload = dict(version=1, run_id=run_id, seq=request['seq'],
+            startup_nonce=child.ack_nonce, localization_generation=0,
+            frame_id=frames[0], child_frame_id=frames[1],
+            source_stamp_ns=stamp, resolution_m=.08, voxel_indices=indices.tolist())
+        payload['model_source_interval_ns'] = [stair_job['model_first_stamp'], stair_job['stamp']]
+        stair_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
+        atomic_json(mailbox / 'planner_stair_labels.json', dict(**payload,
+            models=result['models'], observed_point_count=result['observed_point_count'],
+            provenance='current_exact_stamp_paired_deskewed_cloud_geometric_detection',
+            unseen_surface_completion=False, runtime_permit=False))
+
+    def submit_stair_labels(xyz, pose, stamp):
+        collect_stair_labels()
+        request, child = state['request'], state['child']
+        if (stair_job['future'] is not None or request is None or child is None
+                or state['terminal_failed'] or not current()):
+            return
+        frames = (pose.header.frame_id, pose.child_frame_id)
+        if frames != (request['frame_id'], request['child_frame_id']):
+            return
+        position = pose.pose.pose.position
+        history = [item for item in stair_history if 0 <= stamp - item[0] <= 500_000_000]
+        stair_job.update(identity=(request['seq'], child.ack_nonce), stamp=stamp, frames=frames,
+            model_first_stamp=history[0][0],
+            future=stair_pool.submit(fit_current_stair_geometry,
+                np.concatenate([item[1] for item in history]),
+                [position.x, position.y, position.z], lambda: stair_latest[0]))
+
+    def stair_status_callback(message):
+        status = feedback_json(message)
+        if status is None:
+            return
+        request, child = state['request'], state['child']
+        if (request is not None and child is not None and
+                status.get('run_id') == run_id and status.get('seq') == request['seq'] and
+                status.get('startup_nonce') == child.ack_nonce):
+            stair_status_log.write(json.dumps(status, allow_nan=False) + '\n')
+            atomic_json(mailbox / 'planner_stair_label_status.json', status)
 
     def current():
         request = active_request(mailbox, run_id)
         return request is not None and state['request'] is not None and request == state['request']
 
-    def output(status, reason=None, **extra):
-        if not current():
+    def yaw_output(status, reason=None, **extra):
+        request = state['request']
+        if not current() or request is None or request.get('action') != 'yaw':
             return
+        data = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
+                    target_yaw_rad=request['target_yaw_rad'], frame_id=request['frame_id'],
+                    child_frame_id=request['child_frame_id'], status=status, reason=reason,
+                    sample_id=state['yaw_last_response_id'], received_wall_s=time.monotonic())
+        data.update(extra)
+        data['received_wall_s'] = time.monotonic()
+        atomic_json(mailbox / 'planner_yaw_space.json', data)
+        if status in ('failed', 'blocked'):
+            state['terminal_failed'] = True
+
+    def output(status, reason=None, **extra):
+        if state['request'] is not None and state['request'].get('action') == 'yaw':
+            yaw_output(status, reason, **extra)
+            return
+        if not current() or state['terminal_failed']:
+            return
+        if status == 'failed':
+            state['terminal_failed'] = True
+            if state['handoff'] is not None:
+                state['handoff'].fail(reason)
         request = state['request']
         state['revision'] += 1
         data = dict(version=1, run_id=run_id, seq=request['seq'], frame_id=request['frame_id'],
@@ -225,16 +401,60 @@ def run(args):
             data['reason'] = reason
         atomic_json(mailbox / 'planner_path.json', data)
 
+    def publish_body_pose():
+        message, handoff = state['body_pose'], state['handoff']
+        if message is None or state['terminal_failed']:
+            return
+        request = state['request']
+        if request is not None and request.get('action') == 'yaw':
+            if state['child'] is not None and (message.header.frame_id, message.child_frame_id) == (request['frame_id'], request['child_frame_id']):
+                body_pub.publish(message)
+            return
+        if handoff is None:
+            return
+        if (message.header.frame_id, message.child_frame_id) != (request['frame_id'], request['child_frame_id']):
+            return
+        p = message.pose.pose.position
+        handoff.sent_body_pose(message_stamp_ns(message), [p.x, p.y, p.z])
+        body_pub.publish(message)
+
     def odometry(message):
         previous = state['vio']
-        if previous is not None and message_stamp_ns(message) <= message_stamp_ns(previous):
+        stamp = message_stamp_ns(message)
+        frames = (message.header.frame_id, message.child_frame_id)
+        if previous is not None and stamp <= message_stamp_ns(previous):
+            return
+        if previous is not None and (stamp - message_stamp_ns(previous) > 250_000_000 or
+                frames != (previous.header.frame_id, previous.child_frame_id)):
+            velocity_history.clear()
+        p, q = message.pose.pose.position, message.pose.pose.orientation
+        position = np.asarray([p.x, p.y, p.z])
+        if not all(frames) or not np.isfinite([p.x, p.y, p.z, q.x, q.y, q.z, q.w]).all():
+            velocity_history.clear()
+            state['body_pose'] = None
             return
         state['vio'] = message
-        p = message.pose.pose.position
-        if np.isfinite([p.x, p.y, p.z]).all():
-            trajectory.append([p.x, p.y, p.z])
-        if state['child'] is not None:
-            body_pub.publish(message)
+        trajectory.append(position.tolist())
+        velocity = update_pose_velocity(velocity_history, stamp / 1e9, position,
+                                        velocity_policy['window_s'])
+        state['body_pose'] = None
+        if velocity is not None:
+            # SCAN consumes map-frame velocity. The original post-VIO message
+            # stays unchanged; its zero twist is not a measured velocity.
+            body = deepcopy(message)
+            body.twist.twist.linear.x, body.twist.twist.linear.y, body.twist.twist.linear.z = map(float, velocity)
+            state['body_pose'] = body
+            publish_body_pose()
+
+    def publish_yaw_pair(paired):
+        cloud, pose = paired
+        stamp = message_stamp_ns(cloud)
+        if (stamp == state['yaw_last_cloud_sent'] or not sensor_pub.get_subscription_count() or
+                not cloud_pub.get_subscription_count()):
+            return
+        sensor_pub.publish(pose)
+        cloud_pub.publish(cloud)
+        state['yaw_last_cloud_sent'] = stamp
 
     def pair():
         nonlocal map_frames
@@ -266,11 +486,17 @@ def run(args):
                 lio_sources[stamp] = [position.x, position.y, position.z,
                                       orientation.x, orientation.y, orientation.z, orientation.w]
                 state['pair'] = (cloud, pose)
+                stair_history.append((stamp, xyz))
+                stair_latest[0] = (stamp, xyz, [position.x, position.y, position.z], frames)
                 if state['child'] is not None:
                     # Native GridMap is latest-pose based, not message-filter synchronized.
                     # No claim of child-side exact-stamp consumption is made.
-                    sensor_pub.publish(pose)
-                    cloud_pub.publish(cloud)
+                    if state['request'].get('action') == 'yaw':
+                        publish_yaw_pair((cloud, pose))
+                    else:
+                        sensor_pub.publish(pose)
+                        cloud_pub.publish(cloud)
+                    submit_stair_labels(xyz, pose, stamp)
             except ValueError as error:
                 node.get_logger().warning(str(error))
         for cache in (clouds, poses):
@@ -286,15 +512,19 @@ def run(args):
         pair()
 
     def deliver(key):
-        if key not in splines or key not in metadata or not current():
+        if (key not in splines or key not in metadata or not current() or
+                state['terminal_failed'] or state['handoff'] is None):
             return
+        handoff = state['handoff']
+        if handoff.commit is None:
+            return  # Definitions and spline messages use independent ROS topics.
         spline, info = splines.pop(key), metadata.pop(key)
-        if info.get('reference_stamp') != state['reference_stamp']:
+        if not handoff.accepts_candidate(info):
             return
-        if info.get('run_id') != run_id or info.get('reference_epoch') != state['request']['seq']:
+        if info.get('candidate_kind') == 'emergency_stop':
+            output('hold', 'native_scan_emergency_stop')
             return
         if info.get('candidate_kind') != 'motion':
-            output('hold', 'native_scan_emergency_stop')
             return
         try:
             samples, times = sample_bspline(spline.order, spline.knots,
@@ -311,6 +541,8 @@ def run(args):
             order=spline.order, knots=list(spline.knots),
             control_points_xyz_m=[[p.x, p.y, p.z] for p in spline.pos_pts],
             native_metadata=info, map_source=CLOUD, navigation_source=VIO,
+            body_velocity=velocity_policy, child_odometry_ack=handoff.reference_odometry_ack,
+            reference_commit=handoff.commit,
             local_planner='native_SCAN', global_planner='native_PCT_Astar',
             occupancy='native_3d_inflated_voxels', z_policy='native_linear_reference_zero_z_gradient',
             source_stamp_semantics='latest_post_vio_received_by_adapter_at_spline_delivery',
@@ -328,15 +560,88 @@ def run(args):
             splines.pop(next(iter(splines)))
         deliver(key)
 
+    def feedback_json(message):
+        try:
+            value = json.loads(message.data)
+        except (TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
     def metadata_callback(message):
-        info = json.loads(message.data)
-        key = (info['trajectory_id'], *info['trajectory_start_time'])
-        metadata[key] = info
+        info = feedback_json(message)
+        if info is None:
+            return
+        try:
+            key = (info['trajectory_id'], *info['trajectory_start_time'])
+            metadata[key] = info
+        except (KeyError, TypeError):
+            return
         if len(metadata) > 64:
             metadata.pop(next(iter(metadata)))
         deliver(key)
 
+    def odometry_ack_callback(message):
+        handoff = state['handoff']
+        if current() and handoff is not None and not state['terminal_failed']:
+            handoff.consume_ack(feedback_json(message))
+
+    def route_definition_callback(message):
+        handoff = state['handoff']
+        if (current() and handoff is not None and not state['terminal_failed'] and
+                handoff.accept_commit(feedback_json(message))):
+            output('pending', 'native_scan_reference_committed')
+            for key in list(splines):
+                deliver(key)
+
+    def reference_status_callback(message):
+        handoff = state['handoff']
+        if (current() and handoff is not None and not state['terminal_failed'] and
+                handoff.receive_status(feedback_json(message))):
+            output('failed', handoff.failure, native_feedback=handoff.failure_event)
+
+    def rotation_result_callback(message):
+        request, child = state['request'], state['child']
+        if (not current() or request is None or request.get('action') != 'yaw' or
+                child is None or state['terminal_failed']):
+            return
+        reply = feedback_json(message)
+        if not rotation_response_matches(reply, request, child.process.pid, child.ack_nonce,
+                                         state['yaw_last_response_id']):
+            return
+        state['yaw_last_response_id'] = reply['sample_id']
+        state['yaw_last_response_wall'] = time.monotonic()
+        yaw_output(reply['status'], reply.get('reason'), **{key: value for key, value in reply.items()
+            if key not in ('status', 'reason')})
+
+    def poll_yaw():
+        request, paired = state['request'], state['pair']
+        if state['child'] is None:
+            state['child'] = OwnedScan(binary, mailbox, request, namespace, args.speed)
+            state['yaw_started_wall'] = time.monotonic()
+        child = state['child']
+        if child.process.poll() is not None:
+            yaw_output('failed', 'native_scan_process_exited:%s' % child.process.returncode)
+            return
+        publish_body_pose()
+        publish_yaw_pair(paired)
+        now = time.monotonic()
+        last = state['yaw_last_response_wall'] or state['yaw_started_wall']
+        if now - last > args.reference_response_timeout_s:
+            yaw_output('failed', 'native_rotation_response_timeout')
+            return
+        body = state['body_pose']
+        if body is None or not rotation_pub.get_subscription_count():
+            return
+        state['yaw_sample_id'] += 1
+        query = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
+            sample_id=state['yaw_sample_id'], startup_nonce=child.ack_nonce,
+            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'],
+            target_yaw_rad=request['target_yaw_rad'], body_stamp_ns=message_stamp_ns(body),
+            minimum_cloud_stamp_ns=message_stamp_ns(paired[0]))
+        rotation_pub.publish(String(data=json.dumps(query, allow_nan=False)))
+
     def poll():
+        collect_stair_labels()
         if measured_voxels and time.monotonic() - state['last_snapshot'] >= 5.0:
             state['last_snapshot'] = time.monotonic()
             tmp = mailbox / 'planner_measured_map.tmp.npz'
@@ -357,19 +662,24 @@ def run(args):
             if state['child']:
                 state['child'].close()
             state.update(request=request, child=None, revision=0, reference_stamp=None,
-                         route_sent=False, future=None, route=None, last_attempt=0.0, prepared_at=None,
-                 last_snapshot=0.0, planning_started=None)
+                         route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
+                         last_snapshot=0.0, terminal_failed=False,
+                         yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
+                         yaw_started_wall=None, yaw_last_cloud_sent=None)
             splines.clear()
             metadata.clear()
             if request is not None:
                 output('pending', 'waiting_for_current_measured_map')
-        if request is None:
+        if request is None or state['terminal_failed']:
             return
         vio, paired = state['vio'], state['pair']
         if vio is None or paired is None:
             return
         if (vio.header.frame_id, vio.child_frame_id) != (request['frame_id'], request['child_frame_id']) or map_frames != (request['frame_id'], request['child_frame_id']):
             output('failed', 'post_vio_frame_mismatch')
+            return
+        if request.get('action') == 'yaw':
+            poll_yaw()
             return
         if state['route'] is None:
             future = state['future']
@@ -409,45 +719,47 @@ def run(args):
                     written_wall_unix_s=time.time(), provenance=result.get('provenance', {}),
                     advisory_only=True, artifact_role='active_global_route_diagnostic'))
                 state['child'] = OwnedScan(binary, mailbox, request, namespace, args.speed)
+                state['handoff'] = ReferenceHandoff(request, state['child'].process.pid,
+                    state['child'].ack_nonce, time.monotonic(), args.reference_response_timeout_s)
             return
         child = state['child']
         if child.process.poll() is not None:
             output('failed', 'native_scan_process_exited:%s' % child.process.returncode)
             return
-        if not state['route_sent'] and path_pub.get_subscription_count() and body_pub.get_subscription_count() >= 2:
-            body_pub.publish(vio)
+        handoff = state['handoff']
+        failure = handoff.check_timeout(time.monotonic())
+        if failure:
+            output('failed', failure)
+            return
+        if not state['route_sent']:
+            publish_body_pose()
             sensor_pub.publish(paired[1])
             cloud_pub.publish(paired[0])
-            # Give the native measured callbacks a full timer cycle before committing reference.
-            if state.get('prepared_at') is None:
-                state['prepared_at'] = time.monotonic()
-                return
-            if time.monotonic() - state['prepared_at'] < 0.15:
+            if handoff.consumed is None or not path_pub.get_subscription_count():
                 return
             path = RosPath()
             path.header.frame_id = request['frame_id']
-            path.header.stamp = vio.header.stamp
-            start = np.array([vio.pose.pose.position.x, vio.pose.pose.position.y, vio.pose.pose.position.z])
-            previous = start
-            for xyz in state['route']['points_xyz_m']:
-                xyz = np.asarray(xyz, dtype=float)
-                if np.linalg.norm(xyz - previous) <= 1e-6:
-                    continue
+            stamp = handoff.consumed['source_stamp_ns']
+            path.header.stamp.sec, path.header.stamp.nanosec = divmod(stamp, 1_000_000_000)
+            try:
+                points = reference_waypoints(state['route']['points_xyz_m'], handoff.consumed_position)
+            except ValueError as error:
+                output('failed', str(error))
+                return
+            for xyz in points:
                 pose = PoseStamped()
                 pose.header = path.header
                 pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = map(float, xyz - [0, 0, .4])
                 pose.pose.orientation.w = 1.0
                 path.poses.append(pose)
-                previous = xyz
             if not path.poses:
                 output('failed', 'pct_empty_reference')
                 return
             state['reference_stamp'] = [path.header.stamp.sec, path.header.stamp.nanosec]
+            handoff.sent_reference(state['reference_stamp'], time.monotonic())
             path_pub.publish(path)
             state['route_sent'] = True
-            state['planning_started'] = time.monotonic()
-            state['prepared_at'] = None
-            output('pending', 'native_scan_planning')
+            output('pending', 'native_scan_waiting_for_reference_response')
 
     def stop_worker(signum, frame):
         raise KeyboardInterrupt
@@ -457,7 +769,13 @@ def run(args):
         node.create_subscription(Odometry, LIO, lio, qos_profile_sensor_data),
         node.create_subscription(Odometry, VIO, odometry, qos_profile_sensor_data),
         node.create_subscription(Bspline, namespace + '/planning/bspline', spline_callback, 10),
-        node.create_subscription(String, namespace + '/planning/trajectory_metadata', metadata_callback, 10)]
+        node.create_subscription(String, namespace + '/planning/trajectory_metadata', metadata_callback, 10),
+        node.create_subscription(String, namespace + '/planning/odometry_consumption_ack', odometry_ack_callback, 10),
+        node.create_subscription(String, namespace + '/planning/route_definition', route_definition_callback,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
+        node.create_subscription(String, namespace + '/planning/reference_status', reference_status_callback, 10),
+        node.create_subscription(String, namespace + '/rotation_result', rotation_result_callback, 10),
+        node.create_subscription(String, namespace + '/stair_label_status', stair_status_callback, 10)]
     timer = node.create_timer(0.05, poll)
     try:
         rclpy.spin(node)
@@ -465,6 +783,8 @@ def run(args):
         if state['child']:
             state['child'].close()
         pool.shutdown(wait=True, cancel_futures=True)
+        stair_pool.shutdown(wait=True, cancel_futures=True)
+        stair_status_log.close()
         node.destroy_node()
         rclpy.shutdown()
 
@@ -477,16 +797,24 @@ def main(argv=None):
     parser.add_argument('--build-scan', action='store_true')
     parser.add_argument('--build-only', action='store_true')
     parser.add_argument('--speed', type=float, default=1.0)
+    parser.add_argument('--reference-response-timeout-s', type=float, default=10.0,
+        help='Wall-time limit for child startup/odometry ACK and reference response only')
     parser.add_argument('--pct-binary', type=Path, default=None)
+    parser.add_argument('--pct-max-grid-cells', type=int, default=DEFAULT_MAX_GRID_CELLS,
+        help='Positive dense multilayer allocation budget; does not preallocate or filter the measured map')
     parser.add_argument('--body-support-offset', type=float, default=0.32)
     parser.add_argument('--pct-start-blind-radius', type=float, default=0.0,
         help='Explicit opt-in radius for measured-floor start-blind-region inference; 0 keeps strict measured cells')
     args = parser.parse_args(argv)
+    if args.pct_max_grid_cells <= 0:
+        parser.error('--pct-max-grid-cells must be a positive integer')
+    if not math.isfinite(args.reference_response_timeout_s) or args.reference_response_timeout_s <= 0:
+        parser.error('--reference-response-timeout-s must be finite and positive')
     if args.build_scan:
         build_scan(Path(args.scan_prefix).resolve().parent)
     if not args.build_only:
         try:
-            run(args)
+            run(args, pct_max_grid_cells=args.pct_max_grid_cells)
         except KeyboardInterrupt:
             pass
 

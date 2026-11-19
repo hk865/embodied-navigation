@@ -577,7 +577,10 @@ class FailureBoundaryTests(unittest.TestCase):
 
 class PublishTraceTests(unittest.TestCase):
     @contextlib.contextmanager
-    def ros(self, enabled, journal, *, frontend="/dynanav/lidar_perception_filtered"):
+    def ros(
+        self, enabled, journal, *, frontend="/dynanav/lidar_perception_filtered",
+        reliable=False, shutdown_receipt=None, experiment=None,
+    ):
         from embodied_navigation.simulation.dynanav.capture.ros_interface import create_ros_interface
 
         class Message:
@@ -588,18 +591,27 @@ class PublishTraceTests(unittest.TestCase):
 
         publishers = {}
         def publisher(kind, topic, qos):
-            publishers[topic] = unittest.mock.Mock()
-            return publishers[topic]
+            writer = unittest.mock.Mock(topic_name=topic)
+            writer.get_subscription_count.return_value = 0
+            publishers[topic] = writer
+            return writer
 
         node = unittest.mock.Mock()
         node.create_publisher.side_effect = publisher
+        node.get_subscriptions_info_by_topic.return_value = []
         rclpy = unittest.mock.Mock()
         rclpy.create_node.return_value = node
         modules = {"rclpy": rclpy}
         for name, attrs in {
             "geometry_msgs.msg": {"TwistStamped": Message},
             "nav_msgs.msg": {"Odometry": Message},
-            "rclpy.qos": {"qos_profile_sensor_data": object()},
+            "rclpy.qos": {
+                "qos_profile_sensor_data": object(),
+                "QoSProfile": types.SimpleNamespace,
+                "ReliabilityPolicy": types.SimpleNamespace(RELIABLE=1),
+            },
+            "rclpy.duration": {"Duration": types.SimpleNamespace},
+            "dynanav_sensor_msgs.msg": {"CompleteLidarScan": Message},
             "rclpy.signals": {"SignalHandlerOptions": types.SimpleNamespace(NO=0)},
             "rosgraph_msgs.msg": {"Clock": Message},
             "sensor_msgs.msg": dict.fromkeys(
@@ -609,10 +621,15 @@ class PublishTraceTests(unittest.TestCase):
             module.__dict__.update(attrs)
             modules[name] = module
         with unittest.mock.patch.dict(sys.modules, modules), unittest.mock.patch.dict(
-            os.environ, {"DYNANAV_PUBLISH_TRACE": enabled}
+            os.environ, {
+                "DYNANAV_PUBLISH_TRACE": enabled,
+                "DYNANAV_RECORD_RELIABLE": "1" if reliable else "0",
+                "DYNANAV_RTX_COMPLETE_SCAN": "1",
+            },
         ):
             yield create_ros_interface(
-                {"lidar_frontend_topic": frontend}, object(), None, journal=journal
+                {"lidar_frontend_topic": frontend, **(experiment or {})},
+                object(), None, journal=journal, shutdown_receipt=shutdown_receipt,
             ), publishers
 
     def test_trace_preserves_stamps_and_publish_order_for_selected_sensors(self):
@@ -673,6 +690,91 @@ class PublishTraceTests(unittest.TestCase):
                         ros.publish_rgb(2.0, np.zeros((512, 512, 3), dtype=np.uint8))
                 self.assertIs(caught.exception, sentinel)
                 self.assertFalse(any(row["event"] == "publish_returned" for row in rows))
+
+    def test_reliable_shutdown_waits_before_destroy_and_records_results(self):
+        receipt = {}
+        events = []
+        wall_ns = 0
+
+        def wait_for_camera(timeout):
+            nonlocal wall_ns
+            events.append(("camera", timeout.nanoseconds))
+            wall_ns += 100_000_000
+            return True
+
+        def time_out_for_scan(timeout):
+            nonlocal wall_ns
+            events.append(("scan", timeout.nanoseconds))
+            wall_ns += timeout.nanoseconds
+            return False
+
+        def fail_for_truth(timeout):
+            events.append(("truth", timeout.nanoseconds))
+            raise RuntimeError("DDS acknowledgment failed")
+
+        camera, scan, info, imu, truth = (
+            "/dynanav/camera", "/dynanav/lidar_rtx/complete_scan",
+            "/dynanav/camera_info", "/dynanav/imu", "/dynanav/truth/base_odometry",
+        )
+        reliable_reader = types.SimpleNamespace(
+            node_namespace="/", node_name="rosbag2_recorder",
+            qos_profile=types.SimpleNamespace(reliability=1),
+        )
+        profile = {
+            "point_cloud_source": "rtx_lidar",
+            "control_mode": "native_pose_diagnostic",
+            "record_simulation_truth": True,
+        }
+        with self.ros("", None, reliable=True, shutdown_receipt=receipt, experiment=profile) as (
+            ros, publishers
+        ), unittest.mock.patch(
+            "embodied_navigation.simulation.dynanav.capture.ros_interface.time.monotonic_ns",
+            side_effect=lambda: wall_ns,
+        ):
+            ros.node.get_subscriptions_info_by_topic.side_effect = (
+                lambda topic: [reliable_reader] if topic in (camera, scan, truth) else []
+            )
+            for topic in (camera, scan, imu, truth):
+                publishers[topic].get_subscription_count.return_value = 1
+            publishers[camera].wait_for_all_acked.side_effect = wait_for_camera
+            publishers[scan].wait_for_all_acked.side_effect = time_out_for_scan
+            publishers[imu].wait_for_all_acked.return_value = True
+            publishers[truth].wait_for_all_acked.side_effect = fail_for_truth
+            ros.node.destroy_node.side_effect = lambda: events.append("destroy_node")
+            sys.modules["rclpy"].shutdown.side_effect = lambda: events.append("shutdown_context")
+            ros.destroy()
+
+        self.assertEqual(events, [
+            ("camera", 5_000_000_000), ("scan", 4_900_000_000), ("truth", 0),
+            "destroy_node", "shutdown_context",
+        ])
+        self.assertEqual(receipt["status"], "finished")
+        self.assertEqual(receipt["elapsed_wall_s"], 5.0)
+        topics = receipt["topics"]
+        self.assertEqual(topics[camera]["status"], "wait_succeeded")
+        self.assertEqual(topics[camera]["wait_wall_s"], 0.1)
+        self.assertEqual(topics[camera]["subscribers_before"]["discovered_reliable_nodes"],
+                         ["/rosbag2_recorder"])
+        self.assertEqual(topics[scan]["status"], "timeout")
+        self.assertEqual(topics[scan]["wait_wall_s"], 4.9)
+        self.assertIs(topics[scan]["wait_returned"], False)
+        self.assertEqual(topics[info]["status"], "no_matched_subscribers")
+        publishers[info].wait_for_all_acked.assert_not_called()
+        self.assertEqual(topics[imu]["status"], "no_reliable_subscriber_observed")
+        self.assertEqual(publishers[imu].wait_for_all_acked.call_args.args[0].nanoseconds, 0)
+        self.assertEqual(topics[truth]["status"], "error")
+        self.assertIn("DDS acknowledgment failed", topics[truth]["error"])
+
+    def test_nonrecording_shutdown_does_not_wait_for_subscribers(self):
+        receipt = {}
+        with self.ros("", None, shutdown_receipt=receipt) as (ros, publishers):
+            ros.destroy()
+            ros.node.destroy_node.assert_called_once_with()
+            sys.modules["rclpy"].shutdown.assert_called_once_with()
+        self.assertEqual(receipt, {"status": "disabled"})
+        for publisher in publishers.values():
+            publisher.get_subscription_count.assert_not_called()
+            publisher.wait_for_all_acked.assert_not_called()
 
     def test_trace_flush_is_visible_without_closing_journal(self):
         with tempfile.TemporaryDirectory() as directory:

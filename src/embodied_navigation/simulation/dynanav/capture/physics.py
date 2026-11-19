@@ -8,6 +8,8 @@
 
 from dataclasses import dataclass
 
+from embodied_navigation.common.time import float32_sensor_time_tolerance
+
 import numpy as np
 
 
@@ -139,33 +141,30 @@ class PhysicsStepper:
         # matching their real 10 Hz period instead of waiting for nonexistent
         # camera frames at 20 Hz.
         render_stride = 20 if self.sync_usd_for_camera else 10
-        if (i + 1) % render_stride:
+        render_tick = (i + 1) % render_stride == 0
+        if render_tick and not self.sync_usd_for_camera:
+            rep.orchestrator.step(
+                rt_subframes=1, delta_time=0.005, pause_timeline=False,
+                wait_for_render=True,
+            )
+        else:
+            # RTX由原生管理器推进；避免Replicator再次调度异步物理/渲染帧。
             SimulationManager.step(steps=1, update_fabric=use_fabric)
             if not use_fabric or self.sync_usd_for_camera:
                 omni.physx.get_physx_simulation_interface().fetch_results()
                 omni.physx.get_physx_interface().update_transformations(
                     False, True, True, False
                 )
-        else:
-            rep.orchestrator.step(
-                rt_subframes=1, delta_time=0.005, pause_timeline=False,
-                # Multi-tick camera outputs are already scheduled by this
-                # update. Waiting for an additional dispatcher compute at
-                # fixed physics time times out for tick-controlled sensors.
-                wait_for_render=not self.sync_usd_for_camera,
-            )
-            if self.sync_usd_for_camera:
-                from isaacsim.core.rendering_manager import RenderingManager
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
-                # Flush the pipelined sensor frame without advancing physics.
-                # Native frame timestamps and deduplication remain authoritative.
-                RenderingManager.render()
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
-                RenderingManager.render()
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
+        if render_tick and self.sync_usd_for_camera:
+            from isaacsim.core.rendering_manager import RenderingManager
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
+            RenderingManager.render()
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
+            RenderingManager.render()
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
         actual_time = float(SimulationManager.get_simulation_time())
         effort_after = art.get_dof_efforts().numpy()[0].copy()
         assert np.allclose(effort_after, tau, atol=1e-5), (
@@ -324,9 +323,7 @@ class PhysicsStepper:
         }
         # IMU 时间戳来自 float32，容差按 float32 在当前时间值上的量化间距
         # 取一半（至少 2e-6 s），再加 1e-7 s 余量；不能用固定容差替代。
-        time_tolerance = (
-            max(2e-6, 0.5 * float(abs(np.spacing(np.float32(actual_time))))) + 1e-7
-        )
+        time_tolerance = float32_sensor_time_tolerance(actual_time)
         result["last_imu_clock_check"]["quantization_aware_tolerance_s"] = (
             time_tolerance
         )

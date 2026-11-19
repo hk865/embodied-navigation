@@ -8,6 +8,7 @@ single physical stop at the final operator goal, not at spline sample points.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -40,7 +41,7 @@ class ContinuousScanFollower:
         self.identity = dict(identity)
         self.goal = np.asarray(goal, dtype=float)
         self.speed = float(speed)
-        self.motion_end = float(motion_end)
+        self.motion_end = None if motion_end is None else float(motion_end)
         self.stop_on_stall = stop_on_stall
         self.lookahead_m = float(lookahead_m)
         self.capture_distance_m = float(capture_distance_m)
@@ -110,8 +111,20 @@ class ContinuousScanFollower:
         self.arc = np.r_[0., np.cumsum(np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1))]
         self.revision = revision
         self.progress = 0.
+        record = dict(version=1, **self.identity, revision=revision,
+            source_stamp_s=payload.get("source_stamp_s"), samples=len(points), provenance=provenance)
+        line = (json.dumps(record) + "\n").encode("utf-8")
+        journal = self.mailbox / "planner_provenance.jsonl"
+        with journal.open("ab") as stream:
+            offset = stream.tell()
+            stream.write(line)
+        # Keep the full native evidence once per consumed revision. Per-tick
+        # receipts and the retained event history carry only this small reference.
         self.reference = dict(revision=revision, source_stamp_s=payload.get("source_stamp_s"),
-            provenance=provenance, samples=len(points))
+            samples=len(points), provenance={key: provenance[key]
+                for key in ("local_planner", "global_planner") if key in provenance},
+            provenance_record=dict(file=journal.name, offset_bytes=offset, length_bytes=len(line),
+                sha256=hashlib.sha256(line).hexdigest()))
         self.events.append(dict(event="native_scan_reference", **self.reference))
 
     def _project(self, p):
@@ -138,7 +151,7 @@ class ContinuousScanFollower:
         zero = [0., 0., 0.]
         if self.failure or self.arrived:
             return zero
-        if t >= self.motion_end:
+        if self.motion_end is not None and t >= self.motion_end:
             self.failure = "route_motion_budget"
             return zero
         if not ready or t < 7:

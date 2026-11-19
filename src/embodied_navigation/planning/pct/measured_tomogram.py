@@ -18,6 +18,8 @@ import tempfile
 
 import numpy as np
 
+DEFAULT_MAX_GRID_CELLS = 2_000_000
+
 
 class MeasuredPctError(RuntimeError):
     """Native planner setup, serialization, or execution failure."""
@@ -78,7 +80,7 @@ class MeasuredPctPlanner:
                  body_support_offset_m=0.32, native_binary=None, generation=None,
                  source_metadata=None, endpoint_height_tolerance_m=0.22,
                  support_cluster_m=0.06, clearance_m=0.65,
-                 max_grid_cells=2_000_000, timeout_s=10.0, start_blind_radius_m=0.0):
+                 max_grid_cells=DEFAULT_MAX_GRID_CELLS, timeout_s=10.0, start_blind_radius_m=0.0):
         self.points = _xyz(points_world, 'points_world')
         self.trajectory = _xyz([] if trajectory_body_xyz is None else trajectory_body_xyz,
                                'trajectory_body_xyz')
