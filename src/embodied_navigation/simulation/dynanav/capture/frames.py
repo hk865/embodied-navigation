@@ -7,6 +7,7 @@ journal 字段与断言均保持原样；“10 Hz”是由上层每 20 个 0.005
 一次本模块形成的，本文件不自行计时。
 """
 
+from collections import deque
 import json
 
 import numpy as np
@@ -35,9 +36,12 @@ class FrameStream:
         target_speed,
         receipts,
         rtx_lidar=None,
+        truth_pose_buffer=None,
     ):
         self.experiment = experiment
         self.rtx_lidar = rtx_lidar
+        self.truth_pose_buffer = truth_pose_buffer
+        self._pending_truth_packets = deque()
         self.rgb_outputs = rgb_annotators
         if rgb_annotators is not None:
             rgb_annotators.quarantine_output = out
@@ -112,13 +116,27 @@ class FrameStream:
         result = self.receipts.result
         result["point_cloud_source"] = "isaac_rtx_lidar"
         result["depth_backprojection_enabled"] = False
+        actual_ns = round(actual_time * 1e9)
+        truth_pose_buffer = getattr(self, "truth_pose_buffer", None)
+        pending_truth = None
+        if truth_pose_buffer is not None:
+            pending_truth = getattr(self, "_pending_truth_packets", None)
+            if pending_truth is None:
+                pending_truth = deque()
+                self._pending_truth_packets = pending_truth
         while packet is not None:
             # Physics clock must already cover the final native firing time.
             last_retained_ns = packet.receipt["last_retained_ns"]
-            if last_retained_ns is not None and last_retained_ns > round(actual_time * 1e9) + 1_000_000:
+            if last_retained_ns is not None and last_retained_ns > actual_ns + 1_000_000:
                 raise ValueError("RTX scan contains rays later than the current physics clock")
             self.ros.publish_rtx_cloud(packet)
-            evidence = dict(packet.receipt, acquisition_physics_ns=round(actual_time * 1e9))
+            if truth_pose_buffer is not None:
+                if len(packet.records) == 0 or last_retained_ns is None:
+                    raise ValueError("Cannot deskew empty RTX packet")
+                first_ns = int(packet.stamp_ns) + int(packet.records["t"].min())
+                last_ns = int(packet.stamp_ns) + int(packet.records["t"].max())
+                pending_truth.append((packet, first_ns, last_ns, actual_ns))
+            evidence = dict(packet.receipt, acquisition_physics_ns=actual_ns)
             self.receipts.journal("rtx_lidar_frames.jsonl", evidence)
             result["rtx_lidar_last_scan"] = evidence
             result["rtx_lidar_scans"] = self.rtx_lidar.scans
@@ -129,6 +147,38 @@ class FrameStream:
                                     points=packet.records, stamp_ns=packet.stamp_ns,
                                     metadata_json=json.dumps(evidence))
             packet = self.rtx_lidar.read()
+        if truth_pose_buffer is not None and pending_truth:
+            from embodied_navigation.simulation.dynanav.truth_deskew import (
+                deskew_rtx_packet_to_world,
+            )
+
+            clock_ref = getattr(self.ros, "last_clock_ns", None)
+            clock_ns = (
+                clock_ref[0]
+                if isinstance(clock_ref, list) and clock_ref
+                else None
+            )
+            while pending_truth:
+                pkt, first_ns, last_ns, enqueued_actual_ns = pending_truth[0]
+                ready = (
+                    clock_ns is not None
+                    and last_ns <= clock_ns
+                    and truth_pose_buffer.covers(first_ns, last_ns)
+                )
+                if ready:
+                    pending_truth.popleft()
+                    deskewed = deskew_rtx_packet_to_world(
+                        pkt, truth_pose_buffer, clock_ns
+                    )
+                    self.ros.publish_truth_deskewed_and_lio(deskewed)
+                    continue
+                if actual_ns > enqueued_actual_ns + 5_000_000:
+                    deskew_rtx_packet_to_world(
+                        pkt,
+                        truth_pose_buffer,
+                        clock_ns if clock_ns is not None else -1,
+                    )
+                break
         if not result.get("rtx_lidar_connected"):
             result["rtx_lidar_reads_without_new_scan"] = result.get("rtx_lidar_reads_without_new_scan", 0) + 1
     def _process_rtx_frame(self, it, actual_time, rgb, overview_ann, camera_rows):

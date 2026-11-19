@@ -65,6 +65,7 @@ def annotate_policy_receipt(
     physical_speed_guard, interactive_control=False
 ):
     """Record the unchanged speed_test/policy receipts before walking."""
+    is_truth = experiment.get("slam_pose_source") == "simulation_truth"
     result["speed_test"] = {
         "target_mps": target_speed,
         "physical_speed_guard_mps": physical_speed_guard,
@@ -75,12 +76,20 @@ def annotate_policy_receipt(
         "command_slew": not robogauge,
         "interactive_waypoint_interface": interactive_control,
         "interactive_command_source": (
-            ("pct_global_scan_local_over_live_post_vio"
-             if experiment.get("interactive_controller") == "pct_scan"
-             else "native_route_tracker_over_live_measured_pose")
-            if interactive_control
-            else None
-        ),
+            (
+                "pct_global_scan_local_over_simulation_truth"
+                if is_truth
+                else "pct_global_scan_local_over_live_post_vio"
+            )
+            if experiment.get("interactive_controller") == "pct_scan"
+            else (
+                "native_route_tracker_over_simulation_truth_pose"
+                if is_truth
+                else "native_route_tracker_over_live_measured_pose"
+            )
+        )
+        if interactive_control
+        else None,
     }
     result["policy_loaded"] = True
     result["policy"].update(
@@ -91,8 +100,8 @@ def annotate_policy_receipt(
         else "interactive_waypoint_exploration"
         if interactive_control
         else "/dynanav/nav/approved_cmd",
-        ground_truth_navigation=gt_diagnostic,
-        SLAM_control_enabled=not gt_diagnostic,
+        ground_truth_navigation=gt_diagnostic or is_truth,
+        SLAM_control_enabled=not gt_diagnostic and not is_truth,
         state_time_semantics="Isaac post-step actual measurement time",
         contacts="native foot spheres; nonfoot contacts reported separately",
     )

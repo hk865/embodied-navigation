@@ -49,8 +49,8 @@ class NativeWaypointTracker:
 
     def __init__(self, experiment, *, speed_mps=None, mailbox=None):
         self.pose_source = experiment.get("slam_pose_source")
-        if self.pose_source not in ("lio_estimate", "livo_post_vio") or experiment.get("ground_truth_navigation"):
-            raise ValueError("Native waypoints require measured SLAM, never ground truth")
+        if self.pose_source not in ("lio_estimate", "livo_post_vio", "simulation_truth") or experiment.get("ground_truth_navigation"):
+            raise ValueError("Native waypoints require measured SLAM or explicit simulation_truth, never ground truth")
         self.mailbox = Path(mailbox or experiment["interactive_mailbox"])
         if not self.mailbox.is_absolute():
             raise ValueError("mailbox must be absolute")
@@ -379,7 +379,7 @@ class NativeWaypointTracker:
         result = dict(evidence, status=status, reason=reason, command=self._command,
             phase=self.phase, stage=self.stage, failure=self.failure,
             terminal_reason=self.terminal_reason, pose_source=self.pose_source,
-            controller=self.controller_name, no_gt_pose_used=True)
+            controller=self.controller_name, no_gt_pose_used=(self.pose_source != "simulation_truth"))
         stamp = evidence.get("odom_stamp_s")
         pose = dict(source=self.pose_source, map_frame=evidence.get("frame_id"),
             sensor_frame=evidence.get("child_frame_id"), stamp_s=stamp,

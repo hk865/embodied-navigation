@@ -13,6 +13,10 @@ from pathlib import Path
 
 from embodied_navigation.common.time import float32_sensor_time_tolerance
 from embodied_navigation.project import data_root
+from embodied_navigation.simulation.dynanav.truth_deskew import (
+    TRUTH_POSE_SOURCE,
+    TRUTH_VIO_ODOM_TOPIC,
+)
 
 
 def joint_speed_observation(
@@ -113,9 +117,16 @@ def configure_point_cloud_source(profile, source, semantic_provider=None):
 
 
 def slam_odometry_topic(pose_source, requested=None):
-    """Bind post-VIO control to its dedicated final-state output, never pre-VIO."""
-    if pose_source not in ("lio_estimate", "livo_post_vio"):
+    """Bind post-VIO or simulation_truth control to its dedicated output topic."""
+    if pose_source not in ("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE):
         raise ValueError("unsupported measured navigation pose source")
+    if pose_source == TRUTH_POSE_SOURCE:
+        topic = TRUTH_VIO_ODOM_TOPIC if requested is None else requested
+        if topic != TRUTH_VIO_ODOM_TOPIC:
+            raise ValueError(
+                f"simulation_truth navigation requires the fixed topic {TRUTH_VIO_ODOM_TOPIC!r}, got {topic!r}"
+            )
+        return topic
     post_vio = pose_source == "livo_post_vio"
     topic = (
         requested
@@ -196,8 +207,8 @@ def main(argv=None):
     )
     parser.add_argument(
         "--interactive-pose-source",
-        choices=("lio_estimate", "livo_post_vio"),
-        help="Measured estimator source that may drive interactive waypoints",
+        choices=("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE),
+        help="Pose source that drives interactive waypoints",
     )
     parser.add_argument("--interactive-waypoint-ttl-s", type=float, default=30.0)
     parser.add_argument("--interactive-link-timeout-s", type=float, default=5.0)
@@ -242,8 +253,26 @@ def main(argv=None):
         parser.error(
             "--interactive requires --interactive-pose-source (measured estimator only)"
         )
-    if args.interactive_controller == "pct_scan" and (not interactive_requested or args.interactive_pose_source != "livo_post_vio"):
-        parser.error("pct_scan requires --interactive --interactive-pose-source livo_post_vio")
+    if args.interactive_controller == "pct_scan" and (
+        not interactive_requested
+        or args.interactive_pose_source not in ("livo_post_vio", TRUTH_POSE_SOURCE)
+    ):
+        parser.error(
+            "pct_scan requires --interactive --interactive-pose-source livo_post_vio or simulation_truth"
+        )
+    if (
+        args.interactive_controller == "pct_scan"
+        and args.interactive_pose_source == TRUTH_POSE_SOURCE
+        and args.point_cloud_source != "rtx_lidar"
+    ):
+        parser.error(
+            "pct_scan with simulation_truth requires --point-cloud-source rtx_lidar"
+        )
+    if interactive_requested and args.interactive_pose_source == TRUTH_POSE_SOURCE:
+        try:
+            slam_odometry_topic(args.interactive_pose_source, args.odometry_topic)
+        except ValueError as error:
+            parser.error(str(error))
     if args.until_stopped and not interactive_requested:
         parser.error("--until-stopped requires --interactive")
     profile = make_profile(args.speed, args.duration, interactive=interactive_requested,
@@ -330,7 +359,14 @@ def main(argv=None):
         )
         if mailbox.exists():
             parser.error("Interactive mailbox directory must not exist yet")
+        is_truth = args.interactive_pose_source == TRUTH_POSE_SOURCE
         post_vio = args.interactive_pose_source == "livo_post_vio"
+        pose_window_only = post_vio or is_truth
+        if is_truth and args.point_cloud_source == "rtx_lidar":
+            profile["lidar_motion_compensation"] = (
+                "simulation_truth 200 Hz per-point pose interpolation to "
+                "/dynanav/truth/cloud_deskewed (explicitly not SLAM)"
+            )
         profile.update(
             control_mode="interactive_waypoint_exploration",
             interactive_controller=args.interactive_controller,
@@ -338,14 +374,22 @@ def main(argv=None):
             waypoints_xyz=[],
             slam_pose_source=args.interactive_pose_source,
             navigation_pose_source=(
-                "measured_livo_post_vio" if post_vio else "measured_lio"
+                "simulation_truth_imu"
+                if is_truth
+                else "measured_livo_post_vio"
+                if post_vio
+                else "measured_lio"
             ),
-            navigation_command_source="interactive_waypoint_exploration_measured_pose",
+            navigation_command_source=(
+                "interactive_waypoint_exploration_simulation_truth"
+                if is_truth
+                else "interactive_waypoint_exploration_measured_pose"
+            ),
             odometry_topic=slam_odometry_topic(
                 args.interactive_pose_source, args.odometry_topic
             ),
-            slam_twist_available=not post_vio,
-            slam_speed_source="pose_window" if post_vio else "twist",
+            slam_twist_available=not pose_window_only,
+            slam_speed_source="pose_window" if pose_window_only else "twist",
             slam_pose_speed_window_s=0.5,
             slam_max_sim_age_s=0.25,
             slam_max_wall_age_s=0.5,
@@ -356,15 +400,27 @@ def main(argv=None):
             interactive_require_perception=False,
             interactive_future_tolerance_s=2e-6,
             interactive_gt_usage=(
-                "ground truth only for optional isolated oracle diagnostics and "
+                "explicit simulation_truth mode: go2_imu world pose and 200 Hz "
+                "truth-deskewed RTX cloud drive PCT+SCAN navigation (never labelled SLAM)"
+                if is_truth
+                else "ground truth only for optional isolated oracle diagnostics and "
                 "offline scoring; never a waypoint frame or a pose input"
             ),
-            route_geometry_provenance="operator_selected_from_live_sensors_and_SLAM_only",
+            route_geometry_provenance=(
+                "operator_selected_from_truth_deskewed_rtx_and_truth_imu_only"
+                if is_truth
+                else "operator_selected_from_live_sensors_and_SLAM_only"
+            ),
             navigation_scope=(
-                "measured "
-                + ("post-VIO" if post_vio else "LIO")
-                + " operator waypoints in the live estimator map frame; "
-                "simulation-only exploration, no global localization claim"
+                "simulation_truth go2_imu operator waypoints in camera_init; "
+                "isolated planning/control verification without SLAM"
+                if is_truth
+                else (
+                    "measured "
+                    + ("post-VIO" if post_vio else "LIO")
+                    + " operator waypoints in the live estimator map frame; "
+                    "simulation-only exploration, no global localization claim"
+                )
             ),
         )
         profile["notes"] = (
@@ -444,6 +500,7 @@ def main(argv=None):
         "scripts/dynanav_exploration.py",
         "scripts/run_dynanav_pct_scan.py",
         "src/embodied_navigation/simulation/dynanav/rtx_deskewed_perception.py",
+        "src/embodied_navigation/simulation/dynanav/truth_deskew.py",
         "src/embodied_navigation/simulation/dynanav/operator_map.py",
         "scripts/explore_waypoint_client.py",
         "configs/simulation/dynanav_basement_to_ground_collision.json",

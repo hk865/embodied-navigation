@@ -25,11 +25,19 @@ import numpy as np
 from embodied_navigation.perception.pose_velocity import update_pose_velocity
 from embodied_navigation.planning.pct.measured_tomogram import DEFAULT_MAX_GRID_CELLS
 from embodied_navigation.planning.scan_handoff import ReferenceHandoff, reference_waypoints
+from embodied_navigation.simulation.dynanav.truth_deskew import (
+    TRUTH_DESKEWED_CLOUD_TOPIC,
+    TRUTH_FRAME_ID,
+    TRUTH_LIO_ODOM_TOPIC,
+    TRUTH_POSE_SOURCE,
+    TRUTH_VIO_ODOM_TOPIC,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 CLOUD = '/dynanav/rtx_livo/cloud_registered_full'
 LIO = '/dynanav/rtx_livo/aft_mapped_to_init'
 VIO = '/dynanav/rtx_livo/post_vio_odometry'
+ALLOWED_POSE_SOURCES = ('livo_post_vio', 'simulation_truth')
 
 
 def fit_current_stair_geometry(history_points, model_body_position, current_snapshot):
@@ -61,12 +69,12 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
-def read_yaw_query(mailbox, run_id):
+def read_yaw_query(mailbox, run_id, expected_pose_source='livo_post_vio'):
     """Read the independent yaw mailbox; never synthesize a translation goal."""
     query = read_json(Path(mailbox) / 'planner_yaw_query.json')
     if not isinstance(query, dict) or query.get('version') != 1 or query.get('run_id') != run_id:
         return None
-    if query.get('pose_source') != 'livo_post_vio' or not all(
+    if query.get('pose_source') != expected_pose_source or not all(
             isinstance(query.get(key), str) and query[key] for key in ('frame_id', 'child_frame_id')):
         return None
     if any(type(query.get(key)) is not int or query[key] < 1 for key in ('seq', 'query_id', 'body_stamp_ns')):
@@ -90,7 +98,7 @@ def rotation_response_matches(reply, request, child_pid, startup_nonce, last_sam
             reply.get('status') in ('clear', 'blocked', 'pending', 'failed'))
 
 
-def active_request(mailbox, run_id):
+def active_request(mailbox, run_id, expected_pose_source='livo_post_vio'):
     """Observation, not a stale request file, owns cancellation/sequence state."""
     observation = read_json(Path(mailbox) / 'observation.json')
     request = read_json(Path(mailbox) / 'planner_request.json')
@@ -100,7 +108,7 @@ def active_request(mailbox, run_id):
         return None
     waypoints = observation.get('waypoints', {})
     if waypoints.get('active_action') == 'yaw':
-        query = read_yaw_query(mailbox, run_id)
+        query = read_yaw_query(mailbox, run_id, expected_pose_source=expected_pose_source)
         if query is None or query['seq'] != waypoints.get('active_seq'):
             return None
         return dict(version=1, action='yaw', **{key: query[key] for key in
@@ -109,7 +117,7 @@ def active_request(mailbox, run_id):
         return None
     if observation.get('waypoints', {}).get('active_seq') != request.get('seq'):
         return None
-    if request.get('version') != 1 or request.get('pose_source') != 'livo_post_vio':
+    if request.get('version') != 1 or request.get('pose_source') != expected_pose_source:
         return None
     if not isinstance(request.get('seq'), int) or isinstance(request['seq'], bool):
         return None
@@ -247,13 +255,36 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     receipt = read_json(Path(args.scan_prefix).resolve().parent / 'source_receipt.json')
     if not binary.is_file() or receipt.get('source_sha256') != scan_source_digest():
         raise RuntimeError('SCAN must be built from this checkout with --build-scan; source receipt missing/stale')
+    pose_source = getattr(args, 'pose_source', 'livo_post_vio')
+    cloud_topic = getattr(args, 'cloud_topic', CLOUD)
+    lio_topic = getattr(args, 'lio_topic', LIO)
+    vio_topic = getattr(args, 'vio_topic', VIO)
+    if pose_source not in ALLOWED_POSE_SOURCES:
+        raise ValueError(f'Unsupported pose_source: {pose_source!r}')
+    if pose_source == TRUTH_POSE_SOURCE and (
+            cloud_topic != TRUTH_DESKEWED_CLOUD_TOPIC
+            or lio_topic != TRUTH_LIO_ODOM_TOPIC
+            or vio_topic != TRUTH_VIO_ODOM_TOPIC):
+        raise ValueError(
+            'simulation_truth mode requires exact truth topics: '
+            f'cloud={TRUTH_DESKEWED_CLOUD_TOPIC}, lio={TRUTH_LIO_ODOM_TOPIC}, vio={TRUTH_VIO_ODOM_TOPIC}'
+        )
+    if pose_source == 'livo_post_vio' and any(
+            t.startswith('/dynanav/truth/') for t in (cloud_topic, lio_topic, vio_topic)):
+        raise ValueError('livo_post_vio mode must not consume /dynanav/truth/* topics')
     rclpy.init()
     node = Node('dynanav_pct_scan_worker')
-    velocity_policy = dict(source='post_vio_pose_window', window_s=0.5,
-                           reset_gap_s=0.25, frame='estimator_map', input_topic=VIO,
-                           raw_odometry_twist_used=False)
+    velocity_policy = dict(
+        source=('simulation_truth_pose_window' if pose_source == TRUTH_POSE_SOURCE
+                else 'post_vio_pose_window'),
+        window_s=0.5, reset_gap_s=0.25,
+        frame=(TRUTH_FRAME_ID if pose_source == TRUTH_POSE_SOURCE else 'estimator_map'),
+        input_topic=vio_topic,
+        raw_odometry_twist_used=False)
     parameters = dict(
         reference_response_timeout_s=args.reference_response_timeout_s,
+        pose_source=pose_source, cloud_topic=cloud_topic,
+        lio_topic=lio_topic, vio_topic=vio_topic,
         body_velocity=velocity_policy, speed=args.speed,
         pct_max_grid_cells=pct_max_grid_cells)
     atomic_json(mailbox / 'planner_worker_parameters.json', parameters)
@@ -328,6 +359,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             startup_nonce=child.ack_nonce, localization_generation=0,
             frame_id=frames[0], child_frame_id=frames[1],
             source_stamp_ns=stamp, resolution_m=.08, voxel_indices=indices.tolist())
+        if 'pose_source' in request:
+            payload['pose_source'] = request['pose_source']
         payload['model_source_interval_ns'] = [stair_job['model_first_stamp'], stair_job['stamp']]
         stair_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
         atomic_json(mailbox / 'planner_stair_labels.json', dict(**payload,
@@ -364,7 +397,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             atomic_json(mailbox / 'planner_stair_label_status.json', status)
 
     def current():
-        request = active_request(mailbox, run_id)
+        request = active_request(mailbox, run_id, expected_pose_source=pose_source)
         return request is not None and state['request'] is not None and request == state['request']
 
     def yaw_output(status, reason=None, **extra):
@@ -394,7 +427,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         request = state['request']
         state['revision'] += 1
         data = dict(version=1, run_id=run_id, seq=request['seq'], frame_id=request['frame_id'],
-                    child_frame_id=request['child_frame_id'], pose_source='livo_post_vio', status=status,
+                    child_frame_id=request['child_frame_id'], pose_source=pose_source, status=status,
                     revision=state['revision'], source_stamp_s=(message_stamp_ns(state['vio']) / 1e9
                     if state['vio'] is not None else None), points_xyz_m=[], **extra)
         if reason:
@@ -540,7 +573,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             reference_stamp=info['reference_stamp'], reference_revision=info.get('committed_reference_revision'),
             order=spline.order, knots=list(spline.knots),
             control_points_xyz_m=[[p.x, p.y, p.z] for p in spline.pos_pts],
-            native_metadata=info, map_source=CLOUD, navigation_source=VIO,
+            native_metadata=info, map_source=cloud_topic, navigation_source=vio_topic,
             body_velocity=velocity_policy, child_odometry_ack=handoff.reference_odometry_ack,
             reference_commit=handoff.commit,
             local_planner='native_SCAN', global_planner='native_PCT_Astar',
@@ -549,7 +582,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             sensor_pairing='adapter_exact_stamp_native_latest_pose', pct=state['route'].get('provenance', {}))
         request = state['request']
         atomic_json(mailbox / 'planner_path.json', dict(version=1, run_id=run_id, seq=request['seq'],
-            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'], pose_source='livo_post_vio',
+            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'], pose_source=pose_source,
             status='tracking', revision=state['revision'], source_stamp_s=message_stamp_ns(state['vio']) / 1e9,
             points_xyz_m=samples, sample_times_s=times, provenance=provenance))
 
@@ -651,13 +684,14 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                 trajectory_body_xyz_m=np.asarray(trajectory),
                 lio_pose_stamp_ns=np.asarray(list(lio_sources), dtype=np.int64),
                 lio_pose_xyz_xyzw=np.asarray(list(lio_sources.values())),
-                provenance_json=json.dumps(dict(run_id=run_id, map_frame=map_frames[0],
-                    child_frame=map_frames[1], cloud_topic=CLOUD, pose_topic=LIO,
+                provenance_json=json.dumps(dict(run_id=run_id, pose_source=pose_source,
+                    map_frame=map_frames[0], child_frame=map_frames[1],
+                    cloud_topic=cloud_topic, pose_topic=lio_topic,
                     source_interval_ns=source_interval, voxel_m=.08,
                     sampling='latest_actual_measured_point_per_voxel',
                     pairing='exact_integer_nanoseconds', transform='none_already_world')) )
             tmp.replace(mailbox / 'planner_measured_map.npz')
-        request = active_request(mailbox, run_id)
+        request = active_request(mailbox, run_id, expected_pose_source=pose_source)
         if request != state['request']:
             if state['child']:
                 state['child'].close()
@@ -690,7 +724,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     return
                 state['future'] = pool.submit(plan_snapshot, np.asarray(list(measured_voxels.values())),
                     np.asarray(trajectory), [position.x, position.y, position.z], request['goal_xyz_m'],
-                    dict(cloud_topic=CLOUD, lio_pose_topic=LIO, navigation_topic=VIO,
+                    dict(cloud_topic=cloud_topic, lio_pose_topic=lio_topic, navigation_topic=vio_topic,
                          map_frame=map_frames[0], child_frame=map_frames[1],
                          source_interval_ns=list(source_interval), cloud_voxel_m=.08,
                          transform='none_already_world', pairing='exact_integer_nanoseconds',
@@ -765,9 +799,9 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop_worker)
-    subscriptions = [node.create_subscription(PointCloud2, CLOUD, cloud, qos_profile_sensor_data),
-        node.create_subscription(Odometry, LIO, lio, qos_profile_sensor_data),
-        node.create_subscription(Odometry, VIO, odometry, qos_profile_sensor_data),
+    subscriptions = [node.create_subscription(PointCloud2, cloud_topic, cloud, qos_profile_sensor_data),
+        node.create_subscription(Odometry, lio_topic, lio, qos_profile_sensor_data),
+        node.create_subscription(Odometry, vio_topic, odometry, qos_profile_sensor_data),
         node.create_subscription(Bspline, namespace + '/planning/bspline', spline_callback, 10),
         node.create_subscription(String, namespace + '/planning/trajectory_metadata', metadata_callback, 10),
         node.create_subscription(String, namespace + '/planning/odometry_consumption_ack', odometry_ack_callback, 10),
@@ -805,11 +839,32 @@ def main(argv=None):
     parser.add_argument('--body-support-offset', type=float, default=0.32)
     parser.add_argument('--pct-start-blind-radius', type=float, default=0.0,
         help='Explicit opt-in radius for measured-floor start-blind-region inference; 0 keeps strict measured cells')
+    parser.add_argument('--pose-source', choices=ALLOWED_POSE_SOURCES, default='livo_post_vio',
+        help='Pose source for navigation requests and yaw queries (livo_post_vio or simulation_truth)')
+    parser.add_argument('--cloud-topic', default=CLOUD,
+        help='World-frame deskewed PointCloud2 topic')
+    parser.add_argument('--lio-topic', default=LIO,
+        help='Same-stage Odometry topic paired with the deskewed cloud')
+    parser.add_argument('--vio-topic', default=VIO,
+        help='High-rate Odometry topic driving pose-window body pose/velocity')
     args = parser.parse_args(argv)
     if args.pct_max_grid_cells <= 0:
         parser.error('--pct-max-grid-cells must be a positive integer')
     if not math.isfinite(args.reference_response_timeout_s) or args.reference_response_timeout_s <= 0:
         parser.error('--reference-response-timeout-s must be finite and positive')
+    if args.pose_source == TRUTH_POSE_SOURCE and (
+            args.cloud_topic != TRUTH_DESKEWED_CLOUD_TOPIC
+            or args.lio_topic != TRUTH_LIO_ODOM_TOPIC
+            or args.vio_topic != TRUTH_VIO_ODOM_TOPIC):
+        parser.error(
+            'simulation_truth --pose-source requires exact truth topics: '
+            f'--cloud-topic {TRUTH_DESKEWED_CLOUD_TOPIC} '
+            f'--lio-topic {TRUTH_LIO_ODOM_TOPIC} '
+            f'--vio-topic {TRUTH_VIO_ODOM_TOPIC}'
+        )
+    if args.pose_source == 'livo_post_vio' and any(
+            t.startswith('/dynanav/truth/') for t in (args.cloud_topic, args.lio_topic, args.vio_topic)):
+        parser.error('livo_post_vio --pose-source must not subscribe to /dynanav/truth/* topics')
     if args.build_scan:
         build_scan(Path(args.scan_prefix).resolve().parent)
     if not args.build_only:

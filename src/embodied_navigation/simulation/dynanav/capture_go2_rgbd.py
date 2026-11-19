@@ -245,7 +245,9 @@ def run_capture(config):
             lidar_asset, conversion = prepare_lidar_asset(config.output)
             receipts.result["rtx_lidar_asset"] = conversion
             receipts.result["truth_usage"] = (
-                "policy proprioception, physical guards, native truth route control and isolated offline scoring; never SLAM sensor inputs"
+                "simulation_truth mode: policy proprioception, physical guards, go2_imu world pose and 200 Hz truth-deskewed RTX cloud for PCT+SCAN; never labelled SLAM"
+                if config.experiment.get("slam_pose_source") == "simulation_truth"
+                else "policy proprioception, physical guards, native truth route control and isolated offline scoring; never SLAM sensor inputs"
                 if config.gt_diagnostic
                 else "policy proprioception, physical guards and isolated offline scoring; never SLAM points, estimator pose or waypoint input"
             )
@@ -422,6 +424,10 @@ def run_capture(config):
             sync_usd_for_camera=rtx_lidar is not None,
             capture_render_outputs=capture_render_outputs if rtx_lidar is not None else None,
         )
+        truth_pose_buffer = None
+        if config.experiment.get("slam_pose_source") == "simulation_truth":
+            from embodied_navigation.simulation.dynanav.truth_deskew import TruthPoseBuffer
+            truth_pose_buffer = TruthPoseBuffer(camera_rig.imu_mount)
         stream = FrameStream(
             experiment=config.experiment,
             out=config.output,
@@ -435,6 +441,7 @@ def run_capture(config):
             target_speed=target_speed,
             receipts=receipts,
             rtx_lidar=rtx_lidar,
+            truth_pose_buffer=truth_pose_buffer,
         )
         context.stream = stream
         imu_stride = config.experiment.get("imu_publish_stride", 2)
@@ -444,6 +451,14 @@ def run_capture(config):
         from isaacsim.core.simulation_manager import SimulationManager
         from embodied_navigation.simulation.dynanav.capture.pause import FilePause
         from embodied_navigation.common.runtime_telemetry import RuntimeTelemetry
+        if truth_pose_buffer is not None:
+            init_p, init_r = art.get_world_poses()
+            truth_pose_buffer.record(
+                round(float(SimulationManager.get_simulation_time()) * 1e9),
+                init_p.numpy()[0],
+                init_r.numpy()[0],
+            )
+        last_truth_vio_stamp_ns = None
 
         def pause_counters():
             return {
@@ -519,6 +534,11 @@ def run_capture(config):
                 contact_state=contact_monitor.contact_state,
                 sensor_rows=sensor_rows,
             )
+            if truth_pose_buffer is not None:
+                actual_ns = round(measurement.actual_time * 1e9)
+                truth_pos_wi, truth_quat_wi_wxyz = truth_pose_buffer.record(
+                    actual_ns, measurement.pos, measurement.quat
+                )
             cancellation.check()
             if rtx_lidar is not None and (i + 1) % 10 == 0:
                 rtx_lidar.capture()
@@ -537,6 +557,25 @@ def run_capture(config):
                         measurement.w.numpy()[0],
                         receipts.result["link_coms_local"][0][0][0],
                     )
+            if truth_pose_buffer is not None and (i + 1) % 4 == 0:
+                clock_ref = getattr(ros, "last_clock_ns", None)
+                clock_ns = (
+                    clock_ref[0]
+                    if isinstance(clock_ref, list) and clock_ref
+                    else None
+                )
+                if clock_ns is not None and clock_ns >= truth_pose_buffer.first_stamp_ns:
+                    if clock_ns >= actual_ns:
+                        vio_stamp_ns = actual_ns
+                        vio_pos_wi, vio_quat_wi = truth_pos_wi, truth_quat_wi_wxyz
+                    else:
+                        vio_stamp_ns = clock_ns
+                        vio_pos_wi, vio_quat_wi = truth_pose_buffer.interpolate_imu_pose(
+                            vio_stamp_ns
+                        )
+                    if last_truth_vio_stamp_ns is None or vio_stamp_ns > last_truth_vio_stamp_ns:
+                        ros.publish_truth_vio(vio_stamp_ns, vio_pos_wi, vio_quat_wi)
+                        last_truth_vio_stamp_ns = vio_stamp_ns
             if rtx_lidar is not None:
                 stream.publish_rtx_pending(measurement.actual_time)
             if (i + 1) % 20 == 0:

@@ -37,6 +37,9 @@ class RosInterface:
     destroy: Callable
     publish_rtx_cloud: Callable | None = None
     publish_truth: Callable | None = None
+    publish_truth_vio: Callable | None = None
+    publish_truth_deskewed_and_lio: Callable | None = None
+    last_clock_ns: list | None = None
 
 
 
@@ -147,15 +150,25 @@ def create_ros_interface(
     from rclpy.signals import SignalHandlerOptions
     from rosgraph_msgs.msg import Clock
     from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2, PointField
+    from embodied_navigation.simulation.dynanav.truth_deskew import (
+        TRUTH_DESKEWED_CLOUD_TOPIC,
+        TRUTH_LIO_ODOM_TOPIC,
+        TRUTH_POSE_SOURCE,
+        TRUTH_VIO_ODOM_TOPIC,
+        truth_deskewed_cloud_message,
+        truth_odometry_message,
+    )
 
     rtx_enabled = experiment.get("point_cloud_source", "rgbd") == "rtx_lidar"
+    truth_mode = experiment.get("slam_pose_source") == TRUTH_POSE_SOURCE
 
     # Optional recording profile: reliable source writers permit bag retransmission
     # of large fragmented sensor messages. Default/native subscribers remain unchanged.
     reliable_recording = os.environ.get("DYNANAV_RECORD_RELIABLE") == "1"
+    sensor_qos = qos_profile_sensor_data
     if reliable_recording:
         from rclpy.qos import QoSProfile, ReliabilityPolicy
-        qos_profile_sensor_data = QoSProfile(depth=128, reliability=ReliabilityPolicy.RELIABLE)
+        sensor_qos = QoSProfile(depth=128, reliability=ReliabilityPolicy.RELIABLE)
     if shutdown_receipt is None:
         shutdown_receipt = {}
     shutdown_receipt["status"] = "pending" if reliable_recording else "disabled"
@@ -183,31 +196,46 @@ def create_ros_interface(
     # 这样关停顺序（先停传感器循环再销毁节点）由上层保证。
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = rclpy.create_node("actual_go2_rtx_source" if rtx_enabled else "actual_go2_rgbd_source")
-    pub_imu = node.create_publisher(Imu, "/dynanav/imu", qos_profile_sensor_data)
-    pub_img = node.create_publisher(Image, "/dynanav/camera", qos_profile_sensor_data)
+    pub_imu = node.create_publisher(Imu, "/dynanav/imu", sensor_qos)
+    pub_img = node.create_publisher(Image, "/dynanav/camera", sensor_qos)
     pub_cloud = node.create_publisher(
-        PointCloud2, "/dynanav/lidar_filtered", qos_profile_sensor_data
+        PointCloud2, "/dynanav/lidar_filtered", sensor_qos
     )
     pub_static_cloud = node.create_publisher(
-        PointCloud2, "/dynanav/lidar_static", qos_profile_sensor_data
+        PointCloud2, "/dynanav/lidar_static", sensor_qos
     )
     pub_perception_cloud = (
         node.create_publisher(
-            PointCloud2, "/dynanav/lidar_perception_filtered", qos_profile_sensor_data
+            PointCloud2, "/dynanav/lidar_perception_filtered", sensor_qos
         )
         if learned_mapper is not None
         else None
     )
-    pub_depth = node.create_publisher(Image, "/dynanav/depth", qos_profile_sensor_data)
+    pub_depth = node.create_publisher(Image, "/dynanav/depth", sensor_qos)
     pub_info = node.create_publisher(
-        CameraInfo, "/dynanav/camera_info", qos_profile_sensor_data
+        CameraInfo, "/dynanav/camera_info", sensor_qos
     )
-    pub_rtx = node.create_publisher(PointCloud2, "/dynanav/lidar_rtx", qos_profile_sensor_data) if rtx_enabled else None
+    pub_rtx = node.create_publisher(PointCloud2, "/dynanav/lidar_rtx", sensor_qos) if rtx_enabled else None
     pub_complete_rtx = None
     if rtx_enabled and os.environ.get("DYNANAV_RTX_COMPLETE_SCAN") == "1":
         from dynanav_sensor_msgs.msg import CompleteLidarScan
         from .lidar import COMPLETE_SCAN_TOPIC
-        pub_complete_rtx = node.create_publisher(CompleteLidarScan, COMPLETE_SCAN_TOPIC, qos_profile_sensor_data)
+        pub_complete_rtx = node.create_publisher(CompleteLidarScan, COMPLETE_SCAN_TOPIC, sensor_qos)
+    pub_truth_cloud = (
+        node.create_publisher(PointCloud2, TRUTH_DESKEWED_CLOUD_TOPIC, sensor_qos)
+        if truth_mode
+        else None
+    )
+    pub_truth_lio = (
+        node.create_publisher(Odometry, TRUTH_LIO_ODOM_TOPIC, sensor_qos)
+        if truth_mode
+        else None
+    )
+    pub_truth_vio = (
+        node.create_publisher(Odometry, TRUTH_VIO_ODOM_TOPIC, sensor_qos)
+        if truth_mode
+        else None
+    )
     latest_odom = [None]
 
     def odom_callback(m):
@@ -227,10 +255,10 @@ def create_ros_interface(
                 m.pose.pose.orientation.y,
                 m.pose.pose.orientation.z,
             ],
-            # 纯位姿后端（livo_post_vio）不提供可信速度，显式置 None，
+            # 纯位姿后端（livo_post_vio / simulation_truth）不提供可信速度，显式置 None，
             # 而不是把 Twist 里的零当成“静止”。
             "estimated_velocity": None
-            if experiment.get("slam_pose_source") == "livo_post_vio"
+            if experiment.get("slam_pose_source") in ("livo_post_vio", "simulation_truth")
             else [
                 m.twist.twist.linear.x,
                 m.twist.twist.linear.y,
@@ -283,6 +311,7 @@ def create_ros_interface(
         m.header.stamp.nanosec = ns % 1000000000
         m.header.frame_id = frame
     published = {"imu": 0, "rgb": 0, "cloud": 0}
+    last_clock_ns = [None]
 
     def spin_once(timeout_sec=0.0):
         rclpy.spin_once(node, timeout_sec=timeout_sec)
@@ -299,6 +328,7 @@ def create_ros_interface(
         clock.clock.sec = ns // 1000000000
         clock.clock.nanosec = ns % 1000000000
         pub_clock.publish(clock)
+        last_clock_ns[0] = ns
         msg = Imu()
         header(msg, it, "go2_imu")
         aa = reading["linear_acceleration"]
@@ -471,11 +501,34 @@ def create_ros_interface(
         pub_truth.publish(msg)
         published["truth"] = published.get("truth", 0) + 1
 
+    def publish_truth_vio(stamp_ns, pos_wi, quat_wi_wxyz):
+        if pub_truth_vio is None:
+            return
+        msg = truth_odometry_message(stamp_ns, pos_wi, quat_wi_wxyz)
+        pub_truth_vio.publish(msg)
+        published["truth_vio"] = published.get("truth_vio", 0) + 1
+
+    def publish_truth_deskewed_and_lio(scan):
+        if pub_truth_lio is None or pub_truth_cloud is None:
+            return
+        lio_msg = truth_odometry_message(
+            scan.cloud_stamp_ns, scan.pair_pos_wi, scan.pair_quat_wi_wxyz
+        )
+        cloud_msg = truth_deskewed_cloud_message(scan)
+        # 先发布等价 LIO 位姿，紧接着发布同戳世界系去畸变点云。
+        pub_truth_lio.publish(lio_msg)
+        pub_truth_cloud.publish(cloud_msg)
+        published["truth_lio"] = published.get("truth_lio", 0) + 1
+        published["truth_cloud"] = published.get("truth_cloud", 0) + 1
+
     def destroy():
         # 正常及异常收尾都已退出采集循环，不再推进物理。DDS 仍可发送队列中的数据。
         try:
             if reliable_recording:
-                writers = (pub_img, pub_complete_rtx, pub_rtx, pub_info, pub_imu, pub_clock, pub_truth)
+                writers = (
+                    pub_img, pub_complete_rtx, pub_rtx, pub_info, pub_imu,
+                    pub_clock, pub_truth, pub_truth_cloud, pub_truth_lio, pub_truth_vio,
+                )
                 if not rtx_enabled:
                     writers += (pub_depth, pub_cloud, pub_static_cloud, pub_perception_cloud)
                 _wait_for_recording_acknowledgments(node, writers, shutdown_receipt)
@@ -498,4 +551,7 @@ def create_ros_interface(
         destroy=destroy,
         publish_rtx_cloud=publish_rtx_cloud,
         publish_truth=publish_truth,
+        publish_truth_vio=publish_truth_vio,
+        publish_truth_deskewed_and_lio=publish_truth_deskewed_and_lio,
+        last_clock_ns=last_clock_ns,
     )

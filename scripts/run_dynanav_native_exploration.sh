@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Live RTX + post-VIO + measured PCT global / native SCAN local planning.
-# The operator supplies sparse goals; RoboGauge still executes body commands.
+# Live RTX + PCT global / native SCAN local planning (RoboGauge executes body commands).
+# Default: live FAST-LIVO2 post-VIO + backend SLAM.
+# --truth-pose: bypasses SLAM and drives PCT + SCAN with simulation_truth go2_imu poses + 200 Hz deskewed RTX.
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
         exit 0
     fi
 done
@@ -23,6 +24,7 @@ export PYTHONDONTWRITEBYTECODE=1 DYNANAV_RTX_COMPLETE_SCAN=1
 BUILD="${BUILD_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_complete_scan_20261110T231145Z}"
 RUN=""
 UNTIL_STOPPED=false
+TRUTH_POSE=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
 EXTRA_CAPTURE_ARGS=()
@@ -30,6 +32,7 @@ EXTRA_PLANNER_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
+        --truth-pose) TRUTH_POSE=true; shift ;;
         --scan-prefix)
             (($# >= 2)) || { echo "Missing value for --scan-prefix"; exit 2; }
             SCAN_PREFIX=$2; shift 2 ;;
@@ -99,13 +102,17 @@ flock -n 9 || { echo "An experiment already owns the simulator"; exit 3; }
 if pgrep -f '^([^[:space:]]*/kit/python/bin/python3|[^[:space:]]*/kit/kit|[^[:space:]]*/fastlivo_mapping)([[:space:]]|$)' >/dev/null; then
     echo "A simulator or estimator is already running; left it unchanged"; exit 4
 fi
-# Freeze the observer's configuration before starting any owned process.
+# Freeze run logging config; SLAM YAML configs are copied only in SLAM mode.
 mkdir "$RUN/configuration"
 printf '%s\n' '{"head_bytes":4194304,"tail_bytes":29360128,"error_head_bytes":4194304,"error_tail_bytes":12582912}' \
     > "$RUN/configuration/capture_log.json"
-cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
-    configs/simulation/dynanav/camera_rgbd.yaml \
-    configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
+if ! $TRUTH_POSE; then
+    cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
+        configs/simulation/dynanav/camera_rgbd.yaml \
+        configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
+fi
+# BUILD provides dynanav_sensor_msgs (CompleteLidarScan) required by DYNANAV_RTX_COMPLETE_SCAN=1
+# in both SLAM and --truth-pose modes.
 export PYTHONPATH="$BUILD/install/ros/lib/python3.12/site-packages:$PYTHONPATH"
 export LD_LIBRARY_PATH="$BUILD/install/ros/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export AMENT_PREFIX_PATH="$BUILD/install/ros${AMENT_PREFIX_PATH:+:$AMENT_PREFIX_PATH}"
@@ -181,51 +188,82 @@ if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     set -u
 fi
 printf '%s\n' "$RUN" > /tmp/embodied-navigation-native-exploration-current
-# The same override file also enables the bounded native keyframe export that
-# the SLAM backend node consumes (and deletes) below.
-printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    backend.snapshot_directory: "%s"\n' \
-    "$RUN/observer/native_keyframes" > "$RUN/handoff_parameters.yaml"
-bash scripts/run_dynanav_lio.sh --binary-prefix "$BUILD" --mode livo \
-    --config-dir "$RUN/configuration" \
-    --capture-result "$CAL" --observer-namespace /dynanav/rtx_livo \
-    --output-dir "$RUN/observer" --lidar-topic /dynanav/lidar_rtx \
-    --parameter-override "$RUN/handoff_parameters.yaml" > "$RUN/observer.log" 2>&1 &
-OBS=$!; PIDS+=("$OBS")
-for _ in $(seq 1 200); do
-    [[ -f "$RUN/observer/ready.json" ]] && break
-    kill -0 "$OBS" 2>/dev/null || { echo "Estimator exited"; exit 5; }
-    sleep .1
-done
-[[ -f "$RUN/observer/ready.json" ]] || { echo "Estimator startup timed out"; exit 6; }
-# Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
-# map->camera_init and /dynanav/backend/corrected_odometry. Navigation below
-# still consumes the raw odometry. PRIOR_MAP is an optional saved map directory.
-BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
-    --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map")
-if [[ -n "${PRIOR_MAP:-}" ]]; then
-    BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
+OBS=""
+BACKEND=""
+if $TRUTH_POSE; then
+    CAPTURE_POSE_SOURCE="simulation_truth"
+    CAPTURE_ODOM_TOPIC="/dynanav/truth/control_odometry"
+    PLANNER_POSE_ARGS=(
+        --pose-source simulation_truth
+        --cloud-topic /dynanav/truth/cloud_deskewed
+        --lio-topic /dynanav/truth/imu_odometry
+        --vio-topic /dynanav/truth/control_odometry
+    )
+    MAP_SOURCE_ARGS=(
+        --cloud-topic /dynanav/truth/cloud_deskewed
+        --odometry-topic /dynanav/truth/imu_odometry
+        --pose-source simulation_truth
+        --cloud-semantics lio_deskewed_map
+    )
+else
+    CAPTURE_POSE_SOURCE="livo_post_vio"
+    CAPTURE_ODOM_TOPIC="/dynanav/rtx_livo/post_vio_odometry"
+    PLANNER_POSE_ARGS=()
+    MAP_SOURCE_ARGS=(
+        --cloud-topic /dynanav/rtx_livo/cloud_registered_full
+        --odometry-topic /dynanav/rtx_livo/aft_mapped_to_init
+        --pose-source lio_estimate
+        --cloud-semantics lio_deskewed_map
+        --binary-prefix "$BUILD"
+    )
+    # The same override file also enables the bounded native keyframe export that
+    # the SLAM backend node consumes (and deletes) below.
+    printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    backend.snapshot_directory: "%s"\n' \
+        "$RUN/observer/native_keyframes" > "$RUN/handoff_parameters.yaml"
+    bash scripts/run_dynanav_lio.sh --binary-prefix "$BUILD" --mode livo \
+        --config-dir "$RUN/configuration" \
+        --capture-result "$CAL" --observer-namespace /dynanav/rtx_livo \
+        --output-dir "$RUN/observer" --lidar-topic /dynanav/lidar_rtx \
+        --parameter-override "$RUN/handoff_parameters.yaml" > "$RUN/observer.log" 2>&1 &
+    OBS=$!; PIDS+=("$OBS")
+    for _ in $(seq 1 200); do
+        [[ -f "$RUN/observer/ready.json" ]] && break
+        kill -0 "$OBS" 2>/dev/null || { echo "Estimator exited"; exit 5; }
+        sleep .1
+    done
+    [[ -f "$RUN/observer/ready.json" ]] || { echo "Estimator startup timed out"; exit 6; }
+    # Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
+    # map->camera_init and /dynanav/backend/corrected_odometry. Navigation below
+    # still consumes the raw odometry. PRIOR_MAP is an optional saved map directory.
+    BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
+        --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map")
+    if [[ -n "${PRIOR_MAP:-}" ]]; then
+        BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
+    fi
+    python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS[@]}" \
+        > "$RUN/backend.log" 2>&1 &
+    BACKEND=$!; PIDS+=("$BACKEND")
 fi
-python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS[@]}" \
-    > "$RUN/backend.log" 2>&1 &
-BACKEND=$!; PIDS+=("$BACKEND")
-# This process renders the world as sensor physics only. No scene geometry or
-# simulator truth is passed to the waypoint chooser or route follower.
+# Default mode renders sensor physics only (no truth passed to planner/follower);
+# --truth-pose explicitly publishes /dynanav/truth/* for SLAM-free PCT+SCAN verification.
 /usr/bin/python3 scripts/run_with_bounded_log.py \
     --config "$RUN/configuration/capture_log.json" --output-dir "$RUN/capture_logs" -- \
     "${CAPTURE_PREFIX[@]}" "$ISAAC_ROOT/python.sh" \
     scripts/run_dynanav_experiment.py --output "$RUN/capture" --scene "$SCENE" \
     --capture-log-config "$RUN/configuration/capture_log.json" \
     --point-cloud-source rtx_lidar --semantic-provider none --interactive \
-    --interactive-pose-source livo_post_vio --interactive-controller "$NAVIGATION_BACKEND" \
-    --odometry-topic /dynanav/rtx_livo/post_vio_odometry --render-backend fabric \
+    --interactive-pose-source "$CAPTURE_POSE_SOURCE" --interactive-controller "$NAVIGATION_BACKEND" \
+    --odometry-topic "$CAPTURE_ODOM_TOPIC" --render-backend fabric \
     --spawn-yaw "${SPAWN_YAW_RAD:-0}" --speed "$SPEED" "${EXTRA_CAPTURE_ARGS[@]}" \
     > "$RUN/capture.log" 2>&1 &
 CAP=$!; PIDS=("$CAP" "${PIDS[@]}")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"
 for _ in $(seq 1 900); do
-    for pid in "$OBS" "$BACKEND"; do
-        owned_child_running "$pid" || { echo "Owned dependency exited during capture startup: $pid"; exit 7; }
-    done
+    if ! $TRUTH_POSE; then
+        for pid in "$OBS" "$BACKEND"; do
+            owned_child_running "$pid" || { echo "Owned dependency exited during capture startup: $pid"; exit 7; }
+        done
+    fi
     [[ -d "$RUN/capture/interactive" ]] && break
     if ! kill -0 "$CAP" 2>/dev/null; then
         set +e; wait "$CAP"; CODE=$?; set -e
@@ -236,18 +274,16 @@ done
 if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     /usr/bin/python3 scripts/run_dynanav_pct_scan.py --run-dir "$RUN/capture" \
         --scan-prefix "$SCAN_PREFIX" --speed "$SPEED" --body-support-offset "$PCT_BODY_SUPPORT_OFFSET_M" --pct-start-blind-radius "$PCT_START_BLIND_RADIUS_M" \
-        "${EXTRA_PLANNER_ARGS[@]}" \
+        "${PLANNER_POSE_ARGS[@]}" "${EXTRA_PLANNER_ARGS[@]}" \
         > "$RUN/planner.log" 2>&1 &
     PLANNER=$!; PIDS+=("$PLANNER")
 fi
 python3 scripts/explore_waypoint_client.py map --run-dir "$RUN/capture" \
-    --cloud-topic /dynanav/rtx_livo/cloud_registered_full \
-    --odometry-topic /dynanav/rtx_livo/aft_mapped_to_init \
-    --pose-source lio_estimate --cloud-semantics lio_deskewed_map \
+    "${MAP_SOURCE_ARGS[@]}" \
     --imu-mount 0.020153064280748367 0 -0.005108955316245556 \
     --extrinsic-translation 0.020153064280748367 0 -0.005108955316245556 \
     --extrinsic-quaternion 0 0 0 1 --sensor-frame go2_imu --base-frame go2_base \
-    --binary-prefix "$BUILD" --duration "$WALL_TIMEOUT_S" --snapshot-interval 1 \
+    --duration "$WALL_TIMEOUT_S" --snapshot-interval 1 \
     --export-grid "$RUN/operator_grid" > "$RUN/map.log" 2>&1 &
 MAP=$!; PIDS+=("$MAP")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"

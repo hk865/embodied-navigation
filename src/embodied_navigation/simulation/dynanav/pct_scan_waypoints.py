@@ -224,8 +224,8 @@ class PctScanWaypointTracker(NativeWaypointTracker):
     controller_name = "pct_global_scan_local"
 
     def __init__(self, experiment, **kwargs):
-        if experiment.get("slam_pose_source") != "livo_post_vio":
-            raise ValueError("PCT/SCAN exploration uses post-VIO navigation poses")
+        if experiment.get("slam_pose_source") not in ("livo_post_vio", "simulation_truth"):
+            raise ValueError("PCT/SCAN exploration uses post-VIO or explicit simulation_truth navigation poses")
         super().__init__(experiment, **kwargs)
         self.parameters.update(controller=self.controller_name, global_planner="native_PCT_Astar",
             local_planner="native_SCAN", continuous_path_following=True,

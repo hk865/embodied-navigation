@@ -1488,7 +1488,7 @@ def _write_operator_map_snapshots(accumulator, out_dir, args, state, *, event):
         "last_frame": state["last"],
         "levels": levels,
         "output_dir": str(out_dir),
-        "ground_truth_used": False,
+        "ground_truth_used": args.pose_source == "simulation_truth",
         "path_length_is_not_coverage": True,
         "snapshot_is_partial_until_final": event != "operator_map_accumulated",
         "note": (
@@ -2215,7 +2215,7 @@ def build_parser():
         "map", help="operator-side occupancy snapshot", parents=[common]
     )
     mapping.add_argument("--cloud-topic", default="/dynanav/lidar_filtered")
-    mapping.add_argument("--odometry-topic", required=True)
+    mapping.add_argument("--odometry-topic", "--odom-topic", dest="odometry_topic", required=True)
     mapping.add_argument("--clock-topic", default="/clock")
     mapping.add_argument("--pose-source", default="lio_estimate")
     mapping.add_argument("--sensor-frame", default="go2_imu")

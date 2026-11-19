@@ -37,6 +37,10 @@ import math
 import numpy as np
 
 from embodied_navigation.common.geometry import quaternion_matrix
+from embodied_navigation.simulation.dynanav.truth_deskew import (
+    TRUTH_DESKEWED_CLOUD_TOPIC,
+    TRUTH_LIO_ODOM_TOPIC,
+)
 
 # Raw rotating wire layout (capture/lidar.py OUSTER_DTYPE). A deskewed native
 # cloud must not carry any of these fields; the native PointXYZINormal publisher
@@ -96,6 +100,8 @@ def verify_topic_roles(cloud_topic, pose_topic):
         raise DeskewedCloudError(
             "raw rotating LiDAR requires native deskew; refusing the raw wire scan"
         )
+    if cloud == TRUTH_DESKEWED_CLOUD_TOPIC and pose == TRUTH_LIO_ODOM_TOPIC:
+        return {"cloud_topic": cloud, "pose_topic": pose, "stage": DESKEWED_STAGE}
     if cloud.rsplit("/", 1)[-1] != DESKEWED_CLOUD_TOPIC_LEAF:
         raise DeskewedCloudError(
             "deskewed map cloud must be the native %s publisher, got %r"
