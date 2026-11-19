@@ -54,11 +54,9 @@ import time
 from pathlib import Path
 
 # Mirror the simulator gate: refuse a ground-truth frame before the file is written.
-from embodied_navigation.simulation.dynanav.exploration_waypoints import (
-    FORBIDDEN_POSE_SOURCES,
-    PROTOCOL_VERSION,
-    atomic_write_json,
-)
+from embodied_navigation.common.runtime_io import atomic_write_json
+from embodied_navigation.common.state_contract import FORBIDDEN_POSE_SOURCES
+from embodied_navigation.simulation.dynanav.native_waypoints import PROTOCOL_VERSION
 
 DEFAULT_MAILBOX_NAME = "interactive"
 OCCUPIED = 1
@@ -1069,188 +1067,6 @@ def _consume_fixed_cloud_batch(pending, consume):
             "received_during_batch": newly_received, "pending_count": len(pending)}
 
 
-def _write_deskewed_perception(
-    points_map, pose, args, state, *, stamp_s, arrival_wall, pair
-):
-    """Write native or explicitly enabled joint safety evidence, never map depth."""
-    from embodied_navigation.simulation.dynanav.rtx_deskewed_perception import (
-        DeskewedCloudError, build_perception_payload, fail_closed_payload, map_points_to_base,
-    )
-
-    build_started_wall = time.perf_counter()
-    clock_before_build = _map_clock_snapshot(state, build_started_wall)
-    depth_manifest = getattr(args, "nearfield_depth_manifest", None)
-    fusion_enabled = getattr(args, "enable_nearfield_depth_fusion", False)
-    native_cache = []
-
-    def native_fallback():
-        # A rejected depth input may need native evidence, but no native geometry
-        # is computed eagerly in the enabled, valid-depth path.
-        if not native_cache:
-            native_cache.append(build_perception_payload(
-                points_base, stamp_s=stamp_s, arrival_wall_s=arrival_wall,
-                producer_metadata=producer, source_topic=args.cloud_topic,
-            ))
-        return native_cache[0]
-
-    try:
-        mount = getattr(args, "imu_mount", None)
-        if mount is None:
-            raise DeskewedCloudError("imu_mount_missing")
-        points_base = map_points_to_base(points_map, pose["position"], pose["quat_xyzw"], mount)
-        producer = {
-            "stage": pair["stage"], "reference_stamp_ns": pair["reference_stamp_ns"],
-            "cloud_stamp_ns": pair["cloud_stamp_ns"], "pose_stamp_ns": pair["pose_stamp_ns"],
-            "cloud_topic": args.cloud_topic, "pose_topic": args.odometry_topic,
-            "map_frame": pair["map_frame"], "child_frame": pair["child_frame"],
-            "binary_sha256": state.get("source_binary_sha256"),
-        }
-        if depth_manifest is not None and fusion_enabled:
-            from embodied_navigation.simulation.dynanav.depth_safety_fusion import native_source_envelope
-            payload = native_source_envelope(points_base, stamp_s=stamp_s,
-                                            arrival_wall_s=arrival_wall, producer_metadata=producer)
-        else:
-            payload = native_fallback()
-    except (DeskewedCloudError, ValueError, AttributeError) as error:
-        payload = fail_closed_payload(stamp_s=stamp_s, arrival_wall_s=arrival_wall, error=error)
-    if depth_manifest is not None and ("producer_error" not in payload
-                                      or payload.get("native_geometry_evaluated") is False):
-        from embodied_navigation.simulation.dynanav.depth_safety_fusion import (
-            FUSION_SOURCE, build_safety_fusion, invalidate_fused_perception,
-            validate_fusion_contract, validate_fusion_source_ages,
-        )
-        now_sim, _ = _authoritative_sim_clock(state)
-        payload = build_safety_fusion(
-            points_base, payload, pair=pair,
-            pose_arrival_wall_s=pose.get("arrival_wall_s"),
-            depth_manifest=depth_manifest, now_sim_s=now_sim,
-            now_wall_s=time.perf_counter(), enabled=fusion_enabled,
-            native_fallback_factory=native_fallback if fusion_enabled else None,
-        )
-        # Refresh only real queued callbacks after expensive geometry. This
-        # pump cannot consume recursively and cannot extend the fixed batch.
-        computed_wall = time.perf_counter()
-        before_pump = _map_clock_snapshot(state, computed_wall)
-        pump = state.get("pump_callbacks")
-        pump_evidence = pump() if callable(pump) else {
-            "spin_calls": 0, "callback_count": 0, "max_spin_calls": MAP_CALLBACK_PUMP_LIMIT,
-            "timeout_sec": 0.0, "note": "no callback pump installed",
-        }
-        post_wall = time.perf_counter()
-        post_clock = _map_clock_snapshot(state, post_wall)
-        diagnostic = payload["depth_safety_diagnostic"]
-        diagnostic.update(
-            accepted_input=diagnostic.get("accepted") is True,
-            accepted_post_compute=False,
-            post_compute_scope="source contract and age; geometry still independently required",
-            computation_started_wall_s=build_started_wall,
-            computation_finished_wall_s=computed_wall,
-            computation_wall_s=computed_wall - build_started_wall,
-            post_compute_wall_s=post_wall,
-            clock_before_compute=clock_before_build,
-            clock_after_compute_before_pump=before_pump,
-            clock_after_pump=post_clock, post_compute_pump=pump_evidence,
-        )
-        if diagnostic["accepted_input"]:
-            try:
-                now_sim = post_clock["source_time_s"] if post_clock["usable"] else None
-                validate_fusion_source_ages(diagnostic["sources"], now_sim_s=now_sim,
-                                           now_wall_s=post_wall)
-                if payload.get("source") == FUSION_SOURCE:
-                    validate_fusion_contract(payload, now_sim_s=now_sim, now_wall_s=post_wall)
-                diagnostic["accepted_post_compute"] = True
-            except ValueError as error:
-                diagnostic.update(accepted=False, control_used=False,
-                                  reason="post_compute:" + str(error))
-                if payload.get("source") == FUSION_SOURCE:
-                    # A truly expired pair must remain unknown after pumping.
-                    # Do not add a native fit to an already exhausted deadline.
-                    payload = invalidate_fused_perception(payload, error)
-
-    perception_path = Path(args.perception_out)
-    perception_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(perception_path, payload)
-    directions = payload.get("directions") or {}
-    return {
-        "path": str(args.perception_out),
-        "source": payload.get("source"),
-        "depth_safety_diagnostic": payload.get("depth_safety_diagnostic"),
-        "stamp_s": payload.get("stamp_s"),
-        "arrival_wall_s": payload.get("arrival_wall_s"),
-        "observation_state": payload.get("observation_state"),
-        "clearance_m": payload.get("clearance_m"),
-        "fail_closed": payload.get("fail_closed"),
-        "front": directions.get("front"),
-        "blind_azimuth_sectors_deg": (payload.get("safety_geometry") or payload.get("lidar_geometry") or {}).get(
-            "blind_azimuth_sectors_deg"
-        ),
-        "near_field_floor_unobserved_m": (payload.get("safety_geometry") or payload.get("lidar_geometry") or {}).get(
-            "near_field_floor_unobserved_m"
-        ),
-    }
-
-
-def _async_fusion_requested(args):
-    """Reject incompatible opt-ins before importing/starting ROS or a worker."""
-    enabled = getattr(args, "enable_async_depth_fusion", False)
-    if enabled and (getattr(args, "cloud_semantics", None) != "lio_deskewed_map"
-                    or not getattr(args, "enable_nearfield_depth_fusion", False)
-                    or getattr(args, "nearfield_depth_manifest", None) is None
-                    or not getattr(args, "perception_out", None)):
-        raise ValueError("--enable-async-depth-fusion requires native LIO semantics, "
-                         "--enable-nearfield-depth-fusion, --nearfield-depth-manifest "
-                         "and --perception-out")
-    return enabled
-
-
-def _publish_async_fusion(args, state):
-    """Main owner is the only publisher; check again after serialization/IO.
-
-    Expired cached evidence is made unknown without refreshing any original
-    source stamp/arrival. The unchanged tracker independently gates every tick.
-    """
-    from embodied_navigation.simulation.dynanav.depth_safety_fusion import invalidate_fused_perception
-    session = state["async_fusion"]
-    result = session.poll()
-    if result is not None:
-        path = Path(args.perception_out)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".tmp")
-        try:
-            temporary.write_text(json.dumps(result.payload, sort_keys=True, separators=(",", ":")))
-            session.validate(result)  # Latest real clock + source versions, immediately before replace.
-            os.replace(temporary, path)
-        except (ValueError, OSError, TypeError, KeyError) as error:
-            session.counters["pre_replace_rejected"] += 1
-            session.last_error = str(error)
-            temporary.unlink(missing_ok=True)
-        else:
-            session.published(result)
-            payload = result.payload
-            receipt = {"path": str(path), "source": payload.get("source"),
-                       "stamp_s": payload.get("stamp_s"), "arrival_wall_s": payload.get("arrival_wall_s"),
-                       "observation_state": payload.get("observation_state"),
-                       "clearance_m": payload.get("clearance_m"), "fail_closed": payload.get("fail_closed"),
-                       "front": (payload.get("directions") or {}).get("front"),
-                       "depth_safety_diagnostic": payload.get("depth_safety_diagnostic")}
-            state["perception_samples"] = state.get("perception_samples", 0) + 1
-            state["last_perception"] = receipt
-    previous = session.last_published
-    if previous is not None and not session.last_invalidated:
-        try:
-            session.validate(previous, cached=True)
-        except (ValueError, OSError, TypeError, KeyError) as error:
-            rejected = invalidate_fused_perception(previous.payload, error)
-            atomic_write_json(args.perception_out, rejected)
-            session.last_invalidated = True
-            session.counters["cached_invalidated"] += 1
-            session.last_error = str(error)
-            state["last_perception"] = dict(state.get("last_perception") or {},
-                                             clearance_m=None, fail_closed=True,
-                                             observation_state=rejected["observation_state"])
-    state["async_fusion_stats"] = session.stats()
-
-
 def _operator_map_free_policy(cloud_semantics, requested="auto"):
     """Fail closed when a deskewed cloud lacks physical ray-origin evidence.
 
@@ -1349,42 +1165,8 @@ def _ingest_deskewed_cloud(
     )
     receipt["pair_contract"] = dict(detail["pair"])
     receipt["free_space_policy"] = dict(free_policy)
-    # The exact same-stage pair is evidence on every accepted frame, independent
-    # of whether a perception sample is also written.
+    # The exact same-stage pair is evidence on every accepted frame.
     state["last_pair_contract"] = dict(detail["pair"])
-    if getattr(args, "perception_out", None) and state.get("async_fusion") is not None:
-        session = state["async_fusion"]
-        import hashlib
-        enqueue_started_wall = time.perf_counter()
-        receipt["async_fusion_enqueued"] = session.submit(
-            points_map=points_map, pose=pose, pair=detail["pair"],
-            config={"imu_mount": args.imu_mount, "cloud_topic": args.cloud_topic,
-                    "odometry_topic": args.odometry_topic,
-                    "native_cloud_evidence": {
-                        "fields": [field.name for field in message.fields],
-                        "point_step": int(message.point_step), "width": int(message.width),
-                        "height": int(message.height), "deskew_marker": marker,
-                        "wire_sha256": hashlib.sha256(bytes(message.data)).hexdigest(),
-                        "dropped_nonfinite": dropped}},
-            cloud_arrival_wall_s=float(arrival_wall), depth_manifest=args.nearfield_depth_manifest,
-        )
-        receipt["async_enqueue_wall_s"] = time.perf_counter() - enqueue_started_wall
-    elif getattr(args, "perception_out", None):
-        receipt["perception"] = _write_deskewed_perception(
-            points_map,
-            pose,
-            args,
-            state,
-            stamp_s=stamp_s,
-            arrival_wall=float(arrival_wall),
-            pair=detail["pair"],
-        )
-    if receipt.get("perception") is not None:
-        # The perception sample is real evidence on every admitted frame, even
-        # when the caller does not count map frames (pending-cloud retry path).
-        state["perception_samples"] = state.get("perception_samples", 0) + 1
-        state["last_perception"] = receipt["perception"]
-        state["last_pair_contract"] = dict(detail["pair"])
     if count:
         state["frames"] = state.get("frames", 0) + 1
         state["last"] = receipt
@@ -1690,15 +1472,6 @@ def _write_operator_map_snapshots(accumulator, out_dir, args, state, *, event):
                 "source_binary": state.get("source_binary_identity"),
             }
         ),
-        "perception": (
-            None
-            if not getattr(args, "perception_out", None)
-            else {
-                "path": str(args.perception_out),
-                "samples": state.get("perception_samples", 0),
-                "last": state.get("last_perception"),
-            }
-        ),
         "cloud_frame_declared": state["declared_frame"],
         "cloud_frame_mismatch": state["frame_mismatch"],
         "frames": state["frames"],
@@ -1716,8 +1489,6 @@ def _write_operator_map_snapshots(accumulator, out_dir, args, state, *, event):
             "stamp pairing; never a navigation input for the base"
         ),
     }
-    if "async_fusion_stats" in state:
-        manifest["async_fusion"] = state["async_fusion_stats"]
     atomic_write_json(out_dir / "latest.json", manifest)
     return manifest
 
@@ -2182,25 +1953,12 @@ def _cmd_map(args):
                 "lio_deskewed_map requires the measured --imu-mount "
                 "(IMU origin in the base frame); T_map_base is never guessed"
             )
-    perceptions = getattr(args, "perception_out", None)
-    if cloud_semantics == "lio_deskewed_map" and perceptions is not None:
-        perceptions = Path(perceptions).expanduser().resolve()
-        perceptions.parent.mkdir(parents=True, exist_ok=True)
-    args.perception_out = perceptions
-    depth_manifest = getattr(args, "nearfield_depth_manifest", None)
-    if getattr(args, "enable_nearfield_depth_fusion", False) and depth_manifest is None:
-        raise ValueError("--enable-nearfield-depth-fusion requires --nearfield-depth-manifest")
-    if depth_manifest is not None:
-        if cloud_semantics != "lio_deskewed_map" or perceptions is None:
-            raise ValueError("nearfield safety requires native LIO semantics and --perception-out")
-        args.nearfield_depth_manifest = Path(depth_manifest).expanduser().resolve()
     if args.extrinsic_translation is None:
         raise ValueError(
             "explicit sensor->base extrinsic is required "
             "(use --extrinsic-translation and --extrinsic-quaternion); "
             "no calibration is guessed"
         )
-    async_requested = _async_fusion_requested(args)
     import rclpy
     from nav_msgs.msg import Odometry
     from rclpy.qos import qos_profile_sensor_data
@@ -2234,8 +1992,6 @@ def _cmd_map(args):
         "source_binary_sha256": (
             None if source_identity is None else source_identity.get("core_sha256")
         ),
-        "perception_samples": 0,
-        "last_perception": None,
         "last_pair_contract": None,
         "clock": None,
         "clock_arrival_wall": None,
@@ -2259,66 +2015,23 @@ def _cmd_map(args):
         "declared_frame": None,
     }
     pending = []
-    pending_odometry = []
-    async_session = None
-
-    def message_stamp_s(message):
-        return message.header.stamp.sec + message.header.stamp.nanosec * 1e-9
 
     def on_odometry(message):
         state["callback_count"] = state.get("callback_count", 0) + 1
-        arrival = time.perf_counter()
-        if async_session is None:
-            _ingest_odometry(message, accumulator, state, args, arrival)
-        else:
-            if len(pending_odometry) >= 512:
-                pending_odometry.pop(0)
-                async_session.counters["odometry_callback_overflow"] += 1
-            pending_odometry.append((message, arrival))
-
+        _ingest_odometry(message, accumulator, state, args, time.perf_counter())
 
     def on_cloud(message):
         state["callback_count"] = state.get("callback_count", 0) + 1
-        if async_session is not None and len(pending) >= CLOUD_PENDING_MAX_COUNT:
-            dropped, arrival = pending.pop(0)
-            async_session.counters["cloud_callback_overflow"] += 1
-            state["pending_overflow_rejections"] += 1
-            state["last_cloud_rejection"] = {"reason": "async_callback_overflow",
-                                               "cloud_stamp_s": message_stamp_s(dropped),
-                                               "arrival_wall_s": arrival}
         pending.append((message, time.perf_counter()))
 
     def on_clock(message):
         state["callback_count"] = state.get("callback_count", 0) + 1
         state["clock"] = message.clock.sec + message.clock.nanosec * 1e-9
         state["clock_arrival_wall"] = time.perf_counter()
-        if async_session is not None:
-            generation = async_session.generation
-            async_session.on_clock(state["clock"], state["clock_arrival_wall"])
-            if async_session.generation != generation:
-                # Old ROS caches cannot form a new-generation pair after a
-                # source clock reset. Count discarded cache entries; immutable
-                # source files and previous result evidence remain untouched.
-                async_session.counters["rollback_cloud_cache_discarded"] += len(pending)
-                async_session.counters["rollback_pose_cache_discarded"] += len(state["lio_poses"])
-                async_session.counters["rollback_odometry_cache_discarded"] += len(pending_odometry)
-                pending.clear()
-                pending_odometry.clear()
-                state["lio_poses"].clear()
 
     rclpy.init()
     node = rclpy.create_node("dsh_explore_map_accumulator")
     try:
-        if async_requested:
-            from embodied_navigation.simulation.dynanav import async_depth_fusion, depth_safety_fusion
-            source_paths = [__file__, async_depth_fusion.__file__, depth_safety_fusion.__file__]
-            if source_identity is not None:
-                prefix = Path(source_identity["prefix"])
-                source_paths.extend([prefix / "install/ros/lib/libfast_livo2_core.so",
-                                     prefix / "install/ros/lib/fast_livo2_ros/fastlivo_mapping"])
-            async_session = async_depth_fusion.FusionCoordinator(
-                binary_sha256=state["source_binary_sha256"], source_paths=source_paths)
-            state["async_fusion"] = async_session
         node.create_subscription(
             Odometry, args.odometry_topic, on_odometry, qos_profile_sensor_data
         )
@@ -2343,33 +2056,13 @@ def _cmd_map(args):
                 # Only wait when the nonblocking pump found no work. Geometry
                 # and its final freshness check never use a blocking spin.
                 rclpy.spin_once(node, timeout_sec=0.05)
-            if async_session is None:
-                state["last_fixed_batch"] = _consume_fixed_cloud_batch(
-                    pending,
-                    lambda batch: _retry_pending_clouds(
-                        batch, accumulator, state, args, clock=time.perf_counter,
-                        receipt_path=out_dir / "cloud_consumption.jsonl",
-                    ),
-                )
-            else:
-                # Callbacks only cache. Preserve original arrivals while the
-                # main owner applies native map work; one cloud per pump keeps
-                # a backlog from monopolizing reception. Map geometry is NOT
-                # moved into the worker, and depth never enters this map.
-                odometry_batch = pending_odometry[:MAP_CALLBACK_PUMP_LIMIT]
-                del pending_odometry[:len(odometry_batch)]
-                for message, arrival in odometry_batch:
-                    _ingest_odometry(message, accumulator, state, args, arrival)
-                _publish_async_fusion(args, state)
-                batch = pending[:1]
-                del pending[:len(batch)]
-                waiting = _retry_pending_clouds(
+            state["last_fixed_batch"] = _consume_fixed_cloud_batch(
+                pending,
+                lambda batch: _retry_pending_clouds(
                     batch, accumulator, state, args, clock=time.perf_counter,
-                    receipt_path=out_dir / "cloud_consumption.jsonl")
-                pending.extend(waiting)
-                state["last_fixed_batch"] = {"batch_count": len(batch),
-                                             "waiting_count": len(waiting), "pending_count": len(pending)}
-                _publish_async_fusion(args, state)
+                    receipt_path=out_dir / "cloud_consumption.jsonl",
+                ),
+            )
             if interval > 0 and time.perf_counter() - last_snapshot >= interval:
                 # Keep a readable accumulated map on disk during the run: the
                 # operator decides the next waypoint from it, not from a
@@ -2385,17 +2078,6 @@ def _cmd_map(args):
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     finally:
-        if async_session is not None:
-            # Cancellation is bounded. A still-running daemon can finish only
-            # owned CPU work; close removes its permission to publish results.
-            joined = async_session.close(timeout=1.0)
-            async_session.counters["shutdown_join_timed_out"] += int(not joined)
-            try:
-                _publish_async_fusion(args, state)
-            except OSError as error:
-                # Existing file freshness still stops the consumer. Cleanup of
-                # ROS must not be skipped because shutdown invalidation IO failed.
-                async_session.last_error = "shutdown_invalidation_io:" + str(error)
         # A TERM from the run harness makes rclpy shut the context down itself;
         # the map evidence is already on disk, so shutdown must never raise.
         try:
@@ -2573,33 +2255,8 @@ def build_parser():
             "sensor_imu keeps the legacy sensor-frame raw-cloud path; "
             "lio_deskewed_map consumes FAST-LIVO2 native deskewed "
             "/cloud_registered_full with the same-stage /aft_mapped_to_init pose "
-            "(exact integer stamp pair, no interpolation) and writes the "
-            "LiDAR direction-coverage perception sample"
+            "(exact integer stamp pair, no interpolation)"
         ),
-    )
-    mapping.add_argument(
-        "--perception-out",
-        type=Path,
-        default=None,
-        help=(
-            "write the LiDAR direction-coverage perception.json consumed by the "
-            "interactive tracker; only for --cloud-semantics lio_deskewed_map"
-        ),
-    )
-    mapping.add_argument(
-        "--nearfield-depth-manifest", type=Path, default=None,
-        help="optional nearfield_depth/latest.json; validate exact native camera/LIO "
-        "stamp and raw pixels for diagnostics only unless fusion is separately enabled",
-    )
-    mapping.add_argument(
-        "--enable-async-depth-fusion", action="store_true",
-        help="EXPERIMENTAL, default off: one bounded auxiliary depth-fusion worker; "
-             "requires explicit native LIO + depth fusion, no runtime acceptance implied",
-    )
-    mapping.add_argument(
-        "--enable-nearfield-depth-fusion", action="store_true",
-        help="enable validated safety-only depth endpoints after zero-motion sensor "
-        "validation; default off, never changes the native RTX SLAM/operator map",
     )
     mapping.add_argument(
         "--binary-prefix",

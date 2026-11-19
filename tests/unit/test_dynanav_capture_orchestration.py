@@ -131,18 +131,6 @@ class FakeVideo:
             raise self.close_error
 
 
-class FakeArchive:
-    def __init__(self):
-        self.receipt_calls = 0
-        self.receipt_error = None
-
-    def receipt(self, **kwargs):
-        self.receipt_calls += 1
-        if self.receipt_error is not None:
-            raise self.receipt_error
-        return {"fake": True}
-
-
 class FakeRos:
     def __init__(self):
         self.published = {"rgb": 0}
@@ -248,7 +236,6 @@ class Fakes:
         self.stream = FakeStream()
         self.rgbd = types.SimpleNamespace(rep=object(), product=object())
         self.tracker = object()
-        self.archive = None
         self.stepper = FakeStepper(self.measurement)
         self.previous_delegates = []
 
@@ -313,7 +300,6 @@ def fake_dependencies(fakes, stepper_class=None):
         "FrameStream": lambda **kwargs: fakes.stream,
         "update_pedestrian": lambda pedestrian, experiment: None,
         "compute_torque": lambda **kwargs: np.zeros(12),
-        "open_rgb_archive": lambda output, experiment, result: fakes.archive,
         "stop": lambda app, delegates: (app.finish(), delegates.clear()),
     }
     missing = [name for name in patches if not hasattr(entry, name)]
@@ -472,8 +458,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         fakes.mapping.finalize_failure_error = RuntimeError("mapping finalize failed")
         fakes.video.close_error = RuntimeError("encoder close failed")
         fakes.app.close_error = RuntimeError("app close failed")
-        fakes.archive = FakeArchive()
-        fakes.archive.receipt_error = RuntimeError("archive receipt failed")
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "run"
             with fake_dependencies(fakes), isaac_simulation_manager_stub():
@@ -494,7 +478,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         self.assertIn("mapping", cleanup)
         self.assertIn("video", cleanup)
         self.assertIn("app_close", cleanup)
-        self.assertIn("rgb_archive", cleanup)
         # Every owned resource is still attempted even after an earlier failure.
         self.assertEqual(fakes.ros.destroy_calls, 1)
         self.assertEqual(fakes.app.close_calls, [1])

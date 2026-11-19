@@ -13,8 +13,6 @@ from unittest.mock import patch
 import numpy as np
 
 from embodied_navigation.simulation.dynanav.capture import sensors
-from embodied_navigation.simulation.dynanav.capture.nearfield_sensor import NearfieldDepthRender
-from test_dynanav_nearfield_depth import parameters, plane_image, seg
 
 
 class Attr:
@@ -47,7 +45,7 @@ class Ann:
         return self.value  # Deliberately mutable, even when SDK copy is requested.
 
 
-def rig(path='/RP/front', nearfield=False):
+def rig(path='/RP/front'):
     dispatch = Node(path + '/dispatch')
     ptr = Attr(dispatch, 'outputs:renderResults', 10)
     product = Attr(dispatch, 'outputs:renderProductPath', path)
@@ -63,7 +61,7 @@ def rig(path='/RP/front', nearfield=False):
     Attr(rpnode, 'outputs:exec', 1)
     rptime = Ann({'fabricFrameTimeNumerator': 1, 'fabricFrameTimeDenominator': 10}, rpnode)
     anns = {}
-    values = {'depth_ann': plane_image(), 'instance_ann': seg(), 'camera_params_ann': parameters()} if nearfield else {
+    values = {
         'rgb_ann': np.zeros((512, 512, 4), np.uint8), 'camera_params_ann': {'cameraViewTransform': np.eye(4)}}
     for name, value in values.items():
         producer = Node(path + '/' + name + '_producer')
@@ -73,19 +71,11 @@ def rig(path='/RP/front', nearfield=False):
         data = Attr(producer, 'outputs:data')
         node = Node(path + '/' + name); Attr(node, 'inputs:data', upstream=[data])
         Attr(node, 'outputs:exec', 1)
-        if name == 'instance_ann':
-            token = Node(path + '/instance_token_producer')
-            Attr(token, 'inputs:renderResults', lambda: ptr.value, [ptr])
-            Attr(token, 'outputs:exec', 1)
-            labels = Attr(token, 'outputs:labels')
-            Attr(node, 'inputs:labels', upstream=[labels])
         # A global execution input is deliberately unrelated and is not provenance.
         globalnode = Node('/global'); execution = Attr(globalnode, 'outputs:exec')
         Attr(node, 'inputs:exec', upstream=[execution])
         anns[name] = Ann(value, node)
-    cls = NearfieldDepthRender if nearfield else sensors.RgbdRender
-    obj = cls(None, SimpleNamespace(path=path), anns.get('rgb_ann'), anns.get('depth_ann'), anns['camera_params_ann'])
-    if nearfield: obj.instance_ann = anns['instance_ann']
+    obj = sensors.RgbdRender(None, SimpleNamespace(path=path), anns.get('rgb_ann'), anns.get('depth_ann'), anns['camera_params_ann'])
     obj.reference_ann = Ann({'referenceTimeNumerator': 1, 'referenceTimeDenominator': 10})
     obj.time_ann = Ann({'execOut': 1, 'simulationTime': .1})
     obj.rp_time_ann = rptime
@@ -212,23 +202,6 @@ class BindingTests(unittest.TestCase):
         r._remember_native_event(event(r)); r._consume_after_sdk_update()
         self.assertIs(r.rtx_error, error)
 
-    def test_nearfield_depth_ids_parameters_share_bundle_and_original_arrival(self):
-        r = rig('/RP/near', True); r._remember_native_event(event(r)); r._consume_after_sdk_update()
-        arrays, receipt = r.rtx_cache[0]
-        self.assertEqual(receipt['arrival_wall_s'], 42.); self.assertEqual(receipt['stamp_ns'], 100_000_000)
-        self.assertFalse(receipt['control_enabled']); self.assertFalse(receipt['world_pose_used'])
-        old = arrays['points_base_m'].copy(); r.depth_ann.value[:] = 99; r.instance_ann.value['data'][:] = 0
-        np.testing.assert_array_equal(arrays['points_base_m'], old)
-        self.assertEqual(receipt['time_evidence']['binding_before'], receipt['time_evidence']['binding_after'])
-
-    def test_nearfield_stale_ids_pointer_is_rejected_even_when_other_data_match(self):
-        r = rig('/RP/near', True)
-        ptrs = r._binding_result_attrs
-        name = next(name for name in ptrs if 'instance_ann' in name)
-        ptrs[name].value = 999
-        r._remember_native_event(event(r)); r._consume_after_sdk_update()
-        self.assertFalse(r.rtx_cache); self.assertIn('annotators', str(r.rtx_error))
-
     def test_dependency_graph_rejects_wrong_product_or_missing_data_provenance(self):
         r = rig(); other = Node('/other'); pointer = Attr(other, 'outputs:renderResults', 10)
         producer = r.rgb_ann.node.attrs['inputs:data'].upstream[0].node
@@ -251,14 +224,6 @@ class BindingTests(unittest.TestCase):
         r._remember_native_event(event(r)); r._consume_after_sdk_update()
         self.assertEqual(len(r.rtx_cache), 1)
 
-    def test_nearfield_mask_and_token_execution_both_required(self):
-        for name in ('instance_ann_producer', 'instance_token_producer'):
-            r = rig('/RP/near', True)
-            attr = next(v for k, v in r._binding_output_exec_attrs.items() if name + '.' in k)
-            attr.value = 0; r._remember_native_event(event(r)); r._consume_after_sdk_update()
-            with self.subTest(name=name):
-                self.assertFalse(r.rtx_cache); self.assertIn('not completed', str(r.rtx_error))
-
     def test_execution_change_during_copy_is_rejected(self):
         r = rig(); output = r.rgb_ann.node.attrs['outputs:exec']
         r.rgb_ann.hook = lambda: setattr(output, 'value', 0)
@@ -266,30 +231,25 @@ class BindingTests(unittest.TestCase):
         self.assertFalse(r.rtx_cache); self.assertIn('not completed', str(r.rtx_error))
 
     def test_verified_rp_source_boundary_excludes_only_dispatch_flow_pulses(self):
-        for nearfield in (False, True):
-            r = rig('/unusual/product17', nearfield)
-            # Exact node identity, not the words 'PostProcessDispatch' in a path.
-            r.test_dispatch.path = '/unusual/verified_source91'
-            r._binding_product_attr, r._binding_result_attrs, r._binding_output_exec_attrs = sensors._camera_binding_attributes(r.rp_time_ann, r._native_annotators())
-            self.assertEqual(r.test_dispatch.attrs['outputs:exec'].get(), 0)
-            self.assertEqual(r.test_global_dispatch.attrs['outputs:exec'].get(), 0)
-            execution = r._binding_output_exec_attrs
-            self.assertNotIn(r.test_dispatch.attrs['outputs:exec'].get_path(), execution)
-            self.assertNotIn(r.test_global_dispatch.attrs['outputs:exec'].get_path(), execution)
-            self.assertIn(r.camera_params_ann.node.attrs['outputs:exec'].get_path(), execution)
-            r._remember_native_event(event(r)); r._consume_after_sdk_update()
-            with self.subTest(nearfield=nearfield):
-                self.assertIsNone(r.rtx_error); self.assertEqual(len(r.rtx_cache), 1)
+        r = rig('/unusual/product17')
+        # Exact node identity, not the words 'PostProcessDispatch' in a path.
+        r.test_dispatch.path = '/unusual/verified_source91'
+        r._binding_product_attr, r._binding_result_attrs, r._binding_output_exec_attrs = sensors._camera_binding_attributes(r.rp_time_ann, r._native_annotators())
+        self.assertEqual(r.test_dispatch.attrs['outputs:exec'].get(), 0)
+        self.assertEqual(r.test_global_dispatch.attrs['outputs:exec'].get(), 0)
+        execution = r._binding_output_exec_attrs
+        self.assertNotIn(r.test_dispatch.attrs['outputs:exec'].get_path(), execution)
+        self.assertNotIn(r.test_global_dispatch.attrs['outputs:exec'].get_path(), execution)
+        self.assertIn(r.camera_params_ann.node.attrs['outputs:exec'].get_path(), execution)
+        r._remember_native_event(event(r)); r._consume_after_sdk_update()
+        self.assertIsNone(r.rtx_error); self.assertEqual(len(r.rtx_cache), 1)
 
     def test_zero_dispatcher_does_not_bypass_wrong_product_result_or_data_execution(self):
-        for fault in ('product', 'result', 'root', 'token'):
-            r = rig('/near', True)
+        for fault in ('product', 'result', 'root'):
+            r = rig('/near')
             if fault == 'product': r.test_product.value = '/wrong'
             if fault == 'result': r.test_ptr.value = 99
             if fault == 'root': r.camera_params_ann.node.attrs['outputs:exec'].value = 0
-            if fault == 'token':
-                key = next(k for k in r._binding_output_exec_attrs if 'instance_token_producer.' in k)
-                r._binding_output_exec_attrs[key].value = 0
             r._remember_native_event(event(r)); r._consume_after_sdk_update()
             with self.subTest(fault=fault):
                 self.assertIsNotNone(r.rtx_error); self.assertFalse(r.rtx_cache)
@@ -422,7 +382,7 @@ class SdkCallbackTests(unittest.TestCase):
             stream.rgb_ann = r.rgb_ann; stream.depth_ann = None; stream.camera_params_ann = r.camera_params_ann
             stream.overview_ann = None; stream.camera = SimpleNamespace(GetPrim=lambda: None)
             stream.sensor_yaw = np.eye(3); stream.mount = np.zeros(3); stream.imu_mount = np.zeros(3)
-            stream.target_speed = .5; stream.rgb_archive = None; stream.rgb_frames_acquired = 0
+            stream.target_speed = .5
             stream.video_frames = 1; stream.last_rgb_native_ns = None
             measurement = SimpleNamespace(actual_time=3.315, it=3.315, pos=np.zeros(3), Rb=np.eye(3),
                                           sensor_position=np.zeros(3), camera_position=np.array([.031, 0, 0]))

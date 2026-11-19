@@ -20,8 +20,8 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.geometry import pose_transform
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
-from embodied_navigation.simulation.dynanav.exploration_waypoints import pose_transform
 
 POSE_SOURCE = "lio_estimate"
 POSE_SOURCES = (POSE_SOURCE, "livo_post_vio")

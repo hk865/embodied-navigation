@@ -17,3 +17,27 @@ def quaternion_matrix(w, x, y, z):
         ],
         dtype=float,
     )
+
+
+def pose_transform(position, quat_wxyz):
+    """Validate finite XYZ and a unit WXYZ quaternion; return the 4x4 SE(3) transform."""
+    try:
+        xyz = np.asarray(position, dtype=float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("position must contain 3 finite numbers") from error
+    if xyz.shape != (3,) or not np.isfinite(xyz).all():
+        raise ValueError("position must contain 3 finite numbers")
+    try:
+        quaternion = np.asarray(quat_wxyz, dtype=float)
+    except (TypeError, ValueError) as error:
+        raise ValueError("quaternion_wxyz must contain 4 finite numbers") from error
+    if quaternion.shape != (4,) or not np.isfinite(quaternion).all():
+        raise ValueError("quaternion_wxyz must contain 4 finite numbers")
+    norm = float(np.linalg.norm(quaternion))
+    if abs(norm - 1.0) > 1e-3:
+        raise ValueError("quaternion_wxyz must be unit length within 1e-3")
+    w, x, y, z = quaternion / norm
+    transform = np.eye(4)
+    transform[:3, :3] = quaternion_matrix(w, x, y, z)
+    transform[:3, 3] = xyz
+    return transform

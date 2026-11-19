@@ -20,27 +20,6 @@ SCENE="${SIMULATION_SCENE:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/of
 DURATION="${DURATION_SIM_S:-300}"
 SPEED="${SPEED_MPS:-1.0}"
 NAVIGATION_BACKEND="${NAVIGATION_BACKEND:-pct_scan}"
-EXTRA_CAPTURE_ARGS=()
-if [[ "${MULTICAMERA_OBSERVATION:-0}" == 1 ]]; then
-    EXTRA_CAPTURE_ARGS+=(--multicamera-observation --multicamera-count "${MULTICAMERA_COUNT:-6}")
-    if [[ -n "${MULTICAMERA_HORIZONTAL_FOV:-}" ]]; then
-        [[ -n "${CAPTURE_CALIBRATION:-}" ]] || { echo "Experimental HFOV requires explicit matching CAPTURE_CALIBRATION"; exit 2; }
-        python3 - "$MULTICAMERA_HORIZONTAL_FOV" "$CAL" <<'PY_CAMERA_CAL'
-import json
-import math
-import sys
-
-angle = float(sys.argv[1])
-if not math.isfinite(angle) or not 0 < angle < 180:
-    raise SystemExit("Experimental pinhole HFOV must be finite and within 0..180 degrees")
-expected = [256 / math.tan(math.radians(angle / 2))] * 2 + [256., 256.]
-actual = json.load(open(sys.argv[2]))["sensor_installation"]["camera_intrinsics"]
-if len(actual) != 4 or not all(math.isclose(x, y, rel_tol=1e-6, abs_tol=1e-6) for x, y in zip(actual, expected)):
-    raise SystemExit("Experimental HFOV and frontend calibration disagree")
-PY_CAMERA_CAL
-        EXTRA_CAPTURE_ARGS+=(--multicamera-horizontal-fov "$MULTICAMERA_HORIZONTAL_FOV")
-    fi
-fi
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
 # Nominal Go2 base-support height plus the recorded go2_imu mount z. This is
 # a robot offset, not a measured floor elevation or a scene-map input.
@@ -124,7 +103,7 @@ timeout --signal=TERM --kill-after=20s "$WALL_TIMEOUT_S" /home/hyh001/isaacsim/p
     --point-cloud-source rtx_lidar --semantic-provider none --interactive \
     --interactive-pose-source livo_post_vio --interactive-controller "$NAVIGATION_BACKEND" \
     --odometry-topic /dynanav/rtx_livo/post_vio_odometry --render-backend fabric \
-    --spawn-yaw "${SPAWN_YAW_RAD:-0}" --speed "$SPEED" --duration "$DURATION" "${EXTRA_CAPTURE_ARGS[@]}" \
+    --spawn-yaw "${SPAWN_YAW_RAD:-0}" --speed "$SPEED" --duration "$DURATION" \
     > "$RUN/capture.log" 2>&1 &
 CAP=$!; PIDS=("$CAP" "${PIDS[@]}")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"

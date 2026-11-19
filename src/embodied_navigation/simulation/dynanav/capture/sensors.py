@@ -587,8 +587,7 @@ def create_camera_rig(stage, experiment):
     # 不经过固定内参的 RGB-D 反投影路径；裁剪面仍为 0.05..100 场景单位。
     camera.GetHorizontalApertureAttr().Set(42.0)
     camera.GetVerticalApertureAttr().Set(42.0)
-    from ..multicamera import focal_length_for_hfov
-    focal_length = focal_length_for_hfov(experiment.get("multicamera_horizontal_fov_deg"))
+    focal_length = 24.0
     camera.GetFocalLengthAttr().Set(focal_length)
     camera.GetClippingRangeAttr().Set(Gf.Vec2f(0.05, 100.0))
     rtx_enabled = experiment.get("point_cloud_source", "rgbd") == "rtx_lidar"

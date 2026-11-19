@@ -103,9 +103,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from embodied_navigation.common.geometry import quaternion_matrix
-from embodied_navigation.simulation.dynanav.exploration_waypoints import (
-    FORBIDDEN_POSE_SOURCES,
-)
+from embodied_navigation.common.state_contract import FORBIDDEN_POSE_SOURCES
 
 __all__ = [
     "DEFAULT_BAND_WIDTH_M",

@@ -13,8 +13,11 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.geometry import pose_transform
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
-from embodied_navigation.simulation.dynanav.slam_route import _number, pose_transform
+from embodied_navigation.simulation.dynanav.slam_route import _number
+
+PROTOCOL_VERSION = 1
 
 
 class NativeWaypointTracker:
@@ -107,7 +110,7 @@ class NativeWaypointTracker:
         self._command = [0., 0., 0.]
 
     def _receipt(self, event, **fields):
-        row = dict(protocol_version=1, run_id=self.run_id, event=event, **fields)
+        row = dict(protocol_version=PROTOCOL_VERSION, run_id=self.run_id, event=event, **fields)
         self._last_result = row
         with self.receipts_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, allow_nan=False) + "\n")
@@ -161,7 +164,7 @@ class NativeWaypointTracker:
     def _handle_request(self, payload, now_wall=None):
         seq = payload.get("seq") if isinstance(payload, dict) else None
         try:
-            if not isinstance(payload, dict) or type(payload.get("version")) is not int or payload["version"] != 1:
+            if not isinstance(payload, dict) or type(payload.get("version")) is not int or payload["version"] != PROTOCOL_VERSION:
                 raise ValueError("unsupported_protocol_version")
             if payload.get("run_id") != self.run_id:
                 raise ValueError("run_id_mismatch")
@@ -212,7 +215,7 @@ class NativeWaypointTracker:
             yaw_rad=evidence.get("aligned_yaw_rad"), fresh=status in ("tracking", "idle"),
             sim_age_s=evidence.get("sim_age_s"), wall_age_s=evidence.get("wall_age_s"),
             alignment="identity_in_live_estimator_map_frame")
-        observation = dict(result, protocol_version=1, run_id=self.run_id,
+        observation = dict(result, protocol_version=PROTOCOL_VERSION, run_id=self.run_id,
             written_wall_s=evidence.get("now_wall_s"), sim_s=evidence.get("current_sim_s"),
             source_ns=pose["stamp_ns"], pose=pose, active_waypoint=self.active_waypoint,
             speed=dict(pose_window_mps=evidence.get("pose_window_speed_mps"), command_ceiling_mps=self.speed),

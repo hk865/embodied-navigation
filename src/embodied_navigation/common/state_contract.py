@@ -29,6 +29,13 @@ class StatePurpose(str, Enum):
 
 GAZEBO_NATIVE64_SOURCE = "gazebo.native64.preupdate"
 GAZEBO_SIMULATION_CLOCK = "gazebo_simulation"
+FORBIDDEN_POSE_SOURCES = (
+    "native_truth",
+    "native_pose",
+    "simulator_native_pose",
+    "ground_truth",
+    "gt_diagnostic",
+)
 
 
 @dataclass(frozen=True)

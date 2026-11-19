@@ -6,10 +6,31 @@ expires at the unchanged consumer watchdog, rather than becoming fresh on write.
 
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import queue
+import tempfile
 import threading
 import time
+
+
+def atomic_write_json(path, payload):
+    """Write payload as JSON to path through an exclusive same-directory replace."""
+    path = Path(path)
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    fd, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 
 class EvidenceWriter:

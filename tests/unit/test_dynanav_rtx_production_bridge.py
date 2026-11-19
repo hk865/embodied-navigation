@@ -118,7 +118,6 @@ class Args(SimpleNamespace):
             sensor_frame="go2_imu",
             base_frame="go2_base",
             imu_mount=list(MOUNT),
-            perception_out=None,
             binary_prefix=None,
             cloud_semantics="lio_deskewed_map",
         )
@@ -134,8 +133,6 @@ def state_for(accumulator, *, clock=9.4):
         "lio_poses": {},
         "source_binary_identity": None,
         "source_binary_sha256": None,
-        "perception_samples": 0,
-        "last_perception": None,
         "last_pair_contract": None,
         "clock": clock,
         "clock_arrival_wall": time.perf_counter(),
@@ -320,29 +317,6 @@ class DeskewedBridgeTests(unittest.TestCase):
         for mode in ("floor", "none"):
             self.assertEqual(mode, client._operator_map_free_policy("lio_deskewed_map", mode)["effective"])
 
-    def test_perception_written_with_real_geometry(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            out = Path(temporary) / "interactive" / "perception.json"
-            args = Args(perception_out=out)
-            state = state_for(self.accumulator)
-            self.seed_pose(state)
-            receipt = client._ingest_deskewed_cloud(
-                native_message(floor_cloud()), time.perf_counter(),
-                self.accumulator, state, args
-            )
-            self.assertTrue(receipt.get("accepted"))
-            payload = json.loads(out.read_text())
-            self.assertEqual("go2_base", payload["frame_id"])
-            self.assertIsNone(payload["depth_valid_ratio"])
-            self.assertEqual(9_300_000_000,
-                             payload["producer_metadata"]["reference_stamp_ns"])
-            self.assertEqual(9_300_000_000,
-                             payload["producer_metadata"]["pose_stamp_ns"])
-            self.assertEqual("LIO", payload["producer_metadata"]["stage"])
-            self.assertTrue(payload["lidar_geometry"]["blind_azimuth_sectors_deg"] == []
-                            or isinstance(payload["lidar_geometry"]["blind_azimuth_sectors_deg"], list))
-            self.assertEqual(1, state["perception_samples"])
-
     def test_default_cloud_semantics_keeps_legacy_path(self):
         parser = client.build_parser()
         args = parser.parse_args([
@@ -350,13 +324,12 @@ class DeskewedBridgeTests(unittest.TestCase):
             "/dynanav/rtx_livo/aft_mapped_to_init",
         ])
         self.assertEqual("sensor_imu", args.cloud_semantics)
-        self.assertIsNone(args.perception_out)
 
     def test_deskewed_semantics_requires_imu_mount_at_startup(self):
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary) / "run-20261110"
             run_dir.mkdir()
-            args = Args(imu_mount=None, perception_out=None)
+            args = Args(imu_mount=None)
             args.run_dir = run_dir
             args.mailbox = None
             args.extrinsic_translation = list(MOUNT)

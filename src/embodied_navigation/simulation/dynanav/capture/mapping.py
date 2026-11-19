@@ -1,86 +1,11 @@
-"""Oracle/learned mapping, scoring and raw-RGB archive wiring.
+"""Learned mapping and evaluation scoring wiring.
 
-This module owns the two optional mapping sinks (simulator oracle and learned
-RGB person mapping), the optional evaluation-only learned scorer, the instance
-segmentation annotator they need, and the raw RGB archive. Mapping frames are
-processed in the original order and the module keeps the exact receipt keys,
-journal payloads and error handling for a failed finalisation. It never imports
-Isaac modules at import time.
+This module owns the optional learned RGB person mapping sink, the optional
+evaluation-only learned scorer, and the instance segmentation annotator it
+needs. Mapping frames are processed in the original order and the module keeps
+the exact receipt keys, journal payloads and error handling for a failed
+finalisation. It never imports Isaac modules at import time.
 """
-
-import numpy as np
-
-from embodied_navigation.project import data_root
-
-
-def open_rgb_archive(out, experiment, result):
-    """Open the raw RGB archive, refusing paths outside the project data root."""
-    rgb_archive = None
-    if experiment.get("archive_rgb", False):
-        from embodied_navigation.simulation.dynanav.rgb_archive import RawRgbArchive
-
-        if not out.resolve().is_relative_to(data_root().resolve()):
-            raise ValueError(
-                "Raw RGB archive must be below the external project data root"
-            )
-        rgb_archive = RawRgbArchive(out / "rgb_raw")
-        result["rgb_archive"] = rgb_archive.receipt(acquired_frames=0)
-    return rgb_archive
-
-
-def process_oracle_frame(
-    *,
-    oracle_mapper,
-    packet,
-    instance_ann,
-    it,
-    Rb,
-    sensor_position,
-    rgb,
-    zz,
-    xyz,
-    actual_time,
-    dynamic_guard,
-    result,
-    journal,
-):
-    """Update the oracle mapping sink and the oracle-cloud dynamic hold."""
-    states = None
-    if oracle_mapper is not None:
-        transform = np.eye(4)
-        transform[:3, :3] = Rb
-        transform[:3, 3] = sensor_position
-        states, frame_receipt = oracle_mapper.process(
-            packet=packet,
-            segmentation=instance_ann.get_data(),
-            source_ns=round(it * 1e9),
-            transform=transform,
-            rgb=rgb,
-            depth=zz,
-        )
-        result["mapping_frame"] = frame_receipt
-        if dynamic_guard is not None:
-            from embodied_navigation.localization_mapping.semantic_mapping import (
-                DYNAMIC,
-            )
-
-            physics_ns = round(actual_time * 1e9)
-            held, hold_receipt = dynamic_guard.update(
-                xyz[states == DYNAMIC],
-                source_ns=physics_ns,
-                mask_source_ns=physics_ns,
-                now_ns=physics_ns,
-                mask_valid=frame_receipt["mask_valid"]
-                and frame_receipt["unknown"] == 0,
-                sampled_point_count=len(xyz),
-            )
-            hold_receipt["ros_sensor_stamp_ns"] = round(it * 1e9)
-            hold_receipt["clock_binding"] = (
-                "same validated physics tick; ROS IMU stamp retains float32 quantization"
-            )
-            result["dynamic_hold"] = hold_receipt
-            journal("dynamic_hold_frames.jsonl", hold_receipt)
-    return states
 
 
 def process_learned_frame(
@@ -149,7 +74,7 @@ def process_learned_frame(
 
 
 class MappingSession:
-    """Own the oracle/learned mappers, evaluation scorer and instance annotator."""
+    """Own the learned mapper, evaluation scorer and instance annotator."""
 
     def __init__(
         self,
@@ -170,13 +95,7 @@ class MappingSession:
         self.person_oracle_labels = None
         self.context = context
         context.mapping = self
-        if experiment.get("semantic_provider") == "isaac_instance_oracle":
-            if not (gt_diagnostic or slam_control):
-                raise ValueError("Oracle diagnostic maps require an explicit experiment")
-            from embodied_navigation.simulation.dynanav.oracle_mapping import OracleMapping
-
-            self.oracle_mapper = OracleMapping(stage, out / "mapping", experiment)
-        elif experiment.get("semantic_provider") == "learned_rgb_person":
+        if experiment.get("semantic_provider") == "learned_rgb_person":
             from embodied_navigation.simulation.dynanav.learned_mapping import (
                 LearnedMapping,
             )
@@ -189,11 +108,9 @@ class MappingSession:
                 )
 
                 self.learned_scorer = LearnedScoring(out / "learned_scoring")
-        if self.oracle_mapper is not None or self.learned_scorer is not None:
+        if self.learned_scorer is not None:
             self.instance_ann = rep.AnnotatorRegistry.get_annotator("instance_id_segmentation")
             self.instance_ann.attach([product])
-
-        if self.learned_scorer is not None:
             self.person_oracle_labels = person_oracle_labels
 
     def process_frame(
@@ -212,22 +129,8 @@ class MappingSession:
         result,
         journal,
     ):
-        """Process one 10 Hz RGB-D frame through every enabled mapping sink."""
-        states = process_oracle_frame(
-            oracle_mapper=self.oracle_mapper,
-            packet=packet,
-            instance_ann=self.instance_ann,
-            it=it,
-            Rb=Rb,
-            sensor_position=sensor_position,
-            rgb=rgb,
-            zz=zz,
-            xyz=xyz,
-            actual_time=actual_time,
-            dynamic_guard=dynamic_guard,
-            result=result,
-            journal=journal,
-        )
+        """Process one 10 Hz RGB-D frame through the enabled learned mapping sink."""
+        states = None
         frontend_keep = None
         if self.learned_mapper is not None:
             states, frontend_keep = process_learned_frame(
@@ -249,9 +152,7 @@ class MappingSession:
         return states, frontend_keep
 
     def finish(self, result):
-        """Finalize every enabled mapping sink into result.json (success path)."""
-        if self.oracle_mapper is not None:
-            result["mapping"] = self.oracle_mapper.finish()
+        """Finalize the enabled mapping sink into result.json (success path)."""
         if self.learned_mapper is not None:
             result["mapping"] = self.learned_mapper.finish()
         if self.learned_scorer is not None:
@@ -261,11 +162,6 @@ class MappingSession:
 
     def finalize_failure(self, result):
         """Finalize any partially built mapping sink without masking the primary error."""
-        if self.oracle_mapper is not None:
-            try:
-                result["mapping"] = self.oracle_mapper.finish()
-            except Exception as mapping_error:  # noqa: BLE001 - retain the primary simulation failure
-                result["mapping_finalize_error"] = repr(mapping_error)
         if self.learned_mapper is not None:
             try:
                 result["mapping"] = self.learned_mapper.finish()

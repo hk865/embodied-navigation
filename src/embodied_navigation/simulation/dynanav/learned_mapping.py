@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from embodied_navigation.common.geometry import pose_transform
 from embodied_navigation.localization_mapping.semantic_mapping import (
     DYNAMIC,
     LayeredMap,
@@ -29,7 +30,6 @@ from embodied_navigation.perception.person_worker import (
     PersonWorkerClient,
 )
 from embodied_navigation.perception.temporal_geometry import TemporalGeometryCache
-from embodied_navigation.simulation.dynanav.slam_route import pose_transform
 
 
 def inside_boxes(points, boxes):

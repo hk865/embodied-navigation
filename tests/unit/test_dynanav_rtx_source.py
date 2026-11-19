@@ -39,12 +39,12 @@ class RtxSourceSelection(unittest.TestCase):
             self.assertFalse(output.exists())
             return json.loads(capture.getvalue())["profile"]
 
-    def test_default_and_explicit_rgbd_preserve_legacy_semantics(self):
+    def test_default_and_explicit_rgbd_disable_retired_oracle_semantics(self):
         for args in ((), ("--point-cloud-source", "rgbd")):
             profile = self.check_profile(*args)
             self.assertEqual(profile["point_cloud_source"], "rgbd")
-            self.assertEqual(profile["semantic_provider"], "isaac_instance_oracle")
-            self.assertEqual(profile["mapping_pose_source"], "simulator_native_pose_oracle")
+            self.assertEqual(profile["semantic_provider"], "none")
+            self.assertEqual(profile["mapping_pose_source"], "disabled")
             self.assertNotIn("lidar_frontend_topic", profile)
             self.assertEqual(profile["render_backend"], "usd")
             self.assertNotIn("requested_render_backend", profile)

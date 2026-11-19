@@ -106,7 +106,6 @@ class CaptureContext:
 
     receipts: Receipts
     app: object = None
-    rgb_archive: object = None
     stream: object = None
     video: object = None
     mapping: object = None
@@ -172,20 +171,6 @@ def record_failure(receipts, error, context, *, interrupted_error=None):
         ))
 
     attempt("journals", receipts.close_journals)
-    if context.rgb_archive is not None:
-        def archive_receipt():
-            acquired_frames = (
-                context.stream.rgb_frames_acquired
-                if context.stream is not None
-                else 0
-            )
-            result["rgb_archive"] = context.rgb_archive.receipt(
-                acquired_frames=acquired_frames,
-                published_frames=context.published.get("rgb"),
-                video_frames=context.video.frames if context.video is not None else None,
-            )
-
-        attempt("rgb_archive", archive_receipt)
     if context.qd is not None:
         def actuator_failure_state():
             from isaacsim.core.simulation_manager import SimulationManager

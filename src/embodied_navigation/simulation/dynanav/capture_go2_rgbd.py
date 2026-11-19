@@ -41,10 +41,7 @@ from embodied_navigation.simulation.dynanav.capture.control import (
     resolve_limits,
 )
 from embodied_navigation.simulation.dynanav.capture.frames import FrameStream
-from embodied_navigation.simulation.dynanav.capture.mapping import (
-    MappingSession,
-    open_rgb_archive,
-)
+from embodied_navigation.simulation.dynanav.capture.mapping import MappingSession
 from embodied_navigation.simulation.dynanav.capture.physics import PhysicsStepper
 from embodied_navigation.simulation.dynanav.capture.policy import (
     compute_torque,
@@ -125,8 +122,6 @@ def parse_config(argv=None):
     slam_control = mode in ("slam_pose_diagnostic", "interactive_waypoint_exploration")
     robogauge = experiment.get("policy") == "robogauge"
     use_fabric = experiment.get("render_backend", "fabric") == "fabric"
-    from embodied_navigation.simulation.dynanav.capture.lockstep import validate_profile
-    validate_profile(experiment)
     if experiment.get("point_cloud_source", "rgbd") == "rtx_lidar" and not use_fabric:
         raise ValueError("RTX LiDAR requires Fabric physics updates so attached sensors follow the body")
     if (gt_diagnostic or slam_control) and not robogauge:
@@ -220,14 +215,6 @@ def run_capture(config):
     cancellation = CancellationState()
     try:
         receipts.save()
-        from embodied_navigation.simulation.dynanav.capture.lockstep import validate_profile
-        lockstep_config = validate_profile(config.experiment)
-        if lockstep_config is not None:
-            receipts.result["sensor_lockstep"] = dict(lockstep_config)
-        context.rgb_archive = open_rgb_archive(
-            config.output, config.experiment, receipts.result
-        )
-        receipts.save()
 
         original_signal_handlers = {
             signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
@@ -281,20 +268,12 @@ def run_capture(config):
             from embodied_navigation.simulation.dynanav.capture.lidar import RtxLidar
             rtx_lidar = RtxLidar(camera_rig, lidar_asset)
             rgbd_annotators = create_rgbd_annotators(
-                camera_rig, include_depth=bool(config.experiment.get("multicamera_observation", False)),
+                camera_rig, include_depth=False,
                 recover_invalid_native_frames=(config.experiment.get("interactive_controller") in ("native_route", "pct_scan")),
             )
         else:
             rtx_lidar = None
             rgbd_annotators = create_rgbd_annotators(camera_rig)
-        from embodied_navigation.simulation.dynanav.capture.multicamera_sensor import create_multicamera
-        multicamera = create_multicamera(stage, camera_rig, rgbd_annotators, config.experiment, config.output)
-        from embodied_navigation.simulation.dynanav.capture.nearfield_sensor import create_nearfield_depth
-        nearfield_depth = create_nearfield_depth(stage, camera_rig, config.experiment)
-        if nearfield_depth is not None:
-            from embodied_navigation.simulation.dynanav.capture.nearfield import calibration_receipt
-            receipts.result["simulated_nearfield_depth"] = calibration_receipt()
-            receipts.result["nearfield_depth_control_enabled"] = False
         mapping = MappingSession(
             config.experiment,
             stage,
@@ -411,10 +390,6 @@ def run_capture(config):
             rgbd_annotators.minimum_stamp_ns = rtx_lidar.minimum_scan_start_ns
             rgbd_annotators.rtx_cache.clear()
             rgbd_annotators.rtx_last_native_ns = None
-            if nearfield_depth is not None:
-                nearfield_depth.reset_start(rtx_lidar.minimum_scan_start_ns)
-            if multicamera is not None:
-                multicamera.reset_start(rtx_lidar.minimum_scan_start_ns)
             receipts.result["rtx_minimum_scan_start_ns"] = rtx_lidar.minimum_scan_start_ns
 
         control = ControlLoop(
@@ -436,8 +411,6 @@ def run_capture(config):
         def capture_render_outputs():
             rtx_lidar.capture()
             rgbd_annotators.capture_rtx_frame(rtx_lidar.minimum_scan_start_ns)
-            if multicamera is not None:
-                multicamera.capture(rtx_lidar.minimum_scan_start_ns)
 
         stepper = PhysicsStepper(
             art=art,
@@ -466,10 +439,7 @@ def run_capture(config):
             camera_rig=camera_rig,
             target_speed=target_speed,
             receipts=receipts,
-            rgb_archive=context.rgb_archive,
             rtx_lidar=rtx_lidar,
-            nearfield_depth=nearfield_depth,
-            multicamera=multicamera,
         )
         context.stream = stream
         imu_stride = config.experiment.get("imu_publish_stride", 2)
@@ -478,7 +448,6 @@ def run_capture(config):
         )
         from isaacsim.core.simulation_manager import SimulationManager
 
-        last_clock_published_wall = None
         for i in range(int(os.environ.get("PROBE_STEPS", "4400"))):
             cancellation.check()
             q = art.get_dof_positions().numpy()[0]
@@ -523,10 +492,6 @@ def run_capture(config):
             control.observe_imu(measurement.reading)
             previous_completed_tau = measurement.previous_completed_tau
             if (i + 1) % imu_stride == 0:
-                if lockstep_config is not None:
-                    # Conservative local boundary, not a downstream receipt or
-                    # a replacement for any original source arrival.
-                    last_clock_published_wall = time.perf_counter()
                 ros.publish_imu_and_clock(
                     measurement.it, measurement.reading, imu_orientation_available
                 )
@@ -556,59 +521,6 @@ def run_capture(config):
                         )
                     )
                 ros.spin_once(0)
-            if lockstep_config is not None and (i + 1) % 20 == 0:
-                from isaacsim.core.rendering_manager import RenderingManager
-                from embodied_navigation.simulation.dynanav.capture.lockstep import (
-                    bounded_wait, original_wall_deadline, pipeline_hint,
-                    simulation_snapshot,
-                )
-
-                def pump_lockstep(remaining_wall_s):
-                    # Only flush actual native completion events and consume
-                    # their original queues. No IMU/clock, control or policy tick.
-                    RenderingManager.render()
-                    capture_render_outputs()
-                    stream.publish_rtx_pending(measurement.actual_time)
-                    while rgbd_annotators.has_rtx_frame():
-                        cancellation.check()
-                        stream.process(
-                            iteration=i, measurement=measurement,
-                            pedestrian_view=pedestrian_view,
-                            pedestrian_target=pedestrian_target,
-                            dynamic_guard=dynamic_guard, camera_rows=camera_rows,
-                        )
-                    for _lockstep_callback in range(8):
-                        cancellation.check()
-                        ros.spin_once(0.0)
-                    # A tiny wall wait lets independent ROS/SLAM consumers run;
-                    # it does not move simulation time or renew a source.
-                    ros.spin_once(min(0.002, remaining_wall_s))
-
-                def stop_lockstep():
-                    return bool(
-                        control.source_terminal_reason is not None
-                        or tracker.terminal_reason is not None
-                        or pathlib.Path(os.environ.get(
-                            "NAV_STOP_REQUEST", "/tmp/no_multistage_stop_request"
-                        )).exists()
-                    )
-
-                evidence = bounded_wait(
-                    max_wait_s=lockstep_config["max_wait_wall_s"],
-                    clock_published_wall_s=last_clock_published_wall,
-                    snapshot=lambda: simulation_snapshot(art),
-                    pump=pump_lockstep,
-                    ready=lambda now: pipeline_hint(
-                        tracker=tracker, odom=ros.latest_odom[0],
-                        now_sim_s=measurement.actual_time, now_wall_s=now,
-                    ),
-                    cancelled=cancellation.check, stop_requested=stop_lockstep,
-                    wall_deadline=original_wall_deadline(tracker),
-                )
-                evidence["iteration"] = i
-                evidence["elapsed_wall_s"] = evidence["finished_wall_s"] - evidence["started_wall_s"]
-                receipts.journal("sensor_lockstep.jsonl", evidence)
-                receipts.result["sensor_lockstep_last_wait"] = evidence
             foot_xyz = []  # Runtime foot contact guards retained; optional truth-only rigid-prim queries removed.
             rows.append(
                 {
@@ -668,8 +580,6 @@ def run_capture(config):
                 "current_body_stamp_substituted": False,
             }
             rgbd_annotators.rtx_listener = None
-        if multicamera is not None:
-            receipts.result["multicamera_capture"] = multicamera.close()
         if rtx_lidar is not None and ros.published.get("rtx_lidar", 0) == 0:
             raise RuntimeError("RTX source emitted no verified complete scans; RGB-D fallback is disabled")
         if (rtx_lidar is not None and ros.published.get("rgb", 0) == 0
@@ -690,13 +600,6 @@ def run_capture(config):
             "encoder_exit": video.returncode,
             "camera": "body-following third person plus actual RGB input; camera motion visualization only, never navigation input",
         }
-        if context.rgb_archive is not None:
-            receipts.result["rgb_archive"] = context.rgb_archive.receipt(
-                acquired_frames=stream.rgb_frames_acquired,
-                completed=True,
-                published_frames=ros.published["rgb"],
-                video_frames=stream.video_frames,
-            )
         receipts.result.update(
             stage="articulation_contact_probe_complete",
             contact_paths=contact_monitor.contact_paths,

@@ -17,8 +17,7 @@ from embodied_navigation.perception.depth import depth_cloud_packet
 class FrameStream:
     """持有 10 Hz 帧计数与逐帧证据写入。
 
-    ``rgb_frames_acquired`` 统计归档的 RGB 帧，``video_frames`` 由视频写入器
-    返回的下一帧序号；两者跨帧保留，用于快照与阶段收据。
+    ``video_frames`` 由视频写入器返回的下一帧序号；跨帧保留，用于阶段收据。
     """
 
     def __init__(
@@ -36,21 +35,15 @@ class FrameStream:
         camera_rig,
         target_speed,
         receipts,
-        rgb_archive,
         rtx_lidar=None,
-        nearfield_depth=None,
-        multicamera=None,
     ):
         self.experiment = experiment
         self.rtx_lidar = rtx_lidar
-        self.nearfield_depth = nearfield_depth
-        self.multicamera = multicamera
         self.rgb_outputs = rgb_annotators
-        for output in (rgb_annotators, nearfield_depth):
-            if output is not None:
-                output.quarantine_output = out
-                if hasattr(output, "_binding_quarantine"):
-                    output._flush_native_quarantine()
+        if rgb_annotators is not None:
+            rgb_annotators.quarantine_output = out
+            if hasattr(rgb_annotators, "_binding_quarantine"):
+                rgb_annotators._flush_native_quarantine()
         self.out = out
         self.stage = stage
         self.gt_diagnostic = gt_diagnostic
@@ -69,60 +62,13 @@ class FrameStream:
         self.imu_mount = camera_rig.imu_mount
         self.target_speed = target_speed
         self.receipts = receipts
-        self.rgb_archive = rgb_archive
-        self.rgb_frames_acquired = 0
         self.video_frames = 0
 
-    def _publish_interactive_perception(self, packet, actual_time, rgb, depth):
-        """Publish live static-perception clearance for the interactive operator.
-
-        Only the explicit interactive mode produces this file. The producer
-        packet carries IMU-frame points together with their original pixel
-        indices; the payload builder translates them into the base frame and
-        gathers the validity/self masks through those indices. A pairing or
-        calibration failure becomes a fail-closed sample, never a clearance.
-        """
-        experiment = self.experiment
-        mailbox = experiment.get("interactive_mailbox")
-        if (
-            experiment.get("control_mode") != "interactive_waypoint_exploration"
-            or not mailbox
-        ):
-            return
-        import json as _json
-        import os as _os
-        import pathlib as _pathlib
-        import time as _time
-
-        depth_array = np.asarray(depth, dtype=float)
-        valid_pixels = depth_array[np.isfinite(depth_array) & (depth_array > 0.05)]
-        depth_valid_ratio = float(valid_pixels.size) / float(max(1, depth_array.size))
-        # The payload builder owns the IMU->base translation and the pixel-index
-        # gather. It never guesses: an unpaired packet becomes a fail-closed
-        # sample whose observation state makes the tracker hold.
-        from .perception import interactive_perception_payload
-
-        payload = interactive_perception_payload(
-            packet,
-            imu_mount=self.imu_mount,
-            stamp_s=float(actual_time),
-            arrival_wall_s=_time.perf_counter(),
-            depth_valid_ratio=depth_valid_ratio,
-        )
-        path = _pathlib.Path(mailbox) / "perception.json"
-        temporary = path.with_name(path.name + ".tmp")
-        try:
-            temporary.write_text(_json.dumps(payload, sort_keys=True))
-            _os.replace(temporary, path)
-        except OSError:
-            pass
-        self._write_interactive_still(float(actual_time), rgb)
-
-    def _write_interactive_still(self, source_time, rgb, *, perception=None):
+    def _write_interactive_still(self, source_time, rgb):
         """Low-rate real camera still; cadence is wall/sim time based.
 
-        The image is operator evidence only: it carries its own source time and,
-        optionally, the current perception sample; never a pose or ground truth.
+        The image is operator evidence only: it carries its own source time;
+        never a pose or ground truth.
         """
         import json as _json
         import pathlib as _pathlib
@@ -156,71 +102,14 @@ class FrameStream:
                 "pose_included": False,
                 "ground_truth_included": False,
             }
-            if perception is not None:
-                record["perception"] = perception
             with (frames_dir / "index.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(_json.dumps(record, sort_keys=True) + "\n")
             return record
         except (OSError, ImportError, ValueError):
             return None
 
-    def _read_external_perception(self, actual_time):
-        """Report the external perception sample ages; never refresh or rewrite it.
-
-        When the native deskewed-cloud producer owns perception.json, this capture
-        process only records what it currently sees. A stopped producer leaves an
-        old arrival and source stamp, so the tracker age gates keep holding; the
-        capture never re-stamps a sample to keep it alive.
-        """
-        import json as _json
-        import pathlib as _pathlib
-        import time as _time
-
-        mailbox = self.experiment.get("interactive_mailbox")
-        if not mailbox:
-            return None
-        path = _pathlib.Path(mailbox) / "perception.json"
-        try:
-            payload = _json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
-            return None
-        if not isinstance(payload, dict):
-            return None
-        stamp = payload.get("stamp_s")
-        arrival = payload.get("arrival_wall_s")
-        geometry = payload.get("lidar_geometry") or {}
-        summary = {
-            "source": payload.get("source"),
-            "stamp_s": stamp,
-            "arrival_wall_s": arrival,
-            "observation_state": payload.get("observation_state"),
-            "clearance_m": payload.get("clearance_m"),
-            "fail_closed": payload.get("fail_closed"),
-            "producer_metadata": payload.get("producer_metadata"),
-            "blind_azimuth_sectors_deg": geometry.get("blind_azimuth_sectors_deg"),
-            "near_field_floor_unobserved_m": geometry.get("near_field_floor_unobserved_m"),
-        }
-        try:
-            summary["sim_age_s"] = (
-                None if stamp is None else float(actual_time) - float(stamp)
-            )
-        except (TypeError, ValueError):
-            summary["sim_age_s"] = None
-        try:
-            summary["wall_age_s"] = (
-                None if arrival is None else _time.perf_counter() - float(arrival)
-            )
-        except (TypeError, ValueError):
-            summary["wall_age_s"] = None
-        return summary
     def publish_rtx_pending(self, actual_time):
         """LiDAR publication is independent of RGB buffer/camera cadence."""
-        multicamera = getattr(self, "multicamera", None)
-        if multicamera is not None:
-            multicamera.write_pending(self.receipts, actual_time)
-        nearfield = getattr(self, "nearfield_depth", None)
-        if nearfield is not None:
-            nearfield.write_pending(self.out, self.receipts, actual_time)
         packet = self.rtx_lidar.read()
         result = self.receipts.result
         result["point_cloud_source"] = "isaac_rtx_lidar"
@@ -246,40 +135,9 @@ class FrameStream:
             result["rtx_lidar_reads_without_new_scan"] = result.get("rtx_lidar_reads_without_new_scan", 0) + 1
     def _process_rtx_frame(self, it, actual_time, rgb, overview_ann, camera_rows):
         """RGB stays visual input; the only primary cloud is native RTX LiDAR."""
-        import os
-        import time
-        import pathlib
         self.publish_rtx_pending(actual_time)
         result = self.receipts.result
-        # The perception sample is owned by either this capture (legacy fail-closed
-        # payload) or the native deskewed-cloud producer. A silent producer must
-        # never be turned into a fresh sample: the capture does not rewrite or
-        # re-stamp perception.json for the RTX deskewed-cloud owner, so a missing or
-        # old file keeps the tracker original age gates holding.
-        mailbox = self.experiment.get("interactive_mailbox")
-        external_perception = None
-        if (
-            self.experiment.get("control_mode") == "interactive_waypoint_exploration"
-            and mailbox
-            and self.experiment.get("interactive_controller") not in ("native_route", "pct_scan")
-        ):
-            owner = self.experiment.get("interactive_perception_owner", "fail_closed")
-            result["interactive_perception_owner"] = owner
-            if owner == "rtx_deskewed_cloud":
-                external_perception = self._read_external_perception(actual_time)
-                result["interactive_external_perception"] = external_perception
-            else:
-                from .perception import fail_closed_perception_payload
-                payload = fail_closed_perception_payload(
-                    stamp_s=actual_time, arrival_wall_s=time.perf_counter(),
-                    error="Raw rotating LiDAR requires deskewed perception; RGB-D perception is disabled",
-                )
-                payload["source"] = "rtx_lidar_perception_not_connected"
-                path = pathlib.Path(mailbox) / "perception.json"
-                temporary = path.with_name(path.name + ".tmp")
-                temporary.write_text(json.dumps(payload, sort_keys=True))
-                os.replace(temporary, path)
-        still = self._write_interactive_still(float(it), rgb, perception=external_perception)
+        still = self._write_interactive_still(float(it), rgb)
         if still is not None:
             result["interactive_still"] = still
         overview = np.asarray(overview_ann.get_data())[..., :3]
@@ -333,8 +191,6 @@ class FrameStream:
         mount = self.mount
         imu_mount = self.imu_mount
         target_speed = self.target_speed
-        rgb_archive = self.rgb_archive
-        rgb_frames_acquired = self.rgb_frames_acquired
         video_frames = self.video_frames
         # 标注器返回的数据是渲染缓冲视图：深度为 distance_to_image_plane
         # （米），RGB 只取前三通道，避免把 alpha 通道带进 512x512x3 契约。
@@ -354,18 +210,6 @@ class FrameStream:
             result["rtx_rgb_acquisition_lag_ns"] = round(actual_time * 1e9) - image_ns
         zz = None if self.rtx_lidar is not None else np.asarray(depth_ann.get_data())
         rgb = cached_rgb["rgb"] if cached_rgb is not None else np.asarray(rgb_ann.get_data())[..., :3]
-        if rgb_archive is not None:
-            rgb_frames_acquired += 1
-            self.rgb_frames_acquired = rgb_frames_acquired
-            rgb_archive.write(
-                rgb,
-                source_ns=round(it * 1e9),
-                frame_index=video_frames,
-                frame_id="go2_camera_optical",
-            )
-            result["rgb_archive"] = rgb_archive.receipt(
-                acquired_frames=rgb_frames_acquired
-            )
         result["rgb_rendered"] = True
         # 只在第 0/49 帧落渲染阶段收据，便于对照首帧与预热结束时的状态；
         # 其余帧不重复写，避免每帧产生小文件。
@@ -512,7 +356,11 @@ class FrameStream:
             learned_mapper,
         )
         ros.publish_depth_and_info(it, zz)
-        self._publish_interactive_perception(packet, actual_time, rgb, zz)
+        if (
+            self.experiment.get("control_mode") == "interactive_waypoint_exploration"
+            and self.experiment.get("interactive_mailbox")
+        ):
+            self._write_interactive_still(float(actual_time), rgb)
         # 快照节奏：第 1000/1400/1600 帧是速度阶梯实验的固定检查点，
         # 另外每 1000 帧落一组；文件名用 1 基帧号。
         if (i + 1) in [1000, 1400, 1600] or (i + 1) % 1000 == 0:
@@ -554,5 +402,4 @@ class FrameStream:
         )
         journal("camera_frames.jsonl", camera_rows[-1])
 
-        self.rgb_frames_acquired = rgb_frames_acquired
         self.video_frames = video_frames

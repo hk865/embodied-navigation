@@ -10,8 +10,6 @@ view     Render retained cloud XY/XZ/YZ/3D with a measured pose, without ROS.
 review   Audit one frozen generation with post-VIO trajectory and height grids.
 roi      Inspect an explicit XY crop in YZ/oblique views, without ROS.
 
-multicamera  View the selected independent RGBs and project the shared measured LIO map.
-
 candidates  Prepare read-only PCT-route utility for explicit DSH candidates.
 
 No command uses the historical task directory as a code dependency. Data paths
@@ -32,10 +30,6 @@ COMMANDS = {
     'view': SKILL / 'render_live_3d_views.py',
     'review': TOOLS / 'review_generation.py',
     'roi': TOOLS / 'review_roi.py',
-    'multicamera': TOOLS / 'multicamera_snapshot.py',
-    'observe-multicamera': TOOLS / 'multicamera_observe.py',
-    'multicamera-ros': TOOLS / 'multicamera_ros_bridge.py',
-    'shadow-audit': TOOLS / 'audit_multicamera_shadow.py',
     'candidates': REPO / 'scripts/prepare_dynanav_waypoint_candidates.py',
 }
 
