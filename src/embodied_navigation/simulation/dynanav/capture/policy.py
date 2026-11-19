@@ -159,7 +159,9 @@ class PolicyDriver:
         return ac, obs, hidden_norm, qc
 
 
-def compute_torque(*, art, target, q, qd, experiment, robogauge, result):
+def compute_torque(
+    *, art, target, q, qd, experiment, robogauge, result, read_physics_time_s=None
+):
     """Map target joints to the unchanged effort command and speed guard."""
     if robogauge:
         from embodied_navigation.robot.unitree.robogauge.contract import (
@@ -186,6 +188,21 @@ def compute_torque(*, art, target, q, qd, experiment, robogauge, result):
             or speed_readback["max_abs_radps"] > previous_peak
         ):
             result["joint_speed_peak"] = speed_readback
+        if speed_readback["nominal_exceedance_radps"] > 0.0:
+            physics_s = float(read_physics_time_s()) if read_physics_time_s is not None else None
+            exceedances = result.get("joint_speed_nominal_exceedances")
+            if exceedances is None:
+                exceedances = {
+                    "samples": 0,
+                    "first_physics_s": physics_s,
+                    "peak_abs_radps": speed_readback["max_abs_radps"],
+                }
+                result["joint_speed_nominal_exceedances"] = exceedances
+            exceedances["samples"] += 1
+            exceedances["last_physics_s"] = physics_s
+            exceedances["peak_abs_radps"] = max(
+                exceedances["peak_abs_radps"], speed_readback["max_abs_radps"]
+            )
         assert speed_readback["within_guard"], (
             "Joint speed exceeds Go2HV motor envelope and explicit readback tolerance"
         )

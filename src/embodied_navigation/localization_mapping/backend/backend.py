@@ -37,6 +37,7 @@ from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .trace import graph_snapshot
 
 
 @dataclass
@@ -93,8 +94,12 @@ def yaw_pose(yaw: float) -> np.ndarray:
 
 
 class SlamBackend:
-    def __init__(self, config: BackendConfig, *, prior_map: MapStore | None = None):
+    def __init__(self, config: BackendConfig, *, prior_map: MapStore | None = None, trace=None):
         self.config = config
+        self.trace = trace
+        self.trace_error = None
+        self._trace_context = {}
+        self._trace_candidate = None
         self.prior = prior_map
         self.map = MapStore(config.map_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
@@ -112,6 +117,14 @@ class SlamBackend:
             for key, desc in prior_map.descriptors.items():
                 self.index.add(key, desc)
 
+    def _record(self, event_name, **fields):
+        if self.trace is not None:
+            try:
+                self.trace.emit(event_name, **self._trace_context, **fields)
+            except Exception as error:
+                # 诊断失败必须可见，但不能提前结束正在进行的算法步骤。
+                self.trace_error = f"{type(error).__name__}: {error}"
+
     @property
     def T_world_odom(self) -> np.ndarray | None:
         return self._correction
@@ -121,6 +134,7 @@ class SlamBackend:
 
     def ingest(self, keyframe: Keyframe) -> dict:
         """Process one keyframe; failures are reported in ``event["error"]``."""
+        self._trace_context = {"key": keyframe.key, "stamp_ns": keyframe.stamp_ns}
         event = {"key": keyframe.key, "stamp_ns": keyframe.stamp_ns}
         try:
             if len(keyframe.points_lidar) == 0:
@@ -134,6 +148,7 @@ class SlamBackend:
             self.last_error = f"{type(error).__name__}: {error}"
             event["error"] = self.last_error
         event["T_world_odom"] = None if self._correction is None else self._correction.tolist()
+        self._record("keyframe", result=event)
         return event
 
     # Mapping mode -------------------------------------------------------
@@ -145,7 +160,15 @@ class SlamBackend:
         self.index.add(keyframe.key, desc)
         if loop_key is not None:
             self.loop_count += 1
-            self.graph.optimize(self.config.optimize_iterations)
+            if self.trace is not None:
+                self._record("graph_before", graph=graph_snapshot(self.graph))
+            try:
+                optimization = self.graph.optimize(self.config.optimize_iterations)
+            except Exception as error:
+                self._record("optimization_failed", error=f"{type(error).__name__}: {error}")
+                raise
+            if self.trace is not None:
+                self._record("graph_after", graph=graph_snapshot(self.graph), optimization=optimization)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
             self._correction = np.eye(4)
@@ -200,15 +223,22 @@ class SlamBackend:
             for key, old in self.map.keyframes.items()
             if key in recent or keyframe.stamp_ns - old.stamp_ns < gap_ns
         }
+        if self.trace is not None:
+            self._record("loop_exclusions", excluded=[{
+                "candidate_key": key, "recent": key in recent,
+                "time_gap": keyframe.stamp_ns - self.map.keyframes[key].stamp_ns < gap_ns,
+            } for key in excluded])
         match = self._search(
             self.map, keyframe, desc, lambda key: key in excluded, lambda key: self._loop_submap(key, excluded)
         )
         if match is None:
+            self._record("loop_decision", accepted=False, reason="no_verified_candidate")
             return None, None
         key, result = match
         T_world_new = result.T_target_source
         rejected = self._odometry_inconsistency(key, keyframe, T_world_new)
         if rejected is not None:
+            self._record("loop_decision", accepted=False, candidate_key=key, reason=rejected)
             return None, rejected
         anchor = min(
             self._loop_window(key, excluded),
@@ -216,6 +246,7 @@ class SlamBackend:
         )
         loop = information(self.config.loop_sigma_m, self.config.loop_sigma_rad)
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
+        self._record("loop_decision", accepted=True, candidate_key=key, anchor_key=anchor, T_world_body=T_world_new, information=loop)
         return anchor, None
 
     def _loop_window(self, key, excluded: set) -> list:
@@ -298,14 +329,34 @@ class SlamBackend:
         yaw. Among verified candidates the lowest RMSE wins.
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        self._record("search_candidates", query_key=keyframe.key,
+                     candidates=[{"candidate_key": k, "distance": d, "yaw_rad": y}
+                                 for k, d, y in candidates], icp_limit=self.config.icp_candidates)
         best = None
+        attempted, verified = [], []
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
+            self._trace_candidate = [keyframe.key, key]
             if dist > self.config.max_scan_context_distance:
+                self._record("candidate_skip", candidate_id=self._trace_candidate, reason="scan_context_distance", distance=dist)
                 break
+            attempted.append(key)
             T_init = store.poses[key] @ yaw_pose(yaw)
             result = self._register(keyframe.points_body(), submap(key), T_init)
+            self._record("candidate_verified", candidate_id=self._trace_candidate,
+                         accepted=result is not None,
+                         reason="icp_verified" if result is not None else "icp_verification_failed")
+            if result is not None:
+                verified.append(key)
             if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                 best = (key, result)
+        self._record("search_outcome", candidates=[{
+            "candidate_key": key,
+            "status": ("selected_best" if best is not None and key == best[0]
+                       else "verified_not_selected" if key in verified
+                       else "icp_rejected" if key in attempted
+                       else "not_run_icp_limit" if i >= self.config.icp_candidates
+                       else "scan_context_distance"),
+        } for i, (key, _, _) in enumerate(candidates)])
         return best
 
     def _register(self, source_body, target_world, T_init) -> IcpResult | None:
@@ -319,6 +370,13 @@ class SlamBackend:
             source_body, target_world, coarse.T_target_source,
             max_correspondence_m=c.fine_correspondence_m, iterations=c.icp_iterations, voxel_m=c.icp_voxel_m,
         )
+        self._record("icp", candidate_id=self._trace_candidate,
+                     T_init=T_init, source_points=len(source_body), target_points=len(target_world),
+                     coarse={"T_init": T_init, "T_result": coarse.T_target_source, "fitness": coarse.fitness,
+                             "rmse_m": coarse.rmse_m, "converged": coarse.converged},
+                     fine={"T_init": coarse.T_target_source, "T_result": fine.T_target_source, "fitness": fine.fitness,
+                           "rmse_m": fine.rmse_m, "converged": fine.converged},
+                     thresholds={"min_fitness": c.min_fitness, "max_rmse_m": c.max_rmse_m})
         if fine.converged and fine.fitness >= c.min_fitness and fine.rmse_m <= c.max_rmse_m:
             return fine
         return None
@@ -327,10 +385,14 @@ class SlamBackend:
         """Offer C to the admission: ``"adopted"``, ``"rejected"`` (jump) or ``"pending"``."""
         rejections = len(self.admission.rejections)
         adopted = self.admission.propose(C, keyframe.T_odom_body, keyframe.stamp_ns)
+        status = "adopted" if adopted is not None else (
+            "rejected" if len(self.admission.rejections) > rejections else "pending")
         if adopted is not None:
             self._correction = adopted
-            return "adopted"
-        return "rejected" if len(self.admission.rejections) > rejections else "pending"
+        self._record("correction", status=status, proposed=C,
+                     adopted=self._correction, T_odom_body=keyframe.T_odom_body,
+                     rejection=self.admission.rejections[-1] if status == "rejected" else None)
+        return status
 
     def _new_admission(self) -> CorrectionAdmission:
         c = self.config

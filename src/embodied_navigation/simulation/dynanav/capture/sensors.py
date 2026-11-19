@@ -632,13 +632,13 @@ def create_rgbd_annotators(rig, *, include_depth=True, recover_invalid_native_fr
     """创建 RGB/深度/CameraParams 渲染产品与标注器。
 
     渲染分辨率为 512×512；深度使用 ``distance_to_image_plane``（沿光轴
-    的米制距离，与 depth.py 的针孔反投影约定对应）。``capture_on_play=False``
-    禁止随播放自动抓帧，采集节奏由上层逐步驱动。
+    的米制距离，与 depth.py 的针孔反投影约定对应）。RTX 随显式渲染运行
+    SDG 抓帧；RGBD 保持禁止随播放抓帧，由上层逐步驱动。
     """
     import omni.replicator.core as rep
 
     camera_path = rig.base_path + "/DiagnosticCamera"
-    rep.orchestrator.set_capture_on_play(False)
+    rep.orchestrator.set_capture_on_play(bool(getattr(rig, "rtx_enabled", False)))
     product = rep.create.render_product(camera_path, (512, 512))
     rgb_ann = rep.AnnotatorRegistry.get_annotator("rgb")
     rgb_ann.attach([product])

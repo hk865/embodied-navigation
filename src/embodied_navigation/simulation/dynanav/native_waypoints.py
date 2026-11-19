@@ -237,14 +237,22 @@ class NativeWaypointTracker:
             if not isinstance(values, (list, tuple)) or len(values) != 3:
                 raise ValueError("invalid_goal")
             goal = [_number(value, "goal_xyz_m") for value in values]
-            self._pending.append(dict(seq=seq, goal_xyz_m=goal))
-            self._receipt("waypoint_accepted", seq=seq, goal_xyz_m=goal, pose_source=self.pose_source)
+            reverse = payload.get("reverse", False)
+            if type(reverse) is not bool:
+                raise ValueError("reverse_must_be_boolean")
+            if reverse and self.controller_name != "native_route":
+                raise ValueError("reverse_requires_native_route")
+            candidate = dict(seq=seq, goal_xyz_m=goal)
+            if reverse:
+                candidate["reverse"] = True
+            self._pending.append(candidate)
+            self._receipt("waypoint_accepted", **candidate, pose_source=self.pose_source)
         except (ValueError, TypeError) as error:
             self._receipt("request_rejected", seq=seq if type(seq) is int else None, reason=str(error))
 
     def _create_tracker(self, candidate, position, evidence):
         """Construct the original follower; planned adapters override this hook."""
-        return RouteTracker([candidate["goal_xyz_m"]], position[:2].tolist(), **self._route_kwargs)
+        return RouteTracker([candidate["goal_xyz_m"]], position[:2].tolist(), reverse=candidate.get("reverse", False), **self._route_kwargs)
 
     def _close_yaw(self, event, *, reason=None, evidence=None, completion=None):
         """Close this action's own sequence, leaving the sensing session alive."""

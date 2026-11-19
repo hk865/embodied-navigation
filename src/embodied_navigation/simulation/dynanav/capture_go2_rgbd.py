@@ -258,8 +258,8 @@ def run_capture(config):
             from embodied_navigation.simulation.dynanav.capture.lidar import prepare_lidar_asset
             lidar_asset, conversion = prepare_lidar_asset(config.output)
             receipts.result["rtx_lidar_asset"] = conversion
-            receipts.result["truth_usage"] = ("policy proprioception, physical guards and isolated offline scoring; "
-                                               "never SLAM points, estimator pose or waypoint input")
+            receipts.result["truth_usage"] = (("policy proprioception, physical guards, native truth route control and isolated offline scoring; never SLAM sensor inputs"
+                                                if config.gt_diagnostic else "policy proprioception, physical guards and isolated offline scoring; never SLAM points, estimator pose or waypoint input"))
 
         cancellation.check()
         spawn, spawn_yaw, sim_rtf = resolve_spawn(config.experiment)
@@ -333,6 +333,7 @@ def run_capture(config):
         ros = create_ros_interface(
             config.experiment, mapping.learned_mapper, mapping.learned_scorer,
             journal=lambda name, payload: receipts.journal(name, payload, flush=True),
+            shutdown_receipt=receipts.result.setdefault("sensor_shutdown_acknowledgments", {}),
         )
         receipts.result["sensor_recording_qos"] = {
             "reliable_source_writers": os.environ.get("DYNANAV_RECORD_RELIABLE") == "1",
@@ -488,11 +489,44 @@ def run_capture(config):
         )
         from isaacsim.core.simulation_manager import SimulationManager
 
+        from embodied_navigation.simulation.dynanav.capture.pause import FilePause
+        from embodied_navigation.common.runtime_telemetry import RuntimeTelemetry
+
+        def pause_counters():
+            return {
+                "simulation_s": float(SimulationManager.get_simulation_time()),
+                "physics_steps": int(SimulationManager.get_num_physics_steps()),
+                "published": dict(ros.published), "video_frames": stream.video_frames,
+            }
+
+        pause_gate = (FilePause(
+            tracker.mailbox,
+            journal=lambda row: receipts.journal("simulation_pause.jsonl", row),
+            snapshot=pause_counters, status_write=RuntimeTelemetry().atomic,
+        ) if getattr(tracker, "controller_name", None) in ("native_route", "truth_collection") else None)
         last_clock_published_wall = None
         iterations = (count() if config.experiment.get("duration_s", 0) is None
                       else range(int(os.environ.get("PROBE_STEPS", "4400"))))
         for i in iterations:
             cancellation.check()
+            if pause_gate is not None and i % 4 == 0:
+                pause_evidence = pause_gate.wait(
+                    tracker=tracker, cancelled=cancellation.check,
+                    stop_requested=lambda: bool(
+                        control.source_terminal_reason is not None
+                        or pathlib.Path(os.environ.get(
+                            "NAV_STOP_REQUEST", "/tmp/no_multistage_stop_request"
+                        )).exists()
+                    ),
+                    idle=lambda timeout: ros.spin_once(timeout),
+                )
+                # Scheduling origin only: no changed stamps or source arrivals.
+                loop_start += pause_evidence["paused_wall_s"]
+                if pause_evidence["status"] == "stop_requested":
+                    control.source_terminal_reason = (
+                        control.source_terminal_reason or tracker.terminal_reason
+                        or "invalid_pause_request"
+                    )
             q = art.get_dof_positions().numpy()[0]
             qd = art.get_dof_velocities().numpy()[0]
             context.q, context.qd = q, qd
@@ -520,6 +554,7 @@ def run_capture(config):
                 experiment=config.experiment,
                 robogauge=config.robogauge,
                 result=receipts.result,
+                read_physics_time_s=SimulationManager.get_simulation_time,
             )
             measurement = stepper.step(
                 iteration=i,
@@ -542,6 +577,15 @@ def run_capture(config):
                 ros.publish_imu_and_clock(
                     measurement.it, measurement.reading, imu_orientation_available
                 )
+                if config.experiment.get("record_simulation_truth", False):
+                    ros.publish_truth(
+                        measurement.actual_time,
+                        measurement.pos,
+                        measurement.quat,
+                        measurement.v.numpy()[0],
+                        measurement.w.numpy()[0],
+                        receipts.result["link_coms_local"][0][0][0],
+                    )
             if rtx_lidar is not None:
                 stream.publish_rtx_pending(measurement.actual_time)
             if (i + 1) % 20 == 0:
@@ -669,6 +713,20 @@ def run_capture(config):
                 break
 
         if rtx_lidar is not None:
+            # Flush completed native RGB/scan queues at the final frozen pose.
+            # Rendering does not advance physics, clock, IMU or truth timestamps.
+            from isaacsim.core.rendering_manager import RenderingManager
+            before_flush = dict(ros.published)
+            for _ in range(3):
+                RenderingManager.render()
+                capture_render_outputs()
+                stream.publish_rtx_pending(measurement.actual_time)
+                while rgbd_annotators.has_rtx_frame():
+                    stream.process(iteration=i, measurement=measurement,
+                        pedestrian_view=pedestrian_view, pedestrian_target=pedestrian_target,
+                        dynamic_guard=dynamic_guard, camera_rows=camera_rows)
+            ros.drain(20)
+            receipts.result["final_sensor_flush"] = dict(before=before_flush, after=dict(ros.published), physics_advanced=False)
             receipts.result["rgb_native_capture"] = {
                 "backend": "per-render-product native NEW_FRAME event",
                 "callbacks": rgbd_annotators.rtx_callback_count,

@@ -32,6 +32,7 @@ from nav_msgs.msg import Odometry
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.signals import SignalHandlerOptions
 from scipy.spatial.transform import Rotation
 from std_msgs.msg import String
@@ -40,6 +41,7 @@ from tf2_ros import TransformBroadcaster
 from .backend import BackendConfig, SlamBackend
 from .keyframes import read_keyframe, ready_directories
 from .map_store import MapStore
+from .trace import BackendTrace, graph_snapshot
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -52,6 +54,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--world-frame", default="map")
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
+    parser.add_argument("--trace-dir", type=Path)
+    parser.add_argument("--use-sim-time", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -71,10 +75,15 @@ def write_pose(pose, T: np.ndarray) -> None:
 
 class BackendNode(Node):
     def __init__(self, args: argparse.Namespace, backend: SlamBackend):
-        super().__init__("slam_backend")
+        super().__init__("slam_backend", parameter_overrides=[
+            Parameter("use_sim_time", value=args.use_sim_time),
+        ])
         self.args = args
         self.backend = backend
         self.spool = args.spool.resolve()
+        self._poll_lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._closed = False
         namespace = args.namespace.rstrip("/")
         self.odometry_pub = self.create_publisher(Odometry, f"{namespace}/corrected_odometry", 10)
         self.status_pub = self.create_publisher(String, f"{namespace}/status", 10)
@@ -82,7 +91,9 @@ class BackendNode(Node):
         self.create_subscription(
             Odometry, args.odometry_topic, self.on_odometry, 50, callback_group=MutuallyExclusiveCallbackGroup()
         )
-        self.create_timer(args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup())
+        self._poll_timer = self.create_timer(
+            args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup()
+        )
 
     def on_odometry(self, message: Odometry) -> None:
         C = self.backend.T_world_odom
@@ -91,10 +102,34 @@ class BackendNode(Node):
         self.odometry_pub.publish(message)
 
     def poll(self) -> None:
-        for directory in ready_directories(self.spool):
-            self.ingest(directory)
-        self.publish_tf()
-        self.publish_status()
+        with self._poll_lock:
+            # 已排队的回调也必须在锁内检查，退出后不能再写地图或 trace。
+            if self._stopping.is_set():
+                return
+            for directory in ready_directories(self.spool):
+                if self._stopping.is_set():
+                    return
+                self.ingest(directory)
+            self.publish_tf()
+            self.publish_status()
+
+    def close(self) -> None:
+        self._stopping.set()
+        self._poll_timer.cancel()
+        # 不依赖 executor.shutdown 等待回调；保存前让当前关键帧完整提交。
+        with self._poll_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                if self.args.save_map is not None:
+                    self.backend.save_map(self.args.save_map)
+            finally:
+                if self.backend.trace is not None:
+                    try:
+                        self.backend._record("final_graph", graph=graph_snapshot(self.backend.graph))
+                    finally:
+                        self.backend.trace.close()
 
     def ingest(self, directory: Path) -> None:
         directory = directory.resolve()
@@ -131,6 +166,7 @@ class BackendNode(Node):
             "loops": self.backend.loop_count,
             "keyframes": len(self.backend.map.keyframes),
             "last_error": self.backend.last_error,
+            "trace_error": self.backend.trace_error or (self.backend.trace.error if self.backend.trace else None),
         }
         self.status_pub.publish(String(data=json.dumps(status)))
 
@@ -138,7 +174,9 @@ class BackendNode(Node):
 def main(argv=None) -> int:
     args = parse_args(argv)
     prior = None if args.prior_map is None else MapStore.load(args.prior_map)
-    backend = SlamBackend(BackendConfig(), prior_map=prior)
+    config = BackendConfig()
+    trace = None if args.trace_dir is None else BackendTrace(args.trace_dir, config)
+    backend = SlamBackend(config, prior_map=prior, trace=trace)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -150,11 +188,12 @@ def main(argv=None) -> int:
         while not stop.is_set():
             executor.spin_once(timeout_sec=0.1)
     finally:
-        executor.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
-        if args.save_map is not None:
-            backend.save_map(args.save_map)
+        try:
+            node.close()
+        finally:
+            executor.shutdown()
+            node.destroy_node()
+            rclpy.shutdown()
     return 0
 
 

@@ -568,7 +568,13 @@ def initialize_articulation(art, stage, spawn, spawn_yaw, out, imu_mount, result
     art.set_dof_positions(target[None, :])
     art.set_dof_velocities(np.zeros((1, 12), np.float32))
     art.set_dof_max_efforts(np.full((1, 12), 23.5))
-    art.set_dof_max_velocities(np.full((1, 12), 30.0))
+    max_velocities = np.full((1, 12), 30.0)
+    art.set_dof_max_velocities(max_velocities)
+    result["dof_max_velocities_radps"] = {
+        "requested": max_velocities[0].tolist(),
+        "readback": art.get_dof_max_velocities().numpy()[0].tolist(),
+        "physics_tensor_view_valid": art.is_physics_tensor_entity_valid(),
+    }
     calf_views = [
         RigidPrim(
             "/World/Go2/Geometry/base/"

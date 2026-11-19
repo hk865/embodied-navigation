@@ -63,23 +63,38 @@
 - 难包（核心规则、跨模块）采用“一个 agent 施工、另一个 agent 同时按同一份裁定写验收测试，两边互相看不到”的做法。普通的删除包和返工交给 DSH。
 - 提交信息说明做了什么和为什么。不提交密钥，也不提交 `.env*`。
 
+### 相关分支为何保留
+
+以下为 2026-11-20 的盘点。开工先核对 `git status --short --branch`、`git branch -avv` 和相应报告。远端可用 `git ls-remote --heads origin` 只读核对。运行报告记录实际提交及工作树差异。
+
+| 分支 | 用途和复核要求 |
+| --- | --- |
+| `main` / `origin/main` | 集成、发布和独立验收入口。按验收和审阅结果由用户决定合并及推送 |
+| 本地 `exp/two-floor-demo`（`e378b8d`） | 隔离 DynaNav 两层路线、PCT/SCAN、转向和执行联调。保留实际运行证据，再提取已验证改动 |
+| `refactor/00-plan-docs` 至 `refactor/05-agents-rules` | `00` 计划、`01` 几何去重、`02` 死代码、`03` 移除旧路径、`04` SLAM 后端、`05` 协作规则。逐包验收 |
+| `refactor/05-loop-evidence-base`（`d582b28`） | 保全回环共同比较的实现、配置和证据 |
+| `exp/loop-measured-submaps`（`d44356c`） | 隔离多帧实测 LiDAR 子图对回环配准的影响。核对查询与历史子图、锚点及接受率 |
+| `exp/loop-surface-gate`（`f98372f`） | 对照平面和表面覆盖过滤 ICP 回环的作用，分别报告误配和漏配。独立地面高度因子另立实验 |
+| `exp/loop-visual-retrieval`（`2b4f01f`） | 图像检索补充候选，几何配准验证相对位姿。记录实际使用的候选与图边，光度因子和视觉 BA 另立实验 |
+| `improve/module-docs-readability`、本地 `feat/navigation-review-web` | 模块文档和阅读入口，独立于运行模式与回环性能改动 |
+| `archive/pre-review-20261109`、`wip/navigation-local-snapshot-20261115`、`backup/slam-controlled-experiment-20261116` | 分别保全审查前源码、在途快照、受控 SLAM 追踪与评价及反向航点。按需追证或提取明确修复 |
+
+三个回环方案均已核实远端 ref。到项目数据卷的 `runs/20261117-loop-comparison/20261117T134243Z/REPORT.zh-CN.md` 读比较设计，用 `runs/20261119-hba-project-comparison/` 核对同输入、同时间轴和同对齐的逐帧及最终图。报告收益、失败和适用场景。出现回归、缺少可比证据或用户搁置时，保留结论并停止推广。目标场景和回归均有证据后交用户审阅集成。官方 `hku-mars/HBA` 是外部离线基线。
+
 ## 6. 数据在项目外
 
-模型、场景、构建缓存、实验运行目录都放在仓库外的数据盘上，不进仓库。
+从所选 checkout 的 `.env.local` 读取 `PROJECT_DATA_ROOT`。Linux 上应解析到新加卷的 `6.project_data`，工程数据根是 `$PROJECT_DATA_ROOT/embodied-navigation/`。同时阅读该数据根的 `AGENTS.md`。
 
-- **位置**：由环境变量 `PROJECT_DATA_ROOT` 指定，写在仓库根目录的 `.env.local` 里。这个文件已被 gitignore，参考 `.env.example`。本项目的数据在 `$PROJECT_DATA_ROOT/embodied-navigation/` 下：
-  - `build_cache/`：二进制和场景；
-  - `experiments/`、`runs/`：运行目录；
-  - `runtime_assets/`：模型与资产。
-- **读取**：agent 可以读取 `$PROJECT_DATA_ROOT` 下的任何文件，比如查看运行目录、日志、地图，或用历史运行做离线测试。需要数据时先读 `.env.local` 拿到路径，不要猜。
-- **写入**：只允许新建运行目录，即 `$PROJECT_DATA_ROOT/embodied-navigation/{experiments,runs}/<批次>/<run-id>/`。
-- **禁止**：修改、覆盖或删除已有的数据和运行目录；把数据复制进仓库。
-- **工具权限**：数据盘在项目目录之外，各工具需要在本机单独放行。放行的路径只写在本机的设置文件里，不提交。
-  - Claude Code：在 `.claude/settings.local.json` 中加 `{"permissions": {"additionalDirectories": ["<PROJECT_DATA_ROOT 的实际路径>"]}}`，或者启动时传 `--add-dir <路径>`。
-  - 其他 agent：用对应工具的“额外工作目录”选项。
-  - 如果读不到数据盘，就向用户说明需要放行哪个目录，不要绕过限制，也不要把数据拷进仓库。
+- **开跑前**用 `findmnt -T` 核对挂载设备，用 `df` 核对容量。录包、点云、图像、视频和密集诊断写到数据卷对应项目。挂载、容量或权限不满足时暂停新增采集，避免回退到 `/home`、`Documents/Codex` 或另一项目。工具放行在本机单独配置。
+- **写入位置**默认新建 `runs/<批次>/<run-id>/`。旧入口确需 `experiments/` 或 `runtime_assets/runs/` 时沿用已配置路径并写入运行记录。缓存和资产按数据根规则放置。历史记录按其报告所列路径读取。
+- **最小清单**使用 `manifest.json` 或等价收据。记录分支、commit 和实际工作树差异、冻结配置和外参、源 bag、真值、坐标系与时间基准、完整性或覆盖校验、结果和报告路径、复现入口、结束状态及备份位置。校验在归档或评测阶段完成。密集诊断限定容量、时间窗和所需信号。
+- **何时清理**先确认评分和报告完成、复现材料归档、无进程占用或下游依赖，并核对用户明确批准的范围。原始包、真值、外参、时戳、基线及发布或复盘所需的唯一材料优先保留。可重建缓存、临时件和副本先验证重建来源或备份等价性。不可恢复的数据需用户针对具体对象当场确认。清理采用人工触发，记录对象、恢复来源和实际释放量。
 
-## 7. 沟通
+## 7. README 维护
+
+负责改动的 agent 在顶层目录及职责、主链路或启动入口、分支用途、数据入口改变时，同步维护根 `README.md` 并核实相关模块入口。布局和留存变化时同时更新项目数据根的 `AGENTS.md`。标明盘点日期并区分本地检出、远端分支、独立实验和归档。核对链接、实际路径及 `git diff --check`。
+
+## 8. 沟通
 
 - **汇报、进度和结论一律用中文。** 英文只用于代码标识符、路径和命令。
 - 汇报时说清楚：改了什么、在本机验证到什么程度、哪些地方没有验证（例如本机跑不了 Isaac）、服务器上应该重点看什么。

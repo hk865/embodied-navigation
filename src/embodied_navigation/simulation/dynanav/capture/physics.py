@@ -16,8 +16,12 @@ import numpy as np
 def _native_static_exploration(experiment):
     """Scope prototype acceptance envelopes to static, simulation-only native runs."""
     return (
-        experiment.get("control_mode") == "interactive_waypoint_exploration"
-        and experiment.get("interactive_controller") in ("native_route", "pct_scan")
+        (
+            (experiment.get("control_mode") == "interactive_waypoint_exploration"
+             and experiment.get("interactive_controller") in ("native_route", "pct_scan"))
+            or (experiment.get("control_mode") == "native_pose_diagnostic"
+                and experiment.get("collection_route") is not None)
+        )
         and experiment.get("interactive_simulation_only") is True
         and not experiment.get("pedestrian")
     )
@@ -142,33 +146,30 @@ class PhysicsStepper:
         # matching their real 10 Hz period instead of waiting for nonexistent
         # camera frames at 20 Hz.
         render_stride = 20 if self.sync_usd_for_camera else 10
-        if (i + 1) % render_stride:
+        render_tick = (i + 1) % render_stride == 0
+        if render_tick and not self.sync_usd_for_camera:
+            rep.orchestrator.step(
+                rt_subframes=1, delta_time=0.005, pause_timeline=False,
+                wait_for_render=True,
+            )
+        else:
+            # RTX由原生管理器推进；避免Replicator再次调度异步物理/渲染帧。
             SimulationManager.step(steps=1, update_fabric=use_fabric)
             if not use_fabric or self.sync_usd_for_camera:
                 omni.physx.get_physx_simulation_interface().fetch_results()
                 omni.physx.get_physx_interface().update_transformations(
                     False, True, True, False
                 )
-        else:
-            rep.orchestrator.step(
-                rt_subframes=1, delta_time=0.005, pause_timeline=False,
-                # Multi-tick camera outputs are already scheduled by this
-                # update. Waiting for an additional dispatcher compute at
-                # fixed physics time times out for tick-controlled sensors.
-                wait_for_render=not self.sync_usd_for_camera,
-            )
-            if self.sync_usd_for_camera:
-                from isaacsim.core.rendering_manager import RenderingManager
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
-                # Flush the pipelined sensor frame without advancing physics.
-                # Native frame timestamps and deduplication remain authoritative.
-                RenderingManager.render()
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
-                RenderingManager.render()
-                if self.capture_render_outputs is not None:
-                    self.capture_render_outputs()
+        if render_tick and self.sync_usd_for_camera:
+            from isaacsim.core.rendering_manager import RenderingManager
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
+            RenderingManager.render()
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
+            RenderingManager.render()
+            if self.capture_render_outputs is not None:
+                self.capture_render_outputs()
         actual_time = float(SimulationManager.get_simulation_time())
         effort_after = art.get_dof_efforts().numpy()[0].copy()
         assert np.allclose(effort_after, tau, atol=1e-5), (

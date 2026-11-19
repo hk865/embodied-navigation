@@ -1,0 +1,319 @@
+--- a/third_party/scan/plan_env/include/plan_env/grid_map.h
++++ b/third_party/scan/plan_env/include/plan_env/grid_map.h
+@@ -1,3 +1,4 @@
++#include <map>
+ #ifndef _GRID_MAP_H
+ #define _GRID_MAP_H
+ 
+@@ -153,6 +154,9 @@
+ 
+ class GridMap {
+   public:
++    int queryStairSweep(const Eigen::Vector3d &start, const Eigen::Vector3d &end,
++                        double yaw_start, double yaw_end);
++    int queryStairControlHull(const Eigen::MatrixXd &points);
+     GridMap() {}
+     ~GridMap() {}
+ 
+@@ -218,6 +222,20 @@
+ 
+   private:
+     friend class GridMapTestPeer;
++    void stairLabelsCallback(const std_msgs::msg::String::ConstSharedPtr &message);
++    void refreshStairLabels();
++    void clearStairLabels(const std::string &reason = "replaced_or_reset");
++    void publishStairStatus(const std::string &status,const std::string &reason,int64_t stamp,size_t count);
++    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr stair_status_pub_;
++    int stairBoxCollision(const Eigen::Vector3d &low, const Eigen::Vector3d &high);
++    std::map<int,Eigen::Vector3i> stair_cells_;
++    std_msgs::msg::String::ConstSharedPtr stair_pending_;
++    int64_t stair_source_stamp_ns_ = 0;
++    std::string stair_run_,stair_nonce_,stair_child_;
++    int64_t stair_epoch_=0,stair_generation_=0;
++    std::chrono::steady_clock::time_point stair_received_wall_;
++    rclcpp::TimerBase::SharedPtr stair_lease_timer_;
++    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr stair_label_sub_;
+     void rotationQueryCallback(const std_msgs::msg::String::ConstSharedPtr &message);
+     void completePendingRotationQuery();
+     std_msgs::msg::String::ConstSharedPtr rotation_pending_request_;
+@@ -418,6 +436,9 @@
+ }
+ 
+ inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, VoxelQuery *detail) {
++    refreshStairLabels();
++    const int body_collision = queryStairSweep(pos,pos,yaw,yaw);
++    if (body_collision != 0) return body_collision;
+     // yaw is the body heading in radians (world frame); the footprint is modelled
+     // as two inflated circles ("double cylinder") offset by double_cylinder_offset_.
+     Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
+--- a/third_party/scan/plan_env/src/grid_map.cpp
++++ b/third_party/scan/plan_env/src/grid_map.cpp
+@@ -200,6 +200,11 @@
+         "body_pose", rclcpp::SensorDataQoS(),
+         std::bind(&GridMap::slidingMapFrameCallback, this, std::placeholders::_1));
+ 
++    stair_status_pub_ = node_->create_publisher<std_msgs::msg::String>("stair_label_status",10);
++    stair_label_sub_ = node_->create_subscription<std_msgs::msg::String>(
++        "stair_labels", 10, std::bind(&GridMap::stairLabelsCallback,this,std::placeholders::_1));
++    stair_lease_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
++        std::bind(&GridMap::refreshStairLabels,this));
+     occ_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
+                                           std::bind(&GridMap::updateOccupancyCallback, this));
+     vis_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
+@@ -272,6 +277,8 @@
+ }
+ 
+ void GridMap::resetAllMapData() {
++    clearStairLabels();
++    stair_pending_.reset();
+     std::fill(md_.occupancy_buffer_.begin(), md_.occupancy_buffer_.end(),
+               mp_.clamp_min_log_ - mp_.unknown_flag_);
+     std::fill(md_.occupancy_buffer_inflate_.begin(), md_.occupancy_buffer_inflate_.end(), 0);
+@@ -324,6 +331,7 @@
+ 
+ void GridMap::updateInflation(const Eigen::Vector3i &id, int delta,
+                               const std::vector<char> *ignore_mask) {
++    if (stair_cells_.count(toAddress(id))) return;
+     updateInflationLayer(id, delta, md_.inflate_offsets_, md_.occupancy_buffer_inflate_cnt_,
+                          md_.occupancy_buffer_inflate_, ignore_mask);
+ }
+@@ -335,6 +343,11 @@
+     const int addr = toAddress(id);
+     const bool was_occ = md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_;
+     const bool now_occ = new_log_odds > mp_.min_occupancy_log_;
++    if (!now_occ && stair_cells_.erase(addr)) {
++        // The labelled source contributed nothing, so deletion needs no decrement.
++        md_.occupancy_buffer_[addr] = new_log_odds;
++        return;
++    }
+ 
+     md_.occupancy_buffer_[addr] = new_log_odds;
+     if (was_occ != now_occ)
+@@ -346,6 +359,7 @@
+     hashIdToGlobalIndex(addr, id_g);
+     if (md_.occupancy_buffer_[addr] > mp_.min_occupancy_log_)
+         updateInflation(id_g, -1);
++    stair_cells_.erase(addr);
+ 
+     md_.occupancy_buffer_[addr] = mp_.clamp_min_log_ - mp_.unknown_flag_;
+     md_.count_hit_[addr] = 0;
+@@ -371,6 +385,8 @@
+     if (shift_num.cwiseAbs().maxCoeff() < mp_.map_sliding_thresh_vox_)
+         return;
+ 
++    clearStairLabels();
++    stair_pending_.reset();
+     if ((shift_num.cwiseAbs().array() >= mp_.map_voxel_num_.array()).any()) {
+         resetAllMapData();
+         mp_.map_origin_idx_ = new_origin_idx;
+@@ -1412,3 +1428,161 @@
+     std_msgs::msg::String result; result.data = response.dump();
+     rotation_result_pub_->publish(result);
+ }
++
++
++// Stair semantics never change raw hit/miss occupancy. Only source inflation
++// contributions are removed; overlapping wall contributions remain counted.
++void GridMap::publishStairStatus(const std::string &status,const std::string &reason,int64_t stamp,size_t count) {
++    if (!stair_status_pub_) return;
++    TraceJson event={{"version",1},{"status",status},{"reason",reason},{"source_stamp_ns",stamp},
++        {"accepted_count",count},{"run_id",node_->get_parameter("fsm.reference_run_id").as_string()},
++        {"seq",node_->get_parameter("fsm.reference_epoch").as_int()},
++        {"localization_generation",node_->get_parameter("fsm.localization_generation").as_int()},
++        {"startup_nonce",node_->get_parameter("fsm.child_odometry_ack_nonce").as_string()}};
++    std_msgs::msg::String message; message.data=event.dump(); stair_status_pub_->publish(message);
++}
++
++void GridMap::clearStairLabels(const std::string &reason) {
++    const auto previous_stamp=stair_source_stamp_ns_;
++    auto old = std::move(stair_cells_);
++    stair_cells_.clear();
++    for (const auto &entry : old)
++        if (isInMap(entry.second) && md_.occupancy_buffer_[entry.first] > mp_.min_occupancy_log_)
++            updateInflation(entry.second,1);
++    stair_source_stamp_ns_ = 0;
++    if (!old.empty()) publishStairStatus("cleared",reason,previous_stamp,0);
++}
++
++void GridMap::stairLabelsCallback(const std_msgs::msg::String::ConstSharedPtr &message) {
++    stair_received_wall_ = std::chrono::steady_clock::now();
++    stair_pending_ = message;
++    refreshStairLabels();
++}
++
++void GridMap::refreshStairLabels() {
++    if (!stair_pending_ && stair_cells_.empty()) return;
++    if (std::chrono::steady_clock::now()-stair_received_wall_ > std::chrono::seconds(2)) {
++        clearStairLabels("expired_wall"); stair_pending_.reset(); return;
++    }
++    const int64_t now = node_->now().nanoseconds();
++    if (stair_source_stamp_ns_ && (now < stair_source_stamp_ns_ || now-stair_source_stamp_ns_ > 300000000))
++        clearStairLabels("expired_sim");
++    if (!stair_cells_.empty()) {
++        const int64_t body_stamp=rclcpp::Time(input_body_pose_.header.stamp).nanoseconds();
++        if (stair_run_!=node_->get_parameter("fsm.reference_run_id").as_string() ||
++            stair_epoch_!=node_->get_parameter("fsm.reference_epoch").as_int() ||
++            stair_generation_!=node_->get_parameter("fsm.localization_generation").as_int() ||
++            stair_nonce_!=node_->get_parameter("fsm.child_odometry_ack_nonce").as_string() ||
++            stair_child_!=input_body_pose_.child_frame_id ||
++            !input_has_body_ || !input_has_cloud_ || now<body_stamp || now-body_stamp>300000000 ||
++            input_body_pose_.header.frame_id!=mp_.frame_id_ ||
++            input_fusion_cloud_header_.frame_id!=mp_.frame_id_)
++            clearStairLabels("body_or_frame_stale");
++    }
++    if (!stair_pending_) return;
++    try {
++        if (stair_pending_->data.size()>262144) throw std::invalid_argument("stair_labels_size");
++        const auto j=TraceJson::parse(stair_pending_->data);
++        if (j.at("version")!=1 || !j.at("source_stamp_ns").is_number_integer() ||
++            !j.at("seq").is_number_integer() || !j.at("localization_generation").is_number_integer() ||
++            j.at("run_id")!=node_->get_parameter("fsm.reference_run_id").as_string() ||
++            j.at("seq")!=node_->get_parameter("fsm.reference_epoch").as_int() ||
++            j.at("localization_generation")!=node_->get_parameter("fsm.localization_generation").as_int() ||
++            j.at("startup_nonce")!=node_->get_parameter("fsm.child_odometry_ack_nonce").as_string() ||
++            j.at("frame_id")!=mp_.frame_id_ ||
++            j.at("resolution_m").get<double>()!=mp_.resolution_ ||
++            !j.at("voxel_indices").is_array() || j.at("voxel_indices").size()>4096)
++            throw std::invalid_argument("stair_labels_identity");
++        const auto stamp=j.at("source_stamp_ns").get<int64_t>();
++        if (stamp<=0 || stamp>now || now-stamp>300000000) throw std::invalid_argument("stair_labels_stamp");
++        if (!input_has_body_ || !input_has_cloud_ || input_map_revision_==0) return;
++        const auto fused=rclcpp::Time(input_fusion_cloud_header_.stamp).nanoseconds();
++        if (fused<stamp) return;
++        const auto body_stamp=rclcpp::Time(input_body_pose_.header.stamp).nanoseconds();
++        if (now<body_stamp || now-body_stamp>300000000 ||
++            j.at("frame_id")!=input_body_pose_.header.frame_id ||
++            j.at("frame_id")!=input_fusion_cloud_header_.frame_id ||
++            j.at("child_frame_id")!=input_body_pose_.child_frame_id)
++            throw std::invalid_argument("stair_labels_pose");
++        std::map<int,Eigen::Vector3i> cells;
++        for (const auto &v:j.at("voxel_indices")) {
++            if (!v.is_array() || v.size()!=3 || !v[0].is_number_integer() ||
++                !v[1].is_number_integer() || !v[2].is_number_integer()) throw std::invalid_argument("stair_labels_index");
++            Eigen::Vector3i id(v[0].get<int>(),v[1].get<int>(),v[2].get<int>());
++            if (isInMap(id) && getOccupancy(id)==1) cells.emplace(toAddress(id),id);
++        }
++        clearStairLabels();
++        for (const auto &entry:cells) updateInflation(entry.second,-1);
++        stair_cells_=std::move(cells); stair_source_stamp_ns_=stamp;
++        stair_run_=j.at("run_id").get<std::string>(); stair_nonce_=j.at("startup_nonce").get<std::string>();
++        stair_child_=j.at("child_frame_id").get<std::string>();
++        stair_epoch_=j.at("seq").get<int64_t>(); stair_generation_=j.at("localization_generation").get<int64_t>();
++        publishStairStatus("accepted","fresh_fused_labels",stamp,stair_cells_.size());
++        stair_pending_.reset();
++    } catch (const std::exception &error) {
++        // Invalid/expired externally supplied authority cannot keep an old exemption.
++        clearStairLabels("invalid_label"); stair_pending_.reset();
++        publishStairStatus("rejected",error.what(),0,0);
++    }
++}
++
++int GridMap::stairBoxCollision(const Eigen::Vector3d &low,const Eigen::Vector3d &high) {
++    if (!low.allFinite() || !high.allFinite() || !isInMap(low) || !isInMap(high)) return -1;
++    Eigen::Vector3i first,last; posToIndex(low,first); posToIndex(high,last);
++    for (int x=first.x();x<=last.x();++x)
++        for (int y=first.y();y<=last.y();++y)
++            for (int z=first.z();z<=last.z();++z)
++                if (getOccupancy(Eigen::Vector3i(x,y,z))==1) return 1;
++    return 0;
++}
++
++int GridMap::queryStairSweep(const Eigen::Vector3d &start,const Eigen::Vector3d &end,
++                           double yaw_start,double yaw_end) {
++    refreshStairLabels();
++    if (stair_cells_.empty()) return 0;
++    const auto &b=input_body_pose_; const auto &q=b.pose.pose.orientation;
++    Eigen::Quaterniond quat(q.w,q.x,q.y,q.z);
++    const int64_t now=node_->now().nanoseconds(), stamp=rclcpp::Time(b.header.stamp).nanoseconds();
++    if (!input_has_body_ || now<stamp || now-stamp>300000000 || !quat.coeffs().allFinite() ||
++        std::abs(quat.norm()-1.)>.01 || !std::isfinite(yaw_start) || !std::isfinite(yaw_end)) return -1;
++    const Eigen::Matrix3d R=quat.normalized().toRotationMatrix();
++    const double current_yaw=std::atan2(R(1,0),R(0,0));
++    const double delta=std::atan2(std::sin(yaw_end-yaw_start),std::cos(yaw_end-yaw_start));
++    const Eigen::Matrix3d A=Eigen::AngleAxisd(yaw_start-current_yaw,Eigen::Vector3d::UnitZ()).toRotationMatrix()*R;
++    // Union of base box, front cylinder and sphere, expressed about go2_imu.
++    // 20mm additional geometric margin, NOT a certified attitude-error bound.
++    // Current roll/pitch are held fixed; this is not future posture prediction.
++    const Eigen::Vector3d center(.0557969357,0.,-.0198910447), half(.26405,.05,.082);
++    const Eigen::Vector3d extent=A.cwiseAbs()*half+Eigen::Vector3d::Constant(.02);
++    const Eigen::Vector3d offset=A*center;
++    const double rotation_pad=2.*(center.norm()+half.norm())*std::sin(std::abs(delta)/2.);
++    const Eigen::Vector3d pad=Eigen::Vector3d::Constant(rotation_pad);
++    return stairBoxCollision(start.cwiseMin(end)+offset-extent-pad,
++                             start.cwiseMax(end)+offset+extent+pad);
++}
++
++int GridMap::queryStairControlHull(const Eigen::MatrixXd &points) {
++    refreshStairLabels();
++    if (stair_cells_.empty()) return 0;
++    if (points.rows()!=3 || points.cols()==0 || !points.allFinite()) return -1;
++    const int64_t now=node_->now().nanoseconds();
++    const int64_t stamp=rclcpp::Time(input_body_pose_.header.stamp).nanoseconds();
++    if (!input_has_body_ || now<stamp || now-stamp>300000000) return -1;
++    const auto &q=input_body_pose_.pose.pose.orientation;
++    Eigen::Quaterniond quat(q.w,q.x,q.y,q.z);
++    if (!quat.coeffs().allFinite() || std::abs(quat.norm()-1.)>.01) return -1;
++    const auto R=quat.normalized().toRotationMatrix();
++    const Eigen::Vector3d center(.0557969357,0.,-.0198910447), half(.26405,.05,.082);
++    const double radius=center.norm()+half.norm()+.02;
++    const double zhalf=R.row(2).cwiseAbs().dot(half)+.02;
++    const double zcenter=(R*center).z();
++    const int width=std::min(4,static_cast<int>(points.cols()));
++    for (int i=0;i<=points.cols()-width;++i) {
++        const auto span=points.middleCols(i,width);
++        const Eigen::Vector3d low=span.rowwise().minCoeff()+Eigen::Vector3d(-radius,-radius,zcenter-zhalf);
++        const Eigen::Vector3d high=span.rowwise().maxCoeff()+Eigen::Vector3d(radius,radius,zcenter+zhalf);
++        const int collision=stairBoxCollision(low,high);
++        if (collision) return collision;
++    }
++    return 0;
++}
+--- a/third_party/scan/plan_env/test/original_grid_map.cpp
++++ b/third_party/scan/plan_env/test/original_grid_map.cpp
+@@ -1097,3 +1097,8 @@
+     cloud_msg.header.stamp = node_->now();
+     depth_cloud_pub_->publish(cloud_msg);
+ }
++
++// Original-map baseline has no label subscription or exemption state. Keep its
++// historical collision semantics when linked against the shared public header.
++void GridMap::refreshStairLabels() {}
++int GridMap::queryStairSweep(const Eigen::Vector3d &, const Eigen::Vector3d &, double, double) { return 0; }
+--- a/third_party/scan/bspline_opt/src/bspline_optimizer.cpp
++++ b/third_party/scan/bspline_opt/src/bspline_optimizer.cpp
+@@ -940,6 +940,7 @@
+             flag_force_return = false;
+ 
+             UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
++            if (grid_map_->queryStairControlHull(traj.getControlPoint()) != 0) return false;
+             double tm, tmp;
+             traj.getTimeSpan(tm, tmp);
+             double t_step =
+@@ -1036,6 +1037,7 @@
+         }
+ 
+         UniformBspline traj = UniformBspline(cps_.points, 3, bspline_interval_);
++        if (grid_map_->queryStairControlHull(traj.getControlPoint()) != 0) return false;
+         double tm, tmp;
+         traj.getTimeSpan(tm, tmp);
+         double t_step =
+--- a/third_party/scan/plan_manage/src/scan_replan_fsm.cpp
++++ b/third_party/scan/plan_manage/src/scan_replan_fsm.cpp
+@@ -1115,6 +1115,7 @@
+         return;
+ 
+     /* ---------- check trajectory ---------- */
++    const int stair_hull_collision = map->queryStairControlHull(info->position_traj_.getControlPoint());
+     constexpr double time_step = 0.01;
+     double t_cur = (node_->now() - info->start_time_).seconds();
+     double t_2_3 = info->duration_ * 2 / 3;
+@@ -1127,7 +1128,8 @@
+         Eigen::Vector3d pos = info->position_traj_.evaluateDeBoorT(t);
+         Eigen::Vector3d pos_next =
+             info->position_traj_.evaluateDeBoorT(std::min(t + time_step, info->duration_));
+-        if (map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next))) {
++        if (stair_hull_collision != 0 ||
++            map->getInflateOccupancy(pos, estimateYawFromSegment(pos, pos_next))) {
+             if (planFromCurrentTraj()) // Make a chance
+             {
+                 changeFSMExecState(EXEC_TRAJ, "SAFETY");

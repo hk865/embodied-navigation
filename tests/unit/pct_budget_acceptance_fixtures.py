@@ -145,6 +145,14 @@ if args and args[0] == 'scripts/run_with_bounded_log.py':
     run = pathlib.Path(args[args.index('--output')+1])
     (run/'interactive').mkdir(parents=True)
     time.sleep(.5)
+elif ((args and args[0] == '-m')
+      or (args and args[0] == 'scripts/explore_waypoint_client.py' and 'map' in args)
+      or (args and args[0] == 'scripts/run_dynanav_pct_scan.py' and '--build-only' not in args)):
+    # Runtime sidecars stay alive until the launcher's owned-process cleanup,
+    # as their real counterparts do. Build-only and capture remain finite.
+    import signal
+    while True:
+        signal.pause()
 ''')
     prelude = root / 'prelude.bash'
     prelude.write_text('''source() {
@@ -153,8 +161,13 @@ if args and args[0] == 'scripts/run_with_bounded_log.py':
 }
 pgrep() { return 1; }
 flock() { return 0; }
-python3() { command /usr/bin/python3 "$ACCEPTANCE_TRANSPORT" "$@"; }
-function /usr/bin/python3 { command /usr/bin/python3 "$ACCEPTANCE_TRANSPORT" "$@"; }
+python3() {
+    # Background shell functions otherwise hide the real sidecar behind a
+    # wrapper PID, unlike the real external command used by the launcher.
+    if ((BASH_SUBSHELL > 0)); then exec /usr/bin/python3 "$ACCEPTANCE_TRANSPORT" "$@"; fi
+    command /usr/bin/python3 "$ACCEPTANCE_TRANSPORT" "$@"
+}
+function /usr/bin/python3 { python3 "$@"; }
 ''')
     env = dict(os.environ, BASH_ENV=str(prelude), ACCEPTANCE_TRANSPORT=str(harness),
                PYTHONPATH=str(REPO / 'src'))

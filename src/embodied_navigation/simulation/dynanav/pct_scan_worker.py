@@ -32,6 +32,21 @@ LIO = '/dynanav/rtx_livo/aft_mapped_to_init'
 VIO = '/dynanav/rtx_livo/post_vio_odometry'
 
 
+def fit_current_stair_geometry(history_points, model_body_position, current_snapshot):
+    """Fit history first, then geometrically recheck the newest actual scan.
+
+    A slow fit must not age the points to which an exemption is attached. The
+    immutable snapshot is read after fitting; no old labels are retimestamped.
+    """
+    from embodied_navigation.planning.stair_geometry import detect_stair_voxels, match_stair_voxels
+    fitted = detect_stair_voxels(history_points, model_body_position)
+    stamp, current_points, body_position, frames = current_snapshot()
+    result = match_stair_voxels(current_points, body_position, fitted['models'])
+    result['source_stamp_ns'] = stamp
+    result['source_frames'] = frames
+    return result
+
+
 def read_json(path):
     try:
         return json.loads(Path(path).read_text())
@@ -262,6 +277,10 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     points_xyz_m=result['body_path_xyz'], reason=result.get('reason'),
                     provenance=result['provenance'])
     pool = ThreadPoolExecutor(max_workers=1)
+    stair_pool = ThreadPoolExecutor(max_workers=1)
+    stair_job = {"future": None, "identity": None, "stamp": None, "frames": None, "model_first_stamp": None}
+    stair_history = deque(maxlen=5)
+    stair_latest = [None]
     state = dict(request=None, child=None, revision=0, vio=None, pair=None, reference_stamp=None,
                  route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
                  last_snapshot=0.0, terminal_failed=False, body_pose=None,
@@ -274,6 +293,75 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     cloud_pub = node.create_publisher(PointCloud2, namespace + '/cloud', 10)
     path_pub = node.create_publisher(RosPath, namespace + '/initial_path', 1)
     rotation_pub = node.create_publisher(String, namespace + '/rotation_query', 10)
+    stair_pub = node.create_publisher(String, namespace + '/stair_labels', 1)
+    stair_status_log = (mailbox / 'planner_stair_label_status.jsonl').open('a', buffering=1)
+
+    def collect_stair_labels():
+        future = stair_job['future']
+        if future is None or not future.done():
+            return
+        stair_job['future'] = None
+        request, child = state['request'], state['child']
+        if request is None or child is None or state['terminal_failed'] or not current():
+            return
+        if stair_job['frames'] != (request['frame_id'], request['child_frame_id']):
+            return
+        identity = (request['seq'], child.ack_nonce)
+        if identity != stair_job['identity']:
+            return  # Never transfer old labels to another native process.
+        try:
+            result = future.result()
+        except Exception as error:
+            node.get_logger().warning('stair_geometry_failed:' + str(error))
+            return  # The native freshness lease restores the original inflation.
+        stamp = result['source_stamp_ns']
+        frames = result['source_frames']
+        if frames != (request['frame_id'], request['child_frame_id']):
+            return
+        latest = source_interval[1]
+        if latest is None or not 0 <= latest - stamp <= 300_000_000:
+            return
+        indices = result['voxel_indices']
+        if len(indices) > 4096:
+            indices = np.empty((0, 3), dtype=int)
+        payload = dict(version=1, run_id=run_id, seq=request['seq'],
+            startup_nonce=child.ack_nonce, localization_generation=0,
+            frame_id=frames[0], child_frame_id=frames[1],
+            source_stamp_ns=stamp, resolution_m=.08, voxel_indices=indices.tolist())
+        payload['model_source_interval_ns'] = [stair_job['model_first_stamp'], stair_job['stamp']]
+        stair_pub.publish(String(data=json.dumps(payload, allow_nan=False)))
+        atomic_json(mailbox / 'planner_stair_labels.json', dict(**payload,
+            models=result['models'], observed_point_count=result['observed_point_count'],
+            provenance='current_exact_stamp_paired_deskewed_cloud_geometric_detection',
+            unseen_surface_completion=False, runtime_permit=False))
+
+    def submit_stair_labels(xyz, pose, stamp):
+        collect_stair_labels()
+        request, child = state['request'], state['child']
+        if (stair_job['future'] is not None or request is None or child is None
+                or state['terminal_failed'] or not current()):
+            return
+        frames = (pose.header.frame_id, pose.child_frame_id)
+        if frames != (request['frame_id'], request['child_frame_id']):
+            return
+        position = pose.pose.pose.position
+        history = [item for item in stair_history if 0 <= stamp - item[0] <= 500_000_000]
+        stair_job.update(identity=(request['seq'], child.ack_nonce), stamp=stamp, frames=frames,
+            model_first_stamp=history[0][0],
+            future=stair_pool.submit(fit_current_stair_geometry,
+                np.concatenate([item[1] for item in history]),
+                [position.x, position.y, position.z], lambda: stair_latest[0]))
+
+    def stair_status_callback(message):
+        status = feedback_json(message)
+        if status is None:
+            return
+        request, child = state['request'], state['child']
+        if (request is not None and child is not None and
+                status.get('run_id') == run_id and status.get('seq') == request['seq'] and
+                status.get('startup_nonce') == child.ack_nonce):
+            stair_status_log.write(json.dumps(status, allow_nan=False) + '\n')
+            atomic_json(mailbox / 'planner_stair_label_status.json', status)
 
     def current():
         request = active_request(mailbox, run_id)
@@ -398,6 +486,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                 lio_sources[stamp] = [position.x, position.y, position.z,
                                       orientation.x, orientation.y, orientation.z, orientation.w]
                 state['pair'] = (cloud, pose)
+                stair_history.append((stamp, xyz))
+                stair_latest[0] = (stamp, xyz, [position.x, position.y, position.z], frames)
                 if state['child'] is not None:
                     # Native GridMap is latest-pose based, not message-filter synchronized.
                     # No claim of child-side exact-stamp consumption is made.
@@ -406,6 +496,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     else:
                         sensor_pub.publish(pose)
                         cloud_pub.publish(cloud)
+                    submit_stair_labels(xyz, pose, stamp)
             except ValueError as error:
                 node.get_logger().warning(str(error))
         for cache in (clouds, poses):
@@ -550,6 +641,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         rotation_pub.publish(String(data=json.dumps(query, allow_nan=False)))
 
     def poll():
+        collect_stair_labels()
         if measured_voxels and time.monotonic() - state['last_snapshot'] >= 5.0:
             state['last_snapshot'] = time.monotonic()
             tmp = mailbox / 'planner_measured_map.tmp.npz'
@@ -682,7 +774,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         node.create_subscription(String, namespace + '/planning/route_definition', route_definition_callback,
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         node.create_subscription(String, namespace + '/planning/reference_status', reference_status_callback, 10),
-        node.create_subscription(String, namespace + '/rotation_result', rotation_result_callback, 10)]
+        node.create_subscription(String, namespace + '/rotation_result', rotation_result_callback, 10),
+        node.create_subscription(String, namespace + '/stair_label_status', stair_status_callback, 10)]
     timer = node.create_timer(0.05, poll)
     try:
         rclpy.spin(node)
@@ -690,6 +783,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         if state['child']:
             state['child'].close()
         pool.shutdown(wait=True, cancel_futures=True)
+        stair_pool.shutdown(wait=True, cancel_futures=True)
+        stair_status_log.close()
         node.destroy_node()
         rclpy.shutdown()
 

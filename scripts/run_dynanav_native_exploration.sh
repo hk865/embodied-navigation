@@ -4,7 +4,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--record-slam-config FILE] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
         exit 0
     fi
 done
@@ -24,11 +24,15 @@ RUN=""
 UNTIL_STOPPED=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
+RECORDING_CONFIG=""
 EXTRA_CAPTURE_ARGS=()
 EXTRA_PLANNER_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
+        --record-slam-config)
+            (($# >= 2)) || { echo "Missing value for --record-slam-config"; exit 2; }
+            RECORDING_CONFIG=$2; shift 2 ;;
         --scan-prefix)
             (($# >= 2)) || { echo "Missing value for --scan-prefix"; exit 2; }
             SCAN_PREFIX=$2; shift 2 ;;
@@ -121,13 +125,67 @@ export LD_LIBRARY_PATH="$BUILD/install/ros/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PA
 export AMENT_PREFIX_PATH="$BUILD/install/ros${AMENT_PREFIX_PATH:+:$AMENT_PREFIX_PATH}"
 source "$BUILD/capture_message_env.sh"
 PIDS=(); CAP=""
-cleanup() {
-    trap - EXIT
-    for pid in "${PIDS[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
-    for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
-    printf 'cleanup %s\n' "$(date -u +%FT%T.%NZ)" >> "$RUN/lifecycle.log"
+owned_child_running() {
+    [[ " $(jobs -pr | tr '\n' ' ') " == *" $1 "* ]]
 }
-trap cleanup EXIT INT TERM
+# The logger owns a separate capture session. Recover only that run's group,
+# including when the logger dies before it can forward a termination signal.
+capture_group() {
+    python3 - "$RUN" "$1" <<'PY_CAPTURE_GROUP'
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+run = Path(sys.argv[1])
+try:
+    pid = json.loads((run / "capture_logs/summary.json").read_text())["child_pid"]
+    command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    if str(run / "capture").encode() not in command or os.getpgid(pid) != pid:
+        raise ProcessLookupError("capture ownership no longer matches")
+    os.killpg(pid, 0 if sys.argv[2] == "check" else getattr(signal, sys.argv[2]))
+except (OSError, ValueError, KeyError, TypeError):
+    sys.exit(1)
+PY_CAPTURE_GROUP
+}
+cleanup() {
+    local status=$? deadline pid child_status
+    trap - EXIT
+    trap '' INT TERM HUP
+    # Leave the measurement chain alive while native terminal parking runs.
+    if [[ -n "$CAP" ]] && { owned_child_running "$CAP" || capture_group check; }; then
+        if [[ -d "$RUN/capture/interactive" ]]; then
+            timeout 5 python3 scripts/explore_waypoint_client.py stop --run-dir "$RUN/capture" \
+                >> "$RUN/lifecycle.log" 2>&1 || true
+            deadline=$((SECONDS + 20))
+            while ((SECONDS < deadline)); do
+                if ! owned_child_running "$CAP" && ! capture_group check; then break; fi
+                sleep .2
+            done
+        fi
+    fi
+    capture_group SIGTERM 2>/dev/null || true
+    for pid in "${PIDS[@]}"; do
+        owned_child_running "$pid" && kill -TERM "$pid" 2>/dev/null || true
+    done
+    deadline=$((SECONDS + 10))
+    while ((SECONDS < deadline)) && [[ -n "$(jobs -pr)" ]]; do sleep .2; done
+    capture_group SIGKILL 2>/dev/null || true
+    for pid in "${PIDS[@]}"; do
+        owned_child_running "$pid" && kill -KILL "$pid" 2>/dev/null || true
+        child_status=0
+        wait "$pid" 2>/dev/null || child_status=$?
+        if [[ "$pid" == "$CAP" && ! -f "$RUN/capture_exit.txt" ]]; then
+            printf '%s\n' "$child_status" > "$RUN/capture_exit.txt"
+        fi
+    done
+    printf 'cleanup %s status=%s\n' "$(date -u +%FT%T.%NZ)" "$status" >> "$RUN/lifecycle.log"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 if [[ "$NAVIGATION_BACKEND" == pct_scan ]]; then
     /usr/bin/python3 scripts/run_dynanav_pct_scan.py --run-dir "$RUN/capture" \
         --scan-prefix "$SCAN_PREFIX" --speed "$SPEED" --build-scan --build-only "${EXTRA_PLANNER_ARGS[@]}" \
@@ -156,14 +214,23 @@ done
 # Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
 # map->camera_init and /dynanav/backend/corrected_odometry. Navigation below
 # still consumes the raw odometry. PRIOR_MAP is an optional saved map directory.
-BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
+BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend --odom-frame dynanav_lio_map --use-sim-time
     --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map")
+if [[ -n "$RECORDING_CONFIG" ]]; then
+    cp -- "$RECORDING_CONFIG" "$RUN/configuration/recording.json"
+    BACKEND_ARGS+=(--trace-dir "$RUN/backend_trace")
+fi
 if [[ -n "${PRIOR_MAP:-}" ]]; then
     BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
 fi
 python3 -m embodied_navigation.localization_mapping.backend.node "${BACKEND_ARGS[@]}" \
     > "$RUN/backend.log" 2>&1 &
 BACKEND=$!; PIDS+=("$BACKEND")
+if [[ -n "$RECORDING_CONFIG" ]]; then
+    python3 -m embodied_navigation.localization_mapping.evaluation.recording --output-dir "$RUN/trajectories" \
+        --configuration "$RUN/configuration/recording.json" > "$RUN/recording.log" 2>&1 &
+    PIDS+=("$!")
+fi
 # This process renders the world as sensor physics only. No scene geometry or
 # simulator truth is passed to the waypoint chooser or route follower.
 /usr/bin/python3 scripts/run_with_bounded_log.py \
@@ -179,6 +246,9 @@ BACKEND=$!; PIDS+=("$BACKEND")
 CAP=$!; PIDS=("$CAP" "${PIDS[@]}")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"
 for _ in $(seq 1 900); do
+    for pid in "$OBS" "$BACKEND"; do
+        owned_child_running "$pid" || { echo "Owned dependency exited during capture startup: $pid"; exit 7; }
+    done
     [[ -d "$RUN/capture/interactive" ]] && break
     if ! kill -0 "$CAP" 2>/dev/null; then
         set +e; wait "$CAP"; CODE=$?; set -e
@@ -205,6 +275,17 @@ python3 scripts/explore_waypoint_client.py map --run-dir "$RUN/capture" \
 MAP=$!; PIDS+=("$MAP")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"
 echo "Live exploration: $RUN"
+# A dead observer or planner must not leave an until-stopped capture idling.
+while owned_child_running "$CAP"; do
+    for pid in "${PIDS[@]}"; do
+        [[ "$pid" == "$CAP" ]] && continue
+        if ! owned_child_running "$pid"; then
+            printf 'owned_child_exited pid=%s %s\n' "$pid" "$(date -u +%FT%T.%NZ)" >> "$RUN/lifecycle.log"
+            exit 7
+        fi
+    done
+    sleep .2
+done
 set +e; wait "$CAP"; CODE=$?; set -e
 echo "$CODE" > "$RUN/capture_exit.txt"
 printf 'capture_exit %s %s\n' "$CODE" "$(date -u +%FT%T.%NZ)" >> "$RUN/lifecycle.log"

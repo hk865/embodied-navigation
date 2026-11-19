@@ -746,6 +746,7 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/frames.py",
         "src/embodied_navigation/simulation/dynanav/capture/lidar.py",
         "src/embodied_navigation/simulation/dynanav/capture/lockstep.py",
+        "src/embodied_navigation/simulation/dynanav/capture/pause.py",
         "src/embodied_navigation/simulation/dynanav/capture/mapping.py",
         "src/embodied_navigation/simulation/dynanav/capture/perception.py",
         "src/embodied_navigation/simulation/dynanav/capture/physics.py",

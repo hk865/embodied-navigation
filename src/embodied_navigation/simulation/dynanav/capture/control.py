@@ -79,6 +79,9 @@ def create_route_controller(
             motion_end=experiment["motion_end_s"],
             stop_on_stall=experiment.get("stop_on_stall", True),
         )
+    if gt_diagnostic and experiment.get("collection_route") is not None:
+        from embodied_navigation.simulation.dynanav.truth_route import TruthCollectionRoute
+        tracker = TruthCollectionRoute(experiment, spawn[:2].tolist())
     if slam_control and not interactive_control:
         from embodied_navigation.simulation.dynanav.experiment import (
             make_slam_controller,
