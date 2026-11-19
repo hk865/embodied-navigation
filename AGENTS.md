@@ -4,14 +4,16 @@
 
 ## 1. 项目现状与推进顺序（2026-11-20）
 
-- **主线是 D 路径**：DynaNav / Isaac Sim。入口是 `scripts/run_dynanav_native_exploration.sh`，仿真侧代码在 `src/embodied_navigation/simulation/dynanav/`。
-- **A 路径**（Gazebo 主线，`start.py → launch/main.py`）暂时保留，正在逐步退役。不要为 A 新增功能。
+- **唯一开发主线是 D 路径**：DynaNav / Isaac Sim。入口是 `scripts/run_dynanav_native_exploration.sh`，仿真侧代码在 `src/embodied_navigation/simulation/dynanav/`。
+- **A 路径**（Gazebo 旧主线，`start.py → launch/main.py` 与私有 Fast DDS）已于 `refactor/06-clean-base` 整块退役删除（历史保全于 `main`、`archive/pre-review-20261109` 与 `refactor/05-agents-rules`），不要恢复。
 - **B（Building）和 C（RoboGauge 的 Gazebo 基准）已删除**，不要恢复。RoboGauge 的 MoE-CTS 运动策略运行时在 `robot/unitree/robogauge/` 中，D 在用，必须保留。
+- **动态行人支线**已完整保全于参考分支 `ref/dynanav-dynamic-pedestrian`，已从主底座移出；待主线规划、控制与 SLAM 后端稳定后再按需参考重构。
+- **Agent 感知与控制介入层**（`operator_map.py`、`semantic_mapping/`、`planning/exploration/`、`explore_waypoint_client.py`、`dynanav_exploration.py`、`native_waypoints.py`、`pct_scan_waypoints.py`、`.agents/skills/dynanav-explore/`）是具身导航的核心能力，作为独立接口层完整保留并持续清晰化。
 - **运行环境**：Linux 主机已具备 Isaac Sim 与 ROS 2 环境，可直接进行仿真与原生验证；若在无 Isaac/ROS 的 Windows + WSL 环境工作，仅运行 CPU 单元测试与回归，仿真验证留待 Linux 主机。
 - **当前推进顺序**：
-  1. **先整理干净底座**（`refactor/06-*`）：大刀阔斧清理旧代码、脏代码、假诊断与历史环境开关，解除模块耦合；
-  2. **第一优先验证分支**：基于干净底座切出 **PCT + SCAN 上楼梯导航** 独立分支，先直接用仿真真值位姿（跳过 SLAM 定位漂移干扰）打通上楼梯与多层导航闭环；
-  3. **第二优先验证分支**：规划导航闭环跑通后，基于干净底座按不同 SLAM 后端分别切出独立分支进行优化与横向对照，避免各方向互相耦合。
+  1. **干净底座已成型**（`refactor/06-clean-base`，63 个 `.py` / 14,485 行，0 失败单测）：已完成 P1+P2 死代码/废弃实验清理、P3 动态行人移出主线、A 路径整块退役；后续继续按“仿真 / 通信 / 前端 / 后端 / 规划导航 / 控制执行 / Agent 接口”七层边界保持清晰；
+  2. **第一优先验证分支**（`exp/pct-scan-stairs-truth`）：基于干净底座切出，直接用 **仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云**（跳过 SLAM 定位漂移干扰）打通 **PCT + SCAN 上楼梯与多层导航闭环**；
+  3. **第二优先验证分支**：规划导航闭环跑通并合并回底座后，基于干净底座按不同 SLAM 后端分别切出独立分支进行大幅精简、参数/协方差/IMU 方程规范化与横向对照，避免各方向互相耦合。
 
 ### 多 Agent 分工与协作（2026-11-20 确立）
 
@@ -19,9 +21,9 @@
 
 | 角色 | 调用方式 | 定位与职责 |
 |---|---|---|
-| **主控 Agent（高配模型）** | 当前主会话 | **乐观、敢于做破坏性重构**。负责架构判断、推进大刀阔斧的旧代码清理与模块解耦、拆立干净分支并驱动端到端闭环。 |
-| **Codex** | 本机 `codex` CLI（如 `codex exec` / `codex exec review`） | **严谨审核器**。只负责审核工程规范、深挖隐含前提、找出设计与实现中的具体错误并将其细化为可执行的修正项（定位是查错与细化前提，而非评判重构是否“过于乐观”）。 |
-| **DSH（DeepSeek Harness）** | 本机 DeepSeek Harness 适配器 | **低成本批处理帮手**。适合机械性的删除包、大批量重复清理与低风险返工。 |
+| **主控 Agent（高配模型）** | 当前主会话 | **乐观、敢于做破坏性重构**。负责架构判断、推进大刀阔斧的旧代码清理与模块解耦、给出明确思路/数学公式/优化方案、拆立干净分支并驱动端到端闭环。 |
+| **Codex** | 本机 `codex` CLI（如 `codex exec` / `codex exec review`） | **严谨审核器**。只负责审核工程规范、深挖隐含前提、找出设计与实现中的具体错误并将其细化为可执行的修正项，并防止低价执行引入错误（定位是查错与细化前提，而非评判重构是否“过于乐观”）。 |
+| **DSH（DeepSeek Harness）** | 本机 DSH 子代理适配器（工作区必须绑定本仓库根目录） | **低成本执行 Worker**。适合按主控/Codex 给出的明确思路、公式、优化方法与验收标准执行批量修改、清理包与返工；**每次派单的 session 必须落在本项目工作区下方便用户核验**，完成后必须经 Codex 审核防错。 |
 | **Flash 子代理** | `invoke_subagent(..., Model="flash")` | **高性价比编码帮手**。成本低且代码编写质量高，适合承接边界清晰的功能开发、模块拆分、定向清理与单元测试编写。 |
 
 ## 2. 分层与目录
@@ -68,7 +70,7 @@
 
 - 测试用 unittest。共用的 fixture 放在不以 `test_` 开头的模块里（例如 `tests/unit/slam_backend_fixtures.py`）。
 - **不得为了让测试通过而删除或放松旧断言、加 skip、调大超时。** 某个旧测试只有改了才能通过时，停下来，写清楚冲突在哪。
-- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前基线上有 5 条已知失败（`test_dynanav_rtx_deskewed_perception` 4 条、`test_dynanav_source_snapshot` 1 条），它们与重构无关。
+- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前干净底座（`refactor/06-clean-base`）基线为 **514 条单测 0 失败 0 跳过、60 条回归 0 失败**（旧 5 条历史失败已随死代码清理全部归零）。
 - 删除一个包时，只测试被删代码的测试文件可以一起删掉，但必须在提交信息里点名。
 
 ## 5. 分支、提交与验收
@@ -86,7 +88,9 @@
 | --- | --- |
 | `main` / `origin/main` | 集成、发布和独立验收入口。按验收和审阅结果由用户决定合并及推送 |
 | `refactor/00-plan-docs` 至 `refactor/05-agents-rules` | `00` 计划、`01` 几何去重、`02` 死代码、`03` 移除旧路径、`04` SLAM 后端、`05` 协作规则。逐包验收 |
-| `refactor/06-clean-base`（当前整理主线） | 基于 `refactor/05-agents-rules` 继续清理脏代码、假诊断、废弃实验与模块耦合；后续各专项实验分支均从干净底座切出 |
+| `refactor/06-clean-base`（当前干净底座） | 基于 `refactor/05-agents-rules` 完成 P1+P2 清理、P3 动态行人移出、A 路径整块退役（累计精简 >8.1 万行，0 失败单测）；后续各专项实验分支均从此干净底座切出 |
+| `exp/pct-scan-stairs-truth`（第一优先验证分支） | 基于 `refactor/06-clean-base` 切出，直接用仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云驱动 PCT + SCAN 上楼梯导航闭环（跳过 SLAM 干扰） |
+| `ref/dynanav-dynamic-pedestrian`（动态行人参考分支） | 保全移除前的全部动态行人/学习分割支线代码与测试，供后续动态场景开发参考 |
 | 本地 `exp/two-floor-demo`（`e378b8d`）及 `backup/exp-two-floor-demo-wip-20261120`（`3720814`） | 隔离并完整保全拆分支前的两层联调代码、楼梯补丁、SLAM 评测与采集改动，供按主题提取到干净分支，不在原分支继续叠加混合改动 |
 | `refactor/05-loop-evidence-base`（`d582b28`） | 保全回环共同比较的实现、配置和证据 |
 | `exp/loop-measured-submaps`（`d44356c`） | 隔离多帧实测 LiDAR 子图对回环配准的影响。核对查询与历史子图、锚点及接受率 |
