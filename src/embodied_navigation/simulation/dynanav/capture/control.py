@@ -2,9 +2,9 @@
 
 This module owns the 50 Hz control tick and the terminal/parking logic: native
 state assembly, stand gates, approved-command consumption with freshness holds,
-route trackers (native truth or measured SLAM), the dynamic-hold decision, and
-the policy action call. It also owns the dynamic-hold guard construction.
-Thresholds, gate values, timeout windows and journal payloads are unchanged.
+route trackers (native truth or interactive measured-SLAM waypoints), and the
+policy action call. Thresholds, gate values, timeout windows and journal payloads
+are unchanged.
 """
 
 import json
@@ -13,25 +13,6 @@ import pathlib
 import time
 
 import numpy as np
-
-
-def create_dynamic_guard(experiment, imu_mount):
-    """Create the optional oracle/learned-cloud dynamic hold guard."""
-    dynamic_guard = None
-    if experiment.get("dynamic_hold"):
-        from embodied_navigation.simulation.dynanav.dynamic_hold import (
-            DynamicHold,
-            DynamicHoldConfig,
-        )
-
-        dynamic_guard = DynamicHold(
-            DynamicHoldConfig(recorded_cruise_mps=experiment["speed_mps"]),
-            imu_origin_in_base_m=imu_mount,
-            mask_provenance="online_rgb_person_candidates_and_bounded_history"
-            if experiment.get("semantic_provider") == "learned_rgb_person"
-            else "isaac_instance_oracle",
-        )
-    return dynamic_guard
 
 
 def resolve_limits(experiment):
@@ -45,18 +26,15 @@ def create_route_controller(
     experiment,
     *,
     gt_diagnostic,
-    slam_control,
     interactive_control=False,
     target_speed,
     spawn,
 ):
-    """Create the native-pose, measured-SLAM or interactive-waypoint tracker.
+    """Create the native-pose or interactive-waypoint tracker.
 
     interactive_control is the explicit simulation-only exploration mode: the
     operator publishes waypoints and only a measured estimator pose may drive
-    them. It reuses the measured-SLAM branch for mapping/pose plumbing but is
-    created and reported separately, so a reader can tell the three control
-    sources apart.
+    them.
     """
     tracker = None
     if interactive_control:
@@ -79,17 +57,11 @@ def create_route_controller(
             motion_end=experiment["motion_end_s"],
             stop_on_stall=experiment.get("stop_on_stall", True),
         )
-    if slam_control and not interactive_control:
-        from embodied_navigation.simulation.dynanav.experiment import (
-            make_slam_controller,
-        )
-
-        tracker = make_slam_controller(experiment)
     return tracker
 
 
 def annotate_policy_receipt(
-    result, experiment, gt_diagnostic, slam_control, robogauge, target_speed,
+    result, experiment, gt_diagnostic, robogauge, target_speed,
     physical_speed_guard, interactive_control=False
 ):
     """Record the unchanged speed_test/policy receipts before walking."""
@@ -118,8 +90,6 @@ def annotate_policy_receipt(
         if gt_diagnostic
         else "interactive_waypoint_exploration"
         if interactive_control
-        else experiment.get("navigation_command_source", "measured_lio_route")
-        if slam_control
         else "/dynanav/nav/approved_cmd",
         ground_truth_navigation=gt_diagnostic,
         SLAM_control_enabled=not gt_diagnostic,
@@ -136,14 +106,12 @@ class ControlLoop:
         *,
         experiment,
         gt_diagnostic,
-        slam_control,
         interactive_control=False,
         robogauge,
         target_speed,
         indices,
         target,
         tracker,
-        dynamic_guard,
         policy,
         receipts,
         latest_nav,
@@ -151,14 +119,12 @@ class ControlLoop:
     ):
         self.experiment = experiment
         self.gt_diagnostic = gt_diagnostic
-        self.slam_control = slam_control
         self.interactive_control = interactive_control
         self.robogauge = robogauge
         self.target_speed = target_speed
         self.indices = indices
         self.target = target
         self.tracker = tracker
-        self.dynamic_guard = dynamic_guard
         self.policy = policy
         self.receipts = receipts
         self.latest_nav = latest_nav
@@ -199,14 +165,12 @@ class ControlLoop:
         i = iteration
         experiment = self.experiment
         gt_diagnostic = self.gt_diagnostic
-        slam_control = self.slam_control
         interactive_control = self.interactive_control
         robogauge = self.robogauge
         target_speed = self.target_speed
         indices = self.indices
         target = self.target
         tracker = self.tracker
-        dynamic_guard = self.dynamic_guard
         policy = self.policy
         qdefault = policy.qdefault
         result = self.receipts.result
@@ -291,32 +255,14 @@ class ControlLoop:
             request = np.zeros(3)
             if (
                 not gt_diagnostic
-                and not slam_control
+                and not interactive_control
                 and 7 <= tcontrol < float(os.environ.get("NAV_END_SIM", "38"))
                 and latest_nav[0] is not None
                 and state[0] - latest_nav[0]["time"] < 0.25
                 and time.perf_counter() - latest_nav[0]["arrival_wall"] < 0.25
             ):
                 request = np.array(latest_nav[0]["request"])
-            if dynamic_guard is not None:
-                held, hold_receipt = dynamic_guard.decision(
-                    now_ns=round(state[0] * 1e9)
-                )
-                result["dynamic_hold"] = hold_receipt
-                journal(
-                    "dynamic_hold_control.jsonl",
-                    {
-                        "physics_s": state[0],
-                        "hold": held,
-                        "status": hold_receipt["status"],
-                        "reason": hold_receipt["reason"],
-                    },
-                )
-            else:
-                held = False
             if tracker is not None:
-                if held:
-                    tracker.invalidate_measurement()
                 if interactive_control:
                     odom = latest_odom[0] or {}
                     gyro = locals().get("reading", {}).get("angular_velocity")
@@ -333,7 +279,7 @@ class ControlLoop:
                         float(gyro[2])
                         if gyro is not None and len(gyro) == 3
                         else None,
-                        ready=policy_stand_gate_done and not held,
+                        ready=policy_stand_gate_done,
                         now_wall=time.perf_counter(),
                         arrival_wall=odom.get("arrival_wall"),
                         frame_id=odom.get("frame_id"),
@@ -359,25 +305,6 @@ class ControlLoop:
                     request = np.asarray(measured_command)
                     result["interactive_waypoint_control"] = control_receipt
                     journal("interactive_waypoint_control.jsonl", control_receipt)
-                elif slam_control:
-                    odom = latest_odom[0] or {}
-                    gyro = locals().get("reading", {}).get("angular_velocity")
-                    measured_command, control_receipt = tracker.tick(
-                        state[0],
-                        odom.get("time"),
-                        odom.get("position"),
-                        odom.get("orientation_wxyz"),
-                        odom.get("estimated_velocity"),
-                        float(gyro[2]) if gyro is not None and len(gyro) == 3 else None,
-                        ready=policy_stand_gate_done and not held,
-                        now_wall=time.perf_counter(),
-                        arrival_wall=odom.get("arrival_wall"),
-                        frame_id=odom.get("frame_id"),
-                        child_frame_id=odom.get("child_frame_id"),
-                    )
-                    request = np.asarray(measured_command)
-                    result["slam_route_control"] = control_receipt
-                    journal("slam_route_control.jsonl", control_receipt)
                 else:
                     yaw = float(np.arctan2(R[1, 0], R[0, 0]))
                     request = np.asarray(
@@ -387,7 +314,7 @@ class ControlLoop:
                             yaw,
                             float(np.linalg.norm(v0.numpy()[0])),
                             float(w0.numpy()[0][2]),
-                            ready=policy_stand_gate_done and not held,
+                            ready=policy_stand_gate_done,
                         )
                     )
                 result["route_tracker"] = {
@@ -411,7 +338,7 @@ class ControlLoop:
             ), "Invalid navigation command"
             if (
                 not gt_diagnostic
-                and not slam_control
+                and not interactive_control
                 and 7 <= tcontrol < float(os.environ.get("NAV_END_SIM", "210"))
                 and (np.any(request) or odometry_hold_started is not None)
             ):
@@ -488,12 +415,12 @@ class ControlLoop:
                     "hidden_norm": hidden_norm,
                     "request": request.tolist(),
                     "navigation_source": latest_odom[0]
-                    if slam_control
+                    if interactive_control
                     else latest_nav[0],
                     "navigation_pose_source": experiment.get(
                         "navigation_pose_source", "measured_lio"
                     )
-                    if slam_control
+                    if interactive_control
                     else "native_truth"
                     if gt_diagnostic
                     else "ROS_approved_command",

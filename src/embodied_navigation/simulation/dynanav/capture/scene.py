@@ -2,11 +2,11 @@
 
 This module owns everything that mutates the USD stage/session or the physics
 application: SimulationApp creation, headless viewport display delegates, USD
-stage open plus world/axes setup, basement collision repair, optional pedestrian
-actor setup, the Go2 articulation spawn (asset reference, drive-ownership check,
-training spawn properties), contact-report sensor installation, physics and
-articulation initialisation, and the static support preflights. It is only
-called from the explicit ``run()`` entry; importing it has no side effects.
+stage open plus world/axes setup, basement collision repair, the Go2 articulation
+spawn (asset reference, drive-ownership check, training spawn properties),
+contact-report sensor installation, physics and articulation initialisation, and
+the static support preflights. It is only called from the explicit ``run()``
+entry; importing it has no side effects.
 """
 
 import os
@@ -222,26 +222,6 @@ def open_stage(scene, experiment, result, save):
     return stage
 
 
-def setup_pedestrian(stage, experiment, result):
-    """Create the optional session-only pedestrian actor."""
-    pedestrian = None
-    if experiment.get("pedestrian"):
-        from embodied_navigation.simulation.dynanav.pedestrian import create_pedestrian
-
-        pedestrian_config = experiment["pedestrian"]
-        pedestrian = create_pedestrian(
-            stage,
-            pedestrian_config["asset"],
-            start=pedestrian_config["start"],
-            end=pedestrian_config["end"],
-            speed_mps=pedestrian_config["speed_mps"],
-            path_mode=pedestrian_config["path_mode"],
-            animation_path=pedestrian_config["walk"],
-        )
-        result["pedestrian"] = pedestrian.report
-    return pedestrian
-
-
 def spawn_articulation_asset(stage, spawn, experiment, result, save):
     """Reference the Go2 asset, verify drive ownership and apply spawn properties."""
     from pxr import Gf, PhysxSchema, UsdGeom, UsdPhysics
@@ -360,19 +340,6 @@ class ContactMonitor:
                 str(PhysicsSchemaTools.intToSdfPath(h.actor0)),
                 str(PhysicsSchemaTools.intToSdfPath(h.actor1)),
             ]
-            if (
-                any(path.startswith("/World/DynamicPedestrian") for path in paths)
-                and any(path.startswith("/World/Go2") for path in paths)
-                and len(self.dynamic_contact_events) < 1000
-            ):
-                self.dynamic_contact_events.append(
-                    {
-                        "physics_s": float(SimulationManager.get_simulation_time()),
-                        "colliders": paths,
-                        "actors": actors,
-                        "contact_count": int(h.num_contact_data),
-                    }
-                )
             for j, path in enumerate(paths):
                 if not path.startswith("/World/Go2"):
                     continue
@@ -546,42 +513,8 @@ def initialize_articulation(art, stage, spawn, spawn_yaw, out, imu_mount, result
     return contract, canonical, indices, target, qdefault
 
 
-def create_pedestrian_view(stage, pedestrian):
-    """Create the native rigid-prim view used for pedestrian readback."""
-    from isaacsim.core.experimental.prims import RigidPrim
-
-    pedestrian_view = None
-    if pedestrian is not None:
-        previous_edit_target = stage.GetEditTarget()
-        try:
-            stage.SetEditTarget(stage.GetSessionLayer())
-            pedestrian_view = RigidPrim(
-                pedestrian.root_path, reset_xform_op_properties=False
-            )
-        finally:
-            stage.SetEditTarget(previous_edit_target)
-        assert pedestrian_view.is_physics_tensor_entity_valid(), (
-            "Pedestrian native rigid-body view unavailable"
-        )
-    return pedestrian_view
-
-
-def update_pedestrian(pedestrian, experiment):
-    """Advance the optional pedestrian actor for this physics step."""
-    if pedestrian is None:
-        return None
-    from isaacsim.core.simulation_manager import SimulationManager
-
-    actor_time = max(
-        0.0,
-        float(SimulationManager.get_simulation_time())
-        - experiment["pedestrian"]["start_delay_s"],
-    )
-    return pedestrian.update(actor_time)
-
-
-def run_preflights(experiment, pedestrian, result, save):
-    """Run basement/pedestrian static support preflights before walking."""
+def run_preflights(experiment, result, save):
+    """Run basement static support preflights before walking."""
     if experiment.get("basement_collision"):
         import omni.physx
 
@@ -593,20 +526,6 @@ def run_preflights(experiment, pedestrian, result, save):
             omni.physx.get_physx_scene_query_interface(),
             config_path=experiment.get("collision_config_path"),
         )
-    if (
-        pedestrian is not None
-        and experiment["pedestrian"].get("scenario") == "landing-crossing"
-    ):
-        from embodied_navigation.simulation.dynanav.pedestrian import (
-            inspect_walk_support,
-        )
-
-        result["pedestrian_support"] = inspect_walk_support(
-            omni.physx.get_physx_scene_query_interface(), pedestrian
-        )
-        save(force=True)
-        if not result["pedestrian_support"]["passed"]:
-            raise RuntimeError("Pedestrian three-point static support preflight failed")
 
 
 

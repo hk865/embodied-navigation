@@ -12,13 +12,13 @@ import traceback
 from dataclasses import dataclass, field
 
 
-def initial_result(experiment, gt_diagnostic, slam_control):
+def initial_result(experiment, gt_diagnostic, interactive_control):
     """构造 Isaac 启动前写入的初始结果字典。
 
     ``stage`` 从 ``startup`` 开始，``outcome`` 为 ``running``；
     ``SLAM_control_enabled`` 与 ``ground_truth_navigation`` 互斥。
-    ``truth_usage`` 按运行模式分四支：真值诊断、SLAM + learned 行人语义、
-    普通 SLAM、以及 COM 速度 PID（导航消费 SLAM）。分支由本函数内的条件
+    ``truth_usage`` 按运行模式分三支：真值诊断、交互实测位姿导航、
+    以及 COM 速度 PID（导航消费 SLAM）。分支由本函数内的条件
     表达式决定，不是运行时再判断。
     """
     result = {
@@ -30,13 +30,11 @@ def initial_result(experiment, gt_diagnostic, slam_control):
         "stair_speed_cap_enabled": False,
         # 真值用途声明会写入 result.json，供离线审计区分“策略本体感知/物理保护/
         # 诊断建图”与“实测估计位姿驱动路线”两类运行。
-        "truth_usage": "policy proprioception, physics guards, diagnostic mapping and native-pose tracking"
+        "truth_usage": "policy proprioception, physics guards, offline scoring and native-pose tracking"
         if gt_diagnostic
-        else "policy proprioception, physical guards, optional isolated identity scoring; measured estimator poses drive the route and online mapping"
-        if slam_control and experiment.get("semantic_provider") == "learned_rgb_person"
-        else "policy proprioception, physical guards, diagnostic oracle map and scoring; measured estimator poses alone drive the route"
-        if slam_control
-        else "policy proprioception, COM velocity PID and scoring; navigation consumes SLAM",
+        else "policy proprioception, physical guards and offline scoring; measured estimator poses alone drive the route"
+        if interactive_control
+        else "policy proprioception, COM velocity PID and offline scoring; navigation consumes SLAM",
         "navigation_running": False,
         "policy_loaded": False,
         "rgb_rendered": False,
@@ -52,9 +50,9 @@ class Receipts:
     由 ``close_journals`` 统一收尾。
     """
 
-    def __init__(self, output, experiment, gt_diagnostic, slam_control):
+    def __init__(self, output, experiment, gt_diagnostic, interactive_control=False):
         self.out = output
-        self.result = initial_result(experiment, gt_diagnostic, slam_control)
+        self.result = initial_result(experiment, gt_diagnostic, interactive_control)
         self._last_receipt_wall = -float("inf")
         self._journals = {}
 
@@ -108,7 +106,6 @@ class CaptureContext:
     app: object = None
     stream: object = None
     video: object = None
-    mapping: object = None
     ros: object = None
     art: object = None
     published: dict = field(default_factory=dict)
@@ -184,8 +181,6 @@ def record_failure(receipts, error, context, *, interrupted_error=None):
             }
 
         attempt("actuator_failure_state", actuator_failure_state)
-    if context.mapping is not None:
-        attempt("mapping", lambda: context.mapping.finalize_failure(result))
 
     def failure_report():
         report = getattr(error, "report", None)

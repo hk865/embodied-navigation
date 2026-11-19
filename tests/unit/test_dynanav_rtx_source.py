@@ -76,18 +76,14 @@ class RtxSourceSelection(unittest.TestCase):
         self.assertNotIn("requested_render_backend", profile)
         self.assertNotIn("render_backend_override_reason", profile)
 
-    def test_rtx_refuses_depth_semantics_and_oracle_pedestrian_before_asset_checks(self):
-        for extra in (
-            ("--semantic-provider", "isaac_instance_oracle"),
-            ("--semantic-provider", "learned_rgb_person"),
-            ("--pedestrian",),
-            ("--person-worker", "/not-used"),
-            ("--learned-evaluation-oracle",),
-        ):
-            with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()):
-                with self.assertRaises(SystemExit) as error:
-                    experiment.main(["--output", "/not-used", "--point-cloud-source", "rtx_lidar", *extra])
-                self.assertEqual(error.exception.code, 2)
+    def test_rtx_refuses_unsupported_semantic_provider_before_asset_checks(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                experiment.main([
+                    "--output", "/not-used", "--point-cloud-source", "rtx_lidar",
+                    "--semantic-provider", "isaac_instance_oracle",
+                ])
+            self.assertEqual(error.exception.code, 2)
 
     def test_sensor_override_keeps_imu_frame_and_retains_existing_camera_calibration(self):
         document = yaml.safe_load((ROOT / "configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml").read_text())["/**"]["ros__parameters"]

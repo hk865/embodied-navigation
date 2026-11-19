@@ -17,7 +17,6 @@ def _native_static_exploration(experiment):
         experiment.get("control_mode") == "interactive_waypoint_exploration"
         and experiment.get("interactive_controller") in ("native_route", "pct_scan")
         and experiment.get("interactive_simulation_only") is True
-        and not experiment.get("pedestrian")
     )
 
 

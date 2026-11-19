@@ -96,25 +96,6 @@ class FakeContactMonitor:
         return None
 
 
-class FakeMapping:
-    def __init__(self):
-        self.learned_mapper = None
-        self.learned_scorer = None
-        self.finish_calls = 0
-        self.finalize_failure_calls = 0
-        self.finalize_failure_error = None
-
-    def finish(self, result):
-        self.finish_calls += 1
-        result["mapping"] = {"fake": True}
-
-    def finalize_failure(self, result):
-        self.finalize_failure_calls += 1
-        if self.finalize_failure_error is not None:
-            raise self.finalize_failure_error
-        result["mapping"] = {"partial": True}
-
-
 class FakeVideo:
     def __init__(self):
         self.frames = 0
@@ -227,7 +208,6 @@ class Fakes:
         self.app = FakeApp()
         self.rig = FakeCameraRig()
         self.contact = FakeContactMonitor()
-        self.mapping = FakeMapping()
         self.video = FakeVideo()
         self.ros = FakeRos()
         self.art = FakeArt()
@@ -238,13 +218,6 @@ class Fakes:
         self.tracker = object()
         self.stepper = FakeStepper(self.measurement)
         self.previous_delegates = []
-
-
-def _fake_mapping_session(fakes, args):
-    """Real MappingSession binds itself on the context; mirror that ownership."""
-    context = args[5]
-    context.mapping = fakes.mapping
-    return fakes.mapping
 
 
 @contextlib.contextmanager
@@ -262,19 +235,16 @@ def fake_dependencies(fakes, stepper_class=None):
         "install_headless_display_delegates": lambda: ([], fakes.previous_delegates),
         "resolve_spawn": lambda experiment: ("spawn", 0.0, 1.0),
         "open_stage": open_stage,
-        "setup_pedestrian": lambda stage, experiment, result: None,
         "spawn_articulation_asset": lambda stage, spawn, experiment, result, save: [
             object()
         ],
         "ContactMonitor": FakeContactMonitor,
         "create_camera_rig": lambda stage, experiment: fakes.rig,
-        "create_dynamic_guard": lambda experiment, imu_mount: None,
         "create_imu_sensor": lambda rig: object(),
         "create_rgbd_annotators": lambda rig: fakes.rgbd,
         "sensor_installation_receipt": lambda rig, truth_usage, sim_rtf: {
             "installed": True
         },
-        "MappingSession": lambda *args, **kwargs: _fake_mapping_session(fakes, args),
         "create_overview": lambda rig, stage, rep: object(),
         "OverviewVideo": lambda output: fakes.video,
         "create_ros_interface": lambda experiment, learned_mapper, learned_scorer, **kwargs: fakes.ros,
@@ -287,7 +257,6 @@ def fake_dependencies(fakes, stepper_class=None):
             np.zeros(12),
         ),
         "load_policy": lambda *args, **kwargs: object(),
-        "create_pedestrian_view": lambda stage, pedestrian: None,
         "resolve_limits": lambda *args: (0.5, 1.0),
         "create_route_controller": lambda *args, **kwargs: fakes.tracker,
         "annotate_policy_receipt": lambda result, *args, **kwargs: result.__setitem__(
@@ -298,7 +267,6 @@ def fake_dependencies(fakes, stepper_class=None):
         "ControlLoop": lambda **kwargs: fakes.control,
         "PhysicsStepper": stepper_class,
         "FrameStream": lambda **kwargs: fakes.stream,
-        "update_pedestrian": lambda pedestrian, experiment: None,
         "compute_torque": lambda **kwargs: np.zeros(12),
         "stop": lambda app, delegates: (app.finish(), delegates.clear()),
     }
@@ -392,7 +360,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         self.assertIs(RecordingStepper.last_kwargs["imu_mount"], fakes.rig.imu_mount)
         self.assertEqual(fakes.ros.destroy_calls, 1)
         self.assertEqual(fakes.video.close_calls, [15])
-        self.assertEqual(fakes.mapping.finish_calls, 1)
         self.assertEqual(fakes.app.stop_calls, 1)
         self.assertEqual(fakes.previous_delegates, [])
 
@@ -407,7 +374,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         self.assertEqual(result["physics_dt"], 0.005)
         self.assertEqual(fakes.ros.destroy_calls, 1)
         self.assertEqual(fakes.video.close_calls, [15])
-        self.assertEqual(fakes.mapping.finish_calls, 1)
 
     def test_first_tick_failure_records_primary_error_and_cleans_owned_resources(self):
         fakes = Fakes()
@@ -419,7 +385,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         # The temp dir is gone after the context; inspect the fake calls and the
         # receipt through a retained path instead (run_capture returns output).
         # Re-run is unnecessary: assert cleanup happened without masking.
-        self.assertEqual(fakes.mapping.finalize_failure_calls, 1)
         self.assertEqual(fakes.video.close_calls, [10])
         self.assertEqual(fakes.ros.destroy_calls, 1)
         self.assertEqual(fakes.app.close_calls, [1])
@@ -455,7 +420,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         fakes = Fakes()
         sentinel = SentinelError("primary sentinel")
         fakes.stepper = FakeStepper(fakes.measurement, step_error=sentinel)
-        fakes.mapping.finalize_failure_error = RuntimeError("mapping finalize failed")
         fakes.video.close_error = RuntimeError("encoder close failed")
         fakes.app.close_error = RuntimeError("app close failed")
         with tempfile.TemporaryDirectory() as temporary:
@@ -475,7 +439,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         self.assertIn("SentinelError", result["error"])
         self.assertIn("primary sentinel", result["traceback"])
         cleanup = "\n".join(result["failure_cleanup_errors"])
-        self.assertIn("mapping", cleanup)
         self.assertIn("video", cleanup)
         self.assertIn("app_close", cleanup)
         # Every owned resource is still attempted even after an earlier failure.
@@ -506,7 +469,6 @@ class CaptureOrchestrationTests(unittest.TestCase):
         self.assertEqual(fakes.app.close_calls, [1])
         self.assertEqual(fakes.video.close_calls, [10])
         self.assertEqual(fakes.ros.destroy_calls, 1)
-        self.assertEqual(fakes.mapping.finalize_failure_calls, 1)
 
 
     def test_traceback_output_failure_keeps_primary_and_cleans_owned_resources(self):

@@ -6,7 +6,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT = ROOT / "src/embodied_navigation/simulation/dynanav/experiment.py"
-RECONSTRUCT = ROOT / "scripts/reconstruct_dynanav_learned_person_map.py"
 QUERY_IMPL = "src/embodied_navigation/localization_mapping/semantic_mapping/query.py"
 QUERY_CLI = "scripts/query_scene_map.py"
 DYNANAV = ROOT / "src/embodied_navigation/simulation/dynanav"
@@ -45,11 +44,6 @@ class SourceSnapshotTest(unittest.TestCase):
         self.assertTrue(implementation)
         missing = [relative for relative in implementation if relative not in sources]
         self.assertEqual(missing, [], "source snapshot misses capture modules")
-
-    def test_reconstruction_provenance_has_package_query_and_legacy_cli(self):
-        text = RECONSTRUCT.read_text()
-        self.assertIn("semantic_mapping/query.py", text)
-        self.assertIn("scripts/query_scene_map.py", text)
 
 
 if __name__ == "__main__":

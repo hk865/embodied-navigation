@@ -376,7 +376,6 @@ class SdkCallbackTests(unittest.TestCase):
             stream.experiment = {"interactive_controller": "native_route"} if native_route else {}
             stream.rtx_lidar = object(); stream.rgb_outputs = r; stream.out = Path(d)
             stream.stage = None; stream.gt_diagnostic = False
-            stream.mapping = SimpleNamespace(oracle_mapper=None, learned_mapper=None)
             stream.receipts = SimpleNamespace(result={}, journal=lambda *args: None)
             stream.ros = SimpleNamespace(latest_odom=None)
             stream.rgb_ann = r.rgb_ann; stream.depth_ann = None; stream.camera_params_ann = r.camera_params_ann
@@ -389,13 +388,11 @@ class SdkCallbackTests(unittest.TestCase):
             pxr = ModuleType('pxr'); pxr.UsdGeom = SimpleNamespace(Xformable=lambda prim: SimpleNamespace(ComputeLocalToWorldTransform=lambda t: np.eye(4)))
             with patch.dict(sys.modules, {'pxr': pxr}), patch.object(stream, '_process_rtx_frame') as publish:
                 if native_route:
-                    stream.process(iteration=0, measurement=measurement, pedestrian_view=None,
-                                   pedestrian_target=None, dynamic_guard=None, camera_rows=[])
+                    stream.process(iteration=0, measurement=measurement, camera_rows=[])
                     publish.assert_called_once()
                 else:
                     with self.assertRaisesRegex(RuntimeError, 'does not follow'):
-                        stream.process(iteration=0, measurement=measurement, pedestrian_view=None,
-                                       pedestrian_target=None, dynamic_guard=None, camera_rows=[])
+                        stream.process(iteration=0, measurement=measurement, camera_rows=[])
                     publish.assert_not_called()
             self.assertEqual(stream.receipts.result['rtx_rgb_render_pose_check']['forward_cosine'], 1.)
             self.assertEqual(stream.receipts.result['rtx_rgb_render_pose_check']['used_for_control'], not native_route)

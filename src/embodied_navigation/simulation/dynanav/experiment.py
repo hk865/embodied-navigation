@@ -96,17 +96,11 @@ def configure_point_cloud_source(profile, source, semantic_provider=None):
     if source not in ("rgbd", "rtx_lidar"):
         raise ValueError("point-cloud source must be rgbd or rtx_lidar")
     selected_semantics = semantic_provider or "none"
-    if selected_semantics not in ("none", "learned_rgb_person"):
+    if selected_semantics != "none":
         raise ValueError("unsupported semantic provider")
-    if source == "rtx_lidar" and selected_semantics != "none":
-        raise ValueError(
-            "RTX LiDAR does not support RGB-D learned semantic mapping; "
-            "omit --semantic-provider or select none"
-        )
     profile["point_cloud_source"] = source
     profile["semantic_provider"] = selected_semantics
-    if selected_semantics == "none":
-        profile.update(mapping_enabled=False, mapping_pose_source="disabled")
+    profile.update(mapping_enabled=False, mapping_pose_source="disabled")
     if source == "rtx_lidar":
         profile.update(
             lidar_frontend_topic="/dynanav/lidar_rtx",
@@ -120,29 +114,6 @@ def configure_point_cloud_source(profile, source, semantic_provider=None):
             mapping_disabled_reason="RGB-D semantic projection is incompatible with RTX LiDAR returns",
         )
     return profile
-
-
-def make_slam_controller(profile):
-    """Use the same pure controller construction in --check and the live loop."""
-    from embodied_navigation.simulation.dynanav.slam_route import SlamRouteTracker
-
-    return SlamRouteTracker(
-        profile["slam_route_reference"],
-        speed_mps=profile["speed_mps"],
-        motion_end_s=profile["motion_end_s"],
-        repeat_spawn_assumption=profile["repeat_spawn_assumption"],
-        map_registration_enabled=profile["map_registration_enabled"],
-        max_sim_age_s=0.25,
-        max_wall_age_s=0.5,
-        future_tolerance_s=profile["slam_future_tolerance_s"],
-        stop_on_stall=profile.get("stop_on_stall", True),
-        speed_source=profile["slam_speed_source"],
-        pose_speed_window_s=profile["slam_pose_speed_window_s"],
-        capture_remaining_m=profile.get("slam_capture_remaining_m", 0.20),
-        capture_distance_m=profile.get("slam_capture_distance_m", 0.30),
-        final_capture_remaining_m=profile.get("slam_final_capture_remaining_m"),
-        final_capture_distance_m=profile.get("slam_final_capture_distance_m"),
-    )
 
 
 def slam_odometry_topic(pose_source, requested=None):
@@ -198,46 +169,8 @@ def main(argv=None):
         help="RGB-D render backend; RTX always uses Fabric and records the requested choice",
     )
     parser.add_argument(
-        "--pedestrian",
-        action="store_true",
-        help="Local skeletal pedestrian with oracle point-cloud hold/resume",
-    )
-    parser.add_argument("--pedestrian-asset", type=Path)
-    parser.add_argument("--pedestrian-walk", type=Path)
-    parser.add_argument(
-        "--pedestrian-path", choices=("one_way", "sine", "linear"), default="one_way"
-    )
-    parser.add_argument("--pedestrian-delay", type=float, default=4.0)
-    parser.add_argument(
-        "--slam-reference",
-        type=Path,
-        help="Previous measured LIO route; repeat-spawn lab assumption, no global registration",
-    )
-    parser.add_argument(
         "--odometry-topic",
         help="Explicit estimator output; default follows reference source",
-    )
-    parser.add_argument(
-        "--slam-capture-remaining-m",
-        type=float,
-        default=0.20,
-        help="Explicit measured-reference along-segment capture; old default retained",
-    )
-    parser.add_argument(
-        "--slam-capture-distance-m",
-        type=float,
-        default=0.30,
-        help="Explicit measured-reference XY capture; verify platform turn margin first",
-    )
-    parser.add_argument(
-        "--slam-final-capture-remaining-m",
-        type=float,
-        help="Final goal only: along-segment capture; omitted inherits --slam-capture-remaining-m",
-    )
-    parser.add_argument(
-        "--slam-final-capture-distance-m",
-        type=float,
-        help="Final goal only: XY capture; omitted inherits --slam-capture-distance-m",
     )
     parser.add_argument(
         "--interactive",
@@ -288,12 +221,6 @@ def main(argv=None):
         help="Publish recorded native IMU samples; 100 Hz reproduces legacy decimation",
     )
     parser.add_argument(
-        "--pedestrian-scenario",
-        choices=("spawn-crossing", "landing-crossing"),
-        default="spawn-crossing",
-    )
-    parser.add_argument("--pedestrian-speed", type=float)
-    parser.add_argument(
         "--point-cloud-source",
         choices=("rgbd", "rtx_lidar"),
         default="rgbd",
@@ -301,25 +228,8 @@ def main(argv=None):
     )
     parser.add_argument(
         "--semantic-provider",
-        choices=("none", "learned_rgb_person"),
+        choices=("none",),
         help="Default: none",
-    )
-    parser.add_argument(
-        "--person-worker",
-        type=Path,
-        help="Existing local worker channel; no model is downloaded",
-    )
-    parser.add_argument(
-        "--pose-launch-receipt",
-        type=Path,
-        help="Actual observer launch receipt for the learned frontend binding",
-    )
-    parser.add_argument("--person-max-interval", type=float, default=0.4)
-    parser.add_argument("--person-min-interval", type=float, default=0.2)
-    parser.add_argument(
-        "--learned-evaluation-oracle",
-        action="store_true",
-        help="Isolated oracle scoring sink; never an algorithm input",
     )
     args = parser.parse_args(argv)
     interactive_requested = args.interactive or args.interactive_mailbox is not None
@@ -329,11 +239,6 @@ def main(argv=None):
         )
     if args.interactive_controller == "pct_scan" and (not interactive_requested or args.interactive_pose_source != "livo_post_vio"):
         parser.error("pct_scan requires --interactive --interactive-pose-source livo_post_vio")
-    if interactive_requested and args.slam_reference is not None:
-        parser.error(
-            "--interactive cannot be combined with --slam-reference; the explorer "
-            "accepts operator waypoints, not a prerecorded route"
-        )
     profile = make_profile(args.speed, args.duration, interactive=interactive_requested)
     if args.spawn_yaw is not None:
         if not math.isfinite(args.spawn_yaw):
@@ -343,8 +248,6 @@ def main(argv=None):
         configure_point_cloud_source(profile, args.point_cloud_source, args.semantic_provider)
     except ValueError as error:
         parser.error(str(error))
-    if args.point_cloud_source == "rtx_lidar" and args.pedestrian:
-        parser.error("RTX LiDAR cannot use the RGB-D oracle pedestrian hold/mapping pipeline")
     profile["imu_publish_hz"] = args.imu_hz
     profile["imu_publish_stride"] = 200 // args.imu_hz
     profile["imu_orientation_available"] = False
@@ -371,173 +274,6 @@ def main(argv=None):
     profile["waypoints_xyz"] = [[-22.0, -7.5, -1.1441]]
     profile["collision_config_path"] = str(DEFAULT_COLLISION_CONFIG_PATH)
     profile["route_geometry_provenance"] = collision_config["provenance"]
-    if args.pedestrian:
-        if not math.isfinite(args.pedestrian_delay) or args.pedestrian_delay < 0:
-            parser.error("--pedestrian-delay must be finite and nonnegative")
-        if args.render_backend != "usd":
-            parser.error(
-                "The live pedestrian diagnostic requires the measured USD render path"
-            )
-        asset = args.pedestrian_asset or Path(
-            "/home/hyh001/isaacsim/extscache/isaacsim.replicator.agent.core-1.6.8+110.1.2/data/test_scenes/test_biped/biped_demo_meters.usd"
-        )
-        walk = args.pedestrian_walk or Path(
-            "/home/hyh001/isaacsim/extscache/omni.anim.retarget.core-110.1.0+110.1.1.lx64.r.cp312.u7f4/data/rigs/Human/assets/walk.skelanim.usd"
-        )
-        if not asset.is_file() or not walk.is_file():
-            parser.error("Local human and compatible walk assets are required")
-        profile["pedestrian"] = {
-            "asset": str(asset.resolve()),
-            "walk": str(walk.resolve()),
-            "asset_sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
-            "walk_sha256": hashlib.sha256(walk.read_bytes()).hexdigest(),
-            "start": [-15.25, -9.5, -3.3],
-            "end": [-15.25, -5.5, -3.3],
-            "speed_mps": 0.6,
-            "start_delay_s": args.pedestrian_delay,
-            "path_mode": args.pedestrian_path,
-        }
-        if args.pedestrian_scenario == "landing-crossing":
-            profile["pedestrian"].update(
-                start=[-22.0, -8.7, -1.4906366737798542],
-                end=[-22.0, -6.3, -1.4906366737798542],
-                speed_mps=0.3,
-            )
-        if args.pedestrian_speed is not None:
-            profile["pedestrian"]["speed_mps"] = args.pedestrian_speed
-        profile["pedestrian"]["scenario"] = args.pedestrian_scenario
-        from embodied_navigation.simulation.dynanav.pedestrian import PedestrianPath
-
-        PedestrianPath(
-            profile["pedestrian"]["start"],
-            profile["pedestrian"]["end"],
-            profile["pedestrian"]["speed_mps"],
-            profile["pedestrian"]["path_mode"],
-        )
-        profile["pedestrian_roots"] = ["/World/DynamicPedestrian"]
-        profile["dynamic_hold"] = True
-        profile["navigation_scope"] = (
-            "native_pose_route_with_oracle_dynamic_hold; not SLAM navigation or general avoidance"
-        )
-    if args.slam_reference:
-        from embodied_navigation.simulation.dynanav.slam_route import (
-            load_slam_route_reference,
-        )
-
-        profile["slam_route_reference"] = load_slam_route_reference(args.slam_reference)
-        profile["slam_pose_source"] = profile["slam_route_reference"]["pose_source"]
-        post_vio = profile["slam_pose_source"] == "livo_post_vio"
-        profile["navigation_pose_source"] = (
-            "measured_livo_post_vio" if post_vio else "measured_lio"
-        )
-        profile["navigation_command_source"] = (
-            "measured_livo_post_vio_route" if post_vio else "measured_lio_route"
-        )
-        profile["slam_twist_available"] = profile["slam_route_reference"]["source"].get(
-            "twist_available", True
-        )
-        profile["slam_route_reference_path"] = str(args.slam_reference.resolve())
-        profile["slam_route_reference_sha256"] = hashlib.sha256(
-            args.slam_reference.read_bytes()
-        ).hexdigest()
-        profile["control_mode"] = "slam_pose_diagnostic"
-        profile["odometry_topic"] = slam_odometry_topic(
-            profile["slam_pose_source"], args.odometry_topic
-        )
-        profile["repeat_spawn_assumption"] = True
-        profile["map_registration_enabled"] = False
-        profile["slam_speed_source"] = "pose_window"
-        profile["slam_pose_speed_window_s"] = 0.5
-        profile["slam_capture_remaining_m"] = args.slam_capture_remaining_m
-        profile["slam_capture_distance_m"] = args.slam_capture_distance_m
-        profile["slam_final_capture_remaining_m"] = args.slam_final_capture_remaining_m
-        profile["slam_final_capture_distance_m"] = args.slam_final_capture_distance_m
-        profile["slam_future_tolerance_s"] = float32_sensor_time_tolerance(
-            args.duration
-        )
-        profile["slam_timestamp_precision"] = (
-            "SDK float32 sensor clock; half-ULP horizon bound plus numerical margin"
-        )
-        profile["navigation_scope"] = (
-            "measured "
-            + ("post-VIO" if post_vio else "LIO")
-            + " route in repeat-spawn lab; no native route-pose input or global localization"
-        )
-    if args.slam_reference:
-        make_slam_controller(profile)
-    if args.semantic_provider == "learned_rgb_person":
-        if (
-            not args.slam_reference
-            or profile.get("slam_pose_source") != "livo_post_vio"
-        ):
-            parser.error(
-                "Online learned mapping requires an explicit post-VIO measured reference"
-            )
-        if args.person_worker is None:
-            parser.error("Online learned mapping requires --person-worker")
-        if not (
-            math.isfinite(args.person_min_interval)
-            and math.isfinite(args.person_max_interval)
-            and 0 < args.person_min_interval <= args.person_max_interval
-        ):
-            parser.error("Person event intervals must be finite and 0 < min <= max")
-        if args.pose_launch_receipt is None or not args.pose_launch_receipt.is_file():
-            parser.error(
-                "Online learned mapping requires an actual --pose-launch-receipt"
-            )
-        launch_path = args.pose_launch_receipt.expanduser().resolve()
-        launch = json.loads(launch_path.read_text())
-        if (
-            launch.get("lidar_input_topic") != "/dynanav/lidar_perception_filtered"
-            or launch.get("navigation_pose_topic") != profile["odometry_topic"]
-            or launch.get("ground_truth_input") is not False
-        ):
-            parser.error(
-                "Observer launch must bind the learned candidate cloud and selected post-VIO output, without GT pose input"
-            )
-        if str(launch.get("ros_domain_id")) != os.environ.get("ROS_DOMAIN_ID", "0"):
-            parser.error("Observer launch receipt belongs to a different ROS domain")
-        profile["pose_launch_receipt"] = str(launch_path)
-        profile["pose_launch_receipt_sha256"] = hashlib.sha256(
-            launch_path.read_bytes()
-        ).hexdigest()
-        channel = args.person_worker.expanduser().resolve()
-        state_path = channel / "state.json"
-        if not state_path.is_file():
-            parser.error(
-                "Person worker state.json is missing; start the explicit local worker first"
-            )
-        worker_state = json.loads(state_path.read_text())
-        expected_model = (
-            "73cbd0190fcbe3ba339921fbce2c3a0b6bb9126c9a133c85e43a2a8e060a109e"
-        )
-        if (
-            worker_state.get("model_sha256") != expected_model
-            or worker_state.get("state") != "ready"
-        ):
-            parser.error(
-                "Person worker must be ready with the explicitly selected model hash"
-            )
-        profile.update(
-            semantic_provider="learned_rgb_person",
-            mapping_pose_source="live_livo_post_vio_exact",
-            person_worker=str(channel),
-            person_model_sha256=expected_model,
-            person_max_interval_s=args.person_max_interval,
-            person_min_interval_s=args.person_min_interval,
-            oracle_evaluation=args.learned_evaluation_oracle,
-            lidar_frontend_topic="/dynanav/lidar_perception_filtered",
-            navigation_scope="measured post-VIO repeat-spawn route with online RGB candidate hold/resume; not general avoidance",
-            model_timing="synchronous local online inference pauses physics; realtime deadline not certified",
-        )
-    elif (
-        args.person_worker is not None
-        or args.pose_launch_receipt is not None
-        or args.learned_evaluation_oracle
-    ):
-        parser.error(
-            "Worker/oracle-evaluation options require --semantic-provider learned_rgb_person"
-        )
     if not math.isfinite(args.rtf) or args.rtf <= 0:
         parser.error("--rtf must be positive and finite")
     data = data_root()
@@ -607,14 +343,13 @@ def main(argv=None):
                 "simulation-only exploration, no global localization claim"
             ),
         )
-        if not profile.get("pedestrian"):
-            profile["notes"] = (
-                "Static simulation native route exploration; configured attitude, "
-                "base-speed and position envelopes are diagnostic only. "
-                "Finite-pose, effort, motor and clock checks remain enforced; "
-                "body contact follows body_contact_report_only. "
-                "These physics readbacks are not navigation inputs."
-            )
+        profile["notes"] = (
+            "Static simulation native route exploration; configured attitude, "
+            "base-speed and position envelopes are diagnostic only. "
+            "Finite-pose, effort, motor and clock checks remain enforced; "
+            "body contact follows body_contact_report_only. "
+            "These physics readbacks are not navigation inputs."
+        )
     if args.check:
         print(
             json.dumps(
@@ -622,9 +357,7 @@ def main(argv=None):
                     "assets_checked": True,
                     "model_hash_checked": True,
                     "simulation_started": False,
-                    "controller_config_checked": bool(
-                        args.slam_reference or interactive_requested
-                    ),
+                    "controller_config_checked": bool(interactive_requested),
                     "profile": profile,
                 },
                 indent=2,
@@ -644,7 +377,6 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/control.py",
         "src/embodied_navigation/simulation/dynanav/capture/frames.py",
         "src/embodied_navigation/simulation/dynanav/capture/lidar.py",
-        "src/embodied_navigation/simulation/dynanav/capture/mapping.py",
         "src/embodied_navigation/simulation/dynanav/capture/physics.py",
         "src/embodied_navigation/simulation/dynanav/capture/policy.py",
         "src/embodied_navigation/simulation/dynanav/capture/receipts.py",
@@ -652,22 +384,10 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/scene.py",
         "src/embodied_navigation/simulation/dynanav/capture/sensors.py",
         "src/embodied_navigation/simulation/dynanav/capture/video.py",
-        "src/embodied_navigation/simulation/dynanav/learned_mapping.py",
-        "src/embodied_navigation/simulation/dynanav/learned_scoring.py",
-        "src/embodied_navigation/perception/person_worker.py",
-        "src/embodied_navigation/perception/person_tiling.py",
-        "src/embodied_navigation/perception/person_geometry_tracking.py",
-        "src/embodied_navigation/perception/temporal_geometry.py",
-        "src/embodied_navigation/perception/learned_person_mapping.py",
-        "src/embodied_navigation/perception/person_segmentation.py",
-        "scripts/run_dynanav_person_worker.py",
         "scripts/query_scene_map.py",
         "src/embodied_navigation/localization_mapping/semantic_mapping/query.py",
         "src/embodied_navigation/simulation/dynanav/render_diagnostics.py",
-        "src/embodied_navigation/simulation/dynanav/pedestrian.py",
-        "src/embodied_navigation/simulation/dynanav/dynamic_hold.py",
         "src/embodied_navigation/simulation/dynanav/session_collision.py",
-        "src/embodied_navigation/simulation/dynanav/slam_route.py",
         "src/embodied_navigation/simulation/dynanav/native_waypoints.py",
         "src/embodied_navigation/simulation/dynanav/pct_scan_waypoints.py",
         "src/embodied_navigation/simulation/dynanav/pct_scan_worker.py",

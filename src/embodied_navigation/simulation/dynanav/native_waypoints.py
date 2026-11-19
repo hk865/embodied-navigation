@@ -9,15 +9,28 @@ terminal parking and the run's finite motion budget remains terminal.
 from collections import deque
 import json
 import math
+from numbers import Real
 from pathlib import Path
 
 import numpy as np
 
 from embodied_navigation.common.geometry import pose_transform
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
-from embodied_navigation.simulation.dynanav.slam_route import _number
 
 PROTOCOL_VERSION = 1
+
+
+def _number(value, name, *, positive=False, nonnegative=False):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(value)
+    ):
+        raise ValueError(f"{name} must be a finite number")
+    value = float(value)
+    if (positive and value <= 0) or (nonnegative and value < 0):
+        raise ValueError(f"{name} has an invalid sign")
+    return value
 
 
 class NativeWaypointTracker:

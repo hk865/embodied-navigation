@@ -27,7 +27,6 @@ class FrameStream:
         out,
         stage,
         gt_diagnostic,
-        mapping,
         ros,
         video,
         rgb_annotators,
@@ -47,7 +46,6 @@ class FrameStream:
         self.out = out
         self.stage = stage
         self.gt_diagnostic = gt_diagnostic
-        self.mapping = mapping
         self.ros = ros
         self.video = video
         self.rgb_ann = rgb_annotators.rgb_ann
@@ -153,16 +151,12 @@ class FrameStream:
         *,
         iteration,
         measurement,
-        pedestrian_view,
-        pedestrian_target,
-        dynamic_guard,
         camera_rows,
     ):
         """按原循环块处理一帧 10 Hz RGB-D 数据。
 
-        ``measurement`` 提供本帧对应的物理时间与位姿；``pedestrian_view``
-        非空时额外读取原生行人位姿并写入收据；``dynamic_guard`` 与
-        ``camera_rows`` 分别传给建图与逐帧诊断日志。断言失败即终止采集。
+        ``measurement`` 提供本帧对应的物理时间与位姿；``camera_rows`` 记录
+        逐帧诊断日志。断言失败即终止采集。
         """
         from pxr import UsdGeom
 
@@ -176,12 +170,9 @@ class FrameStream:
         out = self.out
         stage = self.stage
         gt_diagnostic = self.gt_diagnostic
-        oracle_mapper = self.mapping.oracle_mapper
-        learned_mapper = self.mapping.learned_mapper
         journal = self.receipts.journal
         result = self.receipts.result
         ros = self.ros
-        latest_odom = ros.latest_odom
         rgb_ann = self.rgb_ann
         depth_ann = self.depth_ann
         camera_params_ann = self.camera_params_ann
@@ -304,56 +295,13 @@ class FrameStream:
             )
         assert np.isfinite(xyz).all(), "Nonfinite RGB-D point"
         assert gt_diagnostic or len(xyz) > 1000, "Insufficient valid Go2 depth"
-        # 完整障碍点云仍对导航可见（包含行人）；语义过滤只影响建图/评分消费方。
-        states, frontend_keep = self.mapping.process_frame(
-            packet=packet,
-            xyz=xyz,
-            rgb=rgb,
-            zz=zz,
-            it=it,
-            actual_time=actual_time,
-            Rb=Rb,
-            sensor_position=sensor_position,
-            latest_odom=latest_odom,
-            dynamic_guard=dynamic_guard,
-            result=result,
-            journal=journal,
-        )
-        if pedestrian_view is not None:
-            from isaacsim.core.experimental.utils import (
-                backend as backend_utils,
-            )
-
-            # 行人原生位姿必须走 tensor 后端读回；不支持或回退时直接报错，
-            # 避免用另一种后端的结果冒充同源证据。
-            with backend_utils.use_backend(
-                "tensor", raise_on_unsupported=True, raise_on_fallback=True
-            ):
-                person_position, person_orientation = (
-                    pedestrian_view.get_world_poses()
-                )
-            native_person = person_position.numpy()[0].copy()
-            person_receipt = {
-                "physics_s": actual_time,
-                "target": pedestrian_target,
-                "native_position": native_person.tolist(),
-                "native_target_error_m": float(
-                    np.linalg.norm(native_person - pedestrian_target["position_m"])
-                ),
-                "readback_backend": "tensor",
-                "physics_step_delta": result["last_clock_check"][
-                    "step_count_delta"
-                ],
-            }
-            result["pedestrian_readback"] = person_receipt
-            journal("pedestrian_native.jsonl", person_receipt)
         ros.publish_cloud(
             it,
             xyz,
-            states,
-            frontend_keep,
-            oracle_mapper,
-            learned_mapper,
+            None,
+            None,
+            None,
+            None,
         )
         ros.publish_depth_and_info(it, zz)
         if (

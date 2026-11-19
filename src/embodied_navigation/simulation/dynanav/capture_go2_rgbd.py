@@ -8,10 +8,9 @@ DYNANAV_EXPERIMENT environment variable still supplies the experiment profile.
 The implementation is split under ``capture/``:
 
 - ``receipts``: result.json, journals, throttled save, failure receipt
-- ``scene``: SimulationApp, USD stage, Go2 spawn, contacts, pedestrians
+- ``scene``: SimulationApp, USD stage, Go2 spawn, contacts
 - ``sensors``: camera/IMU/render products and the installation receipt
 - ``ros_interface``: node, ``/dynanav/*`` publishers/subscribers, messages
-- ``mapping``: oracle/learned mapping, scoring, raw RGB archive
 - ``policy``: Student/RoboGauge policy loading, actions and torque
 - ``control``: 50 Hz control tick, routes, approval/freshness, termination
 - ``physics``: 0.005 s step, clocks, effort/IMU/safety assertions
@@ -36,12 +35,10 @@ import numpy as np
 from embodied_navigation.simulation.dynanav.capture.control import (
     ControlLoop,
     annotate_policy_receipt,
-    create_dynamic_guard,
     create_route_controller,
     resolve_limits,
 )
 from embodied_navigation.simulation.dynanav.capture.frames import FrameStream
-from embodied_navigation.simulation.dynanav.capture.mapping import MappingSession
 from embodied_navigation.simulation.dynanav.capture.physics import PhysicsStepper
 from embodied_navigation.simulation.dynanav.capture.policy import (
     compute_torque,
@@ -57,19 +54,16 @@ from embodied_navigation.simulation.dynanav.capture.ros_interface import (
 )
 from embodied_navigation.simulation.dynanav.capture.scene import (
     ContactMonitor,
-    create_pedestrian_view,
     initialize_articulation,
     install_headless_display_delegates,
     open_stage,
     play,
     resolve_spawn,
     run_preflights,
-    setup_pedestrian,
     setup_physics,
     spawn_articulation_asset,
     start_simulation_app,
     stop,
-    update_pedestrian,
 )
 from embodied_navigation.simulation.dynanav.capture.sensors import (
     create_camera_rig,
@@ -89,12 +83,9 @@ class CaptureConfig:
     scene: str
     experiment: dict
     gt_diagnostic: bool
-    slam_control: bool
+    interactive_control: bool
     robogauge: bool
     use_fabric: bool
-    # Appended with a default so the original positional construction contract of
-    # this dataclass (and every existing caller) stays unchanged.
-    interactive_control: bool = False
 
 
 def load_experiment():
@@ -114,17 +105,21 @@ def parse_config(argv=None):
     out.mkdir(exist_ok=True)
     experiment = load_experiment()
     mode = experiment.get("control_mode")
+    if mode == "slam_pose_diagnostic":
+        raise ValueError("Retired control_mode 'slam_pose_diagnostic' is no longer supported")
+    if experiment.get("pedestrian") or experiment.get("dynamic_hold"):
+        raise ValueError("Retired pedestrian/dynamic_hold experiment flags are no longer supported")
+    if experiment.get("semantic_provider") not in (None, "none"):
+        raise ValueError(
+            f"Retired semantic_provider {experiment.get('semantic_provider')!r} is no longer supported"
+        )
     gt_diagnostic = mode == "native_pose_diagnostic"
-    # The interactive waypoint explorer is a measured-pose mode: it reuses the
-    # measured-SLAM plumbing for mapping and pose labels, while the tracker that
-    # actually drives the base is created separately below.
     interactive_control = mode == "interactive_waypoint_exploration"
-    slam_control = mode in ("slam_pose_diagnostic", "interactive_waypoint_exploration")
     robogauge = experiment.get("policy") == "robogauge"
     use_fabric = experiment.get("render_backend", "fabric") == "fabric"
     if experiment.get("point_cloud_source", "rgbd") == "rtx_lidar" and not use_fabric:
         raise ValueError("RTX LiDAR requires Fabric physics updates so attached sensors follow the body")
-    if (gt_diagnostic or slam_control) and not robogauge:
+    if (gt_diagnostic or interactive_control) and not robogauge:
         raise ValueError(
             "Native-pose diagnostic requires the explicit RoboGauge experiment"
         )
@@ -137,7 +132,6 @@ def parse_config(argv=None):
         scene=argv[2],
         experiment=experiment,
         gt_diagnostic=gt_diagnostic,
-        slam_control=slam_control,
         interactive_control=interactive_control,
         robogauge=robogauge,
         use_fabric=use_fabric,
@@ -202,12 +196,12 @@ def _restore_signal_handlers(handlers):
             pass
 
 def run_capture(config):
-    """Orchestrate config -> session -> ROS -> mapping -> loop -> receipts."""
+    """Orchestrate config -> session -> ROS -> physics/control loop -> receipts."""
     receipts = Receipts(
         config.output,
         config.experiment,
         config.gt_diagnostic,
-        config.slam_control,
+        config.interactive_control,
     )
     context = CaptureContext(receipts)
     original_signal_handlers = {}
@@ -252,7 +246,6 @@ def run_capture(config):
             config.scene, config.experiment, receipts.result, receipts.save
         )
         cancellation.check()
-        pedestrian = setup_pedestrian(stage, config.experiment, receipts.result)
         roots = spawn_articulation_asset(
             stage, spawn, config.experiment, receipts.result, receipts.save
         )
@@ -262,7 +255,6 @@ def run_capture(config):
 
         cancellation.check()
         camera_rig = create_camera_rig(stage, config.experiment)
-        dynamic_guard = create_dynamic_guard(config.experiment, camera_rig.imu_mount)
         imu_sensor = create_imu_sensor(camera_rig)
         if rtx_lidar_enabled:
             from embodied_navigation.simulation.dynanav.capture.lidar import RtxLidar
@@ -274,16 +266,6 @@ def run_capture(config):
         else:
             rtx_lidar = None
             rgbd_annotators = create_rgbd_annotators(camera_rig)
-        mapping = MappingSession(
-            config.experiment,
-            stage,
-            config.output,
-            rgbd_annotators.rep,
-            rgbd_annotators.product,
-            context,
-            config.gt_diagnostic,
-            config.slam_control,
-        )
         cancellation.check()
         overview = create_overview(camera_rig, stage, rgbd_annotators.rep)
         video = OverviewVideo(config.output)
@@ -300,7 +282,7 @@ def run_capture(config):
 
         cancellation.check()
         ros = create_ros_interface(
-            config.experiment, mapping.learned_mapper, mapping.learned_scorer,
+            config.experiment, None, None,
             journal=lambda name, payload: receipts.journal(name, payload, flush=True),
         )
         receipts.result["sensor_recording_qos"] = {
@@ -340,12 +322,10 @@ def run_capture(config):
             robogauge=config.robogauge,
             result=receipts.result,
         )
-        pedestrian_view = create_pedestrian_view(stage, pedestrian)
         target_speed, physical_speed_guard = resolve_limits(config.experiment)
         tracker = create_route_controller(
             config.experiment,
             gt_diagnostic=config.gt_diagnostic,
-            slam_control=config.slam_control,
             interactive_control=config.interactive_control,
             target_speed=target_speed,
             spawn=spawn,
@@ -354,14 +334,13 @@ def run_capture(config):
             receipts.result,
             config.experiment,
             config.gt_diagnostic,
-            config.slam_control,
             config.robogauge,
             target_speed,
             physical_speed_guard,
             interactive_control=config.interactive_control,
         )
         cancellation.check()
-        run_preflights(config.experiment, pedestrian, receipts.result, receipts.save)
+        run_preflights(config.experiment, receipts.result, receipts.save)
         previous_completed_tau = np.zeros(12)
         receipts.save()
 
@@ -395,14 +374,12 @@ def run_capture(config):
         control = ControlLoop(
             experiment=config.experiment,
             gt_diagnostic=config.gt_diagnostic,
-            slam_control=config.slam_control,
             interactive_control=config.interactive_control,
             robogauge=config.robogauge,
             target_speed=target_speed,
             indices=indices,
             target=target,
             tracker=tracker,
-            dynamic_guard=dynamic_guard,
             policy=policy,
             receipts=receipts,
             latest_nav=ros.latest_nav,
@@ -431,7 +408,6 @@ def run_capture(config):
             out=config.output,
             stage=stage,
             gt_diagnostic=config.gt_diagnostic,
-            mapping=mapping,
             ros=ros,
             video=video,
             rgb_annotators=rgbd_annotators,
@@ -467,7 +443,6 @@ def run_capture(config):
                     policy_frames=policy_frames,
                 )
             cancellation.check()
-            pedestrian_target = update_pedestrian(pedestrian, config.experiment)
             contact_monitor.begin_step()
             tau = compute_torque(
                 art=art,
@@ -502,9 +477,6 @@ def run_capture(config):
                     stream.process(
                         iteration=i,
                         measurement=measurement,
-                        pedestrian_view=pedestrian_view,
-                        pedestrian_target=pedestrian_target,
-                        dynamic_guard=dynamic_guard,
                         camera_rows=camera_rows,
                     )
                     if rtx_lidar is None:
@@ -586,7 +558,6 @@ def run_capture(config):
                 and not rgbd_annotators.recover_invalid_native_frames):
             raise RuntimeError("RTX mode emitted no verified native RGB frames")
         cancellation.check()
-        mapping.finish(receipts.result)
         receipts.close_journals()
         cancellation.check()
         video.close(timeout=15)
@@ -626,8 +597,10 @@ def run_capture(config):
             navigation_running=False,
             navigation_command_source="native_pose_diagnostic"
             if config.gt_diagnostic
-            else config.experiment.get("navigation_command_source", "measured_lio_route")
-            if config.slam_control
+            else config.experiment.get(
+                "navigation_command_source", "interactive_waypoint_exploration"
+            )
+            if config.interactive_control
             else "/dynanav/nav/approved_cmd",
         )
         receipts.save(force=True)
