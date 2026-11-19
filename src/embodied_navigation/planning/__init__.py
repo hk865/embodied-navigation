@@ -1,1 +1,1 @@
-from .route import lookahead_target
+"""Global route planning (PCT) and autonomous exploration."""

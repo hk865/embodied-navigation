@@ -115,14 +115,19 @@ def parse_config(argv=None):
         )
     gt_diagnostic = mode == "native_pose_diagnostic"
     interactive_control = mode == "interactive_waypoint_exploration"
-    robogauge = experiment.get("policy") == "robogauge"
+    explicit_policy = experiment.get("policy")
+    if (gt_diagnostic or interactive_control) and explicit_policy != "robogauge":
+        raise ValueError(
+            "Native-pose diagnostic and interactive exploration require explicit policy='robogauge'"
+        )
+    if explicit_policy not in (None, "robogauge"):
+        raise ValueError(
+            f"Retired policy {explicit_policy!r} is no longer supported; only 'robogauge' is supported"
+        )
+    robogauge = True
     use_fabric = experiment.get("render_backend", "fabric") == "fabric"
     if experiment.get("point_cloud_source", "rgbd") == "rtx_lidar" and not use_fabric:
         raise ValueError("RTX LiDAR requires Fabric physics updates so attached sensors follow the body")
-    if (gt_diagnostic or interactive_control) and not robogauge:
-        raise ValueError(
-            "Native-pose diagnostic requires the explicit RoboGauge experiment"
-        )
     if interactive_control and gt_diagnostic:
         raise ValueError(
             "Interactive waypoint exploration cannot be a ground-truth navigation mode"

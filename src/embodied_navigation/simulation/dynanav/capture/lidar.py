@@ -302,8 +302,20 @@ def prepare_lidar_asset(output):
     from embodied_navigation.project import data_root
     import os
     import shutil
-    version_file = Path(os.environ.get("ISAAC_SIM_ROOT", "/home/hyh001/isaacsim")) / "VERSION"
-    version = version_file.read_text().strip() if version_file.exists() else ""
+    import sys
+    version_file = None
+    isaac_root = os.environ.get("ISAAC_SIM_ROOT")
+    if isaac_root:
+        candidate = Path(isaac_root) / "VERSION"
+        if candidate.exists():
+            version_file = candidate
+    if version_file is None:
+        for parent in Path(sys.executable).resolve().parents:
+            candidate = parent / "VERSION"
+            if candidate.exists():
+                version_file = candidate
+                break
+    version = version_file.read_text().strip() if version_file else ""
     cache = data_root() / "runtime_assets/sensors/isaacsim_6_0_1_rc7"
     cached = cache / (LIDAR_VARIANT + ".usd")
     cached_meta = cache / "os1_32ch10hz1024res.provenance.json"

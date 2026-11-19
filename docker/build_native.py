@@ -106,7 +106,7 @@ def main():
     parser.add_argument(
         "--source-cache",
         type=Path,
-        help="Use only these three verified name.tar.gz archives; no downloads or fallback",
+        help="Use only the verified livox_sdk2.tar.gz archive; no downloads or fallback",
     )
     args = parser.parse_args()
     if not 1 <= args.jobs <= 4:
@@ -129,9 +129,9 @@ def main():
     if not args.execute:
         print(json.dumps(plan, indent=2))
         return
-    if work.exists() or any((install / p).exists() for p in ("dds", "livox", "ros", "pct")):
+    if work.exists() or any((install / p).exists() for p in ("livox", "ros", "pct")):
         raise RuntimeError(
-            "Use a fresh build/native and install/{dds,livox,ros,pct}; no reused CMake objects"
+            "Use a fresh build/native and install/{livox,ros,pct}; no reused CMake objects"
         )
     if args.source_cache:
         for name, pin in pins.items():
@@ -148,30 +148,6 @@ def main():
                 raise ValueError("Copied source checksum mismatch: " + str(target))
         else:
             download(pin, target)
-    dds = install / "dds"
-    run(
-        [
-            sys.executable,
-            ROOT / "docker/private_dds/build_private_dds.py",
-            "--fastdds-archive",
-            sources / "fastdds.tar.gz",
-            "--asio-archive",
-            sources / "asio.tar.gz",
-            "--work-dir",
-            work / "dds",
-            "--prefix",
-            dds,
-            "--jobs",
-            args.jobs,
-            "--execute",
-        ]
-    )
-    run(
-        [
-            work / "dds/build/test/unittest/transport/SharedMemTests",
-            "--gtest_filter=SHMTransportTests.reviewed_heartbeat_*",
-        ]
-    )
     sdk = sources / pins["livox_sdk2"]["archive_root"]
     extract(sources / "livox_sdk2.tar.gz", sources, sdk.name)
     # Keep the original GCC13 compatibility fix explicit and reproducible.
@@ -191,10 +167,10 @@ def main():
     )
     env = dict(os.environ)
     env["CMAKE_PREFIX_PATH"] = ":".join(
-        [str(install / "livox"), str(dds), env.get("CMAKE_PREFIX_PATH", "")]
+        [str(install / "livox"), env.get("CMAKE_PREFIX_PATH", "")]
     )
     env["LD_LIBRARY_PATH"] = ":".join(
-        [str(dds / "lib"), str(install / "livox/lib"), env.get("LD_LIBRARY_PATH", "")]
+        [str(install / "livox/lib"), env.get("LD_LIBRARY_PATH", "")]
     )
     env["MAKEFLAGS"] = "-j" + str(args.jobs)
     run(

@@ -12,8 +12,5 @@ dependencies = ["numpy==1.26.4", "scipy==1.11.4", "PyYAML==6.0.1"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[project.scripts]
-embodied-navigation = "embodied_navigation.launch.main:main"
-
 [tool.setuptools.package-data]
 "embodied_navigation.planning.exploration" = ["os1_calibration.json"]
