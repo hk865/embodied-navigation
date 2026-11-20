@@ -1,7 +1,0 @@
-cmake_minimum_required(VERSION 3.8)
-project(independent_stair_acceptance)
-set(CMAKE_CXX_STANDARD 17)
-find_package(ament_cmake REQUIRED)
-find_package(plan_env REQUIRED)
-add_executable(stair_acceptance stair_acceptance.cpp)
-target_link_libraries(stair_acceptance plan_env::plan_env)

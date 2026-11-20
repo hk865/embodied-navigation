@@ -1,0 +1,198 @@
+--- a/third_party/scan/plan_manage/src/planner_manager.cpp
++++ b/third_party/scan/plan_manage/src/planner_manager.cpp
+@@ -1,6 +1,9 @@
+ // #include <fstream>
+ #include <plan_manage/planner_manager.h>
++#include <algorithm>
+ #include <chrono>
++#include <cmath>
++#include <limits>
+ #include <thread>
+ 
+ namespace scan_planner {
+@@ -31,6 +34,175 @@
+ 
+     points.front()(2) = start_z;
+     points.back()(2) = target_z;
++}
++
++// Compute the upper elevation envelope max(z_linear, z_ref) over the matched
++// local slice of the global 3D reference trajectory:
++//   - At concave transitions (flat floor -> bottom of stairs/ramp, even when
++//     global PCT detours laterally), z_linear >= z_ref so the trajectory rises
++//     smoothly above the first step instead of dipping into it.
++//   - At convex transitions (top of stairs/ramp -> flat landing, ascending or
++//     descending), z_ref > z_linear so the trajectory clears the convex floor
++//     corner instead of cutting through it.
++// Bounds start/target matches to tight progress, elevation, and 3D arc-length
++// windows so multi-floor overlapping XY loops cannot mismatch to another floor.
++void applyReferenceZProfile(std::vector<Eigen::Vector3d> &points,
++                            const Eigen::Vector3d &start_pt,
++                            const Eigen::Vector3d &target_pt,
++                            GlobalTrajData &global_data,
++                            const double max_vel,
++                            const double planning_horizon) {
++    if (points.empty() || !start_pt.allFinite() || !target_pt.allFinite()) {
++        return;
++    }
++    if (points.size() <= 2) {
++        applyLinearZReference(points, start_pt(2), target_pt(2));
++        return;
++    }
++    for (const auto &pt : points) {
++        if (!pt.allFinite()) {
++            applyLinearZReference(points, start_pt(2), target_pt(2));
++            return;
++        }
++    }
++    // Start with the standard linear Z baseline; reference elevation can only
++    // raise interior points over convex terrain crests.
++    applyLinearZReference(points, start_pt(2), target_pt(2));
++
++    const auto seg_times = global_data.global_traj_.getTimes();
++    if (seg_times.empty()) {
++        return;
++    }
++    double total_t = 0.0;
++    for (double dt : seg_times) {
++        if (!std::isfinite(dt) || dt <= 0.0) {
++            return;
++        }
++        total_t += dt;
++    }
++    if (!std::isfinite(total_t) || total_t <= 1e-3) {
++        return;
++    }
++
++    const double raw_prog =
++        (std::isfinite(global_data.last_progress_time_) && std::isfinite(global_data.time_increase_))
++            ? (global_data.last_progress_time_ - global_data.time_increase_)
++            : 0.0;
++    const double prog_t = std::max(0.0, std::min(total_t, raw_prog));
++    const double seg_dist = (target_pt - start_pt).norm();
++    const double speed = (std::isfinite(max_vel) && max_vel > 0.1) ? max_vel : 0.5;
++    const double horizon = (std::isfinite(planning_horizon) && planning_horizon > 0.5)
++                               ? planning_horizon
++                               : 2.5;
++    const double start_window_lo = std::max(0.0, prog_t - 0.5);
++    const double start_window_hi = std::min(total_t, prog_t + 0.5);
++    const double t_lo = start_window_lo;
++    const double t_hi =
++        std::min(total_t, prog_t + std::max(2.0, (std::max(seg_dist, horizon) / speed) * 2.5 + 1.0));
++    const double span = t_hi - t_lo;
++    if (!std::isfinite(span) || span <= 1e-4) {
++        return;
++    }
++
++    const double raw_samples = std::ceil(span / 0.04) + 1.0;
++    const int samples = static_cast<int>(std::max(32.0, std::min(400.0, raw_samples)));
++    std::vector<Eigen::Vector3d> ref_pts;
++    std::vector<double> ref_times;
++    ref_pts.reserve(samples + 1);
++    ref_times.reserve(samples + 1);
++    const double eval_max_t = total_t - 2e-4;
++    for (int i = 0; i <= samples; ++i) {
++        const double t = std::min(eval_max_t, t_lo + span * (static_cast<double>(i) / samples));
++        const Eigen::Vector3d p = global_data.global_traj_.evaluate(t);
++        if (!p.allFinite()) {
++            return;
++        }
++        ref_pts.push_back(p);
++        ref_times.push_back(t);
++    }
++
++    size_t idx_a = 0;
++    double best_a = std::numeric_limits<double>::infinity();
++    bool found_a = false;
++    for (size_t i = 0; i < ref_pts.size(); ++i) {
++        if (ref_times[i] > start_window_hi + 1e-6) {
++            break;
++        }
++        if (std::abs(ref_pts[i](2) - start_pt(2)) > 0.35) {
++            continue;
++        }
++        const double d = (ref_pts[i] - start_pt).norm();
++        if (d < best_a) {
++            best_a = d;
++            idx_a = i;
++            found_a = true;
++        }
++    }
++    if (!found_a || best_a > 0.8) {
++        return;
++    }
++
++    const double max_arc_3d = seg_dist * 1.6 + 0.5;
++    size_t idx_b = idx_a;
++    double best_b = std::numeric_limits<double>::infinity();
++    bool found_b = false;
++    double walked_3d = 0.0;
++    double best_b_arc_3d = 0.0;
++    for (size_t i = idx_a + 1; i < ref_pts.size(); ++i) {
++        walked_3d += (ref_pts[i] - ref_pts[i - 1]).norm();
++        if (walked_3d > max_arc_3d) {
++            break;
++        }
++        if (std::abs(ref_pts[i](2) - target_pt(2)) > 0.35) {
++            continue;
++        }
++        const double d = (ref_pts[i] - target_pt).norm();
++        if (d < best_b) {
++            best_b = d;
++            idx_b = i;
++            best_b_arc_3d = walked_3d;
++            found_b = true;
++        }
++    }
++    if (!found_b || idx_b <= idx_a || best_b > 0.8 || best_b_arc_3d > seg_dist * 2.0 + 0.6) {
++        return;
++    }
++
++    std::vector<double> pt_acc_xy(points.size(), 0.0);
++    for (size_t i = 1; i < points.size(); ++i) {
++        pt_acc_xy[i] = pt_acc_xy[i - 1] + (points[i].head<2>() - points[i - 1].head<2>()).norm();
++    }
++    const double pt_total_xy = pt_acc_xy.back();
++    if (!std::isfinite(pt_total_xy) || pt_total_xy <= 1e-4) {
++        return;
++    }
++
++    const double dz_start = start_pt(2) - ref_pts[idx_a](2);
++    const double dz_end = target_pt(2) - ref_pts[idx_b](2);
++    const double z_ceiling = std::max(start_pt(2), target_pt(2)) + 0.05;
++
++    for (size_t i = 1; i + 1 < points.size(); ++i) {
++        const double ratio = pt_acc_xy[i] / pt_total_xy;
++        double best_xy = std::numeric_limits<double>::infinity();
++        size_t nearest = idx_a;
++        for (size_t k = idx_a; k <= idx_b; ++k) {
++            const double dxy = (ref_pts[k].head<2>() - points[i].head<2>()).norm();
++            if (dxy < best_xy) {
++                best_xy = dxy;
++                nearest = k;
++            }
++        }
++        if (best_xy > 0.6) {
++            continue;
++        }
++        const double z_ref =
++            ref_pts[nearest](2) + (1.0 - ratio) * dz_start + ratio * dz_end;
++        if (std::isfinite(z_ref)) {
++            points[i](2) = std::max(points[i](2), std::min(z_ceiling, z_ref));
++        }
++    }
++    points.front()(2) = start_pt(2);
++    points.back()(2) = target_pt(2);
+ }
+ } // namespace
+ 
+@@ -263,7 +435,8 @@
+         }
+     } while (flag_regenerate);
+ 
+-    applyLinearZReference(point_set, start_pt(2), local_target_pt(2));
++    applyReferenceZProfile(point_set, start_pt, local_target_pt, global_data_, pp_.max_vel_,
++                           pp_.planning_horizon_);
+ 
+     Eigen::MatrixXd ctrl_pts;
+     UniformBspline::parameterizeToBspline(ts, point_set, start_end_derivatives, ctrl_pts);

@@ -267,6 +267,64 @@ class MeasuredPctPlanner:
         layer = int(eligible[np.argmin(dz[eligible])])
         return [layer, int(col), int(row)]
 
+    def _footprint_start_node(self, body, max_radius_m=0.25):
+        """Attach start to a directly 4-adjacent measured support cell within the robot footprint.
+
+        Only applies when the robot's own cell already has measured surface returns near
+        the expected foot elevation (e.g. a stair nosing or slope edge whose mixed heights
+        fail single-cell horizontal clustering) and has NO measured obstacle returns above
+        foot level inside the clearance band. Rejects unobserved holes, cliffs, walls,
+        and diagonal corner cuts; never fabricates cells and never widens goal admission.
+        """
+        c0, r0 = np.floor((body[:2] - self.origin) / self.resolution + 1e-9).astype(int)
+        if r0 < 0 or c0 < 0 or r0 >= self.cost.shape[1] or c0 >= self.cost.shape[2]:
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_out_of_bounds')
+        own_zs = self.measured_buckets.get((int(r0), int(c0)))
+        if not own_zs:
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_unobserved')
+        foot_z = float(body[2] - self.offset)
+        own = np.asarray(own_zs, dtype=float)
+        # Reject if the start cell contains an obstacle inside torso clearance above foot+tolerance.
+        if np.any((own > foot_z + self.tolerance) & (own < foot_z + self.clearance)):
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_obstacle')
+        # Reject if the start cell contains a deep drop (> tolerance + 0.10 m below foot), e.g. cliff lip.
+        if np.any(own < foot_z - self.tolerance - 0.10):
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_cliff_drop')
+        # Require actual measured surface returns at foot level (prevents snapping out of cliffs/drops).
+        if not np.any(np.abs(own - foot_z) <= self.tolerance):
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_no_foot_elevation')
+
+        target = foot_z - self.z_origin
+        best = None
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            r, c = int(r0 + dr), int(c0 + dc)
+            if r < 0 or c < 0 or r >= self.cost.shape[1] or c >= self.cost.shape[2]:
+                continue
+            cx = self.origin[0] + (c + 0.5) * self.resolution
+            cy = self.origin[1] + (r + 0.5) * self.resolution
+            horiz = float(np.hypot(cx - body[0], cy - body[1]))
+            if horiz > max_radius_m + 1e-9:
+                continue
+            dz = np.abs(self.height[:, r, c] - target)
+            eligible = np.flatnonzero((self.cost[:, r, c] < 20) & (dz <= self.tolerance))
+            if not len(eligible):
+                continue
+            layer = int(eligible[np.argmin(dz[eligible])])
+            vert = float(dz[layer])
+            key = (horiz, vert, layer, r, c)
+            if best is None or key < best[0]:
+                best = (key, [layer, c, r], horiz, vert)
+        if best is None:
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason='no_adjacent_support')
+        _, node, horiz, vert = best
+        return node, dict(
+            applied=True,
+            max_radius_m=max_radius_m,
+            cell_layer_row_col=[node[0], node[2], node[1]],
+            horizontal_distance_m=horiz,
+            vertical_delta_m=vert,
+        )
+
     def plan(self, start_body_xyz, goal_body_xyz):
         """Return {found, body_path_xyz, reason, provenance}; never return a partial route."""
         start, goal = _xyz([start_body_xyz, goal_body_xyz], 'endpoints')
@@ -275,12 +333,18 @@ class MeasuredPctPlanner:
             result['reason'] = 'no_measured_support'
             return result
         cost, heights = self.cost, self.height
-        if self.blind_radius > 0 and self._node(start) is None:
+        first = self._node(start, cost, heights)
+        footprint_snap = dict(applied=False, max_radius_m=0.25)
+        if first is None:
+            first, footprint_snap = self._footprint_start_node(start)
+        result['provenance']['start_footprint_snap'] = footprint_snap
+        if first is None and self.blind_radius > 0:
             cost, heights, model = self._start_surface_model(start)
             result['provenance']['start_surface_model'] = model
+            first = self._node(start, cost, heights)
         else:
             result['provenance']['start_surface_model'] = dict(enabled=self.blind_radius > 0, applied=False)
-        first, last = self._node(start, cost, heights), self._node(goal, cost, heights)
+        last = self._node(goal, cost, heights)
         if first is None or last is None:
             result['reason'] = 'start_support_unobserved' if first is None else 'goal_support_unobserved'
             return result

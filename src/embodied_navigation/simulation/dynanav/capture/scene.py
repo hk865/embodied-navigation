@@ -34,7 +34,7 @@ def start_simulation_app(use_fabric, *, rtx_lidar=False, log_to_stdout=False):
             "create_new_stage": False,
             "disable_viewport_updates": True,
             "multi_gpu": False,
-            "sync_loads": False,
+            "sync_loads": bool(rtx_lidar),
             "limit_cpu_threads": 8,
             "extra_args": [
                 # The native launcher owns the bounded stdout/stderr sink. Keep

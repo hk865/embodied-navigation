@@ -103,6 +103,69 @@ class MeasuredPctTests(unittest.TestCase):
         self.assertEqual(result['reason'],'start_support_unobserved')
         self.assertEqual(result['provenance']['start_surface_model']['inferred_support_cells'],0)
 
+    def test_start_footprint_snaps_across_single_riser_cell_without_fabricating_blind_support(self):
+        points = plane(30, 12, height=lambda x, y: 0.0 if x < 10 else 0.15)
+        # Add riser points inside cell (row=5, col=10) so that single cell rejects clustering.
+        riser = np.array([[10.5 * 0.15, 5.5 * 0.15, z] for z in np.linspace(0.0, 0.15, 6)])
+        planner = self.planner(np.vstack([points, riser]))
+        start = [10.5 * 0.15, 5.5 * 0.15, 0.15 + 0.32]
+        goal = [24.5 * 0.15, 5.5 * 0.15, 0.15 + 0.32]
+        self.assertIsNone(planner._node(np.asarray(start)))
+        result = planner.plan(start, goal)
+        self.assertTrue(result['found'], result)
+        snap = result['provenance']['start_footprint_snap']
+        self.assertTrue(snap['applied'])
+        self.assertLessEqual(snap['horizontal_distance_m'], 0.25)
+        self.assertEqual(result['body_path_xyz'][0], start)
+        self.assertEqual(result['body_path_xyz'][-1], goal)
+        # Goal on the same rejected riser cell still fails strictly.
+        bad_goal = planner.plan(goal, start)
+        self.assertFalse(bad_goal['found'])
+        self.assertEqual(bad_goal['reason'], 'goal_support_unobserved')
+
+    def test_start_footprint_snap_rejects_wall_cliff_and_diagonal_corner_cut(self):
+        base = plane(30, 12, height=lambda x, y: 0.0)
+        goal = [24.5 * 0.15, 5.5 * 0.15, 0.32]
+        # 1) Thin wall / torso-height obstacle at start cell must be rejected.
+        wall_cell = np.array([[10.5 * 0.15, 5.5 * 0.15, 0.40]])
+        wall_res = self.planner(np.vstack([base, wall_cell])).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
+        self.assertFalse(wall_res['found'])
+        self.assertEqual(wall_res['reason'], 'start_support_unobserved')
+        self.assertEqual(wall_res['provenance']['start_footprint_snap']['reason'], 'start_cell_obstacle')
+
+        # 2) Cliff / unobserved drop cell right next to floor must be rejected.
+        cliff = base[~((np.floor(base[:, 0] / 0.15) == 10) & (np.floor(base[:, 1] / 0.15) == 5))]
+        cliff_res = self.planner(cliff).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
+        self.assertFalse(cliff_res['found'])
+        self.assertEqual(cliff_res['reason'], 'start_support_unobserved')
+        self.assertEqual(cliff_res['provenance']['start_footprint_snap']['reason'], 'start_cell_unobserved')
+
+        # 2b) Cliff-lip overhang (foot-level lip plus deep drop in same start cell) must be rejected.
+        cliff_lip = np.vstack([
+            cliff,
+            [[10.5 * 0.15, 5.5 * 0.15, z] for z in (0.0, -0.05, -0.10, -0.45)],
+        ])
+        lip_res = self.planner(cliff_lip).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
+        self.assertFalse(lip_res['found'])
+        self.assertEqual(lip_res['reason'], 'start_support_unobserved')
+        self.assertEqual(lip_res['provenance']['start_footprint_snap']['reason'], 'start_cell_cliff_drop')
+
+        # 3) Diagonal-only neighbor separated by two orthogonal obstacles must not corner-cut.
+        diag_pts = base.copy()
+        # Keep foot elevation at (10,5) with a mixed riser so exact _node fails,
+        # block all four 4-neighbors (9,5),(11,5),(10,4),(10,6) with walls, leaving diagonals free.
+        riser = np.array([[10.5 * 0.15, 5.5 * 0.15, z] for z in np.linspace(0.0, 0.15, 6)])
+        orth_walls = np.array([
+            [(10 + dc + 0.5) * 0.15, (5 + dr + 0.5) * 0.15, 0.40]
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+        ])
+        diag_res = self.planner(np.vstack([diag_pts, riser, orth_walls])).plan(
+            [10.5 * 0.15, 5.5 * 0.15, 0.15 + 0.32], goal
+        )
+        self.assertFalse(diag_res['found'])
+        self.assertEqual(diag_res['reason'], 'start_support_unobserved')
+        self.assertEqual(diag_res['provenance']['start_footprint_snap']['reason'], 'no_adjacent_support')
+
     def test_empty_and_invalid(self):
         self.assertEqual(self.planner(np.empty((0,3))).plan([0,0,.32],[1,1,.32])['reason'],'no_measured_support')
         with self.assertRaises(ValueError):

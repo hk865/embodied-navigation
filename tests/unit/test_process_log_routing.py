@@ -28,5 +28,27 @@ class KitLogRoutingTests(unittest.TestCase):
         self.assertFalse(any(argument.startswith("--/log/level=") for argument in args))
 
 
+    def test_rtx_lidar_enables_sync_loads_for_material_stability(self):
+        self.assertFalse(self.app_config(rtx_lidar=False)["sync_loads"])
+        with patch.dict(
+            sys.modules,
+            {
+                "omni": types.SimpleNamespace(
+                    usd=types.SimpleNamespace(
+                        get_context=lambda: types.SimpleNamespace(new_stage=lambda: None)
+                    )
+                ),
+                "omni.usd": types.SimpleNamespace(
+                    get_context=lambda: types.SimpleNamespace(new_stage=lambda: None)
+                ),
+                "isaacsim.core": types.ModuleType("isaacsim.core"),
+                "isaacsim.core.rendering_manager": types.SimpleNamespace(
+                    RenderingManager=types.SimpleNamespace(set_dt=lambda dt: None)
+                ),
+            },
+        ):
+            self.assertTrue(self.app_config(rtx_lidar=True)["sync_loads"])
+
+
 if __name__ == "__main__":
     unittest.main()
