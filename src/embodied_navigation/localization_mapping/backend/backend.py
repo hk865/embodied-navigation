@@ -493,11 +493,14 @@ class SlamBackend:
         yaw. Among verified candidates the lowest RMSE wins.
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
-        source_body = keyframe.points_body()
+        source_body = None
         best = None
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
+            if source_body is None:
+                # 仅在首个合格候选进入 ICP 时才计算查询帧机体系点云，默认关闭或无候选时严格零开销。
+                source_body = keyframe.points_body()
             T_init = store.poses[key] @ yaw_pose(yaw)
             target = submap(key)
             result = self._register(source_body, target, T_init)

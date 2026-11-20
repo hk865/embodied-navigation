@@ -53,6 +53,12 @@ class SurfaceConfig:
         ):
             _positive(f"surface.{name}", getattr(self, name))
         _count("surface.min_points", self.min_points)
+        if self.min_points < 3:
+            raise ValueError(f"surface.min_points 至少为 3 才能拟合平面，当前收到 {self.min_points!r}")
+        if self.normal_tolerance_rad >= np.pi / 4.0:
+            raise ValueError(
+                f"surface.normal_tolerance_rad 必须小于 pi/4 以避免水平与竖直面分类重叠，当前收到 {self.normal_tolerance_rad!r}"
+            )
         _count("surface.min_patches", self.min_patches)
         cov = _positive("surface.min_coverage", self.min_coverage)
         if cov > 1.0:
@@ -133,8 +139,10 @@ def model_surfaces(points_world, source_keys=None, config: SurfaceConfig | None 
             planar[cell] = (indices, center, normal, kind)
     patches = []
     remaining = set(planar)
-    while remaining:
-        first = min(remaining)
+    # 预先按体素索引排序一次，保持确定性合并顺序同时避免每轮 min(remaining) 的平方复杂度。
+    for first in sorted(planar):
+        if first not in remaining:
+            continue
         remaining.remove(first)
         indices, center, normal, kind = planar[first]
         members = list(indices)
@@ -190,15 +198,30 @@ def compare_surfaces(query: SurfaceModel, target: SurfaceModel, config: SurfaceC
         if target_patches:
             target_points = np.vstack([p.points for p in target_patches])
             normals = np.vstack([np.tile(p.normal, (p.support_count, 1)) for p in target_patches])
+            cos_tol = float(np.cos(c.normal_tolerance_rad))
             tree = cKDTree(target_points)
             for patch in query_patches:
                 distance, index = tree.query(patch.points)
                 residual = np.abs(np.einsum("ij,ij->i", patch.points - target_points[index], normals[index]))
-                consistent = (
-                    (distance <= c.correspondence_m)
-                    & (residual <= c.max_residual_m)
-                    & (np.abs(normals[index] @ patch.normal) >= np.cos(c.normal_tolerance_rad))
-                )
+                normal_ok = np.abs(normals[index] @ patch.normal) >= cos_tol
+                consistent = (distance <= c.correspondence_m) & (residual <= c.max_residual_m) & normal_ok
+                # 墙角/平面交界处最近点可能落在另一正交墙面上：仅对半径内未命中的点补查半径内兼容法向点。
+                corner_retry = np.flatnonzero((distance <= c.correspondence_m) & (~consistent))
+                if len(corner_retry) > 0:
+                    neighbors_list = tree.query_ball_point(patch.points[corner_retry], r=c.correspondence_m)
+                    for idx_local, nbrs in zip(corner_retry, neighbors_list):
+                        if not nbrs:
+                            continue
+                        nbr_arr = np.asarray(nbrs, dtype=np.intp)
+                        nbr_norm_ok = np.abs(normals[nbr_arr] @ patch.normal) >= cos_tol
+                        if not np.any(nbr_norm_ok):
+                            continue
+                        cand = nbr_arr[nbr_norm_ok]
+                        cand_res = np.abs(np.einsum("ij,ij->i", patch.points[idx_local] - target_points[cand], normals[cand]))
+                        min_res = float(cand_res.min())
+                        if min_res <= c.max_residual_m:
+                            consistent[idx_local] = True
+                            residual[idx_local] = min_res
                 count = int(consistent.sum())
                 accepted += count
                 errors.extend(residual[consistent])

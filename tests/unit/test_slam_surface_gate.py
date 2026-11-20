@@ -106,6 +106,10 @@ class SurfaceGateUnitTest(unittest.TestCase):
             BackendConfig.from_dict({"surface": {"unknown_key": 1.0}})
         with self.assertRaises(ValueError):
             BackendConfig.from_dict({"surface": {"min_coverage": 1.5}})
+        with self.assertRaises(ValueError):
+            SurfaceConfig(min_points=2)
+        with self.assertRaises(ValueError):
+            SurfaceConfig(normal_tolerance_rad=float(np.pi / 4.0))
 
         cfg_path = REPO_ROOT / "configs" / "localization_mapping" / "slam_surface_gate.json"
         cfg = BackendConfig.from_json(cfg_path)
@@ -115,6 +119,23 @@ class SurfaceGateUnitTest(unittest.TestCase):
         self.assertAlmostEqual(cfg.loop_sigma_rad, 0.03)
         self.assertAlmostEqual(cfg.loop_sigma_yaw_rad, 0.01)
         self.assertAlmostEqual(cfg.cauchy_scale, 3.0)
+
+    def test_compare_surfaces_handles_orthogonal_wall_corner_without_false_rejection(self) -> None:
+        """墙角处正交墙面最近点更近但法向不同，半径内存在兼容墙面时不应误拒绝。"""
+        cfg = SurfaceConfig(correspondence_m=0.3, max_residual_m=0.06, min_coverage=0.8)
+        # 构造目标模型：x=2.0 墙面（稍稀疏）和 y=2.0 墙面（紧贴墙角且在交界处更密集）
+        wall_x_target = _vertical_wall(2.0, np.linspace(1.6, 1.95, 8), np.linspace(0.1, 1.0, 10))
+        gy, gz = np.meshgrid(np.linspace(1.8, 2.02, 12), np.linspace(0.1, 1.0, 10))
+        wall_y_target = np.column_stack([gy.ravel(), np.full(gy.size, 2.0), gz.ravel()])
+        target_model = model_surfaces(np.vstack([wall_x_target, wall_y_target]), config=cfg)
+
+        # 查询模型：靠近墙角的 x=2.0 墙面采样，紧贴 y=1.99 处距 y=2.0 墙面仅 1cm，但属于 x=2.0 墙面
+        wall_x_query = _vertical_wall(2.0, np.linspace(1.75, 1.99, 10), np.linspace(0.1, 1.0, 10))
+        query_model = model_surfaces(wall_x_query, config=cfg)
+
+        res = compare_surfaces(query_model, target_model, cfg)
+        self.assertTrue(res.accepted)
+        self.assertEqual(res.reason, "consistent")
 
     def test_slam_backend_surface_gate_accepts_true_loop_and_records_rejection(self) -> None:
         """SlamBackend 开启表面门控时，真回环放行且可记录拒绝原因。"""
