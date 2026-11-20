@@ -95,6 +95,10 @@ class BackendConfig:
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.measured_submap, SubmapConfig):
+            raise ValueError(
+                f"measured_submap 必须为 SubmapConfig 实例，当前收到 {type(self.measured_submap).__name__}"
+            )
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -289,9 +293,11 @@ class SlamBackend:
         self.loop_count = 0
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
-        self._source_frames: list[Keyframe] = []  # 供查询侧连续实测子图累积使用的历史关键帧缓存
+        self._source_frames: list[Keyframe] = []  # 供查询侧连续实测子图累积使用的已成功处理历史帧缓存
         self.measured_query_submaps = 0
         self.measured_target_submaps = 0
+        self.measured_query_frames_total = 0
+        self.measured_target_frames_total = 0
         self._path_m: dict = {}  # key -> cumulative odom path length
         self._correction: np.ndarray | None = None
         self._tracking = False
@@ -314,16 +320,18 @@ class SlamBackend:
         try:
             if len(keyframe.points_lidar) == 0:
                 raise ValueError(f"keyframe {keyframe.key} has no points")
-            if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
-                self._source_frames.append(keyframe)
-                max_keep = max(self.config.measured_submap.max_frames, 1)
-                if len(self._source_frames) > max_keep:
-                    self._source_frames = self._source_frames[-max_keep:]
             desc = descriptor(keyframe.points_body(), self.config.scan_context)
             if self.prior is None:
                 event.update(self._map_step(keyframe, desc))
             else:
                 event.update(self._relocalize_step(keyframe, desc))
+            if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                # 仅在当前关键帧成功处理后写入历史缓存，避免异常帧污染后续查询子图。
+                keep_history = self.config.measured_submap.max_frames - 1
+                if keep_history > 0:
+                    self._source_frames.append(keyframe)
+                    if len(self._source_frames) > keep_history:
+                        self._source_frames = self._source_frames[-keep_history:]
         except Exception as error:  # one bad keyframe must not stop the backend
             self.last_error = f"{type(error).__name__}: {error}"
             event["error"] = self.last_error
@@ -428,12 +436,18 @@ class SlamBackend:
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
-        """构建回环候选的世界系 ICP 目标点云；开启历史侧多帧子图时改用局部实测子图。"""
+        """构建回环候选的世界系 ICP 目标点云；开启历史侧多帧子图时按原始帧序遇排除断点即截断。"""
         if self.config.use_measured_submaps and self.config.measured_submap.use_history_submap:
             anchor = self.map.keyframes[key]
-            frames = [self.map.keyframes[k] for k in self._loop_window(key, excluded)]
-            measured = build_submap(frames, anchor, self.config.measured_submap)
+            measured = build_submap(
+                self.map.keyframes.values(),
+                anchor,
+                self.config.measured_submap,
+                excluded=excluded,
+                track_sources=False,
+            )
             self.measured_target_submaps += 1
+            self.measured_target_frames_total += len(measured.source_keys)
             return transform_points(self.map.poses[key], measured.points_body)
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
@@ -502,15 +516,24 @@ class SlamBackend:
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         best = None
-        source = keyframe.points_body()
-        if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap and self._source_frames:
-            # 查询侧多帧实测子图：用前端近期连续帧拼成更完整的当前机体系点云做 ICP。
-            measured = build_submap(self._source_frames, keyframe, self.config.measured_submap)
-            source = measured.points_body
-            self.measured_query_submaps += 1
+        source = None
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
+            if source is None:
+                # 仅在首个合格候选真正进入 ICP 时才计算查询点云或构建查询侧多帧子图。
+                if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                    measured = build_submap(
+                        [*self._source_frames, keyframe],
+                        keyframe,
+                        self.config.measured_submap,
+                        track_sources=False,
+                    )
+                    source = measured.points_body
+                    self.measured_query_submaps += 1
+                    self.measured_query_frames_total += len(measured.source_keys)
+                else:
+                    source = keyframe.points_body()
             T_init = store.poses[key] @ yaw_pose(yaw)
             result = self._register(source, submap(key), T_init)
             if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
