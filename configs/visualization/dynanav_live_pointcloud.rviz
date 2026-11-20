@@ -1,0 +1,126 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Metric Grid
+      Enabled: true
+      Alpha: 0.2
+      Cell Size: 1
+      Color: 110; 122; 138
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Accumulated 3D Cloud (Z Color)
+      Enabled: true
+      Topic:
+        Value: /dynanav/rtx_livo/cloud_registered_full
+        Depth: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds: false
+      Min Axis Value: -1.0
+      Max Axis Value: 5.0
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.03
+      Size (Pixels): 3
+      Alpha: 0.95
+      Decay Time: 3600
+      Selectable: false
+      Queue Size: 20
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Current Scan Highlight
+      Enabled: true
+      Topic:
+        Value: /dynanav/rtx_livo/cloud_registered_full
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Position Transformer: XYZ
+      Color Transformer: FlatColor
+      Color: 255; 235; 80
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.05
+      Size (Pixels): 4
+      Alpha: 1.0
+      Decay Time: 0.25
+      Selectable: false
+      Queue Size: 5
+    - Class: rviz_default_plugins/Odometry
+      Name: Post-VIO Trajectory
+      Enabled: true
+      Topic:
+        Value: /dynanav/rtx_livo/post_vio_odometry
+        Depth: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Angle Tolerance: 0.05
+      Position Tolerance: 0.05
+      Keep: 5000
+      Covariance:
+        Value: false
+      Shape:
+        Value: Arrow
+        Alpha: 0.9
+        Color: 40; 220; 140
+        Head Length: 0.12
+        Head Radius: 0.06
+        Shaft Length: 0.35
+        Shaft Radius: 0.025
+    - Class: rviz_default_plugins/TF
+      Name: Robot TF
+      Enabled: true
+      Frame Timeout: 15
+      Marker Scale: 0.6
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+  Enabled: true
+  Global Options:
+    Background Color: 20; 24; 32
+    Fixed Frame: camera_init
+    Frame Rate: 20
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: go2_imu
+      Distance: 18
+      Pitch: 0.72
+      Yaw: 0.85
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 0.5
+      Near Clip Distance: 0.01
+      Field of View: 0.7853981633974483
+      Invert Z Axis: false
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: true
+  Views:
+    collapsed: true
+  Width: 1280
+  Height: 720
+  X: 0
+  Y: 0
