@@ -5,7 +5,8 @@
 ## 开发计划入口（新会话先读）
 
 - [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–4 里程碑与当前状态、分支归属、数据卷约定。
-- [活体任务板 TASKS](plan/TASKS.md)：已完成 / 进行中 / 待办队列，每条任务带建议角色、对应模块与验收标准。
+- [活体任务板 TASKS](plan/TASKS.md)：已完成 / 进行中 / 待办队列与远期触发式架构优化，每条任务带建议角色、对应模块与验收标准。
+- 架构决策记录 `plan/adr/`：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）。
 - 协作、分支与提交规则以 [AGENTS.md](../AGENTS.md) 为准；项目整体入口见根 [README.md](../README.md)。
 
 `docs/plan/` 是 2026-11-20 文档重建时新增的活体计划目录，会随阶段推进更新；本文件其余各节是**相对稳定**的说明与历史证据索引。

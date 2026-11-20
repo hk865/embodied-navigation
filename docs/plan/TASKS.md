@@ -32,14 +32,26 @@
 
 | 状态 | 任务 | 角色 | 对应模块 | 验收标准 |
 | --- | --- | --- | --- | --- |
-| `[ ]` | 从新 `main` 切 `exp/slam-measured-submaps`，对照多帧实测子图回环配准 | 主控 + Flash | `localization_mapping/backend/registration.py`、`keyframes.py` | 同输入、同时间轴、同对齐；报告回环接受率、误配/漏配与位姿误差，给出适用场景 |
-| `[ ]` | 切 `exp/slam-surface-gate`，对照平面/表面覆盖门控 | 主控 + Flash | 同上 | 同上口径；分别报告误配与漏配，独立地面高度因子另立实验 |
-| `[ ]` | 切 `exp/slam-visual-retrieval`，对照图像检索候选 | 主控 + Flash | `localization_mapping/backend/scan_context.py`、视觉检索接入点 | 记录实际候选与图边；光度因子与视觉 BA 另立实验 |
+| `[ ]` | **Phase 4 前置诊断**：复用 `runs/20261117-loop-comparison` 与 `runs/20261119-hba-project-comparison` 录包及分析记录，核查重构后后端优化结果退化的参数与方程原因（信息矩阵各向异性、Z/俯仰杠杆误差、回环权重与边剔除） | 主控 + Codex | `localization_mapping/backend/` | 给出可量化归因报告与基线参数对照表（同输入、同时间轴、同对齐），确认是否为参数/权重问题后再切 3 条分支 |
+| `[ ]` | 从新 `main` 切 `exp/slam-measured-submaps`，对照多帧实测子图回环配准 | 主控 + Flash | `localization_mapping/backend/registration.py`、`keyframes.py` | 同输入、同时间轴、同对齐；拆开验证查询侧/历史侧累积与锚点变化，报告回环接受率、误配/漏配与位姿误差 |
+| `[ ]` | 切 `exp/slam-surface-gate`，对照平面/表面覆盖门控 | 主控 + Flash | 同上 | 同上口径；分别报告误配与漏配，分析被拒边阶段与姿态约束不足问题，独立地面高度因子另立实验 |
+| `[ ]` | 切 `exp/slam-visual-retrieval`，对照图像检索候选 | 主控 + Flash | `localization_mapping/backend/scan_context.py`、视觉检索接入点 | 记录实际候选与图边、评估召回/几何验证/因子权重；光度因子与视觉 BA 另立实验 |
 | `[ ]` | 三条分支横向评测汇总 | 主控 + Codex | `localization_mapping/` | 统一输入/时间轴/对齐；报告收益、失败与适用场景；回归或证据不足时停止推广 |
 | `[ ]` | 按评测结论重构动态行人支线 | 主控 | 从 `ref/dynanav-dynamic-pedestrian` 提取 | 只提取明确需要的模块；主底座保持静态场景可复现；新增/修改有单测与真值对照 |
 | `[ ]` | SLAM 公共接口第二轮规范化（配置 schema、信息矩阵参数统一） | 主控 + Codex | `backend/backend.py`、`backend/node.py` | 未知键/类型错误显式失败；旧配置仍有兼容路径；回归不新增失败 |
 | `[ ]` | 后端模块文档补充板载部署/线程模型说明 | DSH | `localization_mapping/backend/README.md` | 与 `node.py --config` 实际参数一致；无过期文件引用 |
 | `[ ]` | 持续维护：每次改动同步根 README 与 `docs/plan/` | 全体 | `docs/` | 盘点日期更新；`git diff --check` 通过；链接可达 |
+
+## 远期 / 触发式架构优化（关联 ADR，达触发条件时立项）
+
+| 状态 | 任务 | 触发条件 / ADR | 对应模块 | 验收标准 |
+| --- | --- | --- | --- | --- |
+| `[ ]` | 评估将 `pct_scan_worker` 文件邮箱替换为低延迟直连 IPC / ROS Action，并排查 FAST-LIVO2 200 ms 成对突发发包节奏 | 需 >95% `yaw` 占空比、高动态追踪或高频抢占（见 [ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)） | `simulation/dynanav/pct_scan_worker.py`、`native_waypoints.py`、`third_party/fast_livo2/` | 端到端控制延迟显著下降且不放松 `max_sim_age_s=0.25 s` |
+| `[ ]` | 恢复动态行人时重审独立 `yaw` 的 0.2 s 点云融合重叠窗口 | 从 `ref/dynanav-dynamic-pedestrian` 恢复动态障碍（见 [ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)） | `simulation/dynanav/pct_scan_worker.py` | 近身移动障碍进入扫掠区时及时拦截，无漏报 |
+| `[ ]` | 设计具身 Agent 异步“边想边走”（Think-While-Acting）可抢占航点队列与前瞻缓冲 | 启动在线长程 VLM/Agent 探索（见 [ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)） | `scripts/explore_waypoint_client.py`、`simulation/dynanav/native_waypoints.py`、Agent 接口层 | Agent 思考期间机器人平滑推进，新目标可安全热替换且不越层写速度命令 |
+| `[ ]` | 设计语义 + 动态分层地图管理与 SLAM 回环锚点联动、后端位姿修正平滑注入控制 | Phase 4 后端定型且接入在线语义/动态层（见 [ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)） | `localization_mapping/backend/`、`localization_mapping/semantic_mapping/`、`planning/` | 回环更新后语义锚点一致重投影，动态障碍不污染长期静态图，局部轨迹无跳变 |
+| `[ ]` | 将定型后的 SLAM 后端热路径（体素降采样、ICP、地图检索）与点云转发桥按需下沉至 C++ | Phase 4 定型或准备实机/高帧率部署（见 [ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)） | `localization_mapping/backend/`、`simulation/dynanav/pct_scan_worker.py` | 保持与 Python 基线数值等价测试通过，单帧耗时满足实机实时预算 |
+| `[ ]` | 为自有核心 Python 模块补充人类易读的中文注释（不改逻辑、不动 `third_party/`） | 用户需要集中阅读代码前随时可派 DSH 执行 | `src/embodied_navigation/`、`scripts/` | 仅注释与 docstring 变更，650+ 单测与 60 回归零变化 |
 
 ## 已知限制（写任务前先读）
 
