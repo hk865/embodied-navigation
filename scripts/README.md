@@ -15,6 +15,7 @@
 ```text
 scripts/
 ├── README.md                                 # 本文件
+├── build_dynanav_fast_livo2.py               # 107 行，暂存并编译带构建期补丁的 FAST-LIVO2（含可选核心 CTest）
 ├── configure_data.py                         # 51 行，检查/创建 assets、models、runs 三个数据卷软链
 ├── dynanav_exploration.py                    # 61 行，探索工具统一入口（sop/collect/view/review/roi/candidates）
 ├── dynanav_exploration/
@@ -58,6 +59,7 @@ scripts/
 | `render_dynanav_operator_grid.py` | 把 `operator_grid_export/v1` 的 `.npz` + manifest 渲染成 PNG；occupied 黑、free 浅灰、未知灰、ROI 外白，未知格绝不画成 free；不连 ROS、不改地图。 | `render_dynanav_operator_grid.py <grid.npz> <manifest.json> <out.png>` |
 | `summarize_dynanav_experiment.py` | 汇总 run 目录的 `result.json` 与 journal（速度、位移、建图、导航、执行器指标）；缺证据写 `null`，不把「进程完成」当「导航成功」，不覆盖已存在的输出文件。 | `RUN_DIRECTORY [--output FILE] [--low-count-threshold N]`；schema `dynanav-experiment-summary/v1` |
 | `configure_data.py` | 检查或创建 `assets`、`models`、`runs` 三个数据卷软链；已存在真实内容或指向别处时报错不改。 | `--data-root DIR`（或 `PROJECT_DATA_ROOT`）、`--link`；输出 JSON，缺数据退出 2 |
+| `build_dynanav_fast_livo2.py` | 调用 `localization_mapping.fast_livo2_source.stage_fast_livo2_source` 在外部目录暂存并编译带 `0011` 等构建期补丁的 `dynanav_sensor_msgs` / `fast_livo2_core` / `fast_livo2_ros`，生成 `capture_message_env.sh` 并支持 `--with-tests` 跑核心 CTest。 | `--build-root DIR --dependency-prefix DIR [--jobs N] [--with-tests]` |
 | `dynanav_observer_transport.py` | 只读选择 observer 的有界 UDP 接收配置：仅在显式 LIVO/RTX + `rmw_fastrtps_cpp` + `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` 且无既有 DDS 配置时启用 4 MiB 接收 profile，否则保留继承环境；不修改调用方环境。 | `select_transport(mode, policy, environment, repo, cwd, *, lidar_topic=None)`；由 `run_dynanav_lio.sh` 的 preflight 内联导入；profile `configs/simulation/dynanav/observer_udp_rx4m.xml` |
 
 ## 主入口：`run_dynanav_native_exploration.sh`

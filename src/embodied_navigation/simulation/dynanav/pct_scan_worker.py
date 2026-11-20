@@ -294,11 +294,13 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     points_xyz_m=result['body_path_xyz'], reason=result.get('reason'),
                     provenance=result['provenance'])
     pool = ThreadPoolExecutor(max_workers=1)
+    snapshot_pool = ThreadPoolExecutor(max_workers=1)
     state = dict(request=None, child=None, revision=0, vio=None, pair=None, reference_stamp=None,
-                 route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
-                 last_snapshot=0.0, terminal_failed=False, body_pose=None,
+                 route_sent=False, future=None, snapshot_future=None, route=None, last_attempt=0.0,
+                 handoff=None, last_snapshot=0.0, terminal_failed=False, body_pose=None,
                  yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
-                 yaw_started_wall=None, yaw_last_cloud_sent=None)
+                 yaw_started_wall=None, yaw_last_cloud_sent=None,
+                 yaw_initial_cloud_ns=None, yaw_has_clear=False)
     clouds, poses, splines, metadata = OrderedDict(), OrderedDict(), {}, {}
     namespace = '/dynanav/pct_scan/worker_%s' % os.getpid()
     sensor_pub = node.create_publisher(Odometry, namespace + '/sensor_pose', 10)
@@ -362,6 +364,33 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         handoff.sent_body_pose(message_stamp_ns(message), [p.x, p.y, p.z])
         body_pub.publish(message)
 
+    def send_yaw_query():
+        request, paired, child, body = state['request'], state['pair'], state['child'], state['body_pose']
+        if (request is None or request.get('action') != 'yaw' or state['terminal_failed'] or
+                child is None or paired is None or body is None or not rotation_pub.get_subscription_count()):
+            return
+        if (body.header.frame_id, body.child_frame_id) != (request['frame_id'], request['child_frame_id']):
+            return
+        body_ns = message_stamp_ns(body)
+        cloud_ns = message_stamp_ns(paired[0])
+        if not state['yaw_has_clear']:
+            state['yaw_initial_cloud_ns'] = max(state['yaw_initial_cloud_ns'] or 0, cloud_ns)
+        # Before the first clear reply, require the current cloud to fuse. Once
+        # running, require the fused map to stay within 0.2 s of body_pose so
+        # in-flight raycasting does not stall body_pose clearance while still
+        # failing closed if LiDAR or GridMap fusion stops.
+        min_cloud_ns = (
+            max(state['yaw_initial_cloud_ns'], body_ns - 200_000_000)
+            if state['yaw_has_clear'] else cloud_ns
+        )
+        state['yaw_sample_id'] += 1
+        query = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
+            sample_id=state['yaw_sample_id'], startup_nonce=child.ack_nonce,
+            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'],
+            target_yaw_rad=request['target_yaw_rad'], body_stamp_ns=body_ns,
+            minimum_cloud_stamp_ns=min_cloud_ns)
+        rotation_pub.publish(String(data=json.dumps(query, allow_nan=False)))
+
     def odometry(message):
         previous = state['vio']
         stamp = message_stamp_ns(message)
@@ -389,6 +418,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             body.twist.twist.linear.x, body.twist.twist.linear.y, body.twist.twist.linear.z = map(float, velocity)
             state['body_pose'] = body
             publish_body_pose()
+            send_yaw_query()
 
     def publish_yaw_pair(paired):
         cloud, pose = paired
@@ -421,14 +451,6 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     continue
                 source_interval[0] = stamp if source_interval[0] is None else source_interval[0]
                 source_interval[1] = stamp
-                # Retain actual measured representatives, not synthetic voxel centres.
-                keys = np.floor(xyz / .08).astype(np.int64)
-                for key, point in zip(keys, xyz):
-                    measured_voxels[tuple(key)] = point
-                    measured_stamps[tuple(key)] = stamp
-                position, orientation = pose.pose.pose.position, pose.pose.pose.orientation
-                lio_sources[stamp] = [position.x, position.y, position.z,
-                                      orientation.x, orientation.y, orientation.z, orientation.w]
                 state['pair'] = (cloud, pose)
                 if state['child'] is not None:
                     # Native GridMap is latest-pose based, not message-filter synchronized.
@@ -438,6 +460,14 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     else:
                         sensor_pub.publish(pose)
                         cloud_pub.publish(cloud)
+                # Retain actual measured representatives, not synthetic voxel centres.
+                keys = np.floor(xyz / .08).astype(np.int64)
+                voxel_keys = list(map(tuple, keys.tolist()))
+                measured_voxels.update(zip(voxel_keys, xyz))
+                measured_stamps.update(dict.fromkeys(voxel_keys, stamp))
+                position, orientation = pose.pose.pose.position, pose.pose.pose.orientation
+                lio_sources[stamp] = [position.x, position.y, position.z,
+                                      orientation.x, orientation.y, orientation.z, orientation.w]
             except ValueError as error:
                 node.get_logger().warning(str(error))
         for cache in (clouds, poses):
@@ -551,6 +581,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             return
         state['yaw_last_response_id'] = reply['sample_id']
         state['yaw_last_response_wall'] = time.monotonic()
+        if reply.get('status') == 'clear':
+            state['yaw_has_clear'] = True
         yaw_output(reply['status'], reply.get('reason'), **{key: value for key, value in reply.items()
             if key not in ('status', 'reason')})
 
@@ -570,34 +602,39 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         if now - last > args.reference_response_timeout_s:
             yaw_output('failed', 'native_rotation_response_timeout')
             return
-        body = state['body_pose']
-        if body is None or not rotation_pub.get_subscription_count():
-            return
-        state['yaw_sample_id'] += 1
-        query = dict(version=1, run_id=run_id, seq=request['seq'], query_id=request['query_id'],
-            sample_id=state['yaw_sample_id'], startup_nonce=child.ack_nonce,
-            frame_id=request['frame_id'], child_frame_id=request['child_frame_id'],
-            target_yaw_rad=request['target_yaw_rad'], body_stamp_ns=message_stamp_ns(body),
-            minimum_cloud_stamp_ns=message_stamp_ns(paired[0]))
-        rotation_pub.publish(String(data=json.dumps(query, allow_nan=False)))
+        send_yaw_query()
 
     def poll():
         if measured_voxels and time.monotonic() - state['last_snapshot'] >= 5.0:
-            state['last_snapshot'] = time.monotonic()
-            tmp = mailbox / 'planner_measured_map.tmp.npz'
-            keys = list(measured_voxels)
-            np.savez_compressed(tmp, points_xyz_m=np.asarray([measured_voxels[k] for k in keys]),
-                point_source_stamp_ns=np.asarray([measured_stamps[k] for k in keys], dtype=np.int64),
-                trajectory_body_xyz_m=np.asarray(trajectory),
-                lio_pose_stamp_ns=np.asarray(list(lio_sources), dtype=np.int64),
-                lio_pose_xyz_xyzw=np.asarray(list(lio_sources.values())),
-                provenance_json=json.dumps(dict(run_id=run_id, pose_source=pose_source,
+            snap_future = state['snapshot_future']
+            if snap_future is None or snap_future.done():
+                if snap_future is not None:
+                    snap_exc = snap_future.exception()
+                    if snap_exc is not None:
+                        node.get_logger().warning(f'measured map snapshot failed: {snap_exc}')
+                state['last_snapshot'] = time.monotonic()
+                pts = np.asarray(list(measured_voxels.values()))
+                stamps = np.asarray(list(measured_stamps.values()), dtype=np.int64)
+                traj = np.asarray(trajectory)
+                lio_stamps = np.asarray(list(lio_sources), dtype=np.int64)
+                lio_poses = np.asarray(list(lio_sources.values()))
+                prov = json.dumps(dict(run_id=run_id, pose_source=pose_source,
                     map_frame=map_frames[0], child_frame=map_frames[1],
                     cloud_topic=cloud_topic, pose_topic=lio_topic,
-                    source_interval_ns=source_interval, voxel_m=.08,
+                    source_interval_ns=list(source_interval), voxel_m=.08,
                     sampling='latest_actual_measured_point_per_voxel',
-                    pairing='exact_integer_nanoseconds', transform='none_already_world')) )
-            tmp.replace(mailbox / 'planner_measured_map.npz')
+                    pairing='exact_integer_nanoseconds', transform='none_already_world'))
+                def write_snapshot(pts=pts, stamps=stamps, traj=traj,
+                                   lio_stamps=lio_stamps, lio_poses=lio_poses, prov=prov):
+                    tmp = mailbox / 'planner_measured_map.tmp.npz'
+                    np.savez_compressed(tmp, points_xyz_m=pts,
+                        point_source_stamp_ns=stamps,
+                        trajectory_body_xyz_m=traj,
+                        lio_pose_stamp_ns=lio_stamps,
+                        lio_pose_xyz_xyzw=lio_poses,
+                        provenance_json=prov)
+                    tmp.replace(mailbox / 'planner_measured_map.npz')
+                state['snapshot_future'] = snapshot_pool.submit(write_snapshot)
         request = active_request(mailbox, run_id, expected_pose_source=pose_source)
         if request != state['request']:
             if state['child']:
@@ -606,7 +643,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                          route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
                          last_snapshot=0.0, terminal_failed=False,
                          yaw_sample_id=0, yaw_last_response_id=0, yaw_last_response_wall=None,
-                         yaw_started_wall=None, yaw_last_cloud_sent=None)
+                         yaw_started_wall=None, yaw_last_cloud_sent=None,
+                         yaw_initial_cloud_ns=None, yaw_has_clear=False)
             splines.clear()
             metadata.clear()
             if request is not None:
@@ -723,6 +761,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         if state['child']:
             state['child'].close()
         pool.shutdown(wait=True, cancel_futures=True)
+        snapshot_pool.shutdown(wait=True, cancel_futures=True)
         node.destroy_node()
         rclpy.shutdown()
 

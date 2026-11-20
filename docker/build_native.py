@@ -17,6 +17,14 @@ import tarfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from embodied_navigation.localization_mapping.fast_livo2_source import (
+    FAST_LIVO2_BUILD_PATCHES,
+    stage_fast_livo2_source,
+)
+
 PACKAGES = [
     "livox_ros_driver2",
     "vikit_common",
@@ -122,6 +130,9 @@ def main():
         jobs=args.jobs,
         source_cache=str(args.source_cache) if args.source_cache else None,
         vio_floor_patch="Already applied in vendored fast_livo2_core/src/vio.cpp",
+        fast_livo2_build_patches=[
+            f"third_party/fast_livo2/patches/{name}" for name in FAST_LIVO2_BUILD_PATCHES
+        ],
         starts_nodes=False,
         starts_simulation=False,
         requires_gpu=False,
@@ -173,6 +184,15 @@ def main():
         [str(install / "livox/lib"), env.get("LD_LIBRARY_PATH", "")]
     )
     env["MAKEFLAGS"] = "-j" + str(args.jobs)
+    staged_fast_livo2 = stage_fast_livo2_source(
+        ROOT / "third_party/fast_livo2",
+        work / "sources/fast_livo2_stage",
+        allow_inside_repo=True,
+    )
+    base_paths = [
+        staged_fast_livo2 if path.name == "fast_livo2" else path
+        for path in BASES
+    ]
     run(
         [
             "colcon",
@@ -183,7 +203,7 @@ def main():
             "--executor",
             "sequential",
             "--base-paths",
-            *BASES,
+            *base_paths,
             "--packages-select",
             *PACKAGES,
             "--build-base",
