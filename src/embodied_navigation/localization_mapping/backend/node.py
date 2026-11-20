@@ -2,7 +2,8 @@
 
     python -m embodied_navigation.localization_mapping.backend.node \\
         --spool <dir> --odometry-topic <topic> --namespace <ns> \\
-        [--prior-map <dir>] [--save-map <dir>] [--world-frame map] [--odom-frame camera_init]
+        [--prior-map <dir>] [--save-map <dir>] [--config <json>] \\
+        [--world-frame map] [--odom-frame camera_init]
 
 Every ``--poll-s`` seconds the ready ``kf_*`` directories are ingested in
 numeric order and then deleted, so the FAST-LIVO2 exporter never reaches its
@@ -49,6 +50,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--prior-map", type=Path)
     parser.add_argument("--save-map", type=Path)
+    parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--world-frame", default="map")
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
@@ -138,7 +140,8 @@ class BackendNode(Node):
 def main(argv=None) -> int:
     args = parse_args(argv)
     prior = None if args.prior_map is None else MapStore.load(args.prior_map)
-    backend = SlamBackend(BackendConfig(), prior_map=prior)
+    config = BackendConfig() if args.config is None else BackendConfig.from_json(args.config)
+    backend = SlamBackend(config, prior_map=prior)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())

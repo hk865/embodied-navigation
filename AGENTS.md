@@ -11,9 +11,9 @@
 - **Agent 感知与控制介入层**（`operator_map.py`、`semantic_mapping/`、`planning/exploration/`、`explore_waypoint_client.py`、`dynanav_exploration.py`、`native_waypoints.py`、`pct_scan_waypoints.py`、`.agents/skills/dynanav-explore/`）是具身导航的核心能力，作为独立接口层完整保留并持续清晰化。
 - **运行环境**：Linux 主机已具备 Isaac Sim 与 ROS 2 环境，可直接进行仿真与原生验证；若在无 Isaac/ROS 的 Windows + WSL 环境工作，仅运行 CPU 单元测试与回归，仿真验证留待 Linux 主机。
 - **当前推进顺序**：
-  1. **干净底座已成型**（`refactor/06-clean-base`，63 个 `.py` / 14,485 行，0 失败单测）：已完成 P1+P2 死代码/废弃实验清理、P3 动态行人移出主线、A 路径整块退役；后续继续按“仿真 / 通信 / 前端 / 后端 / 规划导航 / 控制执行 / Agent 接口”七层边界保持清晰；
-  2. **第一优先验证分支**（`exp/pct-scan-stairs-truth`）：基于干净底座切出，直接用 **仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云**（跳过 SLAM 定位漂移干扰）打通 **PCT + SCAN 上楼梯与多层导航闭环**；
-  3. **第二优先验证分支**：规划导航闭环跑通并合并回底座后，基于干净底座按不同 SLAM 后端分别切出独立分支进行大幅精简、参数/协方差/IMU 方程规范化与横向对照，避免各方向互相耦合。
+  1. **干净底座已成型并吸收第一优先验证成果**（`refactor/06-clean-base`，`bb2eef2`，70 个 `.py` / 16,978 行，0 失败单测）：已完成 P1+P2 死代码/废弃实验清理、P3 动态行人移出主线、A 路径整块退役；后续继续按“仿真 / 通信 / 前端 / 后端 / 规划导航 / 控制执行 / Agent 接口”七层边界保持清晰；
+  2. **第一优先验证分支已完成并合入底座**（`exp/pct-scan-stairs-truth`，`bb2eef2`）：基于干净底座切出，直接用 **仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云**（跳过 SLAM 定位漂移干扰）完成 **PCT + SCAN 地下室至二楼大厅全链路真值闭环**（净爬升 +3.25 m、零楼梯特化规则、零撞墙/扶手、零 SCAN 失败）；
+  3. **第二优先验证分支（当前推进重点）**：在干净底座上推进 SLAM 公共前端/后端规范化（配置加载、各向异性信息矩阵、IMU 偏置协方差等方程与参数统一），并按不同 SLAM 后端分别切出 3 个精简独立分支进行横向对照，避免各方向互相耦合。
 
 ### 多 Agent 分工与协作（2026-11-20 确立）
 
@@ -70,7 +70,7 @@
 
 - 测试用 unittest。共用的 fixture 放在不以 `test_` 开头的模块里（例如 `tests/unit/slam_backend_fixtures.py`）。
 - **不得为了让测试通过而删除或放松旧断言、加 skip、调大超时。** 某个旧测试只有改了才能通过时，停下来，写清楚冲突在哪。
-- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前干净底座（`refactor/06-clean-base`）基线为 **514 条单测 0 失败 0 跳过、60 条回归 0 失败**（旧 5 条历史失败已随死代码清理全部归零）。
+- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前干净底座（`refactor/06-clean-base`）基线为 **646 条单测 0 失败 0 跳过、60 条回归 0 失败（本机 3 条按环境跳过）**（旧 5 条历史失败已随死代码清理全部归零）。
 - 删除一个包时，只测试被删代码的测试文件可以一起删掉，但必须在提交信息里点名。
 
 ## 5. 分支、提交与验收
@@ -88,8 +88,8 @@
 | --- | --- |
 | `main` / `origin/main` | 集成、发布和独立验收入口。按验收和审阅结果由用户决定合并及推送 |
 | `refactor/00-plan-docs` 至 `refactor/05-agents-rules` | `00` 计划、`01` 几何去重、`02` 死代码、`03` 移除旧路径、`04` SLAM 后端、`05` 协作规则。逐包验收 |
-| `refactor/06-clean-base`（当前干净底座） | 基于 `refactor/05-agents-rules` 完成 P1+P2 清理、P3 动态行人移出、A 路径整块退役（累计精简 >8.1 万行，0 失败单测）；后续各专项实验分支均从此干净底座切出 |
-| `exp/pct-scan-stairs-truth`（第一优先验证分支） | 基于 `refactor/06-clean-base` 切出，直接用仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云驱动 PCT + SCAN 上楼梯导航闭环（跳过 SLAM 干扰） |
+| `refactor/06-clean-base`（当前干净底座） | 基于 `refactor/05-agents-rules` 完成 P1+P2 清理、P3 动态行人移出、A 路径整块退役（累计精简 >8.1 万行，0 失败单测）；已并入第一优先验证分支 `exp/pct-scan-stairs-truth`（`bb2eef2`）的 PCT + SCAN 多层真值闭环成果，后续各专项实验分支均从此干净底座切出 |
+| `exp/pct-scan-stairs-truth`（第一优先验证分支，已完成并合入 `refactor/06-clean-base` 的 `bb2eef2`） | 基于 `refactor/06-clean-base` 切出，直接用仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云驱动 PCT + SCAN 地下室至二楼大厅全链路真值闭环（净爬升 +3.25 m、零楼梯特化规则、零撞墙/扶手、零 SCAN 失败；跳过 SLAM 干扰）。分支保留作复现入口 |
 | `ref/dynanav-dynamic-pedestrian`（动态行人参考分支） | 保全移除前的全部动态行人/学习分割支线代码与测试，供后续动态场景开发参考 |
 | 本地 `exp/two-floor-demo`（`e378b8d`）及 `backup/exp-two-floor-demo-wip-20261120`（`3720814`） | 隔离并完整保全拆分支前的两层联调代码、楼梯补丁、SLAM 评测与采集改动，供按主题提取到干净分支，不在原分支继续叠加混合改动 |
 | `refactor/05-loop-evidence-base`（`d582b28`） | 保全回环共同比较的实现、配置和证据 |

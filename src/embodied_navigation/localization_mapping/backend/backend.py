@@ -26,7 +26,9 @@ the prior map's world frame, which ``save_map`` writes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, fields
+from numbers import Real
 from pathlib import Path
 
 import numpy as np
@@ -79,11 +81,177 @@ class BackendConfig:
     loop_max_jump_rotation_rad: float = 0.6
     max_jump_translation_m: float = 1.0
     max_jump_rotation_rad: float = 0.35
+    # Optional per-axis sigmas (appended last to preserve positional compatibility).
+    # None keeps the isotropic scalar above; axes follow PoseGraph's local tangent frame.
+    odometry_sigma_z_m: float | None = None
+    odometry_sigma_yaw_rad: float | None = None
+    loop_sigma_z_m: float | None = None
+    loop_sigma_yaw_rad: float | None = None
+
+    def __post_init__(self) -> None:
+        self.odometry_information()
+        self.loop_information()
+
+    def odometry_information(self) -> np.ndarray:
+        """6x6 information of one odometry edge; isotropic unless overridden."""
+        sigma_z = self.odometry_sigma_m if self.odometry_sigma_z_m is None else self.odometry_sigma_z_m
+        sigma_yaw = self.odometry_sigma_rad if self.odometry_sigma_yaw_rad is None else self.odometry_sigma_yaw_rad
+        return anisotropic_information(self.odometry_sigma_m, sigma_z, self.odometry_sigma_rad, sigma_yaw)
+
+    def loop_information(self) -> np.ndarray:
+        """6x6 information of one loop edge; isotropic unless overridden."""
+        sigma_z = self.loop_sigma_m if self.loop_sigma_z_m is None else self.loop_sigma_z_m
+        sigma_yaw = self.loop_sigma_rad if self.loop_sigma_yaw_rad is None else self.loop_sigma_yaw_rad
+        return anisotropic_information(self.loop_sigma_m, sigma_z, self.loop_sigma_rad, sigma_yaw)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> BackendConfig:
+        """Strict config from a JSON-style mapping; unknown keys are rejected."""
+        if not isinstance(data, dict):
+            raise ValueError(f"BackendConfig must be a mapping, got {type(data).__name__}")
+        known = {option.name for option in fields(cls)}
+        unknown = sorted(set(data) - known, key=str)
+        if unknown:
+            raise ValueError(f"unknown BackendConfig keys: {unknown}")
+        values = dict(data)
+        if "scan_context" in values:
+            values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        config = cls(**values)
+        config._validate()
+        return config
+
+    @classmethod
+    def from_json(cls, path: Path) -> BackendConfig:
+        """Read a JSON config file through the same strict validation."""
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    def _validate(self) -> None:
+        """Reject non-positive/non-finite sigmas, steps and thresholds from JSON."""
+        for name in ("odometry_sigma_m", "odometry_sigma_rad", "loop_sigma_m", "loop_sigma_rad"):
+            _positive(name, getattr(self, name))
+        for name in ("odometry_sigma_z_m", "odometry_sigma_yaw_rad", "loop_sigma_z_m", "loop_sigma_yaw_rad"):
+            value = getattr(self, name)
+            if value is not None:
+                _positive(name, value)
+        self.odometry_information()
+        self.loop_information()
+        for name in (
+            "map_voxel_m",
+            "icp_voxel_m",
+            "coarse_correspondence_m",
+            "fine_correspondence_m",
+            "max_rmse_m",
+            "submap_radius_m",
+            "max_scan_context_distance",
+            "cauchy_scale",
+            "window_s",
+            "agree_translation_m",
+            "agree_rotation_rad",
+        ):
+            _positive(name, getattr(self, name))
+        if not 0.0 < _positive("min_fitness", self.min_fitness) <= 1.0:
+            raise ValueError(f"min_fitness must lie in (0, 1], got {self.min_fitness!r}")
+        for name in (
+            "min_loop_gap_s",
+            "loop_budget_translation_m",
+            "loop_budget_translation_per_m",
+            "loop_budget_rotation_rad",
+            "loop_budget_rotation_per_m",
+            "loop_max_jump_translation_m",
+            "loop_max_jump_rotation_rad",
+            "max_jump_translation_m",
+            "max_jump_rotation_rad",
+        ):
+            _nonnegative(name, getattr(self, name))
+        for name in ("loop_submap_neighbors", "exclude_recent"):
+            _nonnegative_int(name, getattr(self, name))
+        for name in (
+            "icp_iterations",
+            "scan_context_prefilter",
+            "icp_candidates",
+            "optimize_iterations",
+            "relocalize_every",
+            "lost_after",
+            "confirmations",
+        ):
+            _count(name, getattr(self, name))
+
+
+def _scan_context_from_dict(data: dict) -> ScanContextConfig:
+    """Strict nested ScanContextConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"scan_context must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(ScanContextConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown scan_context keys: {unknown}")
+    config = ScanContextConfig(**data)
+    _count("scan_context.rings", config.rings)
+    _count("scan_context.sectors", config.sectors)
+    _positive("scan_context.max_range_m", config.max_range_m)
+    return config
+
+
+def _positive(name: str, value) -> float:
+    """Finite positive real; rejects bools and non-numeric input from JSON."""
+    if isinstance(value, bool) or not isinstance(value, Real) or not np.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number, got {value!r}")
+    return float(value)
+
+
+def _nonnegative(name: str, value) -> float:
+    """Finite nonnegative real; rejects bools and non-numeric input from JSON."""
+    if isinstance(value, bool) or not isinstance(value, Real) or not np.isfinite(value) or value < 0:
+        raise ValueError(f"{name} must be a finite nonnegative number, got {value!r}")
+    return float(value)
+
+
+def _count(name: str, value) -> int:
+    """Positive integer count; rejects bools, floats and non-numeric input from JSON."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
+def _nonnegative_int(name: str, value) -> int:
+    """Nonnegative integer count; rejects bools, floats and non-numeric input from JSON."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a nonnegative integer, got {value!r}")
+    return value
+
+
+def _inv_variance(name: str, value) -> float:
+    sigma = _positive(name, value)
+    try:
+        weight = 1.0 / (sigma * sigma)
+    except (OverflowError, ZeroDivisionError) as error:
+        raise ValueError(f"{name}={value!r} cannot produce a finite positive weight") from error
+    if not np.isfinite(weight) or weight <= 0.0:
+        raise ValueError(f"{name}={value!r} produced non-finite or zero weight {weight!r}")
+    return float(weight)
+
+
+def anisotropic_information(
+    sigma_xy_m: float,
+    sigma_z_m: float,
+    sigma_rp_rad: float,
+    sigma_yaw_rad: float,
+) -> np.ndarray:
+    """Diagonal 6x6 information for (rho_x, rho_y, rho_z, phi_x, phi_y, phi_z).
+
+    Horizontal translation shares ``sigma_xy_m`` and roll/pitch share
+    ``sigma_rp_rad``; height and yaw carry their own sigma in PoseGraph's
+    local edge tangent frame.
+    """
+    w_xy = _inv_variance("sigma_xy_m", sigma_xy_m)
+    w_z = _inv_variance("sigma_z_m", sigma_z_m)
+    w_rp = _inv_variance("sigma_rp_rad", sigma_rp_rad)
+    w_yaw = _inv_variance("sigma_yaw_rad", sigma_yaw_rad)
+    return np.diag([w_xy, w_xy, w_z, w_rp, w_rp, w_yaw])
 
 
 def information(sigma_m: float, sigma_rad: float) -> np.ndarray:
     """Diagonal 6x6 information in the pose graph's (translation, rotation) order."""
-    return np.diag([sigma_m**-2] * 3 + [sigma_rad**-2] * 3)
+    return anisotropic_information(sigma_m, sigma_m, sigma_rad, sigma_rad)
 
 
 def yaw_pose(yaw: float) -> np.ndarray:
@@ -164,7 +332,7 @@ class SlamBackend:
         else:
             delta = invert(previous.T_odom_body) @ keyframe.T_odom_body
             self.graph.add_node(keyframe.key, self.graph.pose(previous.key) @ delta)
-            odometry = information(self.config.odometry_sigma_m, self.config.odometry_sigma_rad)
+            odometry = self.config.odometry_information()
             self.graph.add_edge(previous.key, keyframe.key, delta, odometry)
             self._path_m[keyframe.key] = self._path_m[previous.key] + float(np.linalg.norm(delta[:3, 3]))
         self._previous = keyframe
@@ -214,7 +382,7 @@ class SlamBackend:
             self._loop_window(key, excluded),
             key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
         )
-        loop = information(self.config.loop_sigma_m, self.config.loop_sigma_rad)
+        loop = self.config.loop_information()
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
         return anchor, None
 
