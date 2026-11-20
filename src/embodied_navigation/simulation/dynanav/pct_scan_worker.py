@@ -138,6 +138,43 @@ def sample_bspline(order, knots, control_points, step_s=0.04):
     return samples.tolist(), (times - knots[order]).tolist()
 
 
+def update_measured_voxels(
+    measured_voxels,
+    measured_stamps,
+    xyz,
+    stamp_ns,
+    *,
+    voxel_m=0.08,
+    stale_vertical_dt_ns=5_000_000_000,
+    stale_vertical_dz_m=0.10,
+):
+    """Retain actual measured representatives and evict stale sub-step Z-drift ghosts.
+
+    When noisy-IMU SLAM drifts vertically by a few centimetres across long climbs
+    or revisits, an older scan of the same horizontal surface can remain in an
+    adjacent 8 cm Z-voxel (iz +- 1) and stack with newer points into a false
+    vertical obstacle (> support_cluster_m). Evicting only immediately adjacent
+    Z-neighbors that are both strictly older (>= 5 s) and within <= 0.10 m
+    vertically preserves walls (observed simultaneously and taller than 0.10 m)
+    and multi-floor slabs while keeping measured surfaces crisp.
+    """
+    if len(xyz) == 0:
+        return
+    keys = np.floor(xyz / voxel_m).astype(np.int64)
+    scan_voxels = dict(zip(map(tuple, keys.tolist()), xyz))
+    measured_voxels.update(scan_voxels)
+    measured_stamps.update(dict.fromkeys(scan_voxels, stamp_ns))
+    for (ix, iy, iz), point in scan_voxels.items():
+        pz = float(point[2])
+        for dz_i in (-1, 1):
+            neighbor = (ix, iy, iz + dz_i)
+            old_stamp = measured_stamps.get(neighbor)
+            if old_stamp is not None and (stamp_ns - old_stamp) >= stale_vertical_dt_ns:
+                if abs(pz - float(measured_voxels[neighbor][2])) <= stale_vertical_dz_m:
+                    del measured_voxels[neighbor]
+                    del measured_stamps[neighbor]
+
+
 def scan_source_digest(root=ROOT):
     digest = hashlib.sha256()
     for path in sorted((Path(root) / 'third_party/scan').rglob('*')):
@@ -460,11 +497,8 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                     else:
                         sensor_pub.publish(pose)
                         cloud_pub.publish(cloud)
-                # Retain actual measured representatives, not synthetic voxel centres.
-                keys = np.floor(xyz / .08).astype(np.int64)
-                voxel_keys = list(map(tuple, keys.tolist()))
-                measured_voxels.update(zip(voxel_keys, xyz))
-                measured_stamps.update(dict.fromkeys(voxel_keys, stamp))
+                # Retain actual measured representatives and evict stale Z-drift ghosts.
+                update_measured_voxels(measured_voxels, measured_stamps, xyz, stamp)
                 position, orientation = pose.pose.pose.position, pose.pose.pose.orientation
                 lio_sources[stamp] = [position.x, position.y, position.z,
                                       orientation.x, orientation.y, orientation.z, orientation.w]
