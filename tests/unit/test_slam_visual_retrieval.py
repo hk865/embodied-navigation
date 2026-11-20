@@ -223,11 +223,18 @@ class VisualRetrievalUnitTest(unittest.TestCase):
             BackendConfig.from_dict({"visual_retrieval": {"max_distance": 3.0}})
         with self.assertRaises(ValueError):
             BackendConfig.from_dict({"visual_agree_translation_m": -0.1})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"visual_retrieval": {"feature_type": "invalid_feat"}})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"visual_retrieval": {"verify_ratio_threshold": 1.0}})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"visual_retrieval": {"lidar_px_radius": 0.0}})
 
         cfg_path = REPO_ROOT / "configs" / "localization_mapping" / "slam_visual_retrieval.json"
         cfg = BackendConfig.from_json(cfg_path)
         self.assertTrue(cfg.use_visual_retrieval)
         self.assertFalse(cfg.use_visual_verification)
+        self.assertEqual(cfg.visual_retrieval.feature_type, "akaze")
         self.assertAlmostEqual(cfg.loop_sigma_rad, 0.03)
         self.assertAlmostEqual(cfg.loop_sigma_yaw_rad, 0.01)
         self.assertAlmostEqual(cfg.cauchy_scale, 3.0)
@@ -436,6 +443,79 @@ class VisualRetrievalUnitTest(unittest.TestCase):
             self.assertIsNone(kf_default.visual)
             with self.assertRaises(ValueError):
                 read_keyframe(kf_dir, load_visual=True)
+
+    def test_viewpoint_invariant_features_verify_rotated_viewpoint(self) -> None:
+        """ORB/AKAZE/BRISK/SIFT 视角不变特征应在偏航旋转视角下成功召回并恢复精确 SE(3) 位姿。"""
+        try:
+            import cv2  # noqa: F401
+        except ImportError:
+            self.skipTest("当前环境未安装 OpenCV (cv2)")
+
+        # 构造 256x256 带棋盘格与多频斑块的清晰结构图像（保证各尺度角点检测器均检出充足关键点）
+        h, w = 256, 256
+        K = np.array([[220.0, 0.0, 128.0], [0.0, 220.0, 128.0], [0.0, 0.0, 1.0]], dtype=float)
+        _, T_bc = _camera_extrinsics()
+        rng = np.random.default_rng(2026)
+        img_ref = np.full((h, w), 120.0, dtype=float)
+        for _ in range(180):
+            cx, cy = int(rng.integers(16, w - 16)), int(rng.integers(16, h - 16))
+            rx, ry = int(rng.integers(4, 14)), int(rng.integers(4, 14))
+            val = float(rng.choice([15.0, 240.0]))
+            img_ref[cy - ry : cy + ry, cx - rx : cx + rx] = val
+
+        # 密集前方墙面点云确保所有图像角点都有精确实测 LiDAR 支撑
+        fy, fz = np.meshgrid(np.linspace(-2.5, 2.5, 65), np.linspace(-2.5, 2.5, 65))
+        pts_ref = np.column_stack([np.full(fy.size, 4.0), fy.ravel(), fz.ravel()])
+
+        # 构造 12 度偏航角 + 0.12 m 横移的旋转重访视角
+        yaw = float(np.deg2rad(12.0))
+        T_target_source = np.eye(4, dtype=float)
+        T_target_source[:3, :3] = [
+            [np.cos(yaw), -np.sin(yaw), 0.0],
+            [np.sin(yaw), np.cos(yaw), 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+        T_target_source[:3, 3] = [0.05, 0.12, 0.0]
+        pts_src = transform_points(invert(T_target_source), pts_ref)
+        img_src = _render_projected_image(pts_src, T_bc, K, img_ref, T_target_source)
+
+        kf_target = Keyframe(
+            key=(0, 0),
+            stamp_ns=1_000_000_000,
+            T_odom_body=np.eye(4),
+            T_body_lidar=np.eye(4),
+            points_lidar=pts_ref,
+            visual=VisualObservation(gray=img_ref, K=K, T_body_camera=T_bc, stamp_ns=1_000_000_000),
+        )
+        kf_source = Keyframe(
+            key=(0, 1),
+            stamp_ns=2_000_000_000,
+            T_odom_body=T_target_source,
+            T_body_lidar=np.eye(4),
+            points_lidar=pts_src,
+            visual=VisualObservation(gray=img_src, K=K, T_body_camera=T_bc, stamp_ns=2_000_000_000),
+        )
+
+        for feat in ("orb", "akaze", "brisk", "sift"):
+            with self.subTest(feature_type=feat):
+                vcfg = VisualRetrievalConfig(feature_type=feat, max_distance=0.6)
+                idx = VisualIndex(vcfg)
+                idx.add(kf_target)
+                hits = idx.query(kf_source)
+                self.assertTrue(hits and hits[0][0] == (0, 0))
+                res = verify_visual(
+                    kf_source,
+                    kf_target,
+                    feature_type=feat,
+                    inlier_m=0.15,
+                    min_inliers=8,
+                    ratio_threshold=0.78,
+                    target_features=idx.local_features.get((0, 0)),
+                )
+                self.assertEqual(res.status, "verified")
+                dt, dr = pose_difference(res.T_target_source, T_target_source)
+                self.assertLess(dt, 0.08)
+                self.assertLess(dr, 0.03)
 
 
 if __name__ == "__main__":

@@ -304,7 +304,10 @@ class SlamBackend:
         self.visual_fallback_count = 0
         self.visual_disagreement_count = 0
         self.visual_loops_accepted = 0
+        self.visual_only_loops_accepted = 0
         self._last_match_visual = False
+        self._last_match_visual_only = False
+        self._current_visual_pair = None
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._path_m: dict = {}  # key -> cumulative odom path length
@@ -346,15 +349,21 @@ class SlamBackend:
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
         self._add_node(keyframe)
-        loop_key, rejected = self._find_loop(keyframe, desc)
-        self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
-        self.index.add(keyframe.key, desc)
-        if self.visual_index is not None:
-            self.visual_index.add(self.map.keyframes[keyframe.key])
+        self._current_visual_pair = self.visual_index.extract(keyframe) if self.visual_index is not None else None
+        try:
+            loop_key, rejected = self._find_loop(keyframe, desc)
+            self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
+            self.index.add(keyframe.key, desc)
+            if self.visual_index is not None:
+                self.visual_index.add(self.map.keyframes[keyframe.key], precomputed=self._current_visual_pair)
+        finally:
+            self._current_visual_pair = None
         if loop_key is not None:
             self.loop_count += 1
             if self._last_match_visual:
                 self.visual_loops_accepted += 1
+                if self._last_match_visual_only:
+                    self.visual_only_loops_accepted += 1
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
@@ -536,12 +545,32 @@ class SlamBackend:
                 if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                     best = (key, result)
             self._last_match_visual = False
+            self._last_match_visual_only = False
             return best
 
-        max_dt = self.config.visual_retrieval.max_time_delta_s
+        vr = self.config.visual_retrieval
+        query_vdesc = None
+        query_vfeat = None
+        if self._current_visual_pair is not None:
+            query_vdesc, query_vfeat = self._current_visual_pair
+        elif self.visual_index is not None:
+            query_vdesc, query_vfeat = self.visual_index.extract(keyframe)
 
         def _try_visual_candidate(key) -> IcpResult | None:
-            visual = verify_visual(keyframe, store.keyframes[key], max_time_delta_s=max_dt)
+            target_vfeat = None if self.visual_index is None else self.visual_index.local_features.get(key)
+            visual = verify_visual(
+                keyframe,
+                store.keyframes[key],
+                feature_type=vr.feature_type,
+                max_time_delta_s=vr.max_time_delta_s,
+                inlier_m=vr.verify_inlier_m,
+                min_inliers=vr.verify_min_inliers,
+                ratio_threshold=vr.verify_ratio_threshold,
+                max_features=vr.max_features,
+                lidar_px_radius=vr.lidar_px_radius,
+                source_features=query_vfeat,
+                target_features=target_vfeat,
+            )
             if visual.status != "verified":
                 return None
             self.visual_verified_count += 1
@@ -560,6 +589,7 @@ class SlamBackend:
 
         # 路径二：若未开启强制视觉门控，先完整保留原 ScanContext 合格候选，绝不被视觉初值覆写或否决。
         eligible_sc_keys: set = set()
+        sc_had_match = False
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
@@ -575,6 +605,7 @@ class SlamBackend:
                 if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                     best = (key, result)
                     best_visual = False
+                    sc_had_match = True
 
         # 路径三：独立视觉召回增补通道（独立名额与跨 epoch 过滤，不改变 ScanContext 的排除集与历史窗口）。
         if self.visual_index is not None:
@@ -587,7 +618,9 @@ class SlamBackend:
                     return True
                 return False
 
-            visual_candidates = self.visual_index.query(keyframe, exclude=_visual_exclude)
+            visual_candidates = self.visual_index.query(
+                keyframe, exclude=_visual_exclude, precomputed_desc=query_vdesc
+            )
             self.visual_candidates_proposed += len(visual_candidates)
             for key, _distance in visual_candidates:
                 if self.config.use_visual_verification and key in eligible_sc_keys:
@@ -603,6 +636,7 @@ class SlamBackend:
                     best_visual = True
 
         self._last_match_visual = best is not None and best_visual
+        self._last_match_visual_only = self._last_match_visual and not sc_had_match
         return best
 
     def _register(self, source_body, target_world, T_init) -> IcpResult | None:

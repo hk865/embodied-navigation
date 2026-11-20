@@ -1,4 +1,8 @@
-"""基于实测 LiDAR 支撑点的图像块匹配与刚体几何验证模块。
+"""基于实测 LiDAR 支撑点的多特征图像匹配与刚体几何验证模块。
+
+支持五种特征前端：
+- ``patch7x7``：纯 numpy/scipy 固定方向 7x7 归一化灰度块（无 OpenCV 依赖基线）
+- ``orb`` / ``akaze`` / ``brisk`` / ``sift``：视角与旋转/尺度不变局部特征（按需调用 OpenCV）
 
 本模块要求输入的针孔图像已经过畸变矫正；相机坐标系采用光学系约定
 （x 向右、y 向下、z 向前）。验证通过后输出的 SE(3) 变换将源关键帧机体系映射到目标关键帧机体系。
@@ -13,6 +17,9 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .pose_graph import invert
+
+ALLOWED_FEATURE_TYPES = ("patch7x7", "orb", "akaze", "brisk", "sift")
+_BINARY_FEATURES = frozenset({"orb", "akaze", "brisk"})
 
 
 @dataclass(frozen=True)
@@ -50,8 +57,19 @@ class VisualObservation:
 
 
 @dataclass(frozen=True)
+class VisualFeatures:
+    """单帧已提取的局部特征：包含绑定实测 LiDAR 的 3D 支撑点与原始局部描述子。"""
+
+    feature_type: str
+    points_body: np.ndarray  # (M, 3) float64，机体系下有实测 LiDAR 支撑的关键点 3D 坐标
+    descriptors: np.ndarray  # (M, D)，用于 verify_visual 匹配的描述子
+    all_descriptors: np.ndarray  # (K, D)，整幅图像所有关键点描述子，供全局检索聚合使用
+    is_binary: bool
+
+
+@dataclass(frozen=True)
 class VisualResult:
-    """图像块匹配与实测 3D 点 RANSAC 刚体估计结果。"""
+    """图像特征匹配与实测 3D 点 RANSAC 刚体估计结果。"""
 
     status: str
     T_target_source: np.ndarray | None = None
@@ -60,8 +78,30 @@ class VisualResult:
     rmse_m: float = float("inf")
 
 
-def _features(keyframe, limit: int = 400) -> tuple[np.ndarray, np.ndarray]:
-    """将关键帧实测 LiDAR 点投影到灰度图，提取最近深度且有纹理的 7x7 归一化图像块。"""
+def _import_cv2(feature_type: str):
+    """按需导入 OpenCV，仅在启用视角不变特征时才要求安装 cv2。"""
+    try:
+        import cv2
+    except ImportError as error:
+        raise RuntimeError(f"feature_type={feature_type!r} 需要安装 opencv-python (cv2)") from error
+    return cv2
+
+
+def _create_cv_detector(feature_type: str, max_features: int):
+    cv2 = _import_cv2(feature_type)
+    if feature_type == "orb":
+        return cv2.ORB_create(nfeatures=max_features)
+    if feature_type == "akaze":
+        return cv2.AKAZE_create()
+    if feature_type == "brisk":
+        return cv2.BRISK_create()
+    if feature_type == "sift":
+        return cv2.SIFT_create(nfeatures=max_features)
+    raise ValueError(f"未知的视觉特征类型: {feature_type!r}")
+
+
+def _project_lidar_to_image(keyframe) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """将关键帧实测 LiDAR 点投影到图像平面，返回视野内的 (uv, points_body, depth_m)。"""
     from .keyframes import transform_points
 
     observation = keyframe.visual
@@ -70,16 +110,32 @@ def _features(keyframe, limit: int = 400) -> tuple[np.ndarray, np.ndarray]:
     front = camera[:, 2] > 0.1
     camera, points = camera[front], points[front]
     if len(camera) == 0:
-        return np.empty((0, 3), dtype=float), np.empty((0, 49), dtype=float)
+        return np.empty((0, 2), dtype=float), np.empty((0, 3), dtype=float), np.empty((0,), dtype=float)
     projected = camera @ observation.K.T
-    pixels = np.rint(projected[:, :2] / projected[:, 2:]).astype(int)
+    uv = projected[:, :2] / projected[:, 2:]
+    h, w = observation.gray.shape
+    valid = (uv[:, 0] >= 0.0) & (uv[:, 0] < float(w)) & (uv[:, 1] >= 0.0) & (uv[:, 1] < float(h))
+    return uv[valid], points[valid], camera[valid, 2]
+
+
+def _extract_patch7x7(keyframe, limit: int = 400) -> VisualFeatures:
+    """纯 numpy 7x7 归一化图像块提取（保持原始基线与零 OpenCV 依赖）。"""
+    observation = keyframe.visual
+    uv, points, depth = _project_lidar_to_image(keyframe)
+    if len(uv) == 0:
+        empty_p = np.empty((0, 3), dtype=float)
+        empty_d = np.empty((0, 49), dtype=float)
+        return VisualFeatures("patch7x7", empty_p, empty_d, empty_d, False)
+    pixels = np.rint(uv).astype(int)
     h, w = observation.gray.shape
     valid = (pixels[:, 0] >= 3) & (pixels[:, 0] < w - 3) & (pixels[:, 1] >= 3) & (pixels[:, 1] < h - 3)
-    pixels, points, camera = pixels[valid], points[valid], camera[valid]
+    pixels, points, depth = pixels[valid], points[valid], depth[valid]
     if len(pixels) == 0:
-        return np.empty((0, 3), dtype=float), np.empty((0, 49), dtype=float)
+        empty_p = np.empty((0, 3), dtype=float)
+        empty_d = np.empty((0, 49), dtype=float)
+        return VisualFeatures("patch7x7", empty_p, empty_d, empty_d, False)
     # 在每个 7x7 像素栅格中仅保留深度最近的实测点，抑制遮挡穿透与强相关重复采样。
-    order = np.argsort(camera[:, 2], kind="stable")
+    order = np.argsort(depth, kind="stable")
     _, first = np.unique(pixels[order] // 7, axis=0, return_index=True)
     selected = order[first]
     patches = np.array(
@@ -91,7 +147,66 @@ def _features(keyframe, limit: int = 400) -> tuple[np.ndarray, np.ndarray]:
     textured = norm > 10.0
     selected, patches, norm = selected[textured], patches[textured], norm[textured]
     strongest = np.argsort(-norm, kind="stable")[:limit]
-    return points[selected[strongest]], patches[strongest] / norm[strongest, None]
+    descs = patches[strongest] / norm[strongest, None]
+    return VisualFeatures("patch7x7", points[selected[strongest]], descs, descs, False)
+
+
+def extract_visual_features(
+    keyframe,
+    *,
+    feature_type: str = "patch7x7",
+    max_features: int = 800,
+    lidar_px_radius: float = 6.0,
+) -> VisualFeatures:
+    """提取指定类型的局部特征并将每个图像关键点绑定到邻域内深度最近的实测 LiDAR 3D 点。"""
+    if feature_type not in ALLOWED_FEATURE_TYPES:
+        raise ValueError(f"feature_type 必须属于 {ALLOWED_FEATURE_TYPES}，当前收到 {feature_type!r}")
+    if feature_type == "patch7x7":
+        return _extract_patch7x7(keyframe, limit=min(max_features, 400))
+
+    observation = keyframe.visual
+    gray_u8 = np.clip(np.rint(observation.gray), 0, 255).astype(np.uint8)
+    detector = _create_cv_detector(feature_type, max_features)
+    keypoints, desc = detector.detectAndCompute(gray_u8, None)
+    is_binary = feature_type in _BINARY_FEATURES
+    if not keypoints or desc is None or len(keypoints) == 0:
+        empty_d = np.empty((0, 32), dtype=np.uint8 if is_binary else np.float32)
+        return VisualFeatures(feature_type, np.empty((0, 3), dtype=float), empty_d, empty_d, is_binary)
+
+    # 限制保留响应最强的前 max_features 个特征，防止 AKAZE/BRISK 在高纹理画面输出过多特征。
+    if len(keypoints) > max_features:
+        order = np.argsort([-kp.response for kp in keypoints], kind="stable")[:max_features]
+        keypoints = [keypoints[i] for i in order]
+        desc = desc[order]
+
+    uv, points, depth = _project_lidar_to_image(keyframe)
+    if len(uv) == 0:
+        empty_d = np.empty((0, desc.shape[1]), dtype=desc.dtype)
+        return VisualFeatures(feature_type, np.empty((0, 3), dtype=float), empty_d, desc, is_binary)
+
+    kp_uv = np.array([kp.pt for kp in keypoints], dtype=float)
+    tree = cKDTree(uv)
+    neighbors_list = tree.query_ball_point(kp_uv, r=lidar_px_radius)
+    pts3d: list[np.ndarray] = []
+    keep_idx: list[int] = []
+    for i, nbrs in enumerate(neighbors_list):
+        if not nbrs:
+            continue
+        # 仅保留邻域内深度最近的实测 LiDAR 回波点，避免前景边缘误绑定背景墙体深度。
+        nbrs_arr = np.asarray(nbrs, dtype=np.intp)
+        nearest_j = nbrs_arr[int(np.argmin(depth[nbrs_arr]))]
+        pts3d.append(points[nearest_j])
+        keep_idx.append(i)
+    if not keep_idx:
+        empty_d = np.empty((0, desc.shape[1]), dtype=desc.dtype)
+        return VisualFeatures(feature_type, np.empty((0, 3), dtype=float), empty_d, desc, is_binary)
+    return VisualFeatures(
+        feature_type=feature_type,
+        points_body=np.asarray(pts3d, dtype=float),
+        descriptors=desc[keep_idx],
+        all_descriptors=desc,
+        is_binary=is_binary,
+    )
 
 
 def _rigid(source: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -104,15 +219,60 @@ def _rigid(source: np.ndarray, target: np.ndarray) -> np.ndarray:
     return T
 
 
+def _match_descriptors(
+    fa: VisualFeatures,
+    fb: VisualFeatures,
+    ratio_threshold: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """双向比率测试匹配：返回成对的实测三维点 (points_source, points_target)。"""
+    if fa.feature_type == "patch7x7":
+        distances, indices = cKDTree(fb.descriptors).query(fa.descriptors, k=2)
+        reverse = cKDTree(fa.descriptors).query(fb.descriptors, k=1)[1]
+        valid = (
+            (distances[:, 0] < ratio_threshold * distances[:, 1])
+            & (distances[:, 0] < 0.7)
+            & (reverse[indices[:, 0]] == np.arange(len(fa.points_body)))
+        )
+        return fa.points_body[valid], fb.points_body[indices[valid, 0]]
+
+    cv2 = _import_cv2(fa.feature_type)
+    norm_type = cv2.NORM_HAMMING if fa.is_binary else cv2.NORM_L2
+    bf = cv2.BFMatcher(norm_type, crossCheck=False)
+    fwd = bf.knnMatch(fa.descriptors, fb.descriptors, k=2)
+    bwd = bf.knnMatch(fb.descriptors, fa.descriptors, k=1)
+    rev_best = np.full(len(fb.points_body), -1, dtype=np.intp)
+    for pair in bwd:
+        if pair:
+            rev_best[pair[0].queryIdx] = pair[0].trainIdx
+
+    src_pts, dst_pts = [], []
+    for pair in fwd:
+        if len(pair) < 2:
+            continue
+        m1, m2 = pair[0], pair[1]
+        if m1.distance < ratio_threshold * m2.distance and rev_best[m1.trainIdx] == m1.queryIdx:
+            src_pts.append(fa.points_body[m1.queryIdx])
+            dst_pts.append(fb.points_body[m1.trainIdx])
+    if not src_pts:
+        return np.empty((0, 3), dtype=float), np.empty((0, 3), dtype=float)
+    return np.asarray(src_pts, dtype=float), np.asarray(dst_pts, dtype=float)
+
+
 def verify_visual(
     source,
     target,
     *,
+    feature_type: str = "patch7x7",
     max_time_delta_s: float = 0.05,
     inlier_m: float = 0.12,
     min_inliers: int = 8,
+    ratio_threshold: float = 0.7,
+    max_features: int = 800,
+    lidar_px_radius: float = 6.0,
+    source_features: VisualFeatures | None = None,
+    target_features: VisualFeatures | None = None,
 ) -> VisualResult:
-    """双向比率测试图像块匹配 + 实测三维点刚体 RANSAC 校验。
+    """双向比率测试图像特征匹配 + 实测三维点刚体 RANSAC 校验。
 
     缺失观测、时间不同步、弱纹理、共线退化或内点不足时全部拒绝，不输出猜测位姿。
     """
@@ -122,23 +282,32 @@ def verify_visual(
         return VisualResult("missing_observation")
     if any(abs(k.visual.stamp_ns - k.stamp_ns) > max_time_delta_s * 1e9 for k in (source, target)):
         return VisualResult("time_mismatch")
-    a, da = _features(source)
-    b, db = _features(target)
-    if min(len(a), len(b)) < min_inliers:
-        return VisualResult("insufficient_texture")
-    distances, indices = cKDTree(db).query(da, k=2)
-    reverse = cKDTree(da).query(db, k=1)[1]
-    valid = (
-        (distances[:, 0] < 0.7 * distances[:, 1])
-        & (distances[:, 0] < 0.7)
-        & (reverse[indices[:, 0]] == np.arange(len(a)))
+
+    fa = (
+        source_features
+        if source_features is not None and source_features.feature_type == feature_type
+        else extract_visual_features(
+            source, feature_type=feature_type, max_features=max_features, lidar_px_radius=lidar_px_radius
+        )
     )
-    a, b = a[valid], b[indices[valid, 0]]
+    fb = (
+        target_features
+        if target_features is not None and target_features.feature_type == feature_type
+        else extract_visual_features(
+            target, feature_type=feature_type, max_features=max_features, lidar_px_radius=lidar_px_radius
+        )
+    )
+    if min(len(fa.points_body), len(fb.points_body)) < min_inliers:
+        return VisualResult("insufficient_texture")
+
+    a, b = _match_descriptors(fa, fb, ratio_threshold=ratio_threshold)
     if len(a) < min_inliers:
         return VisualResult("insufficient_matches", matches=len(a))
+
     rng = np.random.default_rng(0)
     best = np.zeros(len(a), dtype=bool)
-    for _ in range(128):
+    iterations = 128 if feature_type == "patch7x7" else 200
+    for _ in range(iterations):
         sample = rng.choice(len(a), 3, replace=False)
         # 剔除近似共线的三点采样，避免刚体旋转轴退化。
         if np.linalg.svd(a[sample] - a[sample].mean(axis=0), compute_uv=False)[1] < 0.02:
@@ -147,13 +316,20 @@ def verify_visual(
         support = np.linalg.norm(transform_points(T, a) - b, axis=1) < inlier_m
         if support.sum() > best.sum():
             best = support
-    if best.sum() < min_inliers or best.mean() < 0.5:
-        return VisualResult("geometry_rejected", matches=len(a), inliers=int(best.sum()))
+
+    inlier_count = int(best.sum())
+    inlier_ratio = float(best.mean())
+    # patch7x7 维持原 50% 内点率；多尺度视角不变特征在宽视角下允许 >=25% 或内点总数 >= 2*min_inliers。
+    ratio_ok = (inlier_ratio >= 0.5) if feature_type == "patch7x7" else (
+        inlier_ratio >= 0.25 or inlier_count >= 2 * min_inliers
+    )
+    if inlier_count < min_inliers or not ratio_ok:
+        return VisualResult("geometry_rejected", matches=len(a), inliers=inlier_count)
     if min(np.linalg.svd(p[best] - p[best].mean(axis=0), compute_uv=False)[1] for p in (a, b)) < 0.1:
-        return VisualResult("degenerate_geometry", matches=len(a), inliers=int(best.sum()))
+        return VisualResult("degenerate_geometry", matches=len(a), inliers=inlier_count)
     T = _rigid(a[best], b[best])
     residual = np.linalg.norm(transform_points(T, a[best]) - b[best], axis=1)
-    return VisualResult("verified", T, len(a), int(best.sum()), float(np.sqrt(np.mean(residual**2))))
+    return VisualResult("verified", T, len(a), inlier_count, float(np.sqrt(np.mean(residual**2))))
 
 
 def decode_image(message) -> np.ndarray:
