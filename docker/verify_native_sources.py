@@ -14,10 +14,17 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+from embodied_navigation.localization_mapping.fast_livo2_source import (
+    FAST_LIVO2_BUILD_PATCHES,
+)
 EXPECTED = {
     "dynanav_sensor_msgs",
     "fast_livo2_core",
@@ -115,6 +122,23 @@ def main():
                 patch,
             ]
         )
+        fast_livo2_build_patches = {}
+        for patch_name in FAST_LIVO2_BUILD_PATCHES:
+            build_patch = ROOT / "third_party/fast_livo2/patches" / patch_name
+            command(
+                [
+                    "patch",
+                    "--dry-run",
+                    "--forward",
+                    "--batch",
+                    "-p1",
+                    "-d",
+                    ROOT,
+                    "-i",
+                    build_patch,
+                ]
+            )
+            fast_livo2_build_patches[patch_name] = "passed"
         report = dict(
             manifest_files_verified=len(manifest["files"]),
             ros_packages=packages,
@@ -126,6 +150,7 @@ def main():
                 if p.is_symlink()
             ],
             vio_patch_reverse_dry_run="passed",
+            fast_livo2_build_patches_dry_run=fast_livo2_build_patches,
             pct_compile="not requested",
             ros_compile="not run",
             docker_build="not run",

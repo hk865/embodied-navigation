@@ -19,10 +19,11 @@ src/embodied_navigation/localization_mapping/
 ├── backend/                      # 点云 SLAM 后端（9 个 .py），见 backend/README.md
 ├── semantic_mapping/             # 纯 CPU 语义点层与查询（4 个 .py），见 semantic_mapping/README.md
 ├── README.md                     # 本文件
-└── __init__.py                   # 1 行：模块 docstring
+├── __init__.py                   # 1 行：模块 docstring
+└── fast_livo2_source.py          # 构建期暂存 vendored FAST-LIVO2 并应用 patches/（不原地改 third_party/）
 ```
 
-17 个跟踪文件（14 个 `.py` + 3 个 README），共 2,211 行。**只有 `backend/node.py` import ROS**（`git grep rclpy` 只命中该文件），其余模块可被纯 CPU 测试直接导入。
+18 个跟踪文件（15 个 `.py` + 3 个 README）。**只有 `backend/node.py` import ROS**（`git grep rclpy` 只命中该文件），其余模块可被纯 CPU 测试直接导入。
 
 ## 逐文件职责
 
@@ -30,6 +31,7 @@ src/embodied_navigation/localization_mapping/
 | --- | --- | --- |
 | [README.md](README.md) | 本文件：模块定位、数据流、文件清单、测试与配置注意。 | — |
 | [__init__.py](__init__.py) | 模块 docstring（1 行），无重导出、无副作用。 | 无 |
+| [fast_livo2_source.py](fast_livo2_source.py) | 在外部构建目录暂存 `third_party/fast_livo2` 并按序应用构建期补丁（如 `0011-imu-bias-covariance-params.patch`），写出 `source_stage.json` 哈希收据。 | `FAST_LIVO2_BUILD_PATCHES`、`stage_fast_livo2_source(vendor_root, build_root, ...)` |
 | [backend/README.md](backend/README.md) | 后端子模块文档：坐标约定、spool 数据流、配置加载、逐文件职责。 | — |
 | [backend/__init__.py](backend/__init__.py) | 后端包 docstring（6 行），说明只 `node` 依赖 ROS、后端不写前端 odometry。 | 无 |
 | [backend/backend.py](backend/backend.py) | 后端核心：建图（关键帧、回环、位姿图优化）与先验地图重定位，产出 `C = T_world_odom`。 | `BackendConfig`（含 `from_dict`/`from_json` 严格加载与 `anisotropic_information`）、`information`、`SlamBackend.ingest/save_map/T_world_odom` |

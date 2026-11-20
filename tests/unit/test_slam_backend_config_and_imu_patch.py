@@ -276,6 +276,57 @@ class ImuBiasCovariancePatchTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
+    def test_stage_fast_livo2_source_applies_imu_bias_patch_without_mutating_vendor(self):
+        from embodied_navigation.localization_mapping.fast_livo2_source import (
+            FAST_LIVO2_BUILD_PATCHES,
+            stage_fast_livo2_source,
+        )
+
+        self.assertIn("0011-imu-bias-covariance-params.patch", FAST_LIVO2_BUILD_PATCHES)
+        vendor_cpp = REPO_ROOT / "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp"
+        self.assertNotIn("imu.b_gyr_cov", vendor_cpp.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as td:
+            build_root = Path(td) / "fast_livo2_stage"
+            staged = stage_fast_livo2_source(REPO_ROOT / "third_party/fast_livo2", build_root)
+            staged_cpp = (staged / "fast_livo2_core/src/LIVMapper.cpp").read_text(encoding="utf-8")
+            staged_h = (staged / "fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h").read_text(encoding="utf-8")
+            self.assertIn("imu.b_gyr_cov", staged_cpp)
+            self.assertIn("imu.b_acc_cov", staged_cpp)
+            self.assertIn("b_gyr_cov", staged_h)
+            receipt = json.loads((build_root / "source_stage.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["status"], "complete")
+            self.assertEqual(receipt["patch_order"], list(FAST_LIVO2_BUILD_PATCHES))
+            # Also verify staging inside a nested git checkout (Docker build_native.py path)
+            # still patches the staged copy rather than silently skipping paths.
+            git_repo = Path(td) / "outer_git_repo"
+            git_repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=git_repo, check=True)
+            inside_stage = git_repo / "build/native/sources/fast_livo2_stage"
+            staged_in_git = stage_fast_livo2_source(
+                REPO_ROOT / "third_party/fast_livo2",
+                inside_stage,
+                allow_inside_repo=True,
+            )
+            self.assertIn(
+                "imu.b_gyr_cov",
+                (staged_in_git / "fast_livo2_core/src/LIVMapper.cpp").read_text(encoding="utf-8"),
+            )
+        self.assertNotIn("imu.b_gyr_cov", vendor_cpp.read_text(encoding="utf-8"))
+
+    def test_build_native_plan_lists_imu_bias_patch(self):
+        result = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "docker/build_native.py")],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        plan = json.loads(result.stdout)
+        self.assertIn(
+            "third_party/fast_livo2/patches/0011-imu-bias-covariance-params.patch",
+            plan["fast_livo2_build_patches"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

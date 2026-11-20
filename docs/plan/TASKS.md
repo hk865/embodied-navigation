@@ -19,20 +19,19 @@
 | SLAM 公共接口初步规范化 | 主控 + Codex | `localization_mapping/backend/` + `third_party/fast_livo2/patches/` | `0011-imu-bias-covariance-params.patch`、`anisotropic_information`、`BackendConfig.from_dict/from_json`、`node.py --config`，落 `5b880b2` |
 | 全仓库计划与模块文档重建 | DSH | 根 `README.md`、`docs/plan/`、22 份模块 `README.md` | 所有相对链接可达；模块 README 逐文件表与 `git ls-files` 一致；无退役文件名；27 份 `.md` 独立脚本校验 0 错 |
 | 默认 FAST-LIVO2 前端 + PCT/SCAN + Agent 探索实机烟雾测试 | 主控 | `scripts/run_dynanav_native_exploration.sh`、`simulation/dynanav/`、`navigation/` | `runs/20261120-main-smoke/livo-frontend-smoke-01` 通过：`observe` 正常，平地 + 180° 折返爬楼梯（+0.53 m）均 `waypoint_reached`，`capture_exit=0`，零撞墙/扶手与躯干碰撞 |
+| 修复 LIVO 模式下独立 `yaw` 动作 `rotation_space_stale` + 接入 `0011-imu-bias-covariance-params.patch` 原生构建链 | 主控 | `simulation/dynanav/pct_scan_worker.py`、`third_party/scan/patches/z_grid_map_latency.patch`、`localization_mapping/fast_livo2_source.py`、`docker/{build_native,verify_native_sources}.py`、`scripts/build_dynanav_fast_livo2.py` | 6 项 `dynanav_*` CTest + `yaw_consumption` + 13/13 `raycast_regression` 全绿；`runs/20261120-yaw-and-imu-fix/livo-yaw-04` 在默认 live FAST-LIVO2 下完成独立 `yaw +180°`（`yaw_complete`，误差 `-0.036 rad`，连续驻留 `0.52 s`，未放松 `max_sim_age_s=0.25 s`）+ `goto 1.5 m`（`waypoint_reached`），`capture_exit=0` |
 
-## 进行中（Phase 3 收口冲刺）
+## 进行中（Phase 4 准备）
 
 | 状态 | 任务 | 角色 | 对应模块 | 验收标准 |
 | --- | --- | --- | --- | --- |
-| `[x]` | `--truth-pose` 对照验证 | 主控 | 同上 | `runs/20261120-pct-scan-stairs-truth/truth-stairs-09`（地下室→二楼 +3.25 m）与默认 LIVO `livo-frontend-smoke-01` 分别留存 run 目录，结论分列 |
-| `[x]` | Phase 3 全量回归复跑与文档校验 | 主控 + DSH | 全仓库 | 646 单测、60 回归全绿（本机 3 条按环境 skip），27 份 `.md` 零死链/零绝对路径/零僵尸引用 |
-| `[ ]` | 交付用户新会话验收并合并推送 `main` | 用户 | 仓库 | 用户新开会话按文档讲解验收；确认后由用户执行合并与 push，agent 不 push |
+| `[x]` | 干净底座已合入并推送 `main`（`88156de`） | 用户 | 仓库 | `main` = `origin/main` = `88156de` |
+| `[ ]` | 审阅并合入 `fix/livo-yaw-and-imu-patch` 至 `main` | 用户 | 仓库 | 逐行读 diff + 全量测试通过后由用户合并推送 |
 
 ## 待办队列（Phase 4 及以后，未开始）
 
 | 状态 | 任务 | 角色 | 对应模块 | 验收标准 |
 | --- | --- | --- | --- | --- |
-| `[ ]` | 修复 LIVO 模式下独立 `yaw` 动作 `rotation_space_stale` 新鲜度门（0.1 s 点云/位姿时差） | 主控 / Flash | `navigation/yaw_action.py`、`simulation/dynanav/pct_scan_worker.py` | 默认 LIVO 模式下 `explore_waypoint_client.py yaw --delta-deg 180` 稳定返回 `yaw_complete`，不放松安全门 |
 | `[ ]` | 从新 `main` 切 `exp/slam-measured-submaps`，对照多帧实测子图回环配准 | 主控 + Flash | `localization_mapping/backend/registration.py`、`keyframes.py` | 同输入、同时间轴、同对齐；报告回环接受率、误配/漏配与位姿误差，给出适用场景 |
 | `[ ]` | 切 `exp/slam-surface-gate`，对照平面/表面覆盖门控 | 主控 + Flash | 同上 | 同上口径；分别报告误配与漏配，独立地面高度因子另立实验 |
 | `[ ]` | 切 `exp/slam-visual-retrieval`，对照图像检索候选 | 主控 + Flash | `localization_mapping/backend/scan_context.py`、视觉检索接入点 | 记录实际候选与图边；光度因子与视觉 BA 另立实验 |

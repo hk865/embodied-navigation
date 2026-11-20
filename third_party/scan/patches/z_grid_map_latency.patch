@@ -1,0 +1,31 @@
+--- a/third_party/scan/plan_env/src/grid_map.cpp
++++ b/third_party/scan/plan_env/src/grid_map.cpp
+@@ -199,8 +199,8 @@
+     sliding_map_frame_sub_ = node_->create_subscription<nav_msgs::msg::Odometry>(
+         "body_pose", rclcpp::SensorDataQoS(),
+         std::bind(&GridMap::slidingMapFrameCallback, this, std::placeholders::_1));
+ 
+-    occ_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
++    occ_timer_ = node_->create_wall_timer(std::chrono::milliseconds(10),
+                                           std::bind(&GridMap::updateOccupancyCallback, this));
+     vis_timer_ = node_->create_wall_timer(std::chrono::milliseconds(50),
+                                           std::bind(&GridMap::visCallback, this));
+@@ -641,15 +641,14 @@
+         while (raycaster.step(ray_pt)) {
+             Eigen::Vector3d tmp = (ray_pt + half) * mp_.resolution_;
+-            length = (tmp - md_.ray_pos_).norm();
+ 
+             Eigen::Vector3i free_id;
+             posToIndex(tmp, free_id);
+-            if (isInMap(free_id) && free_id != endpoint_id &&
+-                observedSegmentCrossesVoxel(md_.ray_pos_, pt_w, free_id, mp_.resolution_)) {
++            if (isInMap(free_id) && free_id != endpoint_id) {
+                 vox_idx = toAddress(free_id);
+-                if (md_.flag_traverse_[vox_idx] == 0) {
++                if (md_.flag_traverse_[vox_idx] == 0 &&
++                    observedSegmentCrossesVoxel(md_.ray_pos_, pt_w, free_id, mp_.resolution_)) {
+                     setCacheOccupancy(tmp, 0);
+                     md_.flag_traverse_[vox_idx] = 1;
+                 }
+             }
+         }
