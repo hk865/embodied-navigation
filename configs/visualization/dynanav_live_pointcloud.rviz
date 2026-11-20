@@ -91,7 +91,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 20; 24; 32
-    Fixed Frame: camera_init
+    Fixed Frame: dynanav_lio_map
     Frame Rate: 20
   Name: root
   Tools:
