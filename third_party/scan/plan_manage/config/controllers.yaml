@@ -1,40 +1,40 @@
 closed_loop_controller:
   ros__parameters:
     use_sim_time: false
-    time_forward: 0.8
-    heading_error_threshold: 0.8
-    kp_pos: 0.8
-    kp_yaw: 1.5
-    max_vx: 0.75
-    max_vy: 0.35
-    max_vyaw: 1.0
-    finish_dist: 0.15
+    time_forward: 0.8            # look-ahead horizon along the B-spline (s)
+    heading_error_threshold: 0.8 # yaw error at which the controller re-plans (rad)
+    kp_pos: 0.8                  # position proportional gain (1/s)
+    kp_yaw: 1.5                  # yaw proportional gain (1/s)
+    max_vx: 0.75                 # forward speed limit (m/s)
+    max_vy: 0.35                 # lateral speed limit (m/s)
+    max_vyaw: 1.0                # yaw-rate limit (rad/s)
+    finish_dist: 0.15            # waypoint reached within this radius (m)
 
 open_loop_controller:
   ros__parameters:
     use_sim_time: false
     frame_id: world
     child_frame_id: base
-    publish_rate: 100.0
-    yaw_min_speed: 0.05
+    publish_rate: 100.0          # odometry/tf publish rate (Hz)
+    yaw_min_speed: 0.05          # minimum speed used for in-place yaw (m/s)
     hold_final_position: true
-    init_x: -19.0
+    init_x: -19.0                # initial pose in `world` (m)
     init_y: 1.0
     init_z: 0.3
-    init_yaw: 0.0
+    init_yaw: 0.0                # initial heading (rad)
 
 go2_kinematic_sim:
   ros__parameters:
     use_sim_time: false
-    init_x: -19.0
+    init_x: -19.0                # initial pose in `world` (m)
     init_y: 1.0
     init_z: 0.3
-    init_yaw: 0.0
-    max_vx: 0.75
-    max_vy: 0.35
-    max_vyaw: 1.0
-    cmd_timeout: 0.3
-    sim_rate: 100.0
+    init_yaw: 0.0                # initial heading (rad)
+    max_vx: 0.75                 # forward speed limit (m/s)
+    max_vy: 0.35                 # lateral speed limit (m/s)
+    max_vyaw: 1.0                # yaw-rate limit (rad/s)
+    cmd_timeout: 0.3             # stop if no velocity command within this window (s)
+    sim_rate: 100.0              # kinematic integration rate (Hz)
     publish_tf: true
     frame_id: world
     child_frame_id: base
@@ -42,11 +42,11 @@ go2_kinematic_sim:
 go2_gait_publisher:
   ros__parameters:
     use_sim_time: false
-    rate: 60.0
-    gait_frequency: 2.2
-    min_walk_speed: 0.05
-    max_walk_speed: 1.0
+    rate: 60.0                   # gait command publish rate (Hz)
+    gait_frequency: 2.2          # trot frequency (Hz)
+    min_walk_speed: 0.05         # below this the gait holds position (m/s)
+    max_walk_speed: 1.0          # gait speed clamp (m/s)
     always_trot: false
-    hip_swing: 0.08
-    thigh_swing: 0.32
-    calf_swing: 0.42
+    hip_swing: 0.08              # hip joint swing amplitude (rad)
+    thigh_swing: 0.32            # thigh joint swing amplitude (rad)
+    calf_swing: 0.42             # calf joint swing amplitude (rad)

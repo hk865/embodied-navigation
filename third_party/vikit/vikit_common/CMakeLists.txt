@@ -9,6 +9,8 @@ SET(CMAKE_VERBOSE_MAKEFILE OFF)
 SET(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/CMakeModules/")
 
 # Use portable compiler defaults; do not encode the build host CPU.
+# Release uses -O3 and -fno-math-errno/-fno-signed-zeros (both keep IEEE
+# NaN/inf behaviour) plus loop unrolling for the Eigen hot loops.
 SET(CMAKE_CXX_STANDARD 17)
 SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -fPIC")
@@ -52,6 +54,8 @@ LIST(APPEND SOURCEFILES src/atan_camera.cpp
                         src/img_align.cpp)
 
 # Create vikit library
+# One shared library holding every camera model, the robust cost functions and
+# the image alignment code; installed headers are exported through ament below.
 ADD_LIBRARY(${PROJECT_NAME} SHARED ${SOURCEFILES})
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

@@ -1,45 +1,68 @@
 <launch>
+  <!--
+    Livox ROS1 driver launch for HAP. Profile: rviz.
+    Publishes PointCloud2 (xfer_format=0) and starts rviz with the
+    package display config config/display_point_cloud_ROS1.rviz.
+    Any argument can be overridden on the command line, for example:
+      roslaunch livox_ros_driver2 rviz_HAP.launch publish_freq:=20.0
+  -->
 
-	<!--user configure parameters for ros start-->
-	<arg name="lvx_file_path" default="livox_test.lvx"/>
-	<arg name="bd_list" default="100000000000000"/>
-	<arg name="xfer_format" default="0"/>
-	<arg name="multi_topic" default="0"/>
-	<arg name="data_src" default="0"/>
-	<arg name="publish_freq" default="10.0"/>
-	<arg name="output_type" default="0"/>
-	<arg name="rviz_enable" default="true"/>
-	<arg name="rosbag_enable" default="false"/>
-	<arg name="cmdline_arg" default="$(arg bd_list)"/>
-	<arg name="msg_frame_id" default="livox_frame"/>
-	<arg name="lidar_bag" default="true"/>
-	<arg name="imu_bag" default="true"/>
-	<!--user configure parameters for ros end--> 
+  <!-- Overridable arguments; defaults match the upstream rviz profile.
+       data_src 0 = raw LiDAR; this driver snapshot only accepts 0.
+       xfer_format 0 = PointCloud2, 1 = Livox CustomMsg, 2 = PCL PointXYZI.
+       multi_topic 0 = one shared topic, 1 = one topic per LiDAR.
+       publish_freq is Hz and the driver clamps it to [0.5, 100.0].
+       output_type is exported as output_data_type: 0 = ROS publication.
+       1 selects a legacy bag branch, but this entry point never opens a bag.
+       lidar_bag and imu_bag gate writes only if a driver bag is open.
+       For external recording, keep output_type=0 and set rosbag_enable=true.
+       rviz_enable gates the rviz group below (default true in this profile). -->
+  <arg name="lvx_file_path" default="livox_test.lvx"/>
+  <arg name="bd_list" default="100000000000000"/>
+  <arg name="xfer_format" default="0"/>
+  <arg name="multi_topic" default="0"/>
+  <arg name="data_src" default="0"/>
+  <arg name="publish_freq" default="10.0"/>
+  <arg name="output_type" default="0"/>
+  <arg name="rviz_enable" default="true"/>
+  <arg name="rosbag_enable" default="false"/>
+  <arg name="cmdline_arg" default="$(arg bd_list)"/>
+  <arg name="msg_frame_id" default="livox_frame"/>
+  <arg name="lidar_bag" default="true"/>
+  <arg name="imu_bag" default="true"/>
 
-	<param name="xfer_format" value="$(arg xfer_format)"/>
-	<param name="multi_topic" value="$(arg multi_topic)"/>
-	<param name="data_src" value="$(arg data_src)"/>
-	<param name="publish_freq" type="double" value="$(arg publish_freq)"/>
-	<param name="output_data_type" value="$(arg output_type)"/>
-	<param name="cmdline_str" type="string" value="$(arg bd_list)"/>
-	<param name="cmdline_file_path" type="string" value="$(arg lvx_file_path)"/>
-	<param name="user_config_path" type="string" value="$(find livox_ros_driver2)/config/HAP_config.json"/>
-	<param name="frame_id" type="string" value="$(arg msg_frame_id)"/>
-	<param name="enable_lidar_bag" type="bool" value="$(arg lidar_bag)"/>
-	<param name="enable_imu_bag" type="bool" value="$(arg imu_bag)"/>
+  <!-- ROS params read by livox_ros_driver2_node. Note the arg rename
+       output_type becomes output_data_type. cmdline_str, cmdline_file_path and
+       the node args are compatibility fields that this driver snapshot does not
+       read; the LiDAR and network setup comes from user_config_path. -->
+  <param name="xfer_format" value="$(arg xfer_format)"/>
+  <param name="multi_topic" value="$(arg multi_topic)"/>
+  <param name="data_src" value="$(arg data_src)"/>
+  <param name="publish_freq" type="double" value="$(arg publish_freq)"/>
+  <param name="output_data_type" value="$(arg output_type)"/>
+  <param name="cmdline_str" type="string" value="$(arg bd_list)"/>
+  <param name="cmdline_file_path" type="string" value="$(arg lvx_file_path)"/>
+  <param name="user_config_path" type="string" value="$(find livox_ros_driver2)/config/HAP_config.json"/>
+  <param name="frame_id" type="string" value="$(arg msg_frame_id)"/>
+  <param name="enable_lidar_bag" type="bool" value="$(arg lidar_bag)"/>
+  <param name="enable_imu_bag" type="bool" value="$(arg imu_bag)"/>
 
-	<node name="livox_lidar_publisher2" pkg="livox_ros_driver2"
-	      type="livox_ros_driver2_node" required="true"
-	      output="screen" args="$(arg cmdline_arg)"/>
+  <!-- Driver node. required=true means roslaunch shuts the whole launch
+       down if this node exits. -->
+  <node name="livox_lidar_publisher2" pkg="livox_ros_driver2"
+        type="livox_ros_driver2_node" required="true"
+        output="screen" args="$(arg cmdline_arg)"/>
 
-	<group if="$(arg rviz_enable)">
-		<node name="livox_rviz" pkg="rviz" type="rviz" respawn="true"
-				args="-d $(find livox_ros_driver2)/config/display_point_cloud_ROS1.rviz"/>
-    </group>
+  <!-- rviz with the package point-cloud display configuration. -->
+  <group if="$(arg rviz_enable)">
+    <node name="livox_rviz" pkg="rviz" type="rviz" respawn="true"
+          args="-d $(find livox_ros_driver2)/config/display_point_cloud_ROS1.rviz"/>
+  </group>
 
-	<group if="$(arg rosbag_enable)">
-    	<node pkg="rosbag" type="record" name="record" output="screen"
-          		args="-a"/>
-    </group>
+  <!-- Optional catch-all recording: rosbag record -a when rosbag_enable:=true. -->
+  <group if="$(arg rosbag_enable)">
+    <node pkg="rosbag" type="record" name="record" output="screen"
+          args="-a"/>
+  </group>
 
 </launch>

@@ -20,6 +20,7 @@ DEFAULT_OUTPUT = os.path.join(os.getcwd(), "keypoints.yaml")
 
 
 def format_float(value):
+    # Render with at most 6 decimals, trimming trailing zeros (never "-0").
     text = f"{float(value):.6f}".rstrip("0").rstrip(".")
     return "0" if text in ("", "-0") else text
 
@@ -86,6 +87,7 @@ class KeypointRecorder(Node):
         self.get_logger().info(f"Saved {len(self.waypoints)} waypoint(s) to {self.output_path}")
 
     def prompt_index(self, settings, action):
+        # Parse an integer waypoint index; the caller checks its 1-based range.
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
         try:
             return int(input(f"{action} waypoint index (1-{len(self.waypoints)}): ").strip())

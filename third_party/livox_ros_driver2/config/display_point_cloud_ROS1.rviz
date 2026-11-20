@@ -1,3 +1,6 @@
+# RViz (ROS1) layout for livox_ros_driver2: fixed frame livox_frame, one Grid and
+# one PointCloud2 display on /livox/lidar with intensity colouring. Saved by RViz
+# in ROS1 format; numbers below are RViz's own serialised view/window state.
 Panels:
   - Class: rviz/Displays
     Help Height: 78

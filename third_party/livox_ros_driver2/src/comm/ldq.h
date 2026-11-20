@@ -31,21 +31,21 @@
 #include "comm/comm.h"
 
 namespace livox_ros {
-  
-inline static bool IsPowerOf2(uint32_t size) {
-  return (size != 0) && ((size & (size - 1)) == 0);
-}
 
+inline static bool IsPowerOf2(uint32_t size) { return (size != 0) && ((size & (size - 1)) == 0); }
+
+// Round up to the smallest power of two >= size. Note: the loop stops at
+// i = 31, so sizes above 2^31 return 2^31 (not a true round-up).
 inline static uint32_t RoundupPowerOf2(uint32_t size) {
-  uint32_t power2_val = 0;
-  for (int i = 0; i < 32; i++) {
-    power2_val = ((uint32_t)1) << i;
-    if (size <= power2_val) {
-      break;
+    uint32_t power2_val = 0;
+    for (int i = 0; i < 32; i++) {
+        power2_val = ((uint32_t)1) << i;
+        if (size <= power2_val) {
+            break;
+        }
     }
-  }
 
-  return power2_val;
+    return power2_val;
 }
 
 /** queue operate function */
@@ -61,6 +61,6 @@ bool QueueIsFull(LidarDataQueue *queue);
 bool QueueIsEmpty(LidarDataQueue *queue);
 uint32_t QueuePushAny(LidarDataQueue *queue, uint8_t *data, const uint64_t base_time);
 
-}  // namespace livox_ros
+} // namespace livox_ros
 
 #endif // LIVOX_ROS_DRIVER_LDQ_H_

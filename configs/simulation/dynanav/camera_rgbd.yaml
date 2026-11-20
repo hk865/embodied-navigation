@@ -1,0 +1,18 @@
+# Current capture camera: 512x512, focal_px=512*24/42, center=(256,256).
+# Intrinsics reference only; the LIO observer never loads/uses a camera model.
+# A future VIO integration must also use capture camera yaw/IMU extrinsics and a visual dynamic mask.
+/**:
+  ros__parameters:
+    cam_cx: 256.0
+    cam_cy: 256.0
+    cam_d0: 0.0
+    cam_d1: 0.0
+    cam_d2: 0.0
+    cam_d3: 0.0
+    cam_fx: 292.57142857142856
+    cam_fy: 292.57142857142856
+    cam_height: 512
+    cam_model: Pinhole
+    cam_width: 512
+    scale: 1.0
+    use_sim_time: true

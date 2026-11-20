@@ -1,0 +1,463 @@
+{
+  "schema": "dynanav_basement_collision/v1",
+  "ground_plane_path": "/Root/GroundPlane/CollisionPlane",
+  "floor_paths": [
+    "/Root/SM_Floor_3m17_219/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m18_220/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m40_325/SM_Floor_3m",
+    "/Root/SM_Floor_3m50_360/SM_Floor_3m",
+    "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m21/SM_Floor_6m",
+    "/Root/SM_Floor_6m3/SM_Floor_6m/SM_Floor_6m"
+  ],
+  "stair_paths": [
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section0",
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section1",
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section2",
+    "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+  ],
+  "scope": "Original office basement ascent through both stair flights and the intermediate landing to the ground-floor exit; session-only collision restoration, no added geometry.",
+  "route": {
+    "name": "basement-to-ground",
+    "waypoints_xyz": [
+      [
+        -22.0,
+        -7.5,
+        -1.1441
+      ],
+      [
+        -22.0,
+        1.5,
+        -1.1441
+      ],
+      [
+        -13.5,
+        1.5,
+        0.35
+      ]
+    ],
+    "pose_source": "simulator_native_pose_oracle",
+    "recommended_diagnostic_speed_mps": 0.15,
+    "recommended_duration_s": 300.0,
+    "stair_specific_speed_limit": null,
+    "recommendations_are_not_automatic_limits": true
+  },
+  "walk_surface_paths": [
+    "/Root/SM_FloorCarpetPath_12/SM_CarpetPath_02"
+  ],
+  "walk_surface_policy": "Allow a named original walk surface as an actual nearest query hit if it already collides. Do not enable or add collision to these optional surfaces.",
+  "provenance": {
+    "geometry_archive_identifier": "codex/2026-11-05/task-2/nav_validation/multifloor_20261106/geometry/basement_to_ground_candidate.json",
+    "geometry_sha256": "731d450e29fe1699ee3eb50870dfc63e92b70b85064f57a1440bd17d62b1a73d",
+    "repair_archive_identifier": "codex/2026-11-08/task/robogauge_isaac15cm_nopid_20261108/runner/teacher_static_floor37_spec.py",
+    "repair_sha256": "c558f1a43ca303efb2a2ad03a20f99ebb5ca1d4581e9fa60ab090631b53bff80",
+    "selection": "Original seven floors and four stair meshes preserved. Selected archived support waypoints3..28 cover the actual configured spawn approach, both flights and ground exit; three additional landing-interior samples come from read-only original USD triangle intersections. Historical approaches0..2 and later ground waypoint29 are outside this route.",
+    "source_status": "Independent CPU proposal; no live collision/contact/traversal test; v2 route untouched",
+    "geometry_is_not_traversal_evidence": true,
+    "platform_sample_method": "CPU vertical intersections of the original Main Section0 and Carpet mesh at x=-22, y=-5.25/-3/-0.75. Not live PhysX support or robot traversal.",
+    "scene_root_sha256": "c4a1458847c51c3b3afd65dc6e6d8a50929ad350a135601a67100e35e1f59950",
+    "runtime_archive_dependency": false
+  },
+  "support_preflight": {
+    "scope": "Live PhysX downward queries for configured spawn, both original flights, landing interior and ground exit; not robot contact, clearance or route completion.",
+    "ray_origin_above_surface_m": 0.12,
+    "ray_length_m": 0.24,
+    "surface_tolerance_m": 0.02,
+    "robot_paths_excluded_from_static_check": [
+      "/World/Go2"
+    ],
+    "all_hits_recorded": true,
+    "nearest_nonrobot_hit_must_match_reference": true,
+    "samples": [
+      {
+        "label": "spawn_floor",
+        "surface_xyz_m": [
+          -14.53,
+          -7.5,
+          -3.300000262268327
+        ],
+        "expected_colliders": [
+          "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m"
+        ],
+        "reference": "Spawn XY from archived run; expected Z from original flat approach floor at waypoint3. This new scene-query point is not a historical measured contact."
+      },
+      {
+        "label": "basement_to_ground_waypoint_3",
+        "source_waypoint_index": 3,
+        "surface_xyz_m": [
+          -14.7,
+          -7.5,
+          -3.300000262268327
+        ],
+        "expected_colliders": [
+          "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_4",
+        "source_waypoint_index": 4,
+        "surface_xyz_m": [
+          -15.210000048950313,
+          -7.5,
+          -3.1418760455104557
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_5",
+        "source_waypoint_index": 5,
+        "surface_xyz_m": [
+          -15.610000005438923,
+          -7.5,
+          -2.9918762028006216
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_6",
+        "source_waypoint_index": 6,
+        "surface_xyz_m": [
+          -16.00999997742474,
+          -7.5,
+          -2.8418765375843797
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_7",
+        "source_waypoint_index": 7,
+        "surface_xyz_m": [
+          -16.409999930337072,
+          -7.5,
+          -2.691876642311925
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_8",
+        "source_waypoint_index": 8,
+        "surface_xyz_m": [
+          -16.809999883249404,
+          -7.5,
+          -2.5418767303283083
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_9",
+        "source_waypoint_index": 9,
+        "surface_xyz_m": [
+          -18.00999871201816,
+          -7.5,
+          -2.377315721023679
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_10",
+        "source_waypoint_index": 10,
+        "surface_xyz_m": [
+          -19.209999295547618,
+          -7.5,
+          -2.2314413266176576
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_11",
+        "source_waypoint_index": 11,
+        "surface_xyz_m": [
+          -19.610000049546358,
+          -7.5,
+          -2.0849194953421626
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_12",
+        "source_waypoint_index": 12,
+        "surface_xyz_m": [
+          -20.010000345781435,
+          -7.5,
+          -1.938398692131228
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_13",
+        "source_waypoint_index": 13,
+        "surface_xyz_m": [
+          -20.411547425429205,
+          -7.5,
+          -1.7918765221288537
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_14",
+        "source_waypoint_index": 14,
+        "surface_xyz_m": [
+          -20.81154680613696,
+          -7.5,
+          -1.6418769030699243
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_15",
+        "source_waypoint_index": 15,
+        "surface_xyz_m": [
+          -22,
+          -7.5,
+          -1.4906366737798542
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "landing_interior_1",
+        "surface_xyz_m": [
+          -22.0,
+          -5.25,
+          -1.4904489168143122
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ],
+        "reference": "Read-only original USD vertical triangle intersections; live PhysX must independently admit the nearest collider."
+      },
+      {
+        "label": "landing_interior_2",
+        "surface_xyz_m": [
+          -22.0,
+          -3.0,
+          -1.4901187245646925
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ],
+        "reference": "Read-only original USD vertical triangle intersections; live PhysX must independently admit the nearest collider."
+      },
+      {
+        "label": "landing_interior_3",
+        "surface_xyz_m": [
+          -22.0,
+          -0.75,
+          -1.4900003779765876
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ],
+        "reference": "Read-only original USD vertical triangle intersections; live PhysX must independently admit the nearest collider."
+      },
+      {
+        "label": "basement_to_ground_waypoint_16",
+        "source_waypoint_index": 16,
+        "surface_xyz_m": [
+          -22,
+          1.5,
+          -1.4904816416840847
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_17",
+        "source_waypoint_index": 17,
+        "surface_xyz_m": [
+          -20.39000110022721,
+          1.5,
+          -1.341876418919077
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_18",
+        "source_waypoint_index": 18,
+        "surface_xyz_m": [
+          -19.99000034622847,
+          1.5,
+          -1.1918771049792674
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_19",
+        "source_waypoint_index": 19,
+        "surface_xyz_m": [
+          -19.589999439641844,
+          1.5,
+          -1.0418764043313853
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_20",
+        "source_waypoint_index": 20,
+        "surface_xyz_m": [
+          -19.189998533055217,
+          1.5,
+          -0.8918767172735445
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_21",
+        "source_waypoint_index": 21,
+        "surface_xyz_m": [
+          -17.989999627992518,
+          1.5,
+          -0.7418504398089195
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_22",
+        "source_waypoint_index": 22,
+        "surface_xyz_m": [
+          -16.789999959990382,
+          1.5,
+          -0.5918766324045069
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_23",
+        "source_waypoint_index": 23,
+        "surface_xyz_m": [
+          -16.390000121518966,
+          1.5,
+          -0.44187620423807467
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_24",
+        "source_waypoint_index": 24,
+        "surface_xyz_m": [
+          -15.989999977871776,
+          1.5,
+          -0.2918763654959656
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_25",
+        "source_waypoint_index": 25,
+        "surface_xyz_m": [
+          -15.590000024959444,
+          1.5,
+          -0.14187666456186665
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_26",
+        "source_waypoint_index": 26,
+        "surface_xyz_m": [
+          -15.190000063396333,
+          1.5,
+          0.009623165099813055
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet",
+          "/Root/SM_StairsMain_2/SM_StairsMain/Section0"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_27",
+        "source_waypoint_index": 27,
+        "surface_xyz_m": [
+          -14.5,
+          1.5,
+          0.009509631704025101
+        ],
+        "expected_colliders": [
+          "/Root/SM_FloorCarpetPath_12/SM_CarpetPath_02",
+          "/Root/SM_Floor_3m40_325/SM_Floor_3m"
+        ]
+      },
+      {
+        "label": "basement_to_ground_waypoint_28",
+        "source_waypoint_index": 28,
+        "surface_xyz_m": [
+          -13.5,
+          1.5,
+          0.009510946634776345
+        ],
+        "expected_colliders": [
+          "/Root/SM_FloorCarpetPath_12/SM_CarpetPath_02",
+          "/Root/SM_Floor_3m40_325/SM_Floor_3m"
+        ]
+      }
+    ],
+    "surface_tolerance_reason": "This full-route configuration allows the measured approximately1cm gap between original carpet tops and supporting floor/step meshes. The first-flight-only configuration retains its3mm tolerance. Nearest unexpected or tied unknown colliders still reject the check."
+  }
+}

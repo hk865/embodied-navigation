@@ -36,15 +36,20 @@
 
 namespace livox_ros {
 
+// Reads the livox driver JSON configuration (the file referenced by
+// user_config_path) and extracts summary information such as the lidar type.
+// The path is stored at construction; parsing happens on demand.
 class ParseCfgFile {
- public:
-  explicit ParseCfgFile(const std::string& path);
-  ~ParseCfgFile() {}
+  public:
+    explicit ParseCfgFile(const std::string &path);
+    ~ParseCfgFile() {}
 
-  bool ParseSummaryInfo(LidarSummaryInfo& lidar_summary_info);
-  
- private:
-  const std::string path_;
+    // Fill lidar_summary_info from the JSON's lidar_summary_info block.
+    // Returns false on unreadable/invalid JSON.
+    bool ParseSummaryInfo(LidarSummaryInfo &lidar_summary_info);
+
+  private:
+    const std::string path_;
 };
 
 } // namespace livox_ros

@@ -13,39 +13,37 @@
 // Input: a signed distance field and a sequence of points
 // Output: the optimized sequence of points
 // The format of points: N x 3 matrix, each row is a point
-namespace scan_planner
-{
+namespace scan_planner {
 
-  class ControlPoints
-  {
+class ControlPoints {
   public:
     double clearance;
     int size;
     Eigen::MatrixXd points;
-    std::vector<std::vector<Eigen::Vector3d>> base_point; // The point at the start of the direction vector (collision point)
-    std::vector<std::vector<Eigen::Vector3d>> direction;  // Direction vector, must be normalized.
-    std::vector<bool> flag_temp;                          // A flag that used in many places. Initialize it every time before using it.
+    std::vector<std::vector<Eigen::Vector3d>>
+        base_point; // The point at the start of the direction vector (collision point)
+    std::vector<std::vector<Eigen::Vector3d>> direction; // Direction vector, must be normalized.
+    std::vector<bool>
+        flag_temp; // A flag that used in many places. Initialize it every time before using it.
     // std::vector<bool> occupancy;
 
-    void resize(const int size_set)
-    {
-      size = size_set;
+    void resize(const int size_set) {
+        size = size_set;
 
-      base_point.clear();
-      direction.clear();
-      flag_temp.clear();
-      // occupancy.clear();
+        base_point.clear();
+        direction.clear();
+        flag_temp.clear();
+        // occupancy.clear();
 
-      points.resize(3, size_set);
-      base_point.resize(size);
-      direction.resize(size);
-      flag_temp.resize(size);
-      // occupancy.resize(size);
+        points.resize(3, size_set);
+        base_point.resize(size);
+        direction.resize(size);
+        flag_temp.resize(size);
+        // occupancy.resize(size);
     }
-  };
+};
 
-  class BsplineOptimizer
-  {
+class BsplineOptimizer {
 
   public:
     BsplineOptimizer() {}
@@ -77,21 +75,19 @@ namespace scan_planner
     AStar::Ptr a_star_;
     std::vector<Eigen::Vector3d> ref_pts_;
 
-    std::vector<std::vector<Eigen::Vector3d>> initControlPoints(Eigen::MatrixXd &init_points, bool flag_first_init = true);
-    bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points, double ts); // must be called after initControlPoints()
-    bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts, Eigen::MatrixXd &optimal_points);
+    std::vector<std::vector<Eigen::Vector3d>> initControlPoints(Eigen::MatrixXd &init_points,
+                                                                bool flag_first_init = true);
+    bool BsplineOptimizeTrajRebound(Eigen::MatrixXd &optimal_points,
+                                    double ts); // must be called after initControlPoints()
+    bool BsplineOptimizeTrajRefine(const Eigen::MatrixXd &init_points, const double ts,
+                                   Eigen::MatrixXd &optimal_points);
 
     inline int getOrder(void) { return order_; }
 
   private:
     GridMap::Ptr grid_map_;
 
-    enum FORCE_STOP_OPTIMIZE_TYPE
-    {
-      DONT_STOP,
-      STOP_FOR_REBOUND,
-      STOP_FOR_ERROR
-    } force_stop_type_;
+    enum FORCE_STOP_OPTIMIZE_TYPE { DONT_STOP, STOP_FOR_REBOUND, STOP_FOR_ERROR } force_stop_type_;
 
     // main input
     // Eigen::MatrixXd control_points_;     // B-spline control points, N x dim
@@ -128,21 +124,24 @@ namespace scan_planner
     /* cost function */
     /* calculate each part of cost function with control points q as input */
 
-    static double costFunction(const std::vector<double> &x, std::vector<double> &grad, void *func_data);
+    static double costFunction(const std::vector<double> &x, std::vector<double> &grad,
+                               void *func_data);
     void combineCost(const std::vector<double> &x, vector<double> &grad, double &cost);
 
     // q contains all control points
-    void calcSmoothnessCost(const Eigen::MatrixXd &q, double &cost,
-                            Eigen::MatrixXd &gradient, bool falg_use_jerk = true);
-    void calcFeasibilityCost(const Eigen::MatrixXd &q, double &cost,
-                             Eigen::MatrixXd &gradient);
-    void calcDistanceCostRebound(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient, int iter_num, double smoothness_cost);
+    void calcSmoothnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient,
+                            bool falg_use_jerk = true);
+    void calcFeasibilityCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient);
+    void calcDistanceCostRebound(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient,
+                                 int iter_num, double smoothness_cost);
     void calcFitnessCost(const Eigen::MatrixXd &q, double &cost, Eigen::MatrixXd &gradient);
     bool check_collision_and_rebound(void);
     double estimateSegmentYaw(const Eigen::Vector3d &from, const Eigen::Vector3d &to) const;
     double estimateControlPointYaw(const Eigen::MatrixXd &q, int id) const;
 
-    static int earlyExit(void *func_data, const double *x, const double *g, const double fx, const double xnorm, const double gnorm, const double step, int n, int k, int ls);
+    static int earlyExit(void *func_data, const double *x, const double *g, const double fx,
+                         const double xnorm, const double gnorm, const double step, int n, int k,
+                         int ls);
     static double costFunctionRebound(void *func_data, const double *x, double *grad, const int n);
     static double costFunctionRefine(void *func_data, const double *x, double *grad, const int n);
 
@@ -156,7 +155,7 @@ namespace scan_planner
     typedef unique_ptr<BsplineOptimizer> Ptr;
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-  };
+};
 
 } // namespace scan_planner
 #endif

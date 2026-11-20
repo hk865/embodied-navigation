@@ -401,6 +401,8 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
 
       // imu_time = stamp2Sec(head->header.stamp) - first_lidar_time;
 
+      // Scale acceleration so the stationary mean magnitude becomes G_m_s2 (m/s^2),
+      // then subtract bias_a expressed in that same scaled acceleration unit.
       angvel_avr -= state_inout.bias_g;
       acc_avr = acc_avr * G_m_s2 / mean_acc.norm() - state_inout.bias_a;
 
@@ -435,7 +437,12 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       dt_all += dt;
       // printf("[ LIO Propagation ] dt: %lf \n", dt);
 
-      /* covariance propagation */
+      /* covariance propagation
+       * DIM_STATE = 19; block layout (common_lib.h StatesGroup):
+       *   0-2 rot, 3-5 pos, 6 inv_expo_time, 7-9 vel,
+       *   10-12 bias_gyro, 13-15 bias_acc, 16-18 gravity.
+       * Bias/gravity couplings in F_x are switch-gated, as is exposure noise.
+       * The bias random-walk covariance blocks below are populated unconditionally. */
       M3D acc_avr_skew;
       M3D Exp_f = Exp(angvel_avr, dt);
       acc_avr_skew << SKEW_SYM_MATRX(acc_avr);
@@ -563,6 +570,7 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
     fastlivo_timing::Scope timing_deskew_points(2);
 // BOUNDARY_TIMING_END deskew_points
     const bool instantaneous_lidar = lidar_type == 0;
+    const bool include_scan_start = instantaneous_lidar || lidar_type == OUST64;
     bool point_begin_processed = false;
     auto it_pcl = pcl_wait_proc.points.end() - 1;
     M3D extR_Ri(Lid_rot_to_IMU.transpose() * state_inout.rot_end.transpose());
@@ -584,13 +592,13 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
       // printf("it_pcl->curvature: %lf pt dt: %lf \n", it_pcl->curvature,
       // it_pcl->curvature / double(1000) - head->offset_time);
 
-      for (; instantaneous_lidar
+      for (; include_scan_start
                  ? it_pcl->curvature / double(1000) >= head->offset_time - 5e-9
                  : it_pcl->curvature / double(1000) > head->offset_time;
            it_pcl--)
       {
         dt = it_pcl->curvature / double(1000) - head->offset_time;
-        if (instantaneous_lidar && dt < 0.0 && dt >= -5e-9) dt = 0.0;
+        if (include_scan_start && dt < 0.0 && dt >= -5e-9) dt = 0.0;
 
         /* Transform to the 'end' frame */
         M3D R_i(R_imu * Exp(angvel_avr, dt));
@@ -609,9 +617,8 @@ void ImuProcess::UndistortPcl(LidarMeasureGroup &lidar_meas, StatesGroup &state_
 
         if (it_pcl == pcl_wait_proc.points.begin())
         {
-          // A uniform instantaneous frame must not process its first point
-          // again while walking back through older IMU intervals.
-          point_begin_processed = instantaneous_lidar;
+          // Do not process the first point again in an older IMU interval.
+          point_begin_processed = include_scan_start;
           break;
         }
       }
@@ -648,7 +655,7 @@ void ImuProcess::Process2(LidarMeasureGroup &lidar_meas, StatesGroup &stat, Poin
     /// The very first lidar frame
     IMU_init(meas, stat, init_iter_num);
 
-    if (lidar_type == 0)
+    if (lidar_type == 0 || lidar_type == OUST64)
     {
       // The point offset and the propagation origin must reference the same
       // most recent measurement while initialization consumes stationary IMU.

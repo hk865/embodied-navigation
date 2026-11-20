@@ -6,28 +6,23 @@
 using namespace std;
 using namespace Eigen;
 
-AStar::~AStar()
-{
+AStar::~AStar() {
     for (int i = 0; i < POOL_SIZE_(0); i++)
         for (int j = 0; j < POOL_SIZE_(1); j++)
             for (int k = 0; k < POOL_SIZE_(2); k++)
                 delete GridNodeMap_[i][j][k];
 }
 
-void AStar::initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size)
-{
+void AStar::initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size) {
     POOL_SIZE_ = pool_size;
     CENTER_IDX_ = pool_size / 2;
 
     GridNodeMap_ = new GridNodePtr **[POOL_SIZE_(0)];
-    for (int i = 0; i < POOL_SIZE_(0); i++)
-    {
+    for (int i = 0; i < POOL_SIZE_(0); i++) {
         GridNodeMap_[i] = new GridNodePtr *[POOL_SIZE_(1)];
-        for (int j = 0; j < POOL_SIZE_(1); j++)
-        {
+        for (int j = 0; j < POOL_SIZE_(1); j++) {
             GridNodeMap_[i][j] = new GridNodePtr[POOL_SIZE_(2)];
-            for (int k = 0; k < POOL_SIZE_(2); k++)
-            {
+            for (int k = 0; k < POOL_SIZE_(2); k++) {
                 GridNodeMap_[i][j][k] = new GridNode;
             }
         }
@@ -36,8 +31,9 @@ void AStar::initGridMap(GridMap::Ptr occ_map, const Eigen::Vector3i pool_size)
     grid_map_ = occ_map;
 }
 
-double AStar::getDiagHeu(GridNodePtr node1, GridNodePtr node2)
-{
+// 3D unit-grid diagonal metric: sqrt(3) per three-axis step, sqrt(2) per
+// two-axis step and 1 per single-axis step; admissibility is not asserted here.
+double AStar::getDiagHeu(GridNodePtr node1, GridNodePtr node2) {
     double dx = abs(node1->index(0) - node2->index(0));
     double dy = abs(node1->index(1) - node2->index(1));
     double dz = abs(node1->index(2) - node2->index(2));
@@ -48,23 +44,19 @@ double AStar::getDiagHeu(GridNodePtr node1, GridNodePtr node2)
     dy -= diag;
     dz -= diag;
 
-    if (dx == 0)
-    {
+    if (dx == 0) {
         h = 1.0 * sqrt(3.0) * diag + sqrt(2.0) * min(dy, dz) + 1.0 * abs(dy - dz);
     }
-    if (dy == 0)
-    {
+    if (dy == 0) {
         h = 1.0 * sqrt(3.0) * diag + sqrt(2.0) * min(dx, dz) + 1.0 * abs(dx - dz);
     }
-    if (dz == 0)
-    {
+    if (dz == 0) {
         h = 1.0 * sqrt(3.0) * diag + sqrt(2.0) * min(dx, dy) + 1.0 * abs(dx - dy);
     }
     return h;
 }
 
-double AStar::getManhHeu(GridNodePtr node1, GridNodePtr node2)
-{
+double AStar::getManhHeu(GridNodePtr node1, GridNodePtr node2) {
     double dx = abs(node1->index(0) - node2->index(0));
     double dy = abs(node1->index(1) - node2->index(1));
     double dz = abs(node1->index(2) - node2->index(2));
@@ -72,18 +64,15 @@ double AStar::getManhHeu(GridNodePtr node1, GridNodePtr node2)
     return dx + dy + dz;
 }
 
-double AStar::getEuclHeu(GridNodePtr node1, GridNodePtr node2)
-{
+double AStar::getEuclHeu(GridNodePtr node1, GridNodePtr node2) {
     return (node2->index - node1->index).norm();
 }
 
-vector<GridNodePtr> AStar::retrievePath(GridNodePtr current)
-{
+vector<GridNodePtr> AStar::retrievePath(GridNodePtr current) {
     vector<GridNodePtr> path;
     path.push_back(current);
 
-    while (current->cameFrom != NULL)
-    {
+    while (current->cameFrom != NULL) {
         current = current->cameFrom;
         path.push_back(current);
     }
@@ -91,8 +80,11 @@ vector<GridNodePtr> AStar::retrievePath(GridNodePtr current)
     return path;
 }
 
-bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d end_pt, Vector3i &start_idx, Vector3i &end_idx)
-{
+// Map world start/end to pool indices. If an endpoint falls inside an obstacle
+// it is walked back/forward along start->end in step_size_ increments until a
+// free cell is found; leaving the map region (-1) aborts the search.
+bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d end_pt,
+                                                  Vector3i &start_idx, Vector3i &end_idx) {
     if (!Coord2Index(start_pt, start_idx) || !Coord2Index(end_pt, end_idx))
         return false;
 
@@ -103,38 +95,34 @@ bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d en
     start_to_end.normalize();
 
     int occ = checkOccupancy(Index2Coord(start_idx), path_yaw);
-    if (occ)
-    {
+    if (occ) {
         //ROS_WARN("Start point is insdide an obstacle.");
-        do
-        {
+        do {
             start_pt -= start_to_end * step_size_;
             if (!Coord2Index(start_pt, start_idx))
                 return false;
 
             occ = checkOccupancy(Index2Coord(start_idx), path_yaw);
-            if (occ == -1)
-            {
-                RCLCPP_WARN(rclcpp::get_logger("path_searching"), "[Astar] Start point outside the map region.");
+            if (occ == -1) {
+                RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+                            "[Astar] Start point outside the map region.");
                 return false;
             }
         } while (occ);
     }
 
     occ = checkOccupancy(Index2Coord(end_idx), path_yaw);
-    if (occ)
-    {
+    if (occ) {
         //ROS_WARN("End point is insdide an obstacle.");
-        do
-        {
+        do {
             end_pt += start_to_end * step_size_;
             if (!Coord2Index(end_pt, end_idx))
                 return false;
 
             occ = checkOccupancy(Index2Coord(end_idx), path_yaw);
-            if (occ == -1)
-            {
-                RCLCPP_WARN(rclcpp::get_logger("path_searching"), "[Astar] End point outside the map region.");
+            if (occ == -1) {
+                RCLCPP_WARN(rclcpp::get_logger("path_searching"),
+                            "[Astar] End point outside the map region.");
                 return false;
             }
         } while (occ);
@@ -143,8 +131,11 @@ bool AStar::ConvertToIndexAndAdjustStartEndPoints(Vector3d start_pt, Vector3d en
     return true;
 }
 
-ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d end_pt)
-{
+// Search runs on the XY plane only: neighbors are the 8 in-plane moves and the
+// z index is linearly interpolated between the start/end z (see the lambda
+// below), keeping the 3D grid consistent with the 2D local map. Bounded by a
+// a 0.2 s steady-clock loop check; queue exhaustion over 0.1 s is warned about.
+ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d end_pt) {
     const auto time_1 = std::chrono::steady_clock::now();
     ++rounds_;
 
@@ -153,8 +144,7 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
     center_ = (start_pt + end_pt) / 2;
 
     Vector3i start_idx, end_idx;
-    if (!ConvertToIndexAndAdjustStartEndPoints(start_pt, end_pt, start_idx, end_idx))
-    {
+    if (!ConvertToIndexAndAdjustStartEndPoints(start_pt, end_pt, start_idx, end_idx)) {
         RCLCPP_ERROR(rclcpp::get_logger("path_searching"),
                      "Unable to handle the initial or end point, force return!");
         return ASTAR_RET::INIT_ERR;
@@ -204,8 +194,7 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
     double tentative_gScore;
 
     int num_iter = 0;
-    while (!openSet_.empty())
-    {
+    while (!openSet_.empty()) {
         num_iter++;
         current = openSet_.top();
         openSet_.pop();
@@ -213,8 +202,8 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
         // if ( num_iter < 10000 )
         //     cout << "current=" << current->index.transpose() << endl;
 
-        if (current->index(0) == endPtr->index(0) && current->index(1) == endPtr->index(1) && current->index(2) == endPtr->index(2))
-        {
+        if (current->index(0) == endPtr->index(0) && current->index(1) == endPtr->index(1) &&
+            current->index(2) == endPtr->index(2)) {
             // ros::Time time_2 = ros::Time::now();
             // printf("\033[34mA star iter:%d, time:%.3f\033[0m\n",num_iter, (time_2 - time_1).toSec()*1000);
             // if((time_2 - time_1).toSec() > 0.1)
@@ -225,8 +214,7 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
         current->state = GridNode::CLOSEDSET; //move current node from open set to closed set.
 
         for (int dx = -1; dx <= 1; dx++)
-            for (int dy = -1; dy <= 1; dy++)
-            {
+            for (int dy = -1; dy <= 1; dy++) {
                 if (dx == 0 && dy == 0)
                     continue;
 
@@ -235,8 +223,9 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                 neighborIdx(1) = (current->index)(1) + dy;
                 neighborIdx(2) = interpolateZIndexOnSearchPlane(neighborIdx(0), neighborIdx(1));
 
-                if (neighborIdx(0) < 1 || neighborIdx(0) >= POOL_SIZE_(0) - 1 || neighborIdx(1) < 1 || neighborIdx(1) >= POOL_SIZE_(1) - 1 || neighborIdx(2) < 1 || neighborIdx(2) >= POOL_SIZE_(2) - 1)
-                {
+                if (neighborIdx(0) < 1 || neighborIdx(0) >= POOL_SIZE_(0) - 1 ||
+                    neighborIdx(1) < 1 || neighborIdx(1) >= POOL_SIZE_(1) - 1 ||
+                    neighborIdx(2) < 1 || neighborIdx(2) >= POOL_SIZE_(2) - 1) {
                     continue;
                 }
 
@@ -245,16 +234,15 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
 
                 bool flag_explored = neighborPtr->rounds == rounds_;
 
-                if (flag_explored && neighborPtr->state == GridNode::CLOSEDSET)
-                {
+                if (flag_explored && neighborPtr->state == GridNode::CLOSEDSET) {
                     continue; //in closed set.
                 }
 
                 neighborPtr->rounds = rounds_;
 
-                const double neighbor_yaw = std::atan2(static_cast<double>(dy), static_cast<double>(dx));
-                if (checkOccupancy(Index2Coord(neighborPtr->index), neighbor_yaw))
-                {
+                const double neighbor_yaw =
+                    std::atan2(static_cast<double>(dy), static_cast<double>(dx));
+                if (checkOccupancy(Index2Coord(neighborPtr->index), neighbor_yaw)) {
                     continue;
                 }
 
@@ -262,25 +250,21 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
                 double static_cost = sqrt(dx * dx + dy * dy + dz * dz);
                 tentative_gScore = current->gScore + static_cost;
 
-                if (!flag_explored)
-                {
+                if (!flag_explored) {
                     //discover a new node
                     neighborPtr->state = GridNode::OPENSET;
                     neighborPtr->cameFrom = current;
                     neighborPtr->gScore = tentative_gScore;
                     neighborPtr->fScore = tentative_gScore + getHeu(neighborPtr, endPtr);
                     openSet_.push(neighborPtr); //put neighbor in open set and record it.
-                }
-                else if (tentative_gScore < neighborPtr->gScore)
-                { //in open set and need update
+                } else if (tentative_gScore < neighborPtr->gScore) { //in open set and need update
                     neighborPtr->cameFrom = current;
                     neighborPtr->gScore = tentative_gScore;
                     neighborPtr->fScore = tentative_gScore + getHeu(neighborPtr, endPtr);
                 }
             }
         const auto time_2 = std::chrono::steady_clock::now();
-        if (std::chrono::duration<double>(time_2 - time_1).count() > 0.2)
-        {
+        if (std::chrono::duration<double>(time_2 - time_1).count() > 0.2) {
             RCLCPP_WARN(rclcpp::get_logger("path_searching"),
                         "Failed in A-star path search: 0.2 second time limit exceeded");
             return ASTAR_RET::SEARCH_ERR;
@@ -291,14 +275,13 @@ ASTAR_RET AStar::AstarSearch(const double step_size, Vector3d start_pt, Vector3d
 
     const double elapsed = std::chrono::duration<double>(time_2 - time_1).count();
     if (elapsed > 0.1)
-        RCLCPP_WARN(rclcpp::get_logger("path_searching"),
-                    "A-star path search took %.3fs, iter=%d", elapsed, num_iter);
+        RCLCPP_WARN(rclcpp::get_logger("path_searching"), "A-star path search took %.3fs, iter=%d",
+                    elapsed, num_iter);
 
     return ASTAR_RET::SEARCH_ERR;
 }
 
-vector<Vector3d> AStar::getPath()
-{
+vector<Vector3d> AStar::getPath() {
     vector<Vector3d> path;
 
     for (auto ptr : gridPath_)

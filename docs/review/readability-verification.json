@@ -1,0 +1,424 @@
+{
+  "checked_at_utc": "2026-11-08T19:48:45.890767+00:00",
+  "branch": "improve/module-docs-readability",
+  "documentation_baseline": "51209ba685e19d8d45ce779e34a97b5eaa3c8d72",
+  "documentation_commit": "b44f748d7060117d34fbec08479a5fa6f3e34d9e",
+  "code_baseline": "b44f748d7060117d34fbec08479a5fa6f3e34d9e",
+  "execution": {
+    "implementation": "DeepSeek Harness Agent Teams, two sequential tasks; Codex independently reviewed and corrected facts",
+    "provider": "existing ollama/deepseek-v4.1-flash configuration",
+    "task_ids": [
+      "2026-11-08T19-15-30-571Z-f42d17a4",
+      "2026-11-08T19-32-06-594Z-084cd989"
+    ],
+    "tasks_completed": true,
+    "global_dsh_or_network_configuration_changed": false
+  },
+  "source_review": {
+    "method": "Parse with type_comments=True; remove leading module/class/function docstrings; expand import a,b into same-order individual imports; compare remaining AST including every constant, operator and import order.",
+    "interpretation": "Executable syntax unchanged for the nine scoped files; docstrings and source layout intentionally differ. This is not a full runtime proof.",
+    "normalized_ast_equal": 9,
+    "files": [
+      {
+        "path": "src/embodied_navigation/common/config.py",
+        "normalizedAstEqual": true,
+        "sha256": "faf6ecc18b91cfd6177f4da2848cddde8a448c8e4c91bd3d0c49004b405aa4fc",
+        "lines": 90,
+        "baseline_sha256": "38b2f24c3f62456a98fbb28f507c124e4be4e573e01be1b687c70cc0ae0fb068"
+      },
+      {
+        "path": "src/embodied_navigation/common/input_freshness.py",
+        "normalizedAstEqual": true,
+        "sha256": "bb86815c137024b7ea01d8bdcce2f08146d7b1f8fc21e642acb9efd99e81f13e",
+        "lines": 77,
+        "baseline_sha256": "fc5f90d89837e891cd9997d5cec305d3e601aa90062ac8c17318a0fa7cb9e6aa"
+      },
+      {
+        "path": "src/embodied_navigation/launch/main.py",
+        "normalizedAstEqual": true,
+        "sha256": "9f718500415a35d1c4b691d0b6de1dd9af2b88d20fcf2b551c3ebc547a912469",
+        "lines": 335,
+        "baseline_sha256": "5d6182313fa9a4a8511b93a46624162ed6b099001e0b8800ed7edcf872b1f71e"
+      },
+      {
+        "path": "src/embodied_navigation/launch/preflight.py",
+        "normalizedAstEqual": true,
+        "sha256": "b40872d4f0368e9b217a2419375835c0e5ac38cdfe48df74e368783da5a566b3",
+        "lines": 46,
+        "baseline_sha256": "3d354ad1aa22041cd7fec708c4e3f0e82bb96798b6843b09b3f6bcf82c3bc371"
+      },
+      {
+        "path": "src/embodied_navigation/control/tracking/route_progress.py",
+        "normalizedAstEqual": true,
+        "sha256": "0ee00f6a8538fca0fe6df96912d64c20aee7eb2787cabeaa570e54fdb7d0a8b5",
+        "lines": 132,
+        "baseline_sha256": "bcfdf042dcef8f9ee293e31cfcae8854c1e2be5e16ce4f71533996073a05e1cd"
+      },
+      {
+        "path": "src/embodied_navigation/robot/unitree/policy/speed_tiers.py",
+        "normalizedAstEqual": true,
+        "sha256": "8d8fadcddffc8bace41a6d1daf4562598c8127374307ab433e42e9b5ef92ded2",
+        "lines": 161,
+        "baseline_sha256": "bdc71b25de9f3f0bffa81b21007bde60b6a30e58c32bab70c0b1afe05658a10b"
+      },
+      {
+        "path": "src/embodied_navigation/navigation/robogauge/route_tracker.py",
+        "normalizedAstEqual": true,
+        "sha256": "0a7e21cbc0a3053994c617a9f7acdbee6b1a6411eb9cc0d0042ae3225325ab4b",
+        "lines": 232,
+        "baseline_sha256": "45cd7b381ae49bf1357fceecbd03ac8d75ca71ab2625153a801169fe1e3fe20f"
+      },
+      {
+        "path": "src/embodied_navigation/navigation/task.py",
+        "normalizedAstEqual": true,
+        "sha256": "d7b6059ca8482a97313e7f2ef5a92f3af5e09c17f0efc06d183590aac6973188",
+        "lines": 340,
+        "baseline_sha256": "fe9e2e67c81607ce3f4e9af487aff8e9e62e0330c627c806fc95e83993b44441"
+      },
+      {
+        "path": "src/embodied_navigation/evaluation/trajectory.py",
+        "normalizedAstEqual": true,
+        "sha256": "12a3cbfbb8ec751e8123f9da560577675edc781834db4750270e3ce4ce790736",
+        "lines": 36,
+        "baseline_sha256": "99482fd3364d77120321740c00180da7567189a27052d06898b5192ecfbce553"
+      }
+    ],
+    "checker_selftest": {
+      "docstrings_and_ordered_import_split_accepted": true,
+      "threshold_change_detected": true,
+      "comparison_change_detected": true,
+      "rename_detected": true,
+      "import_order_change_detected": true,
+      "from_import_split_detected": true
+    }
+  },
+  "module_documentation": {
+    "readme_count": 46,
+    "code_directories_checked": 46,
+    "missing_readmes": [],
+    "broken_relative_links": [],
+    "fact_review": "All 46 module pages checked against implementation; corrected model interfaces, actual configuration defaults, process/node identity, native boundaries and verification claims before code task.",
+    "files": [
+      {
+        "path": "src/embodied_navigation/README.md",
+        "bytes": 3918,
+        "lines": 32,
+        "sha256": "6593eb48ddca2e0a7e1efd6124ba440f636887a47f87c599feb002f7773f9f37"
+      },
+      {
+        "path": "src/embodied_navigation/common/README.md",
+        "bytes": 3182,
+        "lines": 28,
+        "sha256": "56b0a155edb339a2fa76af54c8125624e531c4f1b1fafef9e38a495dd6688a5e"
+      },
+      {
+        "path": "src/embodied_navigation/common/communication/README.md",
+        "bytes": 2365,
+        "lines": 23,
+        "sha256": "b2ccf13738a67226983c8def28d51d01c91adff862207049c0d355b661d28329"
+      },
+      {
+        "path": "src/embodied_navigation/common/time/README.md",
+        "bytes": 2411,
+        "lines": 20,
+        "sha256": "5ca2b342b54c3b0e65fccc6452d9fa0d5d65ab0ed28c53da1e3a8da23b643d50"
+      },
+      {
+        "path": "src/embodied_navigation/control/README.md",
+        "bytes": 2954,
+        "lines": 33,
+        "sha256": "c797723463652d51d2a692c726971c5fbb710384caee6778300534c957ff8676"
+      },
+      {
+        "path": "src/embodied_navigation/control/launch/README.md",
+        "bytes": 1209,
+        "lines": 17,
+        "sha256": "21956c7860b862732ada410f03f52576bbc6f1646d2149e0709d3776e2684b66"
+      },
+      {
+        "path": "src/embodied_navigation/control/parking/README.md",
+        "bytes": 3640,
+        "lines": 31,
+        "sha256": "c867c2b627f6c3e926006941fbbe75c51979ec8c3e1a3f62770beff44034cb65"
+      },
+      {
+        "path": "src/embodied_navigation/control/safety/README.md",
+        "bytes": 3077,
+        "lines": 27,
+        "sha256": "ce0832d80b40cdf7c85a354d4c8afbbc8f996773518970fb4433baf35964a356"
+      },
+      {
+        "path": "src/embodied_navigation/control/tracking/README.md",
+        "bytes": 3398,
+        "lines": 30,
+        "sha256": "2e0751a428e2db0d8cd2e2c94ec731d9f6e12f8b2092e61c4fc8ea25008b3eba"
+      },
+      {
+        "path": "src/embodied_navigation/evaluation/README.md",
+        "bytes": 1659,
+        "lines": 21,
+        "sha256": "9426d0e2c2ecc4428135c6a9c27799c11931eb2eb692bee279757878aa481587"
+      },
+      {
+        "path": "src/embodied_navigation/launch/README.md",
+        "bytes": 2685,
+        "lines": 27,
+        "sha256": "16aaef9c2494b415a3f8e3e35b1b4fb69d4d26742c3aa07976a0f93a084488a6"
+      },
+      {
+        "path": "src/embodied_navigation/launch/launch/README.md",
+        "bytes": 968,
+        "lines": 9,
+        "sha256": "219256fb44cb7ee088cedb0f808847be3d5fd1042ab5539579d0ca76832257ae"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/README.md",
+        "bytes": 2601,
+        "lines": 26,
+        "sha256": "9c5be64dacca72f62bc1d586e2851910c593852e6c18dd4affd5c1df5913c938"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/backend/README.md",
+        "bytes": 2658,
+        "lines": 26,
+        "sha256": "10c8a99c825150400939f307551ca39001b5dbfaeb5f164afda96246169c97eb"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/backend/native/README.md",
+        "bytes": 1227,
+        "lines": 10,
+        "sha256": "ab31a0da3fd891988e46ee081b4161ead43765f0a7777e72c9f15f9ddda41291"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/frontend/README.md",
+        "bytes": 1206,
+        "lines": 10,
+        "sha256": "64c8defaa5f24d3f825ecb107526208cadbb7ab7c76e08ceea269a2226d1a979"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/frontend/fast_livo2_ros/README.md",
+        "bytes": 1683,
+        "lines": 10,
+        "sha256": "b8addfaf61b2ed0a3d8bb1b0a9886ea1ce0f1c8f8c9af954a5cbabb0706f2f49"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/frontend/fast_livo2_ros/launch/README.md",
+        "bytes": 1070,
+        "lines": 9,
+        "sha256": "1bfb35415212c831cf1b32676137cc0b262283250ce04ab773f2e0462a810992"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/frontend/fast_livo2_ros/scripts/README.md",
+        "bytes": 994,
+        "lines": 9,
+        "sha256": "e36374215a98f54c0eb0ba11b4d3b609aa455552d6ab1a4850c02cbffed16a40"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/launch/README.md",
+        "bytes": 2108,
+        "lines": 11,
+        "sha256": "c0a61a850254c5125541d43345f5b703c2b4983a375acac5b8e02bc9deefccac"
+      },
+      {
+        "path": "src/embodied_navigation/localization_mapping/mapping/README.md",
+        "bytes": 1629,
+        "lines": 11,
+        "sha256": "fe0029139516801bc4dd2240f5e6f821569fa52334bf1b6908ee4153d8a38de5"
+      },
+      {
+        "path": "src/embodied_navigation/navigation/README.md",
+        "bytes": 2460,
+        "lines": 27,
+        "sha256": "be343a2ac12e011787c5a326c85d8a0ab86f147b7a2e67c573546660b637c69f"
+      },
+      {
+        "path": "src/embodied_navigation/navigation/mission/README.md",
+        "bytes": 2463,
+        "lines": 24,
+        "sha256": "493e35378dbf2f4fdb0e621d8093d2613952dd30c4f7e2b4363bb7df3e611e77"
+      },
+      {
+        "path": "src/embodied_navigation/navigation/robogauge/README.md",
+        "bytes": 2671,
+        "lines": 27,
+        "sha256": "17ded7781fadaa92c3f3250ec2d912d60ed111d08d41a4b01ef7845c5ac8f70b"
+      },
+      {
+        "path": "src/embodied_navigation/perception/README.md",
+        "bytes": 1589,
+        "lines": 21,
+        "sha256": "c54e905dfc4ffef9289016229a63386b31f6c80f4c596a456affbe92216cf2ff"
+      },
+      {
+        "path": "src/embodied_navigation/perception/sensors/README.md",
+        "bytes": 2894,
+        "lines": 21,
+        "sha256": "b4102b69e2ccc95a69712d6cfcc69055310ed19f833d6858aea09d5f60b029ef"
+      },
+      {
+        "path": "src/embodied_navigation/planning/README.md",
+        "bytes": 2484,
+        "lines": 28,
+        "sha256": "dee643d3d65d0d7e67527a66c42ee01f202b8b252b14ccc14cb14df1e507897b"
+      },
+      {
+        "path": "src/embodied_navigation/planning/admission/README.md",
+        "bytes": 3286,
+        "lines": 27,
+        "sha256": "99bb8e24e2d6801eedca926bab41758b6ca12d1df537652d92d77e9c2a286599"
+      },
+      {
+        "path": "src/embodied_navigation/planning/launch/README.md",
+        "bytes": 1172,
+        "lines": 11,
+        "sha256": "140f134966660fb918b936e1c247e422bcad4fcb85bb13820db0f968b139eaa5"
+      },
+      {
+        "path": "src/embodied_navigation/planning/pct/README.md",
+        "bytes": 2151,
+        "lines": 30,
+        "sha256": "b7c5abe74a7d37ba559e3da83e87036b4485f43743789f63cdc4648ae9f27ab1"
+      },
+      {
+        "path": "src/embodied_navigation/planning/reference/README.md",
+        "bytes": 2736,
+        "lines": 28,
+        "sha256": "98c0868a8a8640c27aa07bfbaa4178c7497b05496fc8d2fe3abbd4d5f0afd6c6"
+      },
+      {
+        "path": "src/embodied_navigation/robot/README.md",
+        "bytes": 1233,
+        "lines": 18,
+        "sha256": "63bcd40ef36d415587d5012e763199403c668dc95d0c1e51074686152750ee6f"
+      },
+      {
+        "path": "src/embodied_navigation/robot/unitree/README.md",
+        "bytes": 2104,
+        "lines": 19,
+        "sha256": "347bea650541067424a06b6870e10379af90a537ce23ecbd10f370bca645798f"
+      },
+      {
+        "path": "src/embodied_navigation/robot/unitree/policy/README.md",
+        "bytes": 2253,
+        "lines": 18,
+        "sha256": "5660ff6a050fc8116f244f550de9cf16cd475587eb6210badb758329979d6040"
+      },
+      {
+        "path": "src/embodied_navigation/robot/unitree/policy/native/README.md",
+        "bytes": 2261,
+        "lines": 21,
+        "sha256": "ae4174b83d169a27cffc3ef54d33f6b40d64ef2f38a636f5f88b2a4c30ae7e0d"
+      },
+      {
+        "path": "src/embodied_navigation/robot/unitree/robogauge/README.md",
+        "bytes": 2519,
+        "lines": 21,
+        "sha256": "d5cd12c3ccc5f5cbff23dde862478063d07df9766d2a35b0827aa7d7fbc10f79"
+      },
+      {
+        "path": "src/embodied_navigation/sensors/README.md",
+        "bytes": 1365,
+        "lines": 21,
+        "sha256": "84916afe0e6e108772a8a02c5bd488a54b683d5286b3b70765d45263888671ed"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/README.md",
+        "bytes": 2049,
+        "lines": 23,
+        "sha256": "6779bc1af2fb3b3053943f579ded31d21fef19916875e9984de93416e5901a1c"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/actuators/README.md",
+        "bytes": 1688,
+        "lines": 10,
+        "sha256": "e47fa016f4adbdab158c46c16d4cfc33ada20c2c749afc7b2c75a69ef208c938"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/dynanav/README.md",
+        "bytes": 2044,
+        "lines": 16,
+        "sha256": "d35e5bb94500a9357237754f593b88fcc31d74fc3510dfea1f677acd8b9f34b0"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/gazebo/README.md",
+        "bytes": 722,
+        "lines": 9,
+        "sha256": "f2f6c204947d746d0085a7bc21dda30364adda03d0c0c916576f54f15018a1f2"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/gazebo/robogauge/README.md",
+        "bytes": 2387,
+        "lines": 18,
+        "sha256": "0bc7779b832dc8ecdad33f753d6efec435081f3a37e68a3c62fc5cfdf2090948"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/gazebo/robogauge/motor_src/README.md",
+        "bytes": 1227,
+        "lines": 9,
+        "sha256": "e7e6089fd0f2d36da071be564c18580ed6be1d88ff319cb11251a48edd0d4e5f"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/launch/README.md",
+        "bytes": 1928,
+        "lines": 10,
+        "sha256": "8b6e527690e25afdbd15fcf113492099059ff1061fa79da2a5fae374d857bc68"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/terrain/README.md",
+        "bytes": 2077,
+        "lines": 14,
+        "sha256": "5343fc52fdc3148f47b0ee9413231a5d0db27268c6d6f2f621f0e2d78ff6b8b9"
+      },
+      {
+        "path": "src/embodied_navigation/simulation/world/README.md",
+        "bytes": 1745,
+        "lines": 10,
+        "sha256": "af2af1c27de4f8a88e89487a88305d9e77ce799fdf76d6ba20dd62fa9b043d47"
+      }
+    ]
+  },
+  "tests": [
+    {
+      "name": "unit",
+      "command": "env PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests/unit -v",
+      "exit_code": 0,
+      "tests_run": 54,
+      "passed": 54,
+      "skipped": 0,
+      "seconds": 0.885,
+      "skip_details": [],
+      "log_sha256": "a9d9cbad5d30e1b8120e6ec3e9252ad6d198edaa749275388dad59034009e51d"
+    },
+    {
+      "name": "regression",
+      "command": "env PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests/regression -v",
+      "exit_code": 0,
+      "tests_run": 62,
+      "passed": 57,
+      "skipped": 5,
+      "seconds": 3.903,
+      "skip_details": [
+        "test_both_loops_latch_policy_fault_before_terrain_exception (test_native_safety_integration.NativeSafetyLoopIntegration.test_both_loops_latch_policy_fault_before_terrain_exception) ... skipped 'Optional CPU Torch environment is not installed'",
+        "test_both_loops_preserve_targets_and_call_gate_every_frame (test_native_safety_integration.NativeSafetyLoopIntegration.test_both_loops_preserve_targets_and_call_gate_every_frame) ... skipped 'Optional CPU Torch environment is not installed'",
+        "test_both_loops_reject_wrong_time_domain_before_motion (test_native_safety_integration.NativeSafetyLoopIntegration.test_both_loops_reject_wrong_time_domain_before_motion) ... skipped 'Optional CPU Torch environment is not installed'",
+        "test_both_loops_use_shared_fault_grace_and_stop (test_native_safety_integration.NativeSafetyLoopIntegration.test_both_loops_use_shared_fault_grace_and_stop) ... skipped 'Optional CPU Torch environment is not installed'",
+        "test_native_transport_bootstrap_targets_and_termination (test_robogauge_native_loop.RoboGaugeNativeLoop.test_native_transport_bootstrap_targets_and_termination) ... skipped 'Optional CPU Torch environment is not installed'"
+      ],
+      "log_sha256": "3a23f3b2b4c708c205ef937bc4f68baa190f8b85887996d6808472f74c4c8547"
+    }
+  ],
+  "threshold_audit": {
+    "path": "docs/review/validation-and-threshold-audit.md",
+    "sha256": "528c5d08a8fd7f9cf3ff2089e8d5b5bf3da36f1def26dd08be91f48a3a9dc848",
+    "thresholds_changed": false,
+    "behavioral_findings_fixed_this_round": false,
+    "independent_fact_review_applied": true
+  },
+  "limitations": [
+    "Five optional Torch regression cases skipped because Torch is not installed.",
+    "No ROS, Gazebo, Isaac, robot, full route or complete build run for this change.",
+    "No runtime noise, callback-jitter or queue-peak evidence to justify threshold relaxation.",
+    "Only nine dense Python files reformatted; remaining source files were not comprehensively refactored.",
+    "Earlier full-stack receipts remain historical and do not verify this source snapshot."
+  ]
+}

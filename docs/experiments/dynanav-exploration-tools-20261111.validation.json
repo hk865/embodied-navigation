@@ -1,0 +1,73 @@
+{
+  "schema": "dynanav_exploration_tool_archive_validation/v1",
+  "checked_at": "2026-11-11T15:58:09.620167+00:00",
+  "archive_files": 28,
+  "python_sources": 20,
+  "json_configs": 8,
+  "archive_bytes": 154979,
+  "source_and_destination_sha256": "28/28 match; original sources unchanged",
+  "external_evidence_hashes": "14/14 match; not copied",
+  "syntax_and_json_parsing": "passed",
+  "unit_tests": {
+    "command": [
+      "/usr/bin/python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests/unit",
+      "-p",
+      "test_dynanav_exploration_archive.py",
+      "-v"
+    ],
+    "returncode": 0,
+    "count": 10,
+    "result": "OK",
+    "warnings": "Historical render_generation.py emits ResourceWarning for unclosed read handles. Original archived bytes were intentionally retained."
+  },
+  "safe_help_clis": {
+    "scripts": [
+      "render_generation.py",
+      "render_observed_roi.py",
+      "render_upper_region.py"
+    ],
+    "result": "3/3 exit0; included in unit tests"
+  },
+  "real_input_smoke": {
+    "command": [
+      "/usr/bin/python3",
+      "-B",
+      "/home/hyh001/projects/1.Project/embodied-navigation/scripts/dynanav_exploration/archive_20261111/coverage_111150/render_generation.py",
+      "--binding",
+      "/tmp/dynanav-tool-recovery-smoke-darct6z0/binding.json",
+      "--snapshot",
+      "s01"
+    ],
+    "returncode": 0,
+    "elapsed_wall_s": 9.94134885398671,
+    "work_dir": "/tmp/dynanav-tool-recovery-smoke-darct6z0",
+    "stdout": "{\n  \"out\": \"/tmp/dynanav-tool-recovery-smoke-darct6z0/outputs/s01\",\n  \"run_id\": \"native_exploration_20261111T111150Z\",\n  \"points\": 178071,\n  \"trace_samples\": 132,\n  \"physical_regions\": 0\n}\n",
+    "stderr_tail": "",
+    "png_files": 5
+  },
+  "smoke_visual_inspection": "global_measured_multiview.png inspected; labels, axes, color scale, source/run identity and four views readable",
+  "historical_reproduction_limit": "Current archived code and final journal produced 132 postVIO samples for s01; contemporaneous coverage_record.json recorded 131. Exact sample/pixel reproduction is not claimed.",
+  "existing_worktree": {
+    "baseline_files_hashed": 132,
+    "existing_files_changed": [
+      "docs/dynanav-exploration.md",
+      "docs/README.md"
+    ],
+    "change_scope": "Only appended index links to these two existing documents; all pre-existing code and project skill hashes unchanged."
+  },
+  "relative_links": "passed",
+  "git_diff_check": "passed",
+  "not_run": [
+    "Isaac/ROS launch",
+    "navigation request",
+    "full repository suite",
+    "full simulation",
+    "commit/push"
+  ]
+}

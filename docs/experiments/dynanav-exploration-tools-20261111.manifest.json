@@ -1,0 +1,366 @@
+{
+  "schema": "dynanav_exploration_tool_archive/v1",
+  "archived_on": "2026-11-11",
+  "source_root": "/home/hyh001/Documents/Codex/2026-11-11/task",
+  "source_thread": {
+    "id": "6af42200-32d4-8191-adc3-26fc5f6b0005",
+    "title": "探索大厅与地下室",
+    "actual_invocations_verified": true,
+    "model_sku_verified": false,
+    "limitation": "The read API did not expose model SKU. User-described 6.1 SOL attribution is not independently asserted for every file."
+  },
+  "archive_root": "scripts/dynanav_exploration/archive_20261111",
+  "files": [
+    {
+      "source_relative_path": "active_observe.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/active_observe.py",
+      "bytes": 470,
+      "source_sha256": "6d0577275b4c6a9809fc3fc090f3f5a14d71b9efe07f50103c0abf39c3c2435c",
+      "archived_sha256": "6d0577275b4c6a9809fc3fc090f3f5a14d71b9efe07f50103c0abf39c3c2435c",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "active_status.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/active_status.py",
+      "bytes": 1195,
+      "source_sha256": "493ea6d24e95be115fa33a4b013f9d8f96fdfcdb82533019b222866355ec670d",
+      "archived_sha256": "493ea6d24e95be115fa33a4b013f9d8f96fdfcdb82533019b222866355ec670d",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "building_read.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/building_read.py",
+      "bytes": 575,
+      "source_sha256": "72801b2a435acf405122045f72483717652082eb67875974fabc5f700d69a98a",
+      "archived_sha256": "72801b2a435acf405122045f72483717652082eb67875974fabc5f700d69a98a",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "complete_read.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/complete_read.py",
+      "bytes": 559,
+      "source_sha256": "4333ba62dac9d7001f1755c5becc67c3054fdc59c80078b8eb6d082d30518e36",
+      "archived_sha256": "4333ba62dac9d7001f1755c5becc67c3054fdc59c80078b8eb6d082d30518e36",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "continued_observe.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/continued_observe.py",
+      "bytes": 476,
+      "source_sha256": "cb34cccb640e4b3d9aac8856a299826519f4211a7250e6025ad75a9badbfe43d",
+      "archived_sha256": "cb34cccb640e4b3d9aac8856a299826519f4211a7250e6025ad75a9badbfe43d",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "continued_read.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/continued_read.py",
+      "bytes": 570,
+      "source_sha256": "5c76a1f8cfbb6067f13876e0ec7270888e416c2df2b481d46ce905e207f83aaa",
+      "archived_sha256": "5c76a1f8cfbb6067f13876e0ec7270888e416c2df2b481d46ce905e207f83aaa",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "explore_111150_read.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/explore_111150_read.py",
+      "bytes": 570,
+      "source_sha256": "3d1fc2a5950a71b659655ebac11445e1a975dba623987311606970b88525e47d",
+      "archived_sha256": "3d1fc2a5950a71b659655ebac11445e1a975dba623987311606970b88525e47d",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "final_observe.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/final_observe.py",
+      "bytes": 468,
+      "source_sha256": "97f98733ee0521b2ffb466584eb05f5ea605fdc30529866d4f15e634c71e856f",
+      "archived_sha256": "97f98733ee0521b2ffb466584eb05f5ea605fdc30529866d4f15e634c71e856f",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "long_observe.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/long_observe.py",
+      "bytes": 2519,
+      "source_sha256": "1fd5486fd86d9de6e45cb83a39bd977051e4594cbb6a5f0d1348923ca13c89c9",
+      "archived_sha256": "1fd5486fd86d9de6e45cb83a39bd977051e4594cbb6a5f0d1348923ca13c89c9",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_read.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_read.py",
+      "bytes": 559,
+      "source_sha256": "da992f73656729ab4688010a3e995501cd3e3cc8805fe5ea10161eaa57530bd0",
+      "archived_sha256": "da992f73656729ab4688010a3e995501cd3e3cc8805fe5ea10161eaa57530bd0",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "snapshot_live.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/snapshot_live.py",
+      "bytes": 2828,
+      "source_sha256": "819af59a1a10fb667379e5995c0fc92d1b890ef7541399e1066128e75a697400",
+      "archived_sha256": "819af59a1a10fb667379e5995c0fc92d1b890ef7541399e1066128e75a697400",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_audit/record_current_lio_cloud.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_audit/record_current_lio_cloud.py",
+      "bytes": 7940,
+      "source_sha256": "5a1cf9969a9036d9e4af39a94156ee42d9091daaf074b635d9def1a5bffc5e83",
+      "archived_sha256": "5a1cf9969a9036d9e4af39a94156ee42d9091daaf074b635d9def1a5bffc5e83",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_audit/render_live_3d_views.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_audit/render_live_3d_views.py",
+      "bytes": 16512,
+      "source_sha256": "ca175216b223b2951c8405668c0acf7d373e8b40b03748edf99158e0912e99b4",
+      "archived_sha256": "ca175216b223b2951c8405668c0acf7d373e8b40b03748edf99158e0912e99b4",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/render_final_lower_stage.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_final_lower_stage.py",
+      "bytes": 3949,
+      "source_sha256": "7951062db9b0e8b131de460cdae6868569475b96360c585aca02b82ee869f29c",
+      "archived_sha256": "7951062db9b0e8b131de460cdae6868569475b96360c585aca02b82ee869f29c",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/render_generation.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_generation.py",
+      "bytes": 27008,
+      "source_sha256": "3a5e1eea24bad910b5e09713999ae0e3f6da83ea40d10fe0a27c2759de23f9aa",
+      "archived_sha256": "3a5e1eea24bad910b5e09713999ae0e3f6da83ea40d10fe0a27c2759de23f9aa",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/render_observed_roi.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_observed_roi.py",
+      "bytes": 4324,
+      "source_sha256": "26c3327e7532e78dd84f7e5ec68ce4edc86bf2bfccc3c2f85d97e9c83fc8599e",
+      "archived_sha256": "26c3327e7532e78dd84f7e5ec68ce4edc86bf2bfccc3c2f85d97e9c83fc8599e",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/render_upper_region.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/render_upper_region.py",
+      "bytes": 10793,
+      "source_sha256": "9cbc1b24d645594408eb7a116c90dbe43bbae2dd6c861eb4402dad228a6385bb",
+      "archived_sha256": "9cbc1b24d645594408eb7a116c90dbe43bbae2dd6c861eb4402dad228a6385bb",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/build_final.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/build_final.py",
+      "bytes": 11382,
+      "source_sha256": "f46bb2e3f9597f22acc57ab84ee9ffa9a75f0886d43fe308d1da33a326ba32b7",
+      "archived_sha256": "f46bb2e3f9597f22acc57ab84ee9ffa9a75f0886d43fe308d1da33a326ba32b7",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/render_coverage.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/render_coverage.py",
+      "bytes": 22688,
+      "source_sha256": "3d70e20d220f991793749583f8bbd1089c74a7134b3a054e7188774e8607c5af",
+      "archived_sha256": "3d70e20d220f991793749583f8bbd1089c74a7134b3a054e7188774e8607c5af",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/render_physical_slices.py",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/render_physical_slices.py",
+      "bytes": 15994,
+      "source_sha256": "8a026d420657c9f60e56ad9898571993c29ba4d156bea6f6d62e5324c2bd57f1",
+      "archived_sha256": "8a026d420657c9f60e56ad9898571993c29ba4d156bea6f6d62e5324c2bd57f1",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/generation_binding.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/generation_binding.json",
+      "bytes": 978,
+      "source_sha256": "1edbfcfcfef3f8520007d21e02cdc1c4fb7499fde339803dd03e471ab9025e6d",
+      "archived_sha256": "1edbfcfcfef3f8520007d21e02cdc1c4fb7499fde339803dd03e471ab9025e6d",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/physical_regions.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/physical_regions.json",
+      "bytes": 3138,
+      "source_sha256": "36d0487f801b2d1ef8d603d3f5d82cc33570ca6abb6810de0b31efd1571791a8",
+      "archived_sha256": "36d0487f801b2d1ef8d603d3f5d82cc33570ca6abb6810de0b31efd1571791a8",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/upper_surface_reference_s25.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/upper_surface_reference_s25.json",
+      "bytes": 1322,
+      "source_sha256": "4aaa95a483ff0cd07bd90211b070f88d66666b21bbc7f9e9616c98710728d96a",
+      "archived_sha256": "4aaa95a483ff0cd07bd90211b070f88d66666b21bbc7f9e9616c98710728d96a",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/gap_annotations.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/gap_annotations.json",
+      "bytes": 3787,
+      "source_sha256": "98cc1f9058a48780c55d51c61a9316aacf4282dfafd5900d401d0d680bd4c371",
+      "archived_sha256": "98cc1f9058a48780c55d51c61a9316aacf4282dfafd5900d401d0d680bd4c371",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "coverage_111150/gap_ledger.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/coverage_111150/gap_ledger.json",
+      "bytes": 7353,
+      "source_sha256": "15933e1439b54a1bb669bf887752334af0b43efb742986ebed6af80108ddccf9",
+      "archived_sha256": "15933e1439b54a1bb669bf887752334af0b43efb742986ebed6af80108ddccf9",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/layer_record_template.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/layer_record_template.json",
+      "bytes": 1574,
+      "source_sha256": "39b6f1e6a7343541c2c6dae42a8714e6fa1d19eb12ac94489c4f5dcc0f04134a",
+      "archived_sha256": "39b6f1e6a7343541c2c6dae42a8714e6fa1d19eb12ac94489c4f5dcc0f04134a",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/r20_physical_config.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/r20_physical_config.json",
+      "bytes": 2655,
+      "source_sha256": "6b4c1bf500673115c4c3e83d3427b5d12cdc40d7e63c860d910629a35ff1964f",
+      "archived_sha256": "6b4c1bf500673115c4c3e83d3427b5d12cdc40d7e63c860d910629a35ff1964f",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    },
+    {
+      "source_relative_path": "repaired_coverage/r24_physical_config.json",
+      "repository_path": "scripts/dynanav_exploration/archive_20261111/repaired_coverage/r24_physical_config.json",
+      "bytes": 2793,
+      "source_sha256": "8747c0fe7d22572213a360a08299c1ccc6210a95b64dce5c789c8c258adf8424",
+      "archived_sha256": "8747c0fe7d22572213a360a08299c1ccc6210a95b64dce5c789c8c258adf8424",
+      "treatment": "byte-for-byte historical source; hardcoded paths retained"
+    }
+  ],
+  "external_evidence": [
+    {
+      "source_relative_path": "skill_proposal/checks/source_manifest.json",
+      "bytes": 3608,
+      "sha256": "1903beb802c42bcd896f2b64e64f82c4e14c501d867c2e0756ec75723ca01823",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_audit/live_111150/summary.json",
+      "bytes": 2044,
+      "sha256": "39b657753f93d089ad3885e3a331f98fdc8c3e62f9b4174fea232928d76e148a",
+      "copied": false
+    },
+    {
+      "source_relative_path": "explore_111150_evidence/s01/scene_view_metadata.json",
+      "bytes": 2464,
+      "sha256": "ecf422aee0444d0bcd8d806967fb36001afbbe7b8b28c2531518cf2b0b5bb29d",
+      "copied": false
+    },
+    {
+      "source_relative_path": "explore_111150_evidence/coverage_final/freeze_manifest.json",
+      "bytes": 6443,
+      "sha256": "e15126d573aa62fe1f1ed88bc3863d437dea02de327478004a06f252c2b247cc",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/coverage_final/output_manifest_v3.json",
+      "bytes": 4969,
+      "sha256": "2b687c7ed53a979d3cd69f631091fd5859887c32a586e1bd0c61db95f64f6e33",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/coverage_final/coverage_record.json",
+      "bytes": 54986,
+      "sha256": "a8d736854e57e969915adc39bf8b8322bbf6753c5adaa3619e6e95589d667bfd",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/coverage_final/lower_stage_record.json",
+      "bytes": 1534,
+      "sha256": "461dbbb99261a713902be91375c0e272aa8766a433b6674d6e0239a2fa7a7556",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/coverage_final/upper_observed_record.json",
+      "bytes": 5556,
+      "sha256": "080e65aa46b8cc47204355eaa274468c9a528ff91894141f6b15baf83bc5d9fb",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/s20/stair_platform_roi_record.json",
+      "bytes": 1146,
+      "sha256": "f00f6b7b253c0c97ab49b3a27669a4e46c4d986806084eb9957da320e563f36b",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/coverage_final/receipt_audit.json",
+      "bytes": 6670,
+      "sha256": "fd12cfb3c227ac6fa4330751f0e28fb865ab9bc2259df4a19113b947fdaf4e32",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/pairing_audit_final.json",
+      "bytes": 76529,
+      "sha256": "79c2b79ca22c33afb5594a8136d9205f7e2b7b1142ad33467b4e63dca077a93b",
+      "copied": false
+    },
+    {
+      "source_relative_path": "coverage_111150/final_review.md",
+      "bytes": 4037,
+      "sha256": "c2b004c57e0822266d28965d6595482b71beabb5a30e971601449673388bd1f8",
+      "copied": false
+    },
+    {
+      "source_relative_path": "repaired_coverage/final_input_preservation/preservation_manifest.json",
+      "bytes": 19825,
+      "sha256": "2d5d4a55bdb36e32062b336e8e8b8b5485784ce27f060a69f4edc4ebbac3750a",
+      "copied": false
+    },
+    {
+      "source_relative_path": "repaired_coverage/final/waypoint_receipt_audit.json",
+      "bytes": 6095,
+      "sha256": "058023190b75528cf01960122abe8b473b073d3bf220cfac89d6be54859fa53b",
+      "copied": false
+    }
+  ],
+  "existing_reusable_tools": {
+    "root": ".agents/skills/dynanav-explore",
+    "manifest": ".agents/skills/dynanav-explore/archive-manifest.json",
+    "treatment": "Existing project skill kept unchanged; no second skill snapshot."
+  },
+  "excluded_categories": [
+    "runtime NPZ/PNG/MP4/clouds/maps and large logs",
+    "source-code backups/proposals already superseded by current repository implementations",
+    "older collector/finalizer variants; retain at source, indexed by archive README"
+  ],
+  "semantics": [
+    "Archive files are not automatically executed or imported by production code.",
+    "Original paths/defaults are retained for provenance, not portable current-run defaults.",
+    "Invocation evidence does not prove every input was viewed for every goal or identify file authorship."
+  ],
+  "verified_coverage_invocations": [
+    {
+      "item_id": "exec-45753e19-ddb8-486d-8073-40f1b8f5fa0e",
+      "command": "/bin/bash -lc 'env MPLCONFIGDIR=/tmp/coverage_111150_mpl python3 /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/render_generation.py --binding /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/generation_binding.json --snapshot coverage_final --regions /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/physical_regions.json --reference-snapshot s38 --marker-from-postvio'",
+      "status": "completed",
+      "exit_code": 0
+    },
+    {
+      "item_id": "exec-9e44ec98-fbc9-4db7-be80-b5a7fb3594da",
+      "command": "/bin/bash -lc 'env MPLCONFIGDIR=/tmp/coverage_111150_mpl python3 /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/render_observed_roi.py --binding /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/generation_binding.json --snapshot s20 --xy -10 -6 0 10 --label stair_platform_roi'",
+      "status": "completed",
+      "exit_code": 0
+    },
+    {
+      "item_id": "exec-71776e0a-b461-41df-977c-55dd09f37a74",
+      "command": "/bin/bash -lc 'env MPLCONFIGDIR=/tmp/coverage_111150_mpl python3 /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/render_upper_region.py --binding /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/generation_binding.json --snapshot coverage_final --model /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/upper_surface_reference_s25.json --first-source 1245.8 --reference-snapshot s38 --marker-from-postvio'",
+      "status": "completed",
+      "exit_code": 0
+    },
+    {
+      "item_id": "exec-d42f86d9-a467-44cc-9a09-8b99066500f5",
+      "command": "/bin/bash -lc 'env MPLCONFIGDIR=/tmp/coverage_111150_mpl python3 /home/hyh001/Documents/Codex/2026-11-11/task/coverage_111150/render_final_lower_stage.py'",
+      "status": "completed",
+      "exit_code": 0
+    }
+  ]
+}

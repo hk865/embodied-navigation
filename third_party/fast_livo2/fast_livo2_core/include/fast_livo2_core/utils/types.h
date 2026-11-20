@@ -25,15 +25,14 @@ typedef Eigen::Matrix3f M3F;
 #define MF(a, b) Eigen::Matrix<float, (a), (b)>
 #define VF(a) Eigen::Matrix<float, (a), 1>
 
-struct Pose6D
-{
-  /*** the preintegrated Lidar states at the time of IMU measurements in a frame ***/
-  double offset_time; // the offset time of IMU measurement w.r.t the first lidar point
-  double acc[3];      // the preintegrated total acceleration (global frame) at the Lidar origin
-  double gyr[3];      // the unbiased angular velocity (body frame) at the Lidar origin
-  double vel[3];      // the preintegrated velocity (global frame) at the Lidar origin
-  double pos[3];      // the preintegrated position (global frame) at the Lidar origin
-  double rot[9];      // the preintegrated rotation (global frame) at the Lidar origin
+struct Pose6D {
+    /*** the preintegrated Lidar states at the time of IMU measurements in a frame ***/
+    double offset_time; // the offset time of IMU measurement w.r.t the first lidar point
+    double acc[3];      // the preintegrated total acceleration (global frame) at the Lidar origin
+    double gyr[3];      // the unbiased angular velocity (body frame) at the Lidar origin
+    double vel[3];      // the preintegrated velocity (global frame) at the Lidar origin
+    double pos[3];      // the preintegrated position (global frame) at the Lidar origin
+    double rot[9];      // the preintegrated rotation (global frame) at the Lidar origin
 };
 
 #endif

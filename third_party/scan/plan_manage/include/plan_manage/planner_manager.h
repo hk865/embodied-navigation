@@ -10,14 +10,16 @@
 #include <rclcpp/rclcpp.hpp>
 #include <traj_utils/planning_visualization.h>
 
-namespace scan_planner
-{
+namespace scan_planner {
 
-  // Fast Planner Manager
-  // Key algorithms of mapping and planning are called
+// Fast Planner Manager
+// Key algorithms of mapping and planning are called
 
-  class SCANPlannerManager
-  {
+// Owns the planning stack: parameters (pp_), the active local B-spline
+// (local_data_), the global reference (global_data_) and the shared grid map.
+// reboundReplan() is the main entry used by the FSM; the private helpers convert
+// a local target into a feasible B-spline and update the trajectory bookkeeping.
+class SCANPlannerManager {
     // SECTION stable
   public:
     SCANPlannerManager();
@@ -26,13 +28,18 @@ namespace scan_planner
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     /* main planning interface */
-    bool reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel, Eigen::Vector3d start_acc,
-                       Eigen::Vector3d end_pt, Eigen::Vector3d end_vel, bool flag_polyInit, bool flag_randomPolyTraj);
+    bool reboundReplan(Eigen::Vector3d start_pt, Eigen::Vector3d start_vel,
+                       Eigen::Vector3d start_acc, Eigen::Vector3d end_pt, Eigen::Vector3d end_vel,
+                       bool flag_polyInit, bool flag_randomPolyTraj);
+    // Generate an emergency stop trajectory ending at stop_pos.
     bool EmergencyStop(Eigen::Vector3d stop_pos);
-    bool planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
-                        const Eigen::Vector3d &end_pos, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
-    bool planGlobalTrajWaypoints(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel, const Eigen::Vector3d &start_acc,
-                                 const std::vector<Eigen::Vector3d> &waypoints, const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
+    bool planGlobalTraj(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel,
+                        const Eigen::Vector3d &start_acc, const Eigen::Vector3d &end_pos,
+                        const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
+    bool planGlobalTrajWaypoints(const Eigen::Vector3d &start_pos, const Eigen::Vector3d &start_vel,
+                                 const Eigen::Vector3d &start_acc,
+                                 const std::vector<Eigen::Vector3d> &waypoints,
+                                 const Eigen::Vector3d &end_vel, const Eigen::Vector3d &end_acc);
 
     void initPlanModules(rclcpp::Node *node, PlanningVisualization::Ptr vis = nullptr);
 
@@ -48,15 +55,20 @@ namespace scan_planner
 
     BsplineOptimizer::Ptr bspline_optimizer_rebound_;
 
+    // Consecutive replan failures, used to scale random initialization;
+    // reset after reboundReplan successfully saves a trajectory.
     int continuous_failures_count_{0};
 
     void updateTrajInfo(const UniformBspline &position_traj, const rclcpp::Time time_now);
+    // Reject sampled velocity/acceleration norms above the configured maxima
+    // plus their additive tolerances.
     bool checkDynamicFeasibility(UniformBspline position_traj);
 
-    void reparamBspline(UniformBspline &bspline, vector<Eigen::Vector3d> &start_end_derivative, double ratio, Eigen::MatrixXd &ctrl_pts, double &dt,
-                        double &time_inc);
+    void reparamBspline(UniformBspline &bspline, vector<Eigen::Vector3d> &start_end_derivative,
+                        double ratio, Eigen::MatrixXd &ctrl_pts, double &dt, double &time_inc);
 
-    bool refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative, double ratio, double &ts, Eigen::MatrixXd &optimal_control_points);
+    bool refineTrajAlgo(UniformBspline &traj, vector<Eigen::Vector3d> &start_end_derivative,
+                        double ratio, double &ts, Eigen::MatrixXd &optimal_control_points);
 
     // !SECTION stable
 
@@ -66,7 +78,7 @@ namespace scan_planner
     typedef unique_ptr<SCANPlannerManager> Ptr;
 
     // !SECTION
-  };
+};
 } // namespace scan_planner
 
 #endif

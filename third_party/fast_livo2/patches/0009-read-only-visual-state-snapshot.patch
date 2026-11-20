@@ -1,0 +1,201 @@
+--- a/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
++++ b/third_party/fast_livo2/fast_livo2_core/CMakeLists.txt
+@@ -82,6 +82,7 @@
+ add_library(fast_livo2_core SHARED
+   src/runner.cpp
+   src/backend/snapshot_bridge.cpp
++  src/visual_snapshot.cpp
+   src/LIVMapper.cpp
+   src/IMU_Processing.cpp
+   src/frame.cpp
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -12,6 +12,7 @@
+ */
+ 
+ #include "LIVMapper.h"
++#include "visual_snapshot.h"
+ #include <unordered_set>
+ #include <cstdio>
+ #include <exception>
+@@ -939,6 +940,13 @@
+             pending_pair.skip(PendingLivoPair::InvalidOutput);
+     }
+     fastlivo_sync::stage(*this, "lio_completed", true, false);
++    // Optional diagnostic copy only, after the current LIO/map update and before
++    // the paired VIO. The default-disabled exporter never changes native state.
++    fastlivo_visual_snapshot::export_if_requested(_state, _pv_list,
++        voxelmap_manager->voxel_map_, LidarMeasures.last_lio_update_time,
++        pending_pair.source_stamp_valid ? pending_pair.source_stamp_ns : 0,
++        odom_frame, raw_body_frame, voxelmap_manager->config_setting_.max_voxel_size_);
++
+ }
+ 
+ void LIVMapper::savePCD() {
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/visual_snapshot.h
+@@ -0,0 +1,29 @@
++#pragma once
++// Read-only VIO-query geometry and native full-state snapshot, never ROS pose covariance.
++#include "common_lib.h"
++#include "voxel_map.h"
++#include <nlohmann/json.hpp>
++#include <filesystem>
++#include <memory>
++
++namespace fastlivo_visual_snapshot {
++using Json=nlohmann::json;
++using PlaneMap=std::unordered_map<VOXEL_LOCATION,VoxelOctoTree*>;
++struct Owned {
++    StatesGroup state;
++    std::vector<pointWithVar> points;
++    std::vector<std::unique_ptr<VoxelOctoTree>> roots;
++    PlaneMap planes;
++    Json metadata;
++};
++Json encode(const StatesGroup&,const std::vector<pointWithVar>&,const PlaneMap&,
++            uint64_t source_ns,int64_t native_target_ns,const std::string &generation,
++            const std::string &map_frame,const std::string &child_frame,double voxel_size);
++Owned decode(const Json&);
++Owned read(const std::filesystem::path&);
++// Disabled unless explicitly configured; errors are diagnostic, never replace data.
++void export_if_requested(const StatesGroup&,const std::vector<pointWithVar>&,const PlaneMap&,
++                         double native_target_s,uint64_t original_image_ns,
++                         const std::string &map_frame,const std::string &child_frame,
++                         double voxel_size) noexcept;
++}
+--- /dev/null
++++ b/third_party/fast_livo2/fast_livo2_core/src/visual_snapshot.cpp
+@@ -0,0 +1,132 @@
++#include "visual_snapshot.h"
++#include <algorithm>
++#include <cstdlib>
++#include <fstream>
++#include <iomanip>
++#include <iostream>
++#include <sstream>
++#include <tuple>
++
++namespace fastlivo_visual_snapshot {
++namespace {
++constexpr size_t MAX_POINTS=65536,MAX_NODES=250000,MAX_BYTES=256*1024*1024;
++template<class Matrix> Json matrix(const Matrix &m) {
++    if(!m.allFinite())throw std::runtime_error("nonfinite native snapshot matrix");
++    Json rows=Json::array();
++    for(int i=0;i<m.rows();++i) {Json row=Json::array();for(int j=0;j<m.cols();++j)row.push_back(m(i,j));rows.push_back(row);}
++    return rows;
++}
++template<class Matrix> void matrix(const Json &rows,Matrix &m) {
++    if(rows.size()!=size_t(m.rows()))throw std::runtime_error("snapshot matrix rows");
++    for(int i=0;i<m.rows();++i) {
++        if(rows[i].size()!=size_t(m.cols()))throw std::runtime_error("snapshot matrix columns");
++        for(int j=0;j<m.cols();++j)m(i,j)=rows[i][j].get<double>();
++    }
++    if(!m.allFinite())throw std::runtime_error("nonfinite snapshot matrix");
++}
++Json tree(const VoxelOctoTree *t,size_t &nodes,int depth=0) {
++    if(!t)return nullptr;
++    if(++nodes>MAX_NODES || depth>16)throw std::runtime_error("snapshot tree budget");
++    Json n={{"layer",t->layer_},{"max_layer",t->max_layer_},{"init",t->init_octo_},
++            {"octo_state",t->octo_state_},{"center",{t->voxel_center_[0],t->voxel_center_[1],t->voxel_center_[2]}},
++            {"quarter_length",t->quater_length_},{"is_plane",t->plane_ptr_->is_plane_}};
++    if(t->plane_ptr_->is_plane_) {
++        const auto &p=*t->plane_ptr_;
++        n["plane"]={{"center",matrix(p.center_)},{"normal",matrix(p.normal_)},
++            {"covariance",matrix(p.plane_var_)},{"d",p.d_},{"radius",p.radius_},
++            {"points",p.points_size_}};
++    }
++    n["children"]=Json::array();
++    for(auto *child:t->leaves_)n["children"].push_back(tree(child,nodes,depth+1));
++    return n;
++}
++std::unique_ptr<VoxelOctoTree> tree(const Json &n,size_t &nodes,int depth=0) {
++    if(n.is_null())return {};
++    if(++nodes>MAX_NODES || depth>16)throw std::runtime_error("snapshot decoded tree budget");
++    auto t=std::make_unique<VoxelOctoTree>(n.at("max_layer"),n.at("layer"),0,0,0.);
++    t->init_octo_=n.at("init");t->octo_state_=n.at("octo_state");
++    for(int i=0;i<3;++i)t->voxel_center_[i]=n.at("center").at(i);
++    t->quater_length_=n.at("quarter_length");
++    t->plane_ptr_->is_plane_=n.at("is_plane");
++    if(t->plane_ptr_->is_plane_) {
++        const auto &p=n.at("plane");auto &v=*t->plane_ptr_;
++        matrix(p.at("center"),v.center_);matrix(p.at("normal"),v.normal_);
++        matrix(p.at("covariance"),v.plane_var_);v.d_=p.at("d");v.radius_=p.at("radius");v.points_size_=p.at("points");
++    }
++    if(n.at("children").size()!=8)throw std::runtime_error("snapshot tree arity");
++    for(int i=0;i<8;++i)t->leaves_[i]=tree(n["children"][i],nodes,depth+1).release();
++    return t;
++}
++}
++Json encode(const StatesGroup &s,const std::vector<pointWithVar> &points,const PlaneMap &planes,
++            uint64_t ns,int64_t native_ns,const std::string &generation,const std::string &map_frame,
++            const std::string &child_frame,double voxel_size) {
++    if(points.size()>MAX_POINTS || generation.empty() || map_frame.empty() || child_frame.empty())throw std::runtime_error("snapshot source/budget");
++    Json j={{"schema","fastlivo-native-visual-snapshot/v1"},{"generation",generation},
++        {"source_stamp_ns",ns},{"native_target_stamp_ns",native_ns},{"map_snapshot_stamp_ns",ns},
++        {"source_stage","post_lio_pre_vio"},{"covariance_source","native_internal_full_19d"},
++        {"map_frame",map_frame},{"child_frame",child_frame},{"voxel_size_m",voxel_size},
++        {"covariance_consistency_certified",false},{"geometry_semantics","exact native VIO read-query geometry; not a resumable LIO update map"}};
++    j["state"]={{"R",matrix(s.rot_end)},{"p",matrix(s.pos_end)},{"v",matrix(s.vel_end)},
++        {"bg",matrix(s.bias_g)},{"ba",matrix(s.bias_a)},{"g",matrix(s.gravity)},
++        {"inverse_exposure",s.inv_expo_time},{"covariance",matrix(s.cov)}};
++    j["points"]=Json::array();
++    for(const auto &p:points)j["points"].push_back({{"position_world",matrix(p.point_w)},
++        {"normal_world",matrix(p.normal)},{"covariance_world",matrix(p.var)}});
++    std::vector<std::pair<VOXEL_LOCATION,VoxelOctoTree*>> sorted(planes.begin(),planes.end());
++    std::sort(sorted.begin(),sorted.end(),[](const auto &a,const auto &b){return std::tie(a.first.x,a.first.y,a.first.z)<std::tie(b.first.x,b.first.y,b.first.z);});
++    size_t nodes=0;j["roots"]=Json::array();
++    for(const auto &p:sorted)j["roots"].push_back({{"key",{p.first.x,p.first.y,p.first.z}},{"tree",tree(p.second,nodes)}});
++    j["node_count"]=nodes;
++    return j;
++}
++Owned decode(const Json &j) {
++    if(j.at("schema")!="fastlivo-native-visual-snapshot/v1" || j.at("source_stage")!="post_lio_pre_vio" ||
++        j.at("covariance_source")!="native_internal_full_19d" || j.at("points").size()>MAX_POINTS)
++        throw std::runtime_error("invalid native visual snapshot schema/source");
++    Owned out;out.metadata=j;
++    const auto &s=j.at("state");matrix(s.at("R"),out.state.rot_end);matrix(s.at("p"),out.state.pos_end);
++    matrix(s.at("v"),out.state.vel_end);matrix(s.at("bg"),out.state.bias_g);matrix(s.at("ba"),out.state.bias_a);
++    matrix(s.at("g"),out.state.gravity);matrix(s.at("covariance"),out.state.cov);out.state.inv_expo_time=s.at("inverse_exposure");
++    for(const auto &p:j.at("points")) {pointWithVar v;matrix(p.at("position_world"),v.point_w);
++        matrix(p.at("normal_world"),v.normal);matrix(p.at("covariance_world"),v.var);out.points.push_back(v);}
++    size_t count=0;
++    for(const auto &r:j.at("roots")) {
++        auto ptr=tree(r.at("tree"),count);const auto &k=r.at("key");
++        auto inserted=out.planes.emplace(VOXEL_LOCATION(k.at(0),k.at(1),k.at(2)),ptr.get());
++        if(!ptr || !inserted.second)throw std::runtime_error("duplicate/null snapshot map root");
++        out.roots.push_back(std::move(ptr));
++    }
++    if(count!=j.at("node_count").get<size_t>())throw std::runtime_error("native snapshot node count mismatch");
++    return out;
++}
++Owned read(const std::filesystem::path &path) {
++    if(std::filesystem::file_size(path)>MAX_BYTES)throw std::runtime_error("snapshot byte budget");
++    std::ifstream file(path,std::ios::binary);std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)),{});
++    return decode(Json::from_cbor(bytes));
++}
++void export_if_requested(const StatesGroup &s,const std::vector<pointWithVar> &points,const PlaneMap &map,
++                         double target_s,uint64_t source_ns,const std::string &map_frame,
++                         const std::string &child_frame,double voxel_size) noexcept {
++    const char *directory=std::getenv("FASTLIVO_VISUAL_SNAPSHOT_DIR");
++    if(!directory || !*directory)return;
++    try {
++        const char *generation=std::getenv("FASTLIVO_VISUAL_SNAPSHOT_GENERATION");
++        const char *archive=std::getenv("FASTLIVO_VISUAL_SNAPSHOT_CAMERA_ARCHIVE");
++        if(!generation || !archive || !source_ns || !std::isfinite(target_s))throw std::runtime_error("missing native snapshot generation/camera source");
++        std::ostringstream name;name<<std::setw(18)<<std::setfill('0')<<source_ns;
++        if(!std::filesystem::is_regular_file(std::filesystem::path(archive)/"camera_0"/(name.str()+".png")))return;
++        std::filesystem::create_directories(directory);
++        const auto path=std::filesystem::path(directory)/(name.str()+".cbor");
++        if(std::filesystem::exists(path))return;
++        auto j=encode(s,points,map,source_ns,std::llround(target_s*1e9),generation,map_frame,child_frame,voxel_size);
++        auto bytes=Json::to_cbor(j);
++        if(bytes.size()>MAX_BYTES)throw std::runtime_error("encoded snapshot byte budget");
++        const auto tmp=path.string()+".tmp";
++        {std::ofstream file(tmp,std::ios::binary);file.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());if(!file)throw std::runtime_error("snapshot write failed");}
++        std::filesystem::rename(tmp,path);
++    } catch(const std::exception &e) {
++        std::cerr<<"[VISUAL_SNAPSHOT_ERROR] "<<e.what()<<'\n';
++    }
++}
++}

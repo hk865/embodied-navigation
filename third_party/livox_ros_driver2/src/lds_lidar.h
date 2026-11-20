@@ -41,54 +41,59 @@
 namespace livox_ros {
 
 class LdsLidar final : public Lds {
- public:
-  static LdsLidar *GetInstance(double publish_freq) {
-    printf("LdsLidar *GetInstance\n");
-    static LdsLidar lds_lidar(publish_freq);
-    return &lds_lidar;
-  }
+  public:
+    // Process-wide singleton. publish_freq only takes effect on the first call;
+    // later callers silently get the instance created with the earlier value.
+    static LdsLidar *GetInstance(double publish_freq) {
+        printf("LdsLidar *GetInstance\n");
+        static LdsLidar lds_lidar(publish_freq);
+        return &lds_lidar;
+    }
 
-  bool InitLdsLidar(const std::string& path_name);
-  bool Start();
+    // path_name is the Livox config JSON. Summary parsing fills
+    // lidar_summary_info_; the SDK is initialized from the same config path.
+    bool InitLdsLidar(const std::string &path_name);
+    bool Start();
 
-  int DeInitLdsLidar(void);
- private:
-  LdsLidar(double publish_freq);
-  LdsLidar(const LdsLidar &) = delete;
-  ~LdsLidar();
-  LdsLidar &operator=(const LdsLidar &) = delete;
+    int DeInitLdsLidar(void);
 
-  bool ParseSummaryConfig();
+  private:
+    LdsLidar(double publish_freq);
+    LdsLidar(const LdsLidar &) = delete;
+    ~LdsLidar();
+    LdsLidar &operator=(const LdsLidar &) = delete;
 
-  bool InitLidars();
-  bool InitLivoxLidar();    // for new SDK
+    bool ParseSummaryConfig();
 
-  bool LivoxLidarStart();
+    bool InitLidars();
+    bool InitLivoxLidar(); // for new SDK
 
-  void ResetLdsLidar(void);
+    bool LivoxLidarStart();
 
-  void SetLidarPubHandle();
+    void ResetLdsLidar(void);
 
-	// auto connect mode
-	void EnableAutoConnectMode(void) { auto_connect_mode_ = true; }
-  void DisableAutoConnectMode(void) { auto_connect_mode_ = false; }
-  bool IsAutoConnectMode(void) { return auto_connect_mode_; }
+    void SetLidarPubHandle();
 
-  virtual void PrepareExit(void);
+    // auto connect mode
+    void EnableAutoConnectMode(void) { auto_connect_mode_ = true; }
+    void DisableAutoConnectMode(void) { auto_connect_mode_ = false; }
+    bool IsAutoConnectMode(void) { return auto_connect_mode_; }
 
- public:
-  std::mutex config_mutex_;
+    virtual void PrepareExit(void);
 
- private:
-  std::string path_;
-  LidarSummaryInfo lidar_summary_info_;
+  public:
+    std::mutex config_mutex_;
 
-  bool auto_connect_mode_;
-  uint32_t whitelist_count_;
-  volatile bool is_initialized_;
-  char broadcast_code_whitelist_[kMaxLidarCount][kBroadcastCodeSize];
+  private:
+    std::string path_;
+    LidarSummaryInfo lidar_summary_info_;
+
+    bool auto_connect_mode_;
+    uint32_t whitelist_count_;
+    volatile bool is_initialized_;
+    char broadcast_code_whitelist_[kMaxLidarCount][kBroadcastCodeSize];
 };
 
-}  // namespace livox_ros
+} // namespace livox_ros
 
 #endif // LIVOX_ROS_DRIVER_LDS_LIDAR_H_

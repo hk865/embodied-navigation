@@ -1,0 +1,207 @@
+--- a/third_party/scan/plan_manage/src/scan_replan_fsm.cpp
++++ b/third_party/scan/plan_manage/src/scan_replan_fsm.cpp
+@@ -23,21 +23,42 @@
+ bool valid_reference_input(const nav_msgs::msg::Path &path, double body_height,
+                            const Eigen::Vector3d &odom_position,
+                            const Eigen::Vector3d &used_velocity,
+-                           const std::string &expected_frame) {
+-    if (path.header.frame_id != expected_frame || path.poses.empty() ||
+-        !std::isfinite(body_height) || !odom_position.allFinite() || !used_velocity.allFinite())
++                           const std::string &expected_frame,
++                           std::string *reason = nullptr, int *segment_index = nullptr,
++                           double *segment_length = nullptr) {
++    auto reject = [reason](const char *value) {
++        if (reason)
++            *reason = value;
+         return false;
++    };
++    if (path.header.frame_id != expected_frame)
++        return reject("path_frame_mismatch");
++    if (path.poses.empty())
++        return reject("empty_path");
++    if (!std::isfinite(body_height))
++        return reject("nonfinite_body_height");
++    if (!odom_position.allFinite())
++        return reject("nonfinite_consumed_odometry");
++    if (!used_velocity.allFinite())
++        return reject("nonfinite_used_velocity");
+     Eigen::Vector3d previous = odom_position;
+-    for (const auto &pose : path.poses) {
++    for (size_t index = 0; index < path.poses.size(); ++index) {
++        const auto &pose = path.poses[index];
++        if (segment_index)
++            *segment_index = static_cast<int>(index);
+         if (!pose.header.frame_id.empty() && pose.header.frame_id != expected_frame)
+-            return false;
++            return reject("pose_frame_mismatch");
+         const auto &p = pose.pose.position;
+         const auto &q = pose.pose.orientation;
+         Eigen::Vector3d body_point(p.x, p.y, p.z + body_height);
+         if (!body_point.allFinite() || !std::isfinite(p.z) || !std::isfinite(q.x) ||
+-            !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w) ||
+-            (body_point - previous).norm() <= 1e-6)
+-            return false; // A zero-duration segment makes the polynomial fit singular.
++            !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w))
++            return reject("nonfinite_pose");
++        const double length = (body_point - previous).norm();
++        if (segment_length)
++            *segment_length = length;
++        if (length <= 1e-6)
++            return reject("nonzero_segment_required");
+         previous = body_point;
+     }
+     return true;
+@@ -247,6 +268,8 @@
+             node_->create_publisher<std_msgs::msg::String>("planning/reference_attempt", 10);
+         route_definition_pub_ = node_->create_publisher<std_msgs::msg::String>(
+             "planning/route_definition", rclcpp::QoS(1).reliable().transient_local());
++        reference_status_pub_ = node_->create_publisher<std_msgs::msg::String>(
++            "planning/reference_status", rclcpp::QoS(10).reliable());
+     }
+     if (r74_protocol_observation_enabled_)
+         r74InitializeObservation();
+@@ -529,19 +552,26 @@
+     if (navi_mode_ != NAVI_MODE::REFERENCE_PATH)
+         return;
+     invalidateReference("replacement received");
+-    if (!msg || !have_odom_ ||
+-        (external_reference_protocol_ &&
+-         msg->poses.size() > 4096) || // Explicit R85 input budget; no simplification.
+-        !valid_reference_input(*msg, body_height_, odom_pos_,
+-                               measured_start_.velocity(go2_execution_frozen_),
+-                               self_inflation_frame_id_)) {
+-        RCLCPP_WARN(node_->get_logger(),
+-                    "Rejected reference: frame/finite/odometry/nonzero-segment validation failed");
+-        return;
+-    }
+-    if (reference_revision_ == std::numeric_limits<uint64_t>::max()) {
+-        RCLCPP_ERROR(node_->get_logger(),
+-                     "Reference revision exhausted; restart with a fresh outer epoch");
++    std::string rejection;
++    int segment_index = -1;
++    double segment_length = -1.0;
++    if (!msg)
++        rejection = "missing_path";
++    else if (!have_odom_)
++        rejection = "odometry_unavailable";
++    else if (external_reference_protocol_ && msg->poses.size() > 4096)
++        rejection = "input_pose_budget_exceeded";
++    else
++        valid_reference_input(*msg, body_height_, odom_pos_,
++                              measured_start_.velocity(go2_execution_frozen_),
++                              self_inflation_frame_id_, &rejection, &segment_index, &segment_length);
++    if (rejection.empty() && reference_revision_ == std::numeric_limits<uint64_t>::max())
++        rejection = "reference_revision_exhausted";
++    if (!rejection.empty()) {
++        publishReferenceStatus("reference_rejected", rejection,
++                               msg ? &msg->header.stamp : nullptr,
++                               msg ? msg->header.frame_id : "", segment_index, segment_length);
++        RCLCPP_WARN(node_->get_logger(), "Rejected reference: %s", rejection.c_str());
+         return;
+     }
+ 
+@@ -565,6 +595,8 @@
+         end_pt_ = previous_end;
+         end_vel_ = previous_end_velocity;
+         invalidateReference("replacement fit/endpoint rejected");
++        publishReferenceStatus("reference_rejected", "fit_or_endpoint_rejected",
++                               &msg->header.stamp, msg->header.frame_id);
+         return;
+     }
+ 
+@@ -650,6 +682,7 @@
+ 
+ void SCANReplanFSM::odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg) {
+     last_odom_stamp_ns_ = rclcpp::Time(msg->header.stamp).nanoseconds();
++    last_odom_frame_id_ = msg->header.frame_id;
+     last_odom_receive_time_ = std::chrono::steady_clock::now();
+     odom_pos_(0) = msg->pose.pose.position.x;
+     odom_pos_(1) = msg->pose.pose.position.y;
+@@ -698,7 +731,8 @@
+         << ",\"planner_start_ticks\":" << child_odometry_ack_identity_.start_ticks
+         << ",\"startup_nonce\":\"" << child_odometry_ack_nonce_
+         << "\",\"source_stamp_ns\":" << last_odom_stamp_ns_
+-        << ",\"source_frame_id\":\"camera_init\",\"have_odom\":true,\"ack_sequence\":"
++        << ",\"source_frame_id\":" << r74_observation::quoted(message.header.frame_id)
++        << ",\"have_odom\":true,\"ack_sequence\":"
+         << ++child_odometry_ack_sequence_ << ",\"publisher_gid\":\"" << child_odometry_ack_gid_
+         << "\"}";
+     std_msgs::msg::String ack;
+@@ -988,6 +1022,9 @@
+                 have_target_ = false;
+                 trigger_ = false;
+                 changeFSMExecState(WAIT_TARGET, "EMERGENCY_EXIT");
++                if (navi_mode_ == NAVI_MODE::REFERENCE_PATH && reference_ready_)
++                    publishReferenceStatus("target_abandoned", "replan_failures_exhausted",
++                                           &reference_stamp_, self_inflation_frame_id_);
+             }
+         }
+ 
+@@ -1468,6 +1505,38 @@
+             ++r74_observation_->errors;
+         r74DisableObservation("diagnostic_publish_error");
+     }
++}
++
++void SCANReplanFSM::publishReferenceStatus(
++    const std::string &event, const std::string &reason,
++    const builtin_interfaces::msg::Time *input_stamp, const std::string &input_frame,
++    int segment_index, double segment_length) {
++    std::ostringstream out;
++    out << std::setprecision(17)
++        << "{\"schema\":\"scan_reference_status/v1\",\"event\":"
++        << r74_observation::quoted(event) << ",\"reason\":" << r74_observation::quoted(reason)
++        << ",\"run_id\":" << r74_observation::quoted(reference_run_id_)
++        << ",\"reference_epoch\":" << reference_epoch_
++        << ",\"planner_process_id\":" << getpid()
++        << ",\"frame_id\":" << r74_observation::quoted(self_inflation_frame_id_)
++        << ",\"input_frame_id\":" << r74_observation::quoted(input_frame)
++        << ",\"reference_stamp\":";
++    if (input_stamp)
++        out << '[' << input_stamp->sec << ',' << input_stamp->nanosec << ']';
++    else
++        out << "null";
++    out << ",\"have_odometry\":" << (have_odom_ ? "true" : "false")
++        << ",\"last_consumed_odometry_stamp_ns\":" << last_odom_stamp_ns_
++        << ",\"last_consumed_odometry_frame_id\":" << r74_observation::quoted(last_odom_frame_id_)
++        << ",\"segment_index\":" << segment_index << ",\"segment_length_m\":";
++    if (segment_length >= 0.0 && std::isfinite(segment_length))
++        out << segment_length;
++    else
++        out << "null";
++    out << '}';
++    std_msgs::msg::String status;
++    status.data = out.str();
++    reference_status_pub_->publish(status);
+ }
+ 
+ void SCANReplanFSM::publishRouteDefinition() {
+--- a/third_party/scan/plan_manage/include/plan_manage/scan_replan_fsm.h
++++ b/third_party/scan/plan_manage/include/plan_manage/scan_replan_fsm.h
+@@ -94,6 +94,7 @@
+     uint64_t current_attempt_replan_sequence_{0};
+     int global_endpoint_local_occupancy_{-1}, local_target_occupancy_{-1};
+     int64_t last_odom_stamp_ns_{0};
++    std::string last_odom_frame_id_;
+     std::chrono::steady_clock::time_point last_odom_receive_time_;
+     // Process-local committed reference identity. This is not execution admission.
+     uint64_t reference_revision_{0};
+@@ -128,6 +129,7 @@
+     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr trajectory_metadata_pub_;
+     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr reference_attempt_pub_;
+     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr route_definition_pub_;
++    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr reference_status_pub_;
+     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr child_odometry_ack_pub_;
+     rclcpp::Publisher<scan_planner_msgs::msg::DataDisp>::SharedPtr data_disp_pub_;
+     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr self_inflation_pub_;
+@@ -170,6 +172,10 @@
+     void publishTrajectoryMetadata(const scan_planner_msgs::msg::Bspline &trajectory,
+                                    bool emergency_stop = false);
+     void publishRouteDefinition();
++    void publishReferenceStatus(const std::string &event, const std::string &reason,
++                                const builtin_interfaces::msg::Time *input_stamp,
++                                const std::string &input_frame, int segment_index = -1,
++                                double segment_length = -1.0);
+     void publishReferenceAttempt(bool plan_success, const std::string &reason = "optimizer_return");
+     bool mode3ReferenceUsable() const;
+     void invalidateReference(const char *reason);

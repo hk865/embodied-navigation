@@ -31,45 +31,49 @@ namespace livox_ros {
 
 class Lddc;
 
+// Single driver node compiled either as a ROS1 NodeHandle (BUILDING_ROS1) or a
+// ROS2 rclcpp::Node (BUILDING_ROS2). It owns the Lddc driver instance, the two
+// polling threads that drain point-cloud / IMU queues, and an exit_signal_
+// promise/future pair used to stop those threads on shutdown.
 #ifdef BUILDING_ROS1
 class DriverNode final : public ros::NodeHandle {
- public:
-  DriverNode() = default;
-  DriverNode(const DriverNode &) = delete;
-  ~DriverNode();
-  DriverNode &operator=(const DriverNode &) = delete;
+  public:
+    DriverNode() = default;
+    DriverNode(const DriverNode &) = delete;
+    ~DriverNode();
+    DriverNode &operator=(const DriverNode &) = delete;
 
-  DriverNode& GetNode() noexcept;
+    DriverNode &GetNode() noexcept;
 
-  void PointCloudDataPollThread();
-  void ImuDataPollThread();
+    void PointCloudDataPollThread();
+    void ImuDataPollThread();
 
-  std::unique_ptr<Lddc> lddc_ptr_;
-  std::shared_ptr<std::thread> pointclouddata_poll_thread_;
-  std::shared_ptr<std::thread> imudata_poll_thread_;
-  std::shared_future<void> future_;
-  std::promise<void> exit_signal_;
+    std::unique_ptr<Lddc> lddc_ptr_;
+    std::shared_ptr<std::thread> pointclouddata_poll_thread_;
+    std::shared_ptr<std::thread> imudata_poll_thread_;
+    std::shared_future<void> future_;
+    std::promise<void> exit_signal_;
 };
 
 #elif defined BUILDING_ROS2
 class DriverNode final : public rclcpp::Node {
- public:
-  explicit DriverNode(const rclcpp::NodeOptions& options);
-  DriverNode(const DriverNode &) = delete;
-  ~DriverNode();
-  DriverNode &operator=(const DriverNode &) = delete;
+  public:
+    explicit DriverNode(const rclcpp::NodeOptions &options);
+    DriverNode(const DriverNode &) = delete;
+    ~DriverNode();
+    DriverNode &operator=(const DriverNode &) = delete;
 
-  DriverNode& GetNode() noexcept;
+    DriverNode &GetNode() noexcept;
 
- private:
-  void PointCloudDataPollThread();
-  void ImuDataPollThread();
+  private:
+    void PointCloudDataPollThread();
+    void ImuDataPollThread();
 
-  std::unique_ptr<Lddc> lddc_ptr_;
-  std::shared_ptr<std::thread> pointclouddata_poll_thread_;
-  std::shared_ptr<std::thread> imudata_poll_thread_;
-  std::shared_future<void> future_;
-  std::promise<void> exit_signal_;
+    std::unique_ptr<Lddc> lddc_ptr_;
+    std::shared_ptr<std::thread> pointclouddata_poll_thread_;
+    std::shared_ptr<std::thread> imudata_poll_thread_;
+    std::shared_future<void> future_;
+    std::promise<void> exit_signal_;
 };
 #endif
 

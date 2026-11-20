@@ -1,0 +1,349 @@
+{
+  "schema": "dynanav_basement_collision/v1",
+  "scope": "All audited original visible horizontal office floor tiles and existing lower stairs; exact meshes in session only, no added geometry or source-layer save.",
+  "provenance": {
+    "geometry_archive_identifier": "codex/2026-11-05/task-2/nav_validation/multifloor_20261106/geometry/basement_to_ground_candidate.json",
+    "geometry_sha256": "731d450e29fe1699ee3eb50870dfc63e92b70b85064f57a1440bd17d62b1a73d",
+    "repair_archive_identifier": "codex/2026-11-08/task/robogauge_isaac15cm_nopid_20261108/runner/teacher_static_floor37_spec.py",
+    "repair_sha256": "c558f1a43ca303efb2a2ad03a20f99ebb5ca1d4581e9fa60ab090631b53bff80",
+    "selection": "119 active visible horizontal SM_Floor_3m/SM_Floor_6m meshes from CPU inspection of the frozen flattened Office stage; excludes 15 carpet decoration meshes. Includes all seven legacy floors. Original four lower-stair paths and first-flight support samples unchanged.",
+    "source_status": "CPU geometry and session-layer validation only; not live collision/contact/traversal evidence.",
+    "geometry_is_not_traversal_evidence": true,
+    "floor_inventory_source": "office_deinstanced_flattened.usdc (offline_office_freeze_20261111T030623Z)",
+    "floor_inventory_source_sha256": "26954f819bc4b3441254a3f1e966e5e1abc55092972537f57ab04dff51c1a38f",
+    "floor_inventory_counts_by_z_m": {
+      "-3.3": 34,
+      "0": 84,
+      "3.3": 1
+    },
+    "floor_inventory_world_bounds_m": {
+      "min": [
+        -24.000001030921148,
+        -27.000000541392478,
+        -3.3000003496911012
+      ],
+      "max": [
+        5.999999932944755,
+        60.00000007629396,
+        3.3000000000000127
+      ]
+    }
+  },
+  "ground_plane_path": "/Root/GroundPlane/CollisionPlane",
+  "floor_paths": [
+    "/Root/SM_Floor_3m10/SM_Floor_3m",
+    "/Root/SM_Floor_3m11_213/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m12_214/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m13_215/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m14_216/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m15_217/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m16_218/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m17_219/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m18_220/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m19_221/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m2/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m20_222/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m21_223/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m22_224/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m23_225/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m24_226/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m25_227/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m26/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m27_228/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m28_229/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m29_230/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m3/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m30_231/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m31_232/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m32_233/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m33_234/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m34_245/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m35_320/SM_Floor_3m",
+    "/Root/SM_Floor_3m36_321/SM_Floor_3m",
+    "/Root/SM_Floor_3m37_322/SM_Floor_3m",
+    "/Root/SM_Floor_3m38_323/SM_Floor_3m",
+    "/Root/SM_Floor_3m39_324/SM_Floor_3m",
+    "/Root/SM_Floor_3m4/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m40_325/SM_Floor_3m",
+    "/Root/SM_Floor_3m41_335/SM_Floor_3m",
+    "/Root/SM_Floor_3m42_336/SM_Floor_3m",
+    "/Root/SM_Floor_3m43_337/SM_Floor_3m",
+    "/Root/SM_Floor_3m44_338/SM_Floor_3m",
+    "/Root/SM_Floor_3m45_339/SM_Floor_3m",
+    "/Root/SM_Floor_3m46_340/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m47/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m48_341/SM_Floor_3m",
+    "/Root/SM_Floor_3m49_342/SM_Floor_3m",
+    "/Root/SM_Floor_3m5/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m50_360/SM_Floor_3m",
+    "/Root/SM_Floor_3m51/SM_Floor_3m",
+    "/Root/SM_Floor_3m52_363/SM_Floor_3m",
+    "/Root/SM_Floor_3m53/SM_Floor_3m",
+    "/Root/SM_Floor_3m54_364/SM_Floor_3m",
+    "/Root/SM_Floor_3m55/SM_Floor_3m",
+    "/Root/SM_Floor_3m56/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m57/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m58/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m59/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m6/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m60/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m7_351/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_3m8/SM_Floor_3m",
+    "/Root/SM_Floor_3m9/SM_Floor_3m",
+    "/Root/SM_Floor_3m_2/SM_Floor_3m/SM_Floor_3m",
+    "/Root/SM_Floor_6m10/SM_Floor_6m",
+    "/Root/SM_Floor_6m11/SM_Floor_6m",
+    "/Root/SM_Floor_6m12/SM_Floor_6m",
+    "/Root/SM_Floor_6m13/SM_Floor_6m",
+    "/Root/SM_Floor_6m14/SM_Floor_6m",
+    "/Root/SM_Floor_6m15/SM_Floor_6m",
+    "/Root/SM_Floor_6m16/SM_Floor_6m",
+    "/Root/SM_Floor_6m17/SM_Floor_6m",
+    "/Root/SM_Floor_6m18/SM_Floor_6m",
+    "/Root/SM_Floor_6m19/SM_Floor_6m",
+    "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m20/SM_Floor_6m",
+    "/Root/SM_Floor_6m21/SM_Floor_6m",
+    "/Root/SM_Floor_6m22/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m23/SM_Floor_6m",
+    "/Root/SM_Floor_6m24/SM_Floor_6m",
+    "/Root/SM_Floor_6m25/SM_Floor_6m",
+    "/Root/SM_Floor_6m26/SM_Floor_6m",
+    "/Root/SM_Floor_6m27/SM_Floor_6m",
+    "/Root/SM_Floor_6m28/SM_Floor_6m",
+    "/Root/SM_Floor_6m29/SM_Floor_6m",
+    "/Root/SM_Floor_6m3/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m30/SM_Floor_6m",
+    "/Root/SM_Floor_6m31/SM_Floor_6m",
+    "/Root/SM_Floor_6m32/SM_Floor_6m",
+    "/Root/SM_Floor_6m33/SM_Floor_6m",
+    "/Root/SM_Floor_6m34/SM_Floor_6m",
+    "/Root/SM_Floor_6m35/SM_Floor_6m",
+    "/Root/SM_Floor_6m36/SM_Floor_6m",
+    "/Root/SM_Floor_6m37/SM_Floor_6m",
+    "/Root/SM_Floor_6m38/SM_Floor_6m",
+    "/Root/SM_Floor_6m39/SM_Floor_6m",
+    "/Root/SM_Floor_6m4/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m40/SM_Floor_6m",
+    "/Root/SM_Floor_6m41/SM_Floor_6m",
+    "/Root/SM_Floor_6m42/SM_Floor_6m",
+    "/Root/SM_Floor_6m43/SM_Floor_6m",
+    "/Root/SM_Floor_6m44/SM_Floor_6m",
+    "/Root/SM_Floor_6m45/SM_Floor_6m",
+    "/Root/SM_Floor_6m46/SM_Floor_6m",
+    "/Root/SM_Floor_6m47/SM_Floor_6m",
+    "/Root/SM_Floor_6m48/SM_Floor_6m",
+    "/Root/SM_Floor_6m49/SM_Floor_6m",
+    "/Root/SM_Floor_6m5/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m50/SM_Floor_6m",
+    "/Root/SM_Floor_6m51/SM_Floor_6m",
+    "/Root/SM_Floor_6m52/SM_Floor_6m",
+    "/Root/SM_Floor_6m53/SM_Floor_6m",
+    "/Root/SM_Floor_6m54/SM_Floor_6m",
+    "/Root/SM_Floor_6m55/SM_Floor_6m",
+    "/Root/SM_Floor_6m56_355/SM_Floor_6m",
+    "/Root/SM_Floor_6m57/SM_Floor_6m",
+    "/Root/SM_Floor_6m58/SM_Floor_6m",
+    "/Root/SM_Floor_6m59/SM_Floor_6m",
+    "/Root/SM_Floor_6m6/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m7/SM_Floor_6m/SM_Floor_6m",
+    "/Root/SM_Floor_6m8/SM_Floor_6m",
+    "/Root/SM_Floor_6m9/SM_Floor_6m",
+    "/Root/SM_Floor_6m_17/SM_Floor_6m/SM_Floor_6m"
+  ],
+  "stair_paths": [
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section0",
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section1",
+    "/Root/SM_StairsMain_2/SM_StairsMain/Section2",
+    "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+  ],
+  "support_preflight": {
+    "scope": "Live PhysX downward queries only, not robot contact, policy capability or route completion.",
+    "ray_origin_above_surface_m": 0.12,
+    "ray_length_m": 0.24,
+    "surface_tolerance_m": 0.003,
+    "robot_paths_excluded_from_static_check": [
+      "/World/Go2"
+    ],
+    "all_hits_recorded": true,
+    "nearest_nonrobot_hit_must_match_reference": true,
+    "samples": [
+      {
+        "label": "spawn_floor",
+        "surface_xyz_m": [
+          -14.53,
+          -7.5,
+          -3.300000262268327
+        ],
+        "expected_colliders": [
+          "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m"
+        ],
+        "reference": "Spawn XY from archived run; expected Z from original flat approach floor at waypoint3. This new scene-query point is not a historical measured contact."
+      },
+      {
+        "label": "first_flight_waypoint_3",
+        "source_waypoint_index": 3,
+        "surface_xyz_m": [
+          -14.7,
+          -7.5,
+          -3.300000262268327
+        ],
+        "expected_colliders": [
+          "/Root/SM_Floor_6m2/SM_Floor_6m/SM_Floor_6m"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_4",
+        "source_waypoint_index": 4,
+        "surface_xyz_m": [
+          -15.210000048950313,
+          -7.5,
+          -3.1418760455104557
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_5",
+        "source_waypoint_index": 5,
+        "surface_xyz_m": [
+          -15.610000005438923,
+          -7.5,
+          -2.9918762028006216
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_6",
+        "source_waypoint_index": 6,
+        "surface_xyz_m": [
+          -16.00999997742474,
+          -7.5,
+          -2.8418765375843797
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_7",
+        "source_waypoint_index": 7,
+        "surface_xyz_m": [
+          -16.409999930337072,
+          -7.5,
+          -2.691876642311925
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_8",
+        "source_waypoint_index": 8,
+        "surface_xyz_m": [
+          -16.809999883249404,
+          -7.5,
+          -2.5418767303283083
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_9",
+        "source_waypoint_index": 9,
+        "surface_xyz_m": [
+          -18.00999871201816,
+          -7.5,
+          -2.377315721023679
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_10",
+        "source_waypoint_index": 10,
+        "surface_xyz_m": [
+          -19.209999295547618,
+          -7.5,
+          -2.2314413266176576
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_11",
+        "source_waypoint_index": 11,
+        "surface_xyz_m": [
+          -19.610000049546358,
+          -7.5,
+          -2.0849194953421626
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_12",
+        "source_waypoint_index": 12,
+        "surface_xyz_m": [
+          -20.010000345781435,
+          -7.5,
+          -1.938398692131228
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_13",
+        "source_waypoint_index": 13,
+        "surface_xyz_m": [
+          -20.411547425429205,
+          -7.5,
+          -1.7918765221288537
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_14",
+        "source_waypoint_index": 14,
+        "surface_xyz_m": [
+          -20.81154680613696,
+          -7.5,
+          -1.6418769030699243
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      },
+      {
+        "label": "first_flight_waypoint_15",
+        "source_waypoint_index": 15,
+        "surface_xyz_m": [
+          -22,
+          -7.5,
+          -1.4906366737798542
+        ],
+        "expected_colliders": [
+          "/Root/SM_StairsCarpet2/SM_StairsCarpet"
+        ]
+      }
+    ]
+  },
+  "floor_validation": {
+    "mesh_names": [
+      "SM_Floor_3m",
+      "SM_Floor_6m"
+    ],
+    "maximum_world_z_span_m": 0.001,
+    "minimum_projected_area_m2": 1.0
+  }
+}

@@ -1,4 +1,6 @@
-"""Asynchronous, opt-in history and map localization backend.
+"""Point-cloud SLAM backend for the FAST-LIVO2 keyframe spool (D path).
 
-The frontend continues to own its odometry/filter. This package never writes it.
+Keyframes, ScanContext place recognition, ICP, pose graph, map store and
+map->odom correction. The frontend keeps its odometry; this package never
+writes it. Only ``node`` imports ROS.
 """

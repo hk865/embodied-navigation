@@ -51,6 +51,7 @@ find_package(nlohmann_json REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(dynanav_sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(pcl_conversions REQUIRED)
@@ -81,6 +82,8 @@ endif()
 add_library(fast_livo2_core SHARED
   src/runner.cpp
   src/backend/snapshot_bridge.cpp
+  src/visual_snapshot.cpp
+  src/multicamera_native.cpp
   src/LIVMapper.cpp
   src/IMU_Processing.cpp
   src/frame.cpp
@@ -121,6 +124,7 @@ set(deps
   geometry_msgs
   nav_msgs
   sensor_msgs
+  dynanav_sensor_msgs
   visualization_msgs
   cv_bridge
   image_transport

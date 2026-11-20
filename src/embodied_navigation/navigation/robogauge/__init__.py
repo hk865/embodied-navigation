@@ -1,1 +1,1 @@
-"""Portable RoboGauge simulation deployment components."""
+"""RoboGauge native-pose route tracking."""

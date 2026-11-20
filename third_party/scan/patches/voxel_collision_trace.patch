@@ -1,0 +1,499 @@
+--- a/third_party/scan/bspline_opt/src/bspline_optimizer.cpp
++++ b/third_party/scan/bspline_opt/src/bspline_optimizer.cpp
+@@ -950,12 +950,15 @@
+             {
+                 Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
+                 Eigen::Vector3d pos_next = traj.evaluateDeBoorT(std::min(t + t_step, tmp));
+-                flag_occ = grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next));
++                VoxelQuery query;
++                flag_occ = grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next), &query);
+                 if (flag_occ) {
+                     //cout << "hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
+ 
+                     if (t <= bspline_interval_) // First 3 control points in obstacles!
+                     {
++                        grid_map_->traceRejectedOccupancy(query, "rebound_start", t,
++                                                         bspline_interval_, cps_.points, pos_next);
+                         cout << cps_.points.col(1).transpose() << "\n"
+                              << cps_.points.col(2).transpose() << "\n"
+                              << cps_.points.col(3).transpose() << "\n"
+@@ -1043,7 +1046,10 @@
+         for (double t = tm; t < tmp * 2 / 3; t += t_step) {
+             Eigen::Vector3d pos = traj.evaluateDeBoorT(t);
+             Eigen::Vector3d pos_next = traj.evaluateDeBoorT(std::min(t + t_step, tmp));
+-            if (grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next))) {
++            VoxelQuery query;
++            if (grid_map_->getInflateOccupancy(pos, estimateSegmentYaw(pos, pos_next), &query)) {
++                grid_map_->traceRejectedOccupancy(query, "refine", t,
++                                                 bspline_interval_, cps_.points, pos_next);
+                 // cout << "Refined traj hit_obs, t=" << t << " P=" << traj.evaluateDeBoorT(t).transpose() << endl;
+ 
+                 Eigen::MatrixXd ref_pts(ref_pts_.size(), 3);
+--- a/third_party/scan/plan_env/CMakeLists.txt
++++ b/third_party/scan/plan_env/CMakeLists.txt
+@@ -12,6 +12,7 @@
+ find_package(geometry_msgs REQUIRED)
+ find_package(message_filters REQUIRED)
+ find_package(nav_msgs REQUIRED)
++find_package(nlohmann_json REQUIRED)
+ find_package(OpenCV REQUIRED)
+ find_package(PCL REQUIRED COMPONENTS common io filters)
+ find_package(pcl_conversions REQUIRED)
+@@ -21,7 +22,7 @@
+ find_package(tf2_ros REQUIRED)
+ find_package(visualization_msgs REQUIRED)
+ 
+-add_library(plan_env src/grid_map.cpp src/raycast.cpp)
++add_library(plan_env src/grid_map.cpp src/raycast.cpp src/voxel_trace.cpp)
+ target_include_directories(plan_env PUBLIC
+   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+   $<INSTALL_INTERFACE:include>
+@@ -32,7 +33,7 @@
+   cv_bridge geometry_msgs message_filters nav_msgs pcl_conversions rclcpp
+   sensor_msgs tf2 tf2_ros visualization_msgs
+ )
+-target_link_libraries(plan_env Eigen3::Eigen ${PCL_LIBRARIES} ${OpenCV_LIBS})
++target_link_libraries(plan_env Eigen3::Eigen nlohmann_json::nlohmann_json ${PCL_LIBRARIES} ${OpenCV_LIBS})
+ 
+ add_executable(raycast_regression test/raycast_regression.cpp)
+ target_link_libraries(raycast_regression plan_env)
+@@ -48,6 +49,6 @@
+ install(DIRECTORY include/ DESTINATION include)
+ ament_export_targets(export_plan_env HAS_LIBRARY_TARGET)
+ ament_export_dependencies(
+-  cv_bridge Eigen3 geometry_msgs message_filters nav_msgs pcl_conversions
++  cv_bridge Eigen3 geometry_msgs message_filters nav_msgs nlohmann_json pcl_conversions
+   rclcpp sensor_msgs tf2 tf2_ros visualization_msgs)
+ ament_package()
+--- a/third_party/scan/plan_env/include/plan_env/grid_map.h
++++ b/third_party/scan/plan_env/include/plan_env/grid_map.h
+@@ -30,6 +30,7 @@
+ #include <message_filters/time_synchronizer.h>
+ 
+ #include <plan_env/raycast.h>
++#include <plan_env/voxel_trace.h>
+ 
+ #define logit(x) (log((x) / (1 - (x))))
+ 
+@@ -170,7 +171,10 @@
+     inline void setOccupied(Eigen::Vector3d pos);
+     inline int getOccupancy(Eigen::Vector3d pos);
+     inline int getOccupancy(Eigen::Vector3i id);
+-    inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw);
++    inline int getInflateOccupancy(Eigen::Vector3d pos, double yaw, VoxelQuery *detail = nullptr);
++    void traceRejectedOccupancy(const VoxelQuery &query, const char *stage, double candidate_t,
++                                double interval, const Eigen::MatrixXd &control_points,
++                                const Eigen::Vector3d &pos_next) noexcept;
+ 
+     inline void boundIndex(Eigen::Vector3i &id);
+     inline bool isUnknown(const Eigen::Vector3i &id);
+@@ -204,6 +208,20 @@
+     friend class GridMapTestPeer;
+     MappingParameters mp_;
+     MappingData md_;
++    std::shared_ptr<VoxelTrace> voxel_trace_;
++    nav_msgs::msg::Odometry trace_sensor_pose_, trace_body_pose_, trace_cloud_sensor_pose_;
++    nav_msgs::msg::Odometry trace_fusion_sensor_pose_;
++    std_msgs::msg::Header trace_cloud_header_, trace_fusion_cloud_header_;
++    Eigen::Vector3d trace_cloud_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond trace_cloud_ray_q_ = Eigen::Quaterniond::Identity();
++    Eigen::Vector3d trace_fusion_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond trace_fusion_ray_q_ = Eigen::Quaterniond::Identity();
++    Eigen::Vector3d trace_fused_cloud_ray_pos_ = Eigen::Vector3d::Zero();
++    Eigen::Quaterniond trace_fused_cloud_ray_q_ = Eigen::Quaterniond::Identity();
++    nav_msgs::msg::Odometry trace_fused_cloud_sensor_pose_;
++    uint64_t trace_map_revision_ = 0;
++    double trace_fusion_sim_s_ = 0.0;
++    bool trace_has_sensor_ = false, trace_has_body_ = false, trace_has_cloud_ = false;
+ 
+     // get depth image and sensor pose
+     void depthPoseCallback(const sensor_msgs::msg::Image::ConstSharedPtr &img,
+@@ -377,7 +395,7 @@
+     return md_.occupancy_buffer_[toAddress(id)] > mp_.min_occupancy_log_ ? 1 : 0;
+ }
+ 
+-inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw) {
++inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos, double yaw, VoxelQuery *detail) {
+     // yaw is the body heading in radians (world frame); the footprint is modelled
+     // as two inflated circles ("double cylinder") offset by double_cylinder_offset_.
+     Eigen::Vector3d heading(std::cos(yaw), std::sin(yaw), 0.0);
+@@ -385,10 +403,23 @@
+     Eigen::Vector3d rear = pos - mp_.double_cylinder_offset_ * heading;
+ 
+     int front_occ = getInflateOccupancyFromBuffer(front, md_.occupancy_buffer_inflate_);
++    if (detail) {
++        detail->position = pos;
++        detail->yaw = yaw;
++        detail->front = front;
++        detail->rear = rear;
++        detail->front_result = front_occ;
++        detail->rear_evaluated = false;
++    }
+     if (front_occ != 0)
+         return front_occ;
+ 
+-    return getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
++    int rear_occ = getInflateOccupancyFromBuffer(rear, md_.occupancy_buffer_inflate_);
++    if (detail) {
++        detail->rear_result = rear_occ;
++        detail->rear_evaluated = true;
++    }
++    return rear_occ;
+ }
+ 
+ inline int GridMap::getInflateOccupancyFromBuffer(Eigen::Vector3d pos,
+--- /dev/null
++++ b/third_party/scan/plan_env/include/plan_env/voxel_trace.h
+@@ -0,0 +1,36 @@
++#pragma once
++#include <Eigen/Core>
++#include <filesystem>
++#include <string>
++#include <vector>
++
++struct VoxelQuery {
++    Eigen::Vector3d position, front, rear;
++    double yaw = 0.0;
++    int front_result = 0, rear_result = 0;
++    bool rear_evaluated = false;
++};
++
++// This writer owns only a newly created diagnostics directory. Its bounded
++// records observe rejection decisions; filesystem failures never reach planning.
++class VoxelTrace {
++  public:
++    VoxelTrace(const std::string &path, int max_events, int max_bytes, double period_s);
++    ~VoxelTrace();
++    bool enabled() const { return enabled_; }
++    bool shouldRecord(const std::string &key, double sim_s) noexcept;
++    void record(const std::string &key, double sim_s, const std::string &payload) noexcept;
++  private:
++    void writeLast() noexcept;
++    void writeSummary() noexcept;
++    bool writeFile(const std::filesystem::path &path, const std::string &data) noexcept;
++    std::filesystem::path directory_;
++    std::vector<std::string> first_keys_;
++    std::vector<bool> first_written_;
++    std::string latest_;
++    size_t record_bytes_ = 0;
++    int first_limit_ = 0;
++    double period_s_ = 1.0, last_write_sim_s_ = -1.0, last_sample_sim_s_ = -1.0;
++    bool enabled_ = false;
++    unsigned long seen_ = 0, oversize_ = 0, errors_ = 0;
++};
+--- a/third_party/scan/plan_env/package.xml
++++ b/third_party/scan/plan_env/package.xml
+@@ -11,6 +11,7 @@
+   <depend>geometry_msgs</depend>
+   <depend>message_filters</depend>
+   <depend>nav_msgs</depend>
++  <depend>nlohmann-json-dev</depend>
+   <depend>pcl_conversions</depend>
+   <depend>rclcpp</depend>
+   <depend>sensor_msgs</depend>
+--- a/third_party/scan/plan_env/src/grid_map.cpp
++++ b/third_party/scan/plan_env/src/grid_map.cpp
+@@ -1,6 +1,9 @@
+ #include "plan_env/grid_map.h"
+ #include <cmath>
+ #include <limits>
++#include <nlohmann/json.hpp>
++#include <chrono>
++#include <unistd.h>
+ #include <string>
+ #include <geometry_msgs/msg/transform_stamped.hpp>
+ 
+@@ -37,6 +40,14 @@
+ 
+ void GridMap::initMap(rclcpp::Node *node) {
+     node_ = node;
++    std::string trace_path;
++    int trace_events, trace_bytes;
++    double trace_period;
++    load_parameter(node_, "diagnostics.voxel_trace_path", trace_path, std::string());
++    load_parameter(node_, "diagnostics.voxel_trace_max_events", trace_events, 8);
++    load_parameter(node_, "diagnostics.voxel_trace_max_bytes", trace_bytes, 2097152);
++    load_parameter(node_, "diagnostics.voxel_trace_period_s", trace_period, 1.0);
++    voxel_trace_ = std::make_shared<VoxelTrace>(trace_path, trace_events, trace_bytes, trace_period);
+ 
+     /* get parameter */
+     // Lengths/positions are metres; image margins/skip use pixels. The p_*
+@@ -744,7 +755,18 @@
+     if (!md_.use_cloud_update_)
+         projectDepthImage();
+     // t2 = ros::Time::now();
++    if (voxel_trace_ && voxel_trace_->enabled()) {
++        trace_fusion_sensor_pose_ = trace_sensor_pose_;
++        trace_fusion_cloud_header_ = trace_cloud_header_;
++        trace_fusion_ray_pos_ = md_.ray_pos_;
++        trace_fusion_ray_q_ = md_.ray_q_;
++        trace_fused_cloud_ray_pos_ = trace_cloud_ray_pos_;
++        trace_fused_cloud_ray_q_ = trace_cloud_ray_q_;
++        trace_fused_cloud_sensor_pose_ = trace_cloud_sensor_pose_;
++        trace_fusion_sim_s_ = node_->now().seconds();
++    }
+     raycastProcess();
++    ++trace_map_revision_;
+     // t3 = ros::Time::now();
+ 
+     // t4 = ros::Time::now();
+@@ -844,10 +866,18 @@
+     md_.ray_pos_ = ray_pos;
+     md_.ray_q_ = ray_q;
+     md_.has_ray_pose_ = true;
++    if (voxel_trace_ && voxel_trace_->enabled()) {
++        trace_sensor_pose_ = *pose_msg;
++        trace_has_sensor_ = true;
++    }
+     updateSlidingMap(md_.ray_pos_);
+ }
+ 
+ void GridMap::slidingMapFrameCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &pose) {
++    if (voxel_trace_ && voxel_trace_->enabled()) {
++        trace_body_pose_ = *pose;
++        trace_has_body_ = true;
++    }
+     const geometry_msgs::msg::Point &pos = pose->pose.pose.position;
+     md_.sliding_map_frame_pos_ = Eigen::Vector3d(pos.x, pos.y, pos.z);
+ }
+@@ -910,6 +940,13 @@
+     if (md_.proj_points_cnt == 0)
+         return;
+ 
++    if (voxel_trace_ && voxel_trace_->enabled()) {
++        trace_cloud_header_ = img->header;
++        trace_cloud_sensor_pose_ = trace_sensor_pose_;
++        trace_cloud_ray_pos_ = ray_pos;
++        trace_cloud_ray_q_ = md_.ray_q_;
++        trace_has_cloud_ = true;
++    }
+     md_.use_cloud_update_ = true;
+     md_.occ_need_update_ = true;
+ }
+@@ -1138,3 +1175,117 @@
+     cloud_msg.header.stamp = node_->now();
+     depth_cloud_pub_->publish(cloud_msg);
+ }
++
++namespace {
++using TraceJson = nlohmann::json;
++template <typename Derived> TraceJson traceVector(const Eigen::MatrixBase<Derived> &v) {
++    return TraceJson::array({v(0), v(1), v(2)});
++}
++TraceJson traceQuaternion(const Eigen::Quaterniond &q) {
++    return TraceJson::array({q.x(), q.y(), q.z(), q.w()});
++}
++TraceJson traceHeader(const std_msgs::msg::Header &h) {
++    return {{"frame_id", h.frame_id}, {"stamp_sec", h.stamp.sec}, {"stamp_nanosec", h.stamp.nanosec}};
++}
++TraceJson traceOdometry(const nav_msgs::msg::Odometry &o) {
++    const auto &p = o.pose.pose; const auto &t = o.twist.twist;
++    return {{"header", traceHeader(o.header)}, {"child_frame_id", o.child_frame_id},
++            {"position", {p.position.x,p.position.y,p.position.z}},
++            {"quaternion_xyzw", {p.orientation.x,p.orientation.y,p.orientation.z,p.orientation.w}},
++            {"linear_velocity", {t.linear.x,t.linear.y,t.linear.z}},
++            {"angular_velocity", {t.angular.x,t.angular.y,t.angular.z}}};
++}
++}
++
++void GridMap::traceRejectedOccupancy(const VoxelQuery &query, const char *stage, double candidate_t,
++                                    double interval, const Eigen::MatrixXd &control_points,
++                                    const Eigen::Vector3d &pos_next) noexcept {
++    if (!voxel_trace_ || !voxel_trace_->enabled()) return;
++    try {
++        const double sim_s = node_->now().seconds();
++        Eigen::Vector3i front_id, rear_id;
++        posToIndex(query.front,front_id); posToIndex(query.rear,rear_id);
++        const std::string key = std::string(stage)+traceVector(front_id).dump()+
++            traceVector(rear_id).dump()+std::to_string(query.front_result)+
++            (query.rear_evaluated ? std::to_string(query.rear_result) : "not_evaluated");
++        if (!voxel_trace_->shouldRecord(key,sim_s)) return;
++        auto cell = [this](const Eigen::Vector3i &id) -> TraceJson {
++            TraceJson c = {{"index", traceVector(id)}, {"in_bounds", isInMap(id)}};
++            Eigen::Vector3d center; indexToPos(id, center); c["center"] = traceVector(center);
++            if (isInMap(id)) {
++                const int address = toAddress(id);
++                c["local_index"] = {getLocalIndex(id(0),0),getLocalIndex(id(1),1),getLocalIndex(id(2),2)};
++                c["address"] = address;
++                c["raw_logodds"] = md_.occupancy_buffer_[address];
++                c["raw_occupied"] = md_.occupancy_buffer_[address] > mp_.min_occupancy_log_;
++                c["inflate"] = static_cast<int>(md_.occupancy_buffer_inflate_[address]);
++                c["inflate_count"] = md_.occupancy_buffer_inflate_cnt_[address];
++            }
++            return c;
++        };
++        auto probe = [&](const Eigen::Vector3d &p, bool evaluated, int result) -> TraceJson {
++            TraceJson q = {{"position", traceVector(p)}, {"evaluated", evaluated}};
++            if (!evaluated) return q;
++            q["result"] = result;
++            q["reason"] = result < 0 ? "out_of_bounds" : (result ? "occupied" : "free");
++            Eigen::Vector3i id; posToIndex(p, id);
++            q["cell"] = {{"index",traceVector(id)},{"in_bounds",isInMap(id)}};
++            q["buffer_accessed"] = result >= 0;
++            if (result < 0) return q;
++            q["cell"] = cell(id);
++            q["local_cells"] = TraceJson::array();
++            for (int x=-1;x<=1;++x) for(int y=-1;y<=1;++y) for(int z=-1;z<=1;++z)
++                q["local_cells"].push_back(cell(id+Eigen::Vector3i(x,y,z)));
++            q["inverse_inflation_cells"] = TraceJson::array();
++            size_t count = 0;
++            for (const auto &offset : md_.inflate_offsets_) {
++                if (count++ == 512) break;
++                TraceJson source = cell(id-offset);
++                source["offset"] = traceVector(offset);
++                q["inverse_inflation_cells"].push_back(std::move(source));
++            }
++            q["inverse_inflation_complete"] = md_.inflate_offsets_.size() <= 512;
++            q["inverse_inflation_total"] = md_.inflate_offsets_.size();
++            return q;
++        };
++        TraceJson event = {{"schema", "scan_voxel_rejection"}, {"stage", stage},
++            {"sim_s", sim_s}, {"pid", getpid()}, {"map_revision", trace_map_revision_},
++            {"monotonic_ns", std::chrono::duration_cast<std::chrono::nanoseconds>(
++                std::chrono::steady_clock::now().time_since_epoch()).count()},
++            {"candidate", {{"t",candidate_t},{"interval",interval},{"position",traceVector(query.position)},
++                {"pos_next",traceVector(pos_next)},{"yaw",query.yaw},{"yaw_source","path_segment"}}},
++            {"front",probe(query.front,true,query.front_result)},
++            {"rear",probe(query.rear,query.rear_evaluated,query.rear_result)},
++            {"returned", query.front_result != 0 ? query.front_result : query.rear_result}};
++        event["candidate"]["first_control_points"] = TraceJson::array();
++        for (int i=0;i<std::min<int>(6,control_points.cols());++i)
++            event["candidate"]["first_control_points"].push_back(traceVector(control_points.col(i)));
++        event["map"] = {{"frame_id",mp_.frame_id_},{"resolution",mp_.resolution_},
++            {"origin",traceVector(mp_.map_origin_)},{"origin_index",traceVector(mp_.map_origin_idx_)},
++            {"shape",traceVector(mp_.map_voxel_num_)},{"min_index",traceVector(mp_.map_bound_min_idx_)},
++            {"max_index",traceVector(mp_.map_bound_max_idx_)},{"min_world",traceVector(mp_.map_min_boundary_)},
++            {"max_world",traceVector(mp_.map_max_boundary_)},{"world_bound_epsilon",1e-4},
++            {"occupancy_threshold",mp_.min_occupancy_log_},{"cylinder_offset",mp_.double_cylinder_offset_},
++            {"cylinder_radius",mp_.double_cylinder_radius_},{"inflation_z_up",mp_.obstacles_inflation_z_up},
++            {"inflation_z_down",mp_.obstacles_inflation_z_down},{"cloud_is_world",mp_.cloud_is_world_},
++            {"need_extrinsic",mp_.need_extrinsic_}};
++        event["sources"] = {{"body_pose_subscription",traceOdometry(trace_body_pose_)},
++            {"has_body_pose",trace_has_body_},{"has_sensor_pose",trace_has_sensor_},{"has_cloud",trace_has_cloud_},
++            {"latest_sensor_pose",traceOdometry(trace_sensor_pose_)},
++            {"fusion_sensor_pose",traceOdometry(trace_fusion_sensor_pose_)},
++            {"fusion_cloud_header",traceHeader(trace_fusion_cloud_header_)},
++            {"fusion_ray_position",traceVector(trace_fusion_ray_pos_)},
++            {"fusion_ray_quaternion_xyzw",traceQuaternion(trace_fusion_ray_q_)},
++            {"cloud_projection_sensor_pose",traceOdometry(trace_fused_cloud_sensor_pose_)},
++            {"cloud_projection_ray_position",traceVector(trace_fused_cloud_ray_pos_)},
++            {"cloud_projection_ray_quaternion_xyzw",traceQuaternion(trace_fused_cloud_ray_q_)},
++            {"fusion_sim_s",trace_fusion_sim_s_},
++            {"raw_cell_lineage","current_buffer_only; source stamps describe latest fusion, not per-cell history"}};
++        for (const char *name : {"fsm.reference_run_id", "fsm.reference_epoch"})
++            if (node_->has_parameter(name)) event["identity"][name] = node_->get_parameter(name).value_to_string();
++        voxel_trace_->record(key,sim_s,event.dump()+"\n");
++    } catch (const std::exception &e) {
++        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 10000,
++                            "[VoxelTrace] snapshot failed: %s", e.what());
++    }
++}
+--- /dev/null
++++ b/third_party/scan/plan_env/src/voxel_trace.cpp
+@@ -0,0 +1,106 @@
++#include "plan_env/voxel_trace.h"
++#include <algorithm>
++#include <cmath>
++#include <fstream>
++#include <iostream>
++
++VoxelTrace::VoxelTrace(const std::string &path, int max_events, int max_bytes, double period_s) {
++    if (path.empty()) return;
++    // These are external diagnostic parameters, never planner admissibility.
++    if (max_events < 1 || max_events > 8 || max_bytes < 16384 || max_bytes > 2097152 ||
++        !std::isfinite(period_s) || period_s < 1.0) {
++        std::cerr << "[VoxelTrace] invalid diagnostic budget; tracing disabled\n";
++        return;
++    }
++    try {
++        directory_ = path;
++        if (!std::filesystem::create_directory(directory_)) {
++            std::cerr << "[VoxelTrace] output directory exists; tracing disabled\n";
++            return;
++        }
++        first_limit_ = max_events - 1;
++        first_written_.assign(first_limit_,false);
++        // Reserve a latest-file atomic replacement and a small final summary.
++        record_bytes_ = std::min<size_t>(131072, (max_bytes - 4096) / (max_events + 1));
++        period_s_ = period_s;
++        enabled_ = true;
++    } catch (const std::exception &e) {
++        std::cerr << "[VoxelTrace] setup failed: " << e.what() << "\n";
++    }
++}
++
++bool VoxelTrace::writeFile(const std::filesystem::path &path, const std::string &data) noexcept {
++    try {
++        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
++        stream.write(data.data(), static_cast<std::streamsize>(data.size()));
++        stream.close();
++        if (stream) return true;
++    } catch (...) {}
++    ++errors_;
++    return false;
++}
++
++void VoxelTrace::writeLast() noexcept {
++    if (!enabled_ || latest_.empty()) return;
++    try {
++        const auto temporary = directory_ / "last_rejection.tmp";
++        if (writeFile(temporary, latest_)) {
++            std::error_code error;
++            std::filesystem::rename(temporary, directory_ / "last_rejection.json", error);
++            if (error) ++errors_;
++        }
++    } catch (...) { ++errors_; }
++    writeSummary();
++}
++
++bool VoxelTrace::shouldRecord(const std::string &key, double sim_s) noexcept {
++    if (!enabled_) return false;
++    ++seen_;
++    try {
++        const bool first = static_cast<int>(first_keys_.size()) < first_limit_ &&
++            std::find(first_keys_.begin(), first_keys_.end(), key) == first_keys_.end();
++        const bool periodic = last_sample_sim_s_ < 0.0 || sim_s - last_sample_sim_s_ >= period_s_;
++        if (first) first_keys_.push_back(key);
++        if (periodic) last_sample_sim_s_ = sim_s;
++        return first || periodic;
++    } catch (...) { ++errors_; return false; }
++}
++
++void VoxelTrace::record(const std::string &key, double sim_s, const std::string &payload) noexcept {
++    if (!enabled_) return;
++    if (payload.size() > record_bytes_) {
++        ++oversize_;
++        last_write_sim_s_ = sim_s;
++        writeSummary();
++        return;
++    }
++    try {
++        latest_ = payload;
++        const auto first = std::find(first_keys_.begin(), first_keys_.end(), key);
++        if (first != first_keys_.end()) {
++            const size_t index = static_cast<size_t>(first-first_keys_.begin());
++            if (!first_written_[index]) {
++                const auto name = "first_" + std::to_string(index) + ".json";
++                if (writeFile(directory_ / name, payload)) first_written_[index] = true;
++            }
++        }
++        if (last_write_sim_s_ < 0.0 || sim_s - last_write_sim_s_ >= period_s_) {
++            writeLast();
++            last_write_sim_s_ = sim_s;
++        }
++    } catch (...) { ++errors_; }
++}
++
++void VoxelTrace::writeSummary() noexcept {
++    try {
++        const std::string summary = "{\"seen\":" + std::to_string(seen_) +
++            ",\"retained_first\":" + std::to_string(std::count(first_written_.begin(),first_written_.end(),true)) +
++            ",\"oversize_dropped\":" + std::to_string(oversize_) +
++            ",\"write_errors\":" + std::to_string(errors_) + "}\n";
++        writeFile(directory_ / "summary.json", summary);
++    } catch (...) {}
++}
++
++VoxelTrace::~VoxelTrace() {
++    if (enabled_) { writeLast(); writeSummary(); }
++}

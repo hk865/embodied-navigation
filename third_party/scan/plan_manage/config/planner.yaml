@@ -2,6 +2,8 @@ scan_planner_node:
   ros__parameters:
     use_sim_time: false
 
+    # FSM thresholds: thresh_replan/thresh_no_replan/planning_horizon in metres,
+    # emergency_time in seconds, navi_mode 1=static 2=dynamic 3=unknown.
     fsm.navi_mode: 1
     fsm.thresh_replan: 1.0
     fsm.thresh_no_replan: 0.1
@@ -10,6 +12,8 @@ scan_planner_node:
     fsm.fail_safe: true
     fsm.max_replan_fail_count: 1000
 
+    # Voxel map: resolution and all map sizes/ranges in metres; sensor_type is
+    # "lidar" or "depth" (invalid values fall back to lidar).
     grid_map.resolution: 0.05
     grid_map.sliding_map_size_x: 10.0
     grid_map.sliding_map_size_y: 10.0
@@ -31,6 +35,9 @@ scan_planner_node:
     grid_map.cloud_is_world: true
     grid_map.need_extrinsic: false
 
+    # Pinhole depth-camera model (used only when sensor_type == "depth"):
+    # cx/cy/fx/fy in pixels, depth_filter_* in metres, k_depth_scaling_factor
+    # converts depth image units (mm) to metres, skip_pixel subsamples the image.
     grid_map.cx: 321.04638671875
     grid_map.cy: 243.44969177246094
     grid_map.fx: 387.229248046875
@@ -41,6 +48,9 @@ scan_planner_node:
     grid_map.k_depth_scaling_factor: 1000.0
     grid_map.skip_pixel: 2
 
+    # Occupancy update: p_hit/p_miss are hit/miss probabilities converted to
+    # log-odds, p_min/p_max clamp the accumulated log-odds, p_occ is the
+    # binary-occupancy threshold used for collision checks.
     grid_map.p_hit: 0.85
     grid_map.p_miss: 0.30
     grid_map.p_min: 0.12
@@ -50,6 +60,8 @@ scan_planner_node:
     grid_map.vis_height: 0.3
     grid_map.show_occ_time: false
 
+    # Planner limits: max_vel m/s, max_acc m/s^2, max_jerk m/s^3,
+    # control_points_distance/feasibility_tolerance/planning_horizon in metres.
     manager.max_vel: 0.75
     manager.max_acc: 0.5
     manager.max_jerk: 4.0
@@ -57,6 +69,8 @@ scan_planner_node:
     manager.feasibility_tolerance: 0.5
     manager.planning_horizon: 7.5
 
+    # B-spline cost weights (smoothness/collision/feasibility/fitness); dist0 is
+    # the initial knot spacing in metres and order 3 means cubic B-splines.
     optimization.lambda_smooth: 1.0
     optimization.lambda_collision: 1.0
     optimization.lambda_feasibility: 0.1

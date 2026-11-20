@@ -1,10 +1,12 @@
 // utils.cpp
 #include <vector>
-#include <cstdint> // for int64_t
-#include <limits>  // for std::numeric_limits
+#include <cstdint>   // for int64_t
+#include <limits>    // for std::numeric_limits
 #include <stdexcept> // for std::out_of_range
 
-std::vector<int> convertToIntVectorSafe(const std::vector<int64_t>& int64_vector) {
+// Converts int64_t values to int, throwing std::out_of_range instead of
+// silently narrowing when a value does not fit in 32-bit int.
+std::vector<int> convertToIntVectorSafe(const std::vector<int64_t> &int64_vector) {
     std::vector<int> int_vector;
     int_vector.reserve(int64_vector.size()); // 预留空间以提高效率
 

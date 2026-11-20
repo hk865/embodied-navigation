@@ -24,13 +24,14 @@
 namespace vk {
 
 template <typename T>
-T getParam(const std::string& node, const std::string& name, const T& defaultValue) {
+T getParam(const std::string &node, const std::string &name, const T &defaultValue) {
     // Keep popen as a absolute fallback if no Node handle is available
     // But this is very slow!
     try {
         std::string full_node = node;
-        if (!full_node.empty() && full_node[0] != '/') full_node = "/" + full_node;
-        
+        if (!full_node.empty() && full_node[0] != '/')
+            full_node = "/" + full_node;
+
         std::string command = "ros2 param get " + full_node + " " + name + " 2>/dev/null";
         std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(command.c_str(), "r"), pclose);
         if (!pipe) {
@@ -46,7 +47,8 @@ T getParam(const std::string& node, const std::string& name, const T& defaultVal
         size_t pos = result.find(": ");
         if (pos != std::string::npos) {
             std::string valueStr = result.substr(pos + 2);
-            if (!valueStr.empty() && valueStr.back() == '\n') valueStr.pop_back();
+            if (!valueStr.empty() && valueStr.back() == '\n')
+                valueStr.pop_back();
 
             if (!valueStr.empty()) {
                 std::stringstream ss(valueStr);
@@ -62,8 +64,7 @@ T getParam(const std::string& node, const std::string& name, const T& defaultVal
     }
 }
 
-template <typename T>
-T getParam(const std::string& node, const std::string& name) {
+template <typename T> T getParam(const std::string &node, const std::string &name) {
     // override function could has no default value
     if constexpr (std::is_same_v<T, std::string>) {
         return getParam<T>(node, name, ""); // if std::string, default value is ""
@@ -76,68 +77,69 @@ T getParam(const std::string& node, const std::string& name) {
     }
 }
 
-inline
-bool hasParam(const rclcpp::Node::SharedPtr &nh, const std::string& name)
-{
-  return nh->has_parameter(name);
+inline bool hasParam(const rclcpp::Node::SharedPtr &nh, const std::string &name) {
+    return nh->has_parameter(name);
 }
 
-template<typename T>
-T getParam(const rclcpp::Node::SharedPtr &nh, const std::string& name, const T& defaultValue)
-{
-  T v;
-  if(nh->get_parameter(name, v))
-  {
-    return v;
-  }
-  
-  // If not found locally, it might be a prefix for a remote node or a local param not yet declared
-  if (!nh->has_parameter(name)) {
-      nh->declare_parameter(name, defaultValue);
-      if (nh->get_parameter(name, v)) return v;
-  }
+template <typename T>
+T getParam(const rclcpp::Node::SharedPtr &nh, const std::string &name, const T &defaultValue) {
+    T v;
+    if (nh->get_parameter(name, v)) {
+        return v;
+    }
 
-  return defaultValue;
+    // If not found locally, it might be a prefix for a remote node or a local param not yet declared
+    if (!nh->has_parameter(name)) {
+        nh->declare_parameter(name, defaultValue);
+        if (nh->get_parameter(name, v))
+            return v;
+    }
+
+    return defaultValue;
 }
 
 // New function for cross-node parameter access
-template<typename T>
-T getRemoteParam(const rclcpp::Node::SharedPtr &nh, const std::string& remote_node_name, const std::string& param_name, const T& defaultValue)
-{
+template <typename T>
+T getRemoteParam(const rclcpp::Node::SharedPtr &nh, const std::string &remote_node_name,
+                 const std::string &param_name, const T &defaultValue) {
     // Try local first just in case
     std::string full_name = remote_node_name + "." + param_name; // common convention
     T v;
-    if (nh->get_parameter(full_name, v)) return v;
-    if (nh->get_parameter(param_name, v)) return v;
+    if (nh->get_parameter(full_name, v))
+        return v;
+    if (nh->get_parameter(param_name, v))
+        return v;
 
     // Use SyncParametersClient for high performance cross-node access
     try {
-        auto parameters_client = std::make_shared<rclcpp::SyncParametersClient>(nh, remote_node_name);
+        auto parameters_client =
+            std::make_shared<rclcpp::SyncParametersClient>(nh, remote_node_name);
         if (parameters_client->wait_for_service(std::chrono::milliseconds(2000))) {
             auto values = parameters_client->get_parameters({param_name});
-            if (!values.empty() && values[0].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
+            if (!values.empty() &&
+                values[0].get_type() != rclcpp::ParameterType::PARAMETER_NOT_SET) {
                 return values[0].get_value<T>();
             }
         }
-    } catch (...) {}
+    } catch (...) {
+    }
 
     // Fallback to popen if SyncParametersClient fails
     return getParam<T>(remote_node_name, param_name, defaultValue);
 }
 
-template<typename T>
-T getParam(const rclcpp::Node::SharedPtr &nh, const std::string& name)
-{
-  T v;
-  if (nh->get_parameter(name, v)) {
-    RCLCPP_INFO_STREAM(nh->get_logger(), "Found parameter: " << name << ", value: " << v);
-    return v;
-  }
+template <typename T> T getParam(const rclcpp::Node::SharedPtr &nh, const std::string &name) {
+    T v;
+    if (nh->get_parameter(name, v)) {
+        RCLCPP_INFO_STREAM(nh->get_logger(), "Found parameter: " << name << ", value: " << v);
+        return v;
+    }
 
-  // If not found, try to declare it (this might be useful if the parameter is expected to be there)
-  // or just return a default constructed T.
-  RCLCPP_ERROR_STREAM(nh->get_logger(), "Cannot find value for parameter: " << name << ". Returning default.");
-  return T();
+    // If not found, try to declare it (this might be useful if the parameter is expected to be there)
+    // or just return a default constructed T.
+    RCLCPP_ERROR_STREAM(nh->get_logger(),
+                        "Cannot find value for parameter: " << name << ". Returning default.");
+    return T();
 }
 
 } // namespace vk

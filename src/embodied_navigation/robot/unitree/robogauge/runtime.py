@@ -2,6 +2,7 @@
 
 Only the immutable export is loaded. Training configuration is never evaluated.
 """
+
 from __future__ import annotations
 import hashlib
 from pathlib import Path
@@ -11,18 +12,20 @@ from .contract import MODEL_SHA256, NATIVE_NAMES, OFFICIAL_NAMES, Q0, joint_indi
 
 
 def default_model_path():
-    return data_root() / 'runtime_assets/models/robogauge_policy.pt'
+    """Return the project's frozen TorchScript .pt policy asset path."""
+    return data_root() / "runtime_assets/models/robogauge_policy.pt"
 
 
 def verify_model(path):
+    """Stream-hash the policy file and require the pinned ``MODEL_SHA256``."""
     path = Path(path)
     digest = hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     actual = digest.hexdigest()
     if actual != MODEL_SHA256:
-        raise ValueError(f'RoboGauge model SHA256 mismatch: {actual}')
+        raise ValueError(f"RoboGauge model SHA256 mismatch: {actual}")
     return path
 
 
@@ -33,9 +36,10 @@ class Runtime:
         self.to_official, self.to_native = joint_indices(self.canonical)
         self.qdefault = Q0[self.to_native]
         import torch
+
         self.torch = torch
         torch.set_num_threads(1)
-        self.model = torch.jit.load(str(self.path), map_location='cpu').eval()
+        self.model = torch.jit.load(str(self.path), map_location="cpu").eval()
         self.model.reset()
         with torch.inference_mode():
             for _ in range(10):
@@ -51,28 +55,45 @@ class Runtime:
 
     def __call__(self, x):
         if tuple(x.shape) != (1, 45) or not self.torch.isfinite(x).all():
-            raise ValueError('Expected one finite float observation [1,45]')
+            raise ValueError("Expected one finite float observation [1,45]")
         with self.torch.inference_mode():
             y = self.model(x)
         if tuple(y.shape) != (1, 12) or not self.torch.isfinite(y).all():
-            raise ValueError('Actor returned invalid action [1,12]')
+            raise ValueError("Actor returned invalid action [1,12]")
         self.calls += 1
-        return y.clamp(-100., 100.)[:, self.to_native]
+        return y.clamp(-100.0, 100.0)[:, self.to_native]
 
     def infer(self, obs):
         obs = np.asarray(obs, dtype=np.float32)
         if obs.shape != (45,):
-            raise ValueError('Expected observation45')
+            raise ValueError("Expected observation45")
         return self(self.torch.from_numpy(obs).reshape(1, 45)).numpy()[0]
 
     def metadata(self):
-        return dict(actor_kind='robogauge_moe_cts', controller_kind='robogauge_moe_cts',
-                    model_path=str(self.path), model_sha256=MODEL_SHA256, inference_device='cpu',
-                    observation_dimension=45, internal_history_frames=10, external_history=False,
-                    policy_joint_order=list(OFFICIAL_NAMES), native_joint_order=list(self.canonical),
-                    to_official_indices=self.to_official.tolist(), to_native_indices=self.to_native.tolist(),
-                    command_scale=[.5, 1., 1.], angular_velocity_scale=.25, joint_velocity_scale=.05,
-                    action_clip=100., action_scale=.25, last_action_unscaled=True,
-                    existing_native_COM_velocity_PID=False, terrain_policy_input=False,
-                    proprioception_only=True, reset_after_warmup=True, reset_before_run=True,
-                    motor_envelope='Go2HV 20.2/23.4 Nm, 13.5/30 rad/s', physics_asset_equivalence=False)
+        return dict(
+            actor_kind="robogauge_moe_cts",
+            controller_kind="robogauge_moe_cts",
+            model_path=str(self.path),
+            model_sha256=MODEL_SHA256,
+            inference_device="cpu",
+            observation_dimension=45,
+            internal_history_frames=10,
+            external_history=False,
+            policy_joint_order=list(OFFICIAL_NAMES),
+            native_joint_order=list(self.canonical),
+            to_official_indices=self.to_official.tolist(),
+            to_native_indices=self.to_native.tolist(),
+            command_scale=[0.5, 1.0, 1.0],
+            angular_velocity_scale=0.25,
+            joint_velocity_scale=0.05,
+            action_clip=100.0,
+            action_scale=0.25,
+            last_action_unscaled=True,
+            existing_native_COM_velocity_PID=False,
+            terrain_policy_input=False,
+            proprioception_only=True,
+            reset_after_warmup=True,
+            reset_before_run=True,
+            motor_envelope="Go2HV 20.2/23.4 Nm, 13.5/30 rad/s",
+            physics_asset_equivalence=False,
+        )

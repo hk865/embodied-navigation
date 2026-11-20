@@ -1,0 +1,52 @@
+--- a/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
++++ b/third_party/fast_livo2/fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h
+@@ -166,6 +166,7 @@ class LIVMapper {
+ 
+     double res_mean_last = 0.05;
+     double gyr_cov = 0, acc_cov = 0, inv_expo_cov = 0;
++    double b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
+     double blind_rgb_points = 0.0;
+     double last_timestamp_lidar = -1.0, last_timestamp_imu = -1.0, last_timestamp_img = -1.0;
+     double filter_size_surf_min = 0;
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -20,6 +20,8 @@ which is included as part of this source code package.
+ #include <nlohmann/json.hpp>
+ #include <map>
+ #include <set>
++#include <cmath>
++#include <stdexcept>
+ #include "diagnostics.h"
+ // BOUNDARY_TIMING_BEGIN include
+ #include "boundary_timing.h"
+@@ -194,6 +196,8 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
+     this->node->declare_parameter<bool>("evo.pose_output_en", false);
+     this->node->declare_parameter<double>("imu.gyr_cov", 1.0);
+     this->node->declare_parameter<double>("imu.acc_cov", 1.0);
++    this->node->declare_parameter<double>("imu.b_gyr_cov", 0.0001);
++    this->node->declare_parameter<double>("imu.b_acc_cov", 0.0001);
+     this->node->declare_parameter<int>("imu.imu_int_frame", 30);
+     this->node->declare_parameter<bool>("imu.stationary_initialization_en", false);
+     this->node->declare_parameter<double>("imu.init_max_gyro_norm", .03);
+@@ -278,6 +282,8 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
+     this->node->get_parameter("evo.pose_output_en", pose_output_en);
+     this->node->get_parameter("imu.gyr_cov", gyr_cov);
+     this->node->get_parameter("imu.acc_cov", acc_cov);
++    this->node->get_parameter("imu.b_gyr_cov", b_gyr_cov);
++    this->node->get_parameter("imu.b_acc_cov", b_acc_cov);
+     this->node->get_parameter("imu.imu_int_frame", imu_int_frame);
+     this->node->get_parameter("imu.imu_en", imu_en);
+     this->node->get_parameter("imu.gravity_est_en", gravity_est_en);
+@@ -364,8 +370,10 @@ void LIVMapper::initializeComponents(rclcpp::Node::SharedPtr &node) {
+     p_imu->set_gyr_cov_scale(V3D(gyr_cov, gyr_cov, gyr_cov));
+     p_imu->set_acc_cov_scale(V3D(acc_cov, acc_cov, acc_cov));
+     p_imu->set_inv_expo_cov(inv_expo_cov);
+-    p_imu->set_gyr_bias_cov(V3D(0.0001, 0.0001, 0.0001));
+-    p_imu->set_acc_bias_cov(V3D(0.0001, 0.0001, 0.0001));
++    if (!std::isfinite(b_gyr_cov) || b_gyr_cov <= 0.0 || !std::isfinite(b_acc_cov) || b_acc_cov <= 0.0)
++        throw std::invalid_argument("imu.b_gyr_cov and imu.b_acc_cov must be finite and positive");
++    p_imu->set_gyr_bias_cov(V3D(b_gyr_cov, b_gyr_cov, b_gyr_cov));
++    p_imu->set_acc_bias_cov(V3D(b_acc_cov, b_acc_cov, b_acc_cov));
+     p_imu->set_imu_init_frame_num(imu_int_frame);
+     StationaryImuInitialization::Limits initialization_limits;
+     bool stationary_initialization_en = false;

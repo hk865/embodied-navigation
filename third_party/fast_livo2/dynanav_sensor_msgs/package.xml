@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>dynanav_sensor_msgs</name><version>0.1.0</version>
+  <description>Explicit, atomic RTX full-scan provenance and original point cloud.</description>
+  <maintainer email="user@todo.todo">user</maintainer><license>GPL-2.0-only</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <depend>sensor_msgs</depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-  <profiles>
-    <publisher profile_name="/demo/navigation/localization_bundle">
-      <qos><publishMode><kind>ASYNCHRONOUS</kind></publishMode></qos>
-    </publisher>
-  </profiles>
-</dds>

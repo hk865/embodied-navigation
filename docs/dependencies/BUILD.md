@@ -62,7 +62,7 @@ python3 -B docker/verify_native_sources.py --compile-pct
 - 原恢复脚本实际使用的 Isaac Sim 是 `6.0.1-rc.7+release.42383.32955d8d.gl`，含 experimental API。该安装不是本工程源码，也不能从 `ros:jazzy-ros-base` 获得。这个精确 RC 版本的公开可获取性尚未验证。需要按 NVIDIA 正式授权方式安装兼容 Isaac Sim、GPU 驱动和容器运行时，并重新测试；不能未经验证就换成 5.x 并宣称等价。
 - 原生镜像不包含 Isaac Sim、RTX/PhysX、场景资产、Student 模型或可选视觉模型。完整 Isaac 运行仍未验证。
 - 根目录完整应用镜像现已包含官方OSRF Gazebo Harmonic (`gz-sim8`、`gz-plugin2`)、CPU `torch==2.7.1`，并从本仓库编译actuator/backend/writer_qos/Go2HV四个自有原生模块。它与Isaac流程是不同入口。
-- 完整应用Docker已从公开ROS基础镜像构建，11个ROS包及四个自有原生模块编译通过，数据只读窄挂载下preflight通过。最终源码测试/短时软件栈结果见docs/verification；短时运行不等于完整路线、Building分支、实机或Isaac验收。
+- 完整应用Docker已从公开ROS基础镜像构建，11个ROS包及四个自有原生模块编译通过，数据只读窄挂载下preflight通过。最终源码测试/短时软件栈结果见docs/verification；短时运行不等于完整路线、实机或Isaac验收。
 
 ## 完整应用构建
 

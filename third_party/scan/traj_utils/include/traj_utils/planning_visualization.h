@@ -14,10 +14,11 @@
 #include <stdlib.h>
 
 using std::vector;
-namespace scan_planner
-{
-  class PlanningVisualization
-  {
+namespace scan_planner {
+// Publishes planner debug markers (goal point, global/init/optimal path lists,
+// A* multi-path lists and arrow markers) on five rviz Marker topics. All
+// display* helpers only visualize; scale is in metres and color is RGBA.
+class PlanningVisualization {
   private:
     using MarkerPublisher = rclcpp::Publisher<visualization_msgs::msg::Marker>;
     using MarkerArrayPublisher = rclcpp::Publisher<visualization_msgs::msg::MarkerArray>;
@@ -36,22 +37,27 @@ namespace scan_planner
 
     typedef std::shared_ptr<PlanningVisualization> Ptr;
 
-    void displayMarkerList(const MarkerPublisher::SharedPtr &pub, const vector<Eigen::Vector3d> &list, double scale,
-                           Eigen::Vector4d color, int id);
+    void displayMarkerList(const MarkerPublisher::SharedPtr &pub,
+                           const vector<Eigen::Vector3d> &list, double scale, Eigen::Vector4d color,
+                           int id);
     void generatePathDisplayArray(visualization_msgs::msg::MarkerArray &array,
-                                  const vector<Eigen::Vector3d> &list, double scale, Eigen::Vector4d color, int id);
+                                  const vector<Eigen::Vector3d> &list, double scale,
+                                  Eigen::Vector4d color, int id);
     void generateArrowDisplayArray(visualization_msgs::msg::MarkerArray &array,
-                                   const vector<Eigen::Vector3d> &list, double scale, Eigen::Vector4d color, int id);
-    void displayGoalPoint(Eigen::Vector3d goal_point, Eigen::Vector4d color, const double scale, int id);
+                                   const vector<Eigen::Vector3d> &list, double scale,
+                                   Eigen::Vector4d color, int id);
+    void displayGoalPoint(Eigen::Vector3d goal_point, Eigen::Vector4d color, const double scale,
+                          int id);
     void displayGlobalPathList(vector<Eigen::Vector3d> global_pts, const double scale, int id);
     void displayInitPathList(vector<Eigen::Vector3d> init_pts, const double scale, int id);
     void displayOptimalList(Eigen::MatrixXd optimal_pts, int id);
     void displayOptimalTraj(UniformBspline position_traj, int id);
     void displayAStarList(std::vector<std::vector<Eigen::Vector3d>> a_star_paths, int id);
-    void displayArrowList(const MarkerArrayPublisher::SharedPtr &pub, const vector<Eigen::Vector3d> &list,
-                          double scale, Eigen::Vector4d color, int id);
+    void displayArrowList(const MarkerArrayPublisher::SharedPtr &pub,
+                          const vector<Eigen::Vector3d> &list, double scale, Eigen::Vector4d color,
+                          int id);
     // void displayIntermediateState(ros::Publisher& intermediate_pub, scan_planner::BsplineOptimizer::Ptr optimizer, double sleep_time, const int start_iteration);
     // void displayNewArrow(ros::Publisher& guide_vector_pub, scan_planner::BsplineOptimizer::Ptr optimizer);
-  };
+};
 } // namespace scan_planner
 #endif

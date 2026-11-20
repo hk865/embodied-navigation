@@ -1,14 +1,31 @@
 // generated from rosidl_adapter/resource/msg.idl.em
 // with input from scan_planner_msgs/msg/DataDisp.msg
 // generated code does not contain a copyright notice
+//
+// Readability notes, hand added. DataDisp.msg is the generation source; regenerate
+// from it rather than editing this snapshot's values. The field order and types
+// below are the ROS 2 wire contract and must stay exactly as they are.
+//
+// What this snapshot establishes: scan_replan_fsm.cpp publishes this type on
+// planning/data_display and assigns only header.stamp, the publish time. It does
+// not assign a..e, so for that producer's messages the five doubles carry no
+// definition and keep their 0.0 defaults. The interface itself neither names nor
+// reserves the fields: another publisher may assign them, but no such producer
+// is present here, so no further field semantics are documented.
 
 #include "std_msgs/msg/Header.idl"
 
 module scan_planner_msgs {
   module msg {
     struct DataDisp {
+      // Standard header. The vendored producer sets only its stamp, to the
+      // publish time, before publishing on planning/data_display.
       std_msgs::msg::Header header;
 
+      // Five generic double slots in fixed wire order (a, b, c, d, e). The
+      // vendored producer never assigns them, so in this snapshot they stay
+      // 0.0 with undefined meaning; the interface does not forbid another
+      // publisher from assigning them. Do not reorder the fields.
       double a;
 
       double b;
