@@ -2,6 +2,8 @@
 
 所有 agent（Claude Code、Codex、DSH 及其子代理）在本仓库工作时必须遵守本文件。规则如果和某个任务书冲突，以本文件为准；需要改规则，先改本文件，并写明原因。详细的设计理由见 [docs/repo-hygiene.md](docs/repo-hygiene.md)；当前的能力分层与重构计划见 [docs/refactor/capability-map.md](docs/refactor/capability-map.md)。
 
+**开发计划入口**：当前阶段目标、里程碑与分支归属见 [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md)；活体待办、角色分工与验收标准见 [docs/plan/TASKS.md](docs/plan/TASKS.md)。新会话先读这两份再动手。
+
 ## 1. 项目现状与推进顺序（2026-11-20）
 
 - **唯一开发主线是 D 路径**：DynaNav / Isaac Sim。入口是 `scripts/run_dynanav_native_exploration.sh`，仿真侧代码在 `src/embodied_navigation/simulation/dynanav/`。
@@ -51,7 +53,7 @@
 3. **诊断只能观察，不能改变决策。** 诊断代码不得把 `allowed=False` 改成 True，也不得跳过超时或业务门。不要再新增空的探针调用（`_observer_api(...)` 一类）。需要追踪时序时，用一个真正写盘的 Tracer，并用配置打开。
 4. **不加没有依据的校验。** 防护外部输入（ROS 消息、文件、socket、CLI）的校验要保留。内部可信值、上游已经校验过的值、当前调用图里不可能出现的情况，都不写防御分支。新增一项检查前，先说清它防的是哪个真实会发生的场景。
 5. **不复制已有的实现。** 写新函数前先 `git grep` 查有没有现成的；例如 `common/geometry.py` 里已有 `wrap_angle` 和 `quaternion_matrix`。确实要共用时，删掉旧副本，只保留一份。
-6. **代码、配置和文档里不写本机绝对路径**（`/home/<user>`、`/media/<user>`、`D:\...`）。路径统一用 `${PROJECT_ROOT}`、`$PROJECT_DATA_ROOT` 或参数传入。这条只约束写进仓库的内容，不限制读取项目外的数据，见第 6 节。
+6. **代码、配置和文档里不写本机绝对路径**（Linux 家目录、外挂数据盘的挂载点、Windows 盘符路径）。路径统一用 `${PROJECT_ROOT}`、`$PROJECT_DATA_ROOT` 或参数传入。这条只约束写进仓库的内容，不限制读取项目外的数据，见第 6 节。
 7. **运行产物不进仓库**，包括日志、bag、点云、视频、逐帧 JSON、审计台账和 source snapshot。它们放在 `$PROJECT_DATA_ROOT/embodied-navigation/runs/<批次>/<run-id>/`。仓库只放实验定义和不超过 300 行的结论报告。单个文件超过 200 KB 默认不允许提交。
 8. **`docs/experiments/`、`docs/review/` 不再新增文件。** 过程记录放进 `experiments/<批次>/REPORT.md`，或者留在数据卷。
 9. **vendored 代码（`third_party/`）不原地改格式、不改注释。** 逻辑修改走 `third_party/<包>/patches/`。

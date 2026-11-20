@@ -1,82 +1,50 @@
-# robot/unitree/robogauge：RoboGauge 45D 部署
+# robot/unitree/robogauge：RoboGauge MoE-CTS 契约与运行时
 
-本目录提供 RoboGauge MoE-CTS 的纯数值契约、45D 直接观测、CPU TorchScript 推理与可选真实权重 replay，不启动 ROS、Gazebo、Isaac 或硬件。
+盘点日期 2026-11-20。本目录是 DynaNav 主线的生产策略层：45D 直接观测的纯 NumPy 契约、Go2HV 力矩包络，以及经过 SHA256 校验的 CPU TorchScript actor；不启动 ROS/Isaac，也不训练。
 
-## 目录结构
+## 模块定位与架构层级
+
+- 架构层级：第 6 层「机器人执行」下的策略契约与推理运行时。
+- 输入：`state64`（wxyz 姿态、body 角速度、12 关节 q/qd/力矩等，由仿真采集侧组装）、`command3=[vx, vy, wz]`、`last_action12`；以及数据卷里的冻结 TorchScript 权重 `runtime_assets/models/robogauge_policy.pt`。
+- 输出：`float32[45]` 观测 + provenance；`(1, 12)` 动作（official 顺序，夹到 ±100 后映射回 native 顺序）；Go2HV PD 力矩（含速度相关包络）；`Runtime.metadata()` 契约字典。
+- 上游 / 下游：被 [simulation/dynanav/capture/policy.py](../../../simulation/dynanav/capture/policy.py)（`load_policy`/`compute_torque`）和 [simulation/dynanav/experiment.py](../../../simulation/dynanav/experiment.py)（启动前 `verify_model`）调用；本目录不依赖仿真层。
+- 边界：不做路线跟踪、不做停车、不发布 ROS 消息、不写执行器；动作目标 `q_target = q_default + 0.25 * action` 由采集侧 `PolicyDriver.step` 计算，本目录只负责观测、推理与力矩包络。
+
+## 当前文件夹结构
 
 ```text
 src/embodied_navigation/robot/unitree/robogauge/
-├── README.md       # 本文件：45D 契约、运行时与权重校验
-├── __init__.py     # 1 行，包 docstring：Go2 关节契约/观测映射/actor 运行时
-├── contract.py     # 76 行，45D 观测数值契约 + Go2HV 力矩包络
-└── runtime.py      # 99 行，校验 SHA256 的 CPU TorchScript actor
+├── README.md        # 本文件
+├── __init__.py      # 1 行：包 docstring
+├── contract.py      # 76 行：45D 观测契约、关节顺序映射、Go2HV 力矩
+└── runtime.py       # 99 行：SHA256 校验 + CPU TorchScript actor
 ```
 
-## 代码、日志与配置
+## 逐文件职责
 
-| 类别 | 位置 | 含义 |
+| 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
-| 代码 | `contract.py`（76 行） | 活代码/纯 NumPy：`observation(state64, command3, last_action12)` 返回 `(float32[45], provenance)`；`joint_indices()` 在 official（FL/FR/RL/RR）与 native（FR/FL/RR/RL）顺序间映射；`go2hv_torque()` 复刻归档 Go2HV PD 与速度包络；`MODEL_SHA256` 与 `Q0` 冻结 |
-| 代码 | `runtime.py`（99 行） | 活代码：`verify_model()` 流式 SHA256 校验；`Runtime` 加载 CPU TorchScript、`torch.set_num_threads(1)`、预热 10 帧后 `reset()`；`infer()` 返回 12 维动作（模型 official 序 → 夹到 ±100 → 映射回 native 序）；`metadata()` 记录契约 |
-| 代码 | `__init__.py`（1 行） | 包 docstring "Go2 joint contract, policy observation mapping and verified actor runtime." |
-| 日志/输出 | 无日志、无日志文件 | 本目录 4 个 py 文件 `getLogger` 均为 0（事实包 grep）；没有 ROS/仿真日志 |
-| 日志/输出 | `<PROJECT_DATA_ROOT>/embodied-navigation/runtime_assets/models/robogauge_policy.pt` | 只读：`Runtime` 启动时做 SHA256 校验并加载；权重不在 Git |
-| 配置 | `PROJECT_DATA_ROOT` | 经 `project.data_root()` 解析权重路径；`--model` 可指定别处同一份导出，但 SHA256 必须等于 `MODEL_SHA256`，否则 `verify_model()` 拒绝加载 |
+| `__init__.py` | 包标记，1 行 docstring "Go2 joint contract, policy observation mapping and verified actor runtime." | 无 |
+| `README.md` | 本文件：45D 契约、权重校验、生产消费关系与测试 | 索引页 |
+| `contract.py` | 常量 `MODEL_SHA256`、`OFFICIAL_NAMES`（策略侧 FL FR RL RR）、`NATIVE_NAMES`（仿真 body 侧 FR FL RR RL）、`Q0`、`ORDER`/`QDEFAULT`；`joint_indices(canonical)` 双向映射；`observation(state, command, last_action)` 返回 45D + provenance；`go2hv_torque(target, q, qd)` 返回 `(raw, lower, upper, clipped)` | `observation()`、`go2hv_torque()`、`joint_indices()` |
+| `runtime.py` | `default_model_path()` 指向 `data_root()/runtime_assets/models/robogauge_policy.pt`；`verify_model(path)` 流式 SHA256 与 `MODEL_SHA256` 对比，不符即 `ValueError`；`Runtime` 单线程加载 CPU TorchScript、`reset()` 后以 10 帧零输入预热，再 `reset()`；`observation()` 组 45D；`__call__(x)` 校验 `(1,45)` 有限值、推理并返回 native 顺序 12 动作；`infer(obs45)` 返回 NumPy 12 维；`metadata()` 记录全部契约字段 | `verify_model()`、`Runtime(path=None, canonical=NATIVE_NAMES)`、`infer()`、`metadata()` |
 
+## 45D 观测与 Go2HV 包络
 
-## 模块内文件耦合
+- **45D 组成**（`contract.observation` 的拼接顺序）：`state[11:14] × 0.25`（3）+ 投影重力 `R^T·[0,0,-1]`（3）+ `command × [0.5, 1.0, 1.0]`（3）+ 关节位置相对默认姿态（12，official 顺序）+ 关节速度 `× 0.05`（12）+ 上一原始动作（12）。`provenance` 明确 `terrain_input=False`、`COM_linear_velocity_input=False`、`joint_order="FL FR RL RR; hip thigh calf"`。
+- **关节顺序**：`NATIVE_NAMES` 与 `policy/native/contract.json` 的 `joint_names` 完全一致；`OFFICIAL_NAMES` 是归档策略顺序，`joint_indices()` 用名字映射而不是硬编码下标，`Runtime.__call__` 返回前用 `to_native` 换回仿真顺序。
+- **Go2HV 公式**（`go2hv_torque`）：`raw = 25·(target−q) − 0.5·qd`；同向运动（`qd·raw>0`）时 base 为 20.2 Nm，否则 23.4 Nm；`|qd| ≥ 13.5 rad/s` 时按 `base·(30−|qd|)/16.5` 线性收敛到 0（下限 0），最后 `clip(raw, −limit, limit)`。这是关节 PD + 速度包络，不是 COM 速度 PID。
+- **权重不可替换**：`MODEL_SHA256="bde5210a..."` 固定；换权重必须先改常量并重跑契约测试，否则加载即失败（fail closed）。
 
-- 依赖方向：`contract.py` → [policy/native/observation.py](../policy/native/observation.py) 的 `quaternion_rotation()`（唯一跨子目录依赖）；`runtime.py` → `contract.py` + `project.data_root()`。依赖单向，**无环**。
-- 反向依赖：`runtime.py` 被 `simulation/dynanav/capture/policy.py`、`simulation/dynanav/experiment.py` 复用；`contract.py` 被 `simulation/dynanav/capture/policy.py` 复用。本目录是被依赖的库，不 import 上层。
+## 与其它策略契约的边界
 
-| 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
-| --- | ---: | --- | --- | --- |
-| `contract.py` | 76 | `policy.native.observation.quaternion_rotation` | `runtime`、`dynanav.capture.policy` | 清楚：纯函数 + 常量 |
-| `runtime.py` | 99 | `project.data_root`、`contract` | `dynanav.capture.policy`、`dynanav.experiment` | 清楚 |
-| `__init__.py` | 1 | 无 | 无 | 清楚 |
+- 45D 是 RoboGauge 自己的直接观测，不含 height scan/地形输入、不含 COM 线速度，也不是 247D 冻结观测的裁剪；两套契约的 clip/scale/关节顺序不能互换。
+- 数据流：采集侧组装 `state64` → `contract.observation()` → `Runtime.infer()` → 采集侧算 `q_target` 与 Go2HV 力矩。本目录不持有指令平滑、停车或安全门。
+- `metadata()` 显式声明 `proprioception_only=True`、`physics_asset_equivalence=False`、`existing_native_COM_velocity_PID=False`：CPU 推理与训练环境不宣称物理等价。
 
-四类问题：
+## 验证与测试入口 / 配置注意
 
-- **上帝文件**：没有（最大文件 99 行）。
-- **重复实现**：有（跨目录、有测试守护）——Go2 关节名与默认姿态在 `contract.py`（`OFFICIAL_NAMES`/`NATIVE_NAMES`/`Q0`）与 [policy/native/contract.json](../policy/native/contract.json)（`joint_names`/`default_joint_positions`）各存一份；`tests/regression/test_robogauge_contract.py` 断言 `NATIVE_NAMES == CONTRACT["joint_names"]` 且 `QDEFAULT == CONTRACT["default_joint_positions"]`。
-- **跨层直达**：轻微——`contract.py` 直接从 `policy/native/observation.py` 取 `quaternion_rotation`，两个子目录共用同一旋转实现（好处是不重复实现、坏处是 robogauge 依赖 policy 内部文件）。
-- **隐式契约**：有——`MODEL_SHA256` 必须与权重文件匹配（不匹配直接拒绝，不静默接受）；official/native 两套关节顺序靠 `joint_indices()` 显式映射；模型输入固定 `(1, 45)` float32；内部历史帧固定 10 帧（`runtime.py:45-46` 预热 10 次，`metadata()` 里 `internal_history_frames=10` 是同一数字的第二处出现）；`action_scale=0.25` 只写在 metadata，
-
-结论：**耦合清楚**，是本层里最小、最内聚的目录；唯一可议的是 `contract.py → policy/native/observation.py` 的跨子目录依赖与 Go2 常量的两处保存。
-
-## 可读性评估
-
-| 对象 | 分级 | 证据 |
-| --- | --- | --- |
-| `contract.py` | **良好** | 76 行 / 3 函数；docstring 0.667；最长函数 28 行；无 >80 行函数；3 行注释；模块 docstring 说明 wxyz/body-frame 帧约定，`OFFICIAL_NAMES` 上方注释解释了两套顺序 |
-| `runtime.py` | **可接受** | 99 行 / 8 函数；docstring 0.25（2/8：`default_model_path`、`verify_model`）；最长函数 28 行；无 >80 行；0 行注释。`metadata()` 返回的 20+ 个字段本身就是契约文档 |
-| `__init__.py` | **良好** | 1 行 docstring，无代码 |
-
-区分结构与文档：本目录没有结构问题（无环、无静默 except、失败即抛错），文档缺口集中在 `runtime.Runtime.__call__/reset/metadata`——它们行为清楚但没写 docstring。
-
-## 重构建议
-
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P2 | 把 `runtime.py` 里的 10 帧预热提为命名常量，并复用到 `metadata()` 的 `internal_history_frames` | 同一魔法数出现两处，改一处漏一处会让 metadata 与实际行为不一致 | 无（纯常量） | `tests/regression/test_robogauge_contract.py` |
-| P2 | 给 `Runtime.__call__/reset/metadata` 补 docstring | 运行时是外部使用者最先读的入口 | 无 | 静态检查 |
-| P2 | 在 `contract.py` 顶部注释说明“Go2 常量与 `policy/native/contract.json` 必须一致，由 `test_robogauge_contract` 守护”；`contract.py:9` 的跨子目录 import 也加一句理由 | 现在防漂移只靠测试，代码里没有提示 | 无 | 已有测试断言 |
-
-没有 P0/P1：本目录最大文件 99 行、无配置读取、无日志写入、依赖单向、权重有 SHA256 硬校验（fail closed）。本轮只写建议、不改代码；涉及 simulation 的建议需要先有测试与对齐。
-
-## 关键文件与接口
-
-- `contract.py`：`observation(state64, command3, last_action12)` 返回 `(float32[45], provenance_dict)` 二元组（body 角速度 ×0.25、投影重力、command ×[0.5, 1, 1]、关节位置相对默认、关节速度 ×0.05、上一原始动作；策略侧 official FL/FR/RL/RR 顺序）；`go2hv_torque()` 复刻归档 Go2HV PD 与速度包络（20.2 / 23.4 Nm，13.5 / 30 rad/s）；`MODEL_SHA256` 与默认关节顺序冻结。
-- `runtime.py`：`verify_model()` 校验模型 SHA256；`Runtime` 从 `data_root()/runtime_assets/models/robogauge_policy.pt` 加载 CPU TorchScript，单线程，预热 10 个内部历史帧后 `reset()`；`infer(obs)` 返回 12 维动作，`metadata()` 记录 45D、proprioception-only、无 terrain/COM 速度输入、无 COM 速度 PID。
-
-## 调用与依赖
-
-本目录只提供契约与运行时。权重不在 Git，由 `PROJECT_DATA_ROOT` 指向的数据目录提供；更完整的部署与权重说明见 [docs/robogauge/README.md](../../../../../docs/robogauge/README.md)。
-
-## 与 247D 的区别
-
-45D 是 RoboGauge 自己的直接观测接口（独立 scale 与关节顺序），不是 [policy/native](../policy/native/README.md) 247D 中间观测链的裁剪，也不含 Student 的 COM 速度 PID 或 terrain/camera 输入；两者不能当作同一策略输入或 actuator 契约。
-
-## 测试与限制
-
-[tests/regression/test_robogauge_contract.py](../../../../../tests/regression/test_robogauge_contract.py)（NumPy 契约）、[test_native_safety_integration.py](../../../../../tests/regression/test_native_safety_integration.py) 覆盖。CPU fixture 不是物理或导航测试；仿真部署与训练环境不宣称等价。
+- [tests/regression/test_robogauge_contract.py](../../../../../tests/regression/test_robogauge_contract.py)：`ORDER`/`QDEFAULT` 与 `contract.json` 一致性、45D 帧与关节顺序、错误权重在导入 torch 前被拒绝。
+- [tests/unit/test_dynanav_joint_readback.py](../../../../../tests/unit/test_dynanav_joint_readback.py) 覆盖 `go2hv_torque` 的包络方向；[tests/unit/test_dynanav_rtx_source.py](../../../../../tests/unit/test_dynanav_rtx_source.py)、[test_dynanav_unlimited_acceptance.py](../../../../../tests/unit/test_dynanav_unlimited_acceptance.py)、[test_truth_deskew_and_mode.py](../../../../../tests/unit/test_truth_deskew_and_mode.py) 以 monkeypatch 替换 `default_model_path`/`verify_model`，不加载真实权重。
+- 命令：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`、`... -s tests/regression`；契约测试不需要 torch，实例化 `Runtime` 需要 `torch` 与真实权重。
+- 权重与模型布局见 [docs/robogauge/README.md](../../../../../docs/robogauge/README.md)；45D 与 247D 是不同契约，见 [policy/native/README.md](../policy/native/README.md)。

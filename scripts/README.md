@@ -1,176 +1,147 @@
-# scripts
+# scripts（DynaNav 入口脚本与离线工具）
 
-文件数量、行数和行号是 2026-11-09 文档审计时的结构快照；后续生命周期修复以当前源码和 [真实重验记录](../docs/review/runtime-repair-validation-20261109.md) 为准，保留历史统计便于对照。
-本目录是 DynaNav/Isaac 实验（路径 D）与离线分析的**入口脚本集**：负责进程编排、数据采集、离线重建、回放、评测与审计；它不实现导航控制律，也不写主路径的 `runs/`。
+盘点日期 2026-11-20。本目录是 D 路径（DynaNav / Isaac Sim）的薄 CLI 入口与离线工具集：解析参数、编排进程、调用 `src/` 里的包；业务逻辑一律在 `src/`，脚本互相之间不 `import`，也不是 Python 包或 `pyproject.toml` 的 console script。
 
-## 边界
+## 模块定位与架构层级
 
-- 做：显式启动一次 DynaNav/Isaac 实验（capture、experiment、LIO/LIVO observer、行人工人推理 worker、以及把三者串起来并收尾的 supervisor）；从已有记录重建地图/路线参考；把已记录的 IMU/RGB/地图回放到 ROS 话题；离线评测、汇总与速度档位审计；建立数据卷软链。
-- 不做：不改源码、不改守护/门禁参数；不启动主路径（`start.py`）或 RoboGauge 基准；不做验收——`run_dynanav_online_person.py` 写的 `supervision.json` 明确标注 `"technical process supervision only; not navigation or dynamic-perception acceptance"`；不写 `runs/`（主路径产物目录），产物落在外部数据卷 `$PROJECT_DATA_ROOT/embodied-navigation/` 下或调用方指定的新目录。
-- 16 个 Python 脚本 + 1 个 shell（`run_dynanav_lio.sh`），共 17 个文件，合计 5863 行（`wc -l`，含 shell 438 行）。脚本不是包的一部分，也不是 `pyproject.toml` 的 console script；只有 `simulation/dynanav/experiment.py` 在源码快照清单里按**路径字符串**引用其中两个（见"模块内文件耦合"）。
+- 架构层级：不属于七层中的任何一层，是跨层的**编排/工具层**。主入口 [`run_dynanav_native_exploration.sh`](run_dynanav_native_exploration.sh) 串起仿真（`src/embodied_navigation/simulation/dynanav/`）、估计器（`third_party/fast_livo2` 的 `fastlivo_mapping` + `scripts/run_dynanav_lio.sh`）、SLAM 后端（`localization_mapping/backend/node.py`）、规划（`run_dynanav_pct_scan.py` → `pct_scan_worker.main`）与 Agent 介入层（`explore_waypoint_client.py`）。
+- 输入：人的命令行参数、`.env.local` 提供的 `PROJECT_DATA_ROOT`、`configs/simulation/dynanav/` 下的估计器 YAML、外部数据卷上的 build prefix / SCAN install / 场景 USD、run 目录里的收据与点云。
+- 输出：数据卷 `$PROJECT_DATA_ROOT/embodied-navigation/runs/<批次>/<run-id>/` 下的 run 目录（`capture/`、`observer/`、`backend.log`、`planner*.log`、`map.log`、`operator_grid/`、`lifecycle.log`、`capture_exit.txt` 等）；仓库内**不写**运行产物。
+- 上游 / 下游：上游是人、`.agents/skills/dynanav-explore/` 的 SOP 与 `run_dynanav_native_exploration.sh`；下游是 `simulation/dynanav/experiment.py`、`simulation/dynanav/pct_scan_worker.main`、`localization_mapping/semantic_mapping`、`common/process_log`。
+- 边界：不实现控制律、不修改源码、不写仓库内产物、不做验收。`run_dynanav_native_exploration.sh` 只负责进程编排与清理；导航与感知是否成功由 run 目录收据与离线工具判定。
 
-## 目录结构
+## 当前文件夹结构
 
 ```text
 scripts/
-├── build_dynanav_slam_route.py               # 468 行，从记录的 Odometry 实测位姿生成路线参考（重建）
-├── configure_data.py                         # 51 行，检查/创建 3 个数据卷软链（工具）
-├── evaluate_dynanav_person_segmentation.py   # 464 行，离线 RGB-only 行人分割评测（评测）
-├── query_scene_map.py                         # 76 行，查询已落盘的 scene_map.json 快照（回放/查询）
-├── reconstruct_dynanav_learned_person_map.py # 452 行，learned person 点 + LIO 位姿离线重建（重建）
-├── reconstruct_dynanav_slam_map.py           # 602 行，用记录的 LIO 估计重建观测点层（重建）
-├── run_dynanav_experiment.py                 # 7 行，experiment.main 的薄入口（入口）
-├── run_dynanav_lio.sh                        # 438 行 shell，隔离的 static RGB-D/IMU observer 启动器（入口）
-├── run_dynanav_online_person.py              # 636 行，三进程在线行人实验的 supervisor（入口）
-├── run_dynanav_person_worker.py              # 436 行，持久 RGB-only 行人推理 worker（入口）
-├── summarize_dynanav_experiment.py           # 414 行，汇总已记录实验证据（评测）
-└── README.md                                 # 本文件（职责/数据/耦合/可读性说明；行数随改写变化）
+├── README.md                                 # 本文件
+├── configure_data.py                         # 51 行，检查/创建 assets、models、runs 三个数据卷软链
+├── dynanav_exploration.py                    # 61 行，探索工具统一入口（sop/collect/view/review/roi/candidates）
+├── dynanav_exploration/
+│   ├── README.md                             # 114 行，探索工具说明（历史版本，见逐文件表备注）
+│   ├── review_generation.py                  # 375 行，只读同代覆盖审计与多视角渲染
+│   └── review_roi.py                         # 44 行，显式 XY ROI 的 YZ/斜视检查
+├── dynanav_observer_transport.py             # 60 行，observer UDP 接收配置选择（纯函数）
+├── explore_waypoint_client.py                # 2302 行，算子侧交互航点/观察/占用图客户端
+├── prepare_dynanav_waypoint_candidates.py    # 59 行，PCT 路线候选建议（只读、不下发动作）
+├── query_scene_map.py                        # 76 行，查询已落盘地图快照的 CLI
+├── reconstruct_dynanav_slam_map.py           # 602 行，用记录 LIO 位姿离线重建观测点层
+├── render_dynanav_operator_grid.py           # 145 行，把导出的 operator grid NPZ 渲染成 PNG
+├── run_dynanav_experiment.py                 # 7 行，experiment.main 的薄入口
+├── run_dynanav_lio.sh                        # 684 行，隔离的 LIO/LIVO observer 启动器
+├── run_dynanav_native_exploration.sh         # 305 行，D 路径唯一主入口（PCT+SCAN 探索）
+├── run_dynanav_pct_scan.py                   # 10 行，pct_scan_worker.main 的薄入口（ROS system python）
+├── run_with_bounded_log.py                   # 27 行，带冻结日志预算的子进程包装器
+└── summarize_dynanav_experiment.py           # 414 行，汇总 run 目录收据与 journal
 ```
 
-`__pycache__/` 是运行产物（未设置 `-B` 时导入生成），不入 Git，也不在上表。
+18 个 git 跟踪文件（14 个 Python 脚本、2 个 shell、2 个 README），14 个 Python 合计 4233 行、2 个 shell 合计 989 行（`wc -l`，2026-11-20）。
 
-## 代码、日志与配置
+## 逐文件职责
 
-### 代码：17 个文件按职责分类
-
-| 分类 | 脚本 | 行数 | 职责（已核实） |
-| --- | --- | ---: | --- |
-| 入口 | `run_dynanav_experiment.py` | 7 | 纯委托：`from embodied_navigation.simulation.dynanav.experiment import main`，`raise SystemExit(main())`；所有参数都在被委托模块里 |
-| 入口 | `run_dynanav_lio.sh` | 438 | 启动隔离 namespace 下的 ONLY_LIO / LIVO observer；`--check` 只做文件/hash/动态依赖预检（不建 run、不起 ROS）；`--mode livo` 额外起 `parameter_blackboard` 并校验相机参数，`trap` 清理自己启动的子进程 |
-| 入口 | `run_dynanav_online_person.py` | 636 | 三进程 supervisor：worker（就绪）→ LIVO observer（`ready.json` 校验输入订阅，`launch.json` 留存来源）→ capture（绑定该收据）；按 `--check`、`--print-commands`、超时、信号、退出码决定成败，最后写 `supervision.json` |
-| 入口 | `run_dynanav_person_worker.py` | 436 | 持久 RGB-only 行人推理 worker：只做本地 IPC（channel 目录）、不 import rclpy、不下载权重；模型为 `torchvision.maskrcnn_resnet50_fpn_v2`（`TorchvisionPersonModel`） |
-| 重建 | `build_dynanav_slam_route.py` | 468 | 从 SQLite bag 里记录的 `nav_msgs/Odometry` 实测位姿生成路线参考；只读 bag、不读仿真状态/图像归档/真值；终止点用显式 measured-pose 静止窗口确认 |
-| 重建 | `reconstruct_dynanav_slam_map.py` | 602 | 用记录的 LIO 估计重建观测点层（每个关键帧必须有同帧实测 `Odometry`）；输出不覆盖、不写 GT 位姿 |
-| 重建 | `reconstruct_dynanav_learned_person_map.py` | 452 | learned person mask + 记录 LIO 位姿的离线重建；复用 `reconstruct_dynanav_slam_map.py` 的位姿索引；带上游 provenance 校验 |
-| 回放/查询 | `query_scene_map.py` | 76 | 查询一份已落盘 `scene_map.json` 快照；查询/过滤逻辑在 `localization_mapping.semantic_mapping.query`，本文件只是 CLI 包装 |
-| 评测 | `evaluate_dynanav_person_segmentation.py` | 464 | 离线 RGB-only 行人 mask 对稀疏 oracle 采样评测；**不做在线控制**；输出必须是数据卷下的新目录 |
-| 评测 | `summarize_dynanav_experiment.py` | 414 | 汇总已记录的 DynaNav 证据（`result.json`、`truth_scoring_stream.jsonl`、`policy_frames.jsonl`、`mapping/frames.jsonl`）；不启动 Isaac、不改 run |
-| 工具 | `configure_data.py` | 51 | 检查/创建 `assets`、`models`、`runs` 三个数据卷软链；已存在真实内容或指向别处时**报错不改** |
-
-### 日志与数据：写到哪里
-
-所有脚本的产物都在外部数据卷 `$PROJECT_DATA_ROOT/embodied-navigation/` 下（`runs/`、`assets/`、`models/` 是仓库内软链，`experiments/` 只在数据卷里）。**除 `configure_data.py` 在仓库根建 3 个软链外，没有脚本写 Git 内路径**；`--check` 类路径只读不建目录（两个 replay 的 `--check` 例外：仍会写一份 `validated_check_only` receipt）。
-
-| 脚本 | 产物位置（数据卷内） | 关键文件与语义 |
+| 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
-| `run_dynanav_online_person.py` | `<run>/` | `supervision.json`（schema `dynanav_online_supervision/v3`：argv/pids/退出码/`unexpected_exits`/`ok`，scope 明确"非验收"）；`<run>/livo/snapshots.yaml`（observer 的参数快照覆盖）；子进程 stdout/stderr 落各自 log |
-| `run_dynanav_lio.sh` | `<output-dir>/`（必须位于数据卷下且不存在） | `preflight.json`、`launch.json`（observer 收据：输入话题、namespace、二进制/配置 hash、domain）、`runner.log`、`ros_logs/`、`diagnostics/`；livo 另有 `camera_parameters.log`、`camera_parameter_ready.json`、`capture_calibration.yaml`、输入订阅 `ready.json` 和结束时的 `shutdown.json`（退出时移除 ready） |
-| `run_dynanav_person_worker.py` | `<channel>/`（必须是数据卷下的新目录，权限 0700） | `requests/*.npz`、`results/*.npz`、`results/*.error.json`、`events.jsonl`、`state.json`（模型 hash + 计数）、`stop.request.json` |
-| `reconstruct_dynanav_slam_map.py` | `--output`（新目录） | `static_map.npz`（内嵌 `pose_source="slam"`、`mask_source="sim_oracle"`、`no_GT_pose_used=true`、`semantic_oracle=true`、`complete_full_scene=false`）、`scene_map.json`、`receipt.json` |
-| `reconstruct_dynanav_learned_person_map.py` | `<output-prefix>-<mode>/`（数据卷下、不得已存在） | `static_map.npz`、`scene_map.json`、`person_history.json`、`person_query.json`、`person_query_fresh.json`、`person_context.txt`、`receipt.json`、`provenance.json` |
-| `build_dynanav_slam_route.py` | `--output`（新文件） | 路线参考 JSON：`version`/`pose_source`/`no_gt_pose_used`/`repeat_spawn_assumption`/`localization_scope`/`source{bag,files,sha256,...}`/`anchor`/`goals`/`goal_selection` |
-| `evaluate_dynanav_person_segmentation.py` | `--output`（数据卷下的新目录） | `all.json`、`periodic2s.json`、`compare.json`、`receipt.json`（schema `offline_RGB_only_person_segmentation/v1`）、`predictions/*.npz`、`visualizations/` |
-| `summarize_dynanav_experiment.py` | stdout 或 `--output`（新文件） | schema `dynanav-experiment-summary/v1`；缺证据写 `null`，不把"进程完成"当"导航成功" |
-| `configure_data.py` | 仓库根 `assets`/`models`/`runs` 三个软链 | stdout 打印 `data_present`/`linked` |
+| `README.md` | 本文件：入口清单、主链路、CLI、配置读取点与验证方式。 | — |
+| `run_dynanav_native_exploration.sh` | D 路径主入口：解析参数与环境、加模拟器独占锁、冻结日志配置与 YAML、按顺序拉起观察器/SLAM 后端/采集/规划/占用图，并在退出时按「先停交互、再 TERM、最后 KILL」清理自有子进程。 | `[NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] [--scan-prefix DIR] [--isaac-root DIR] [--pct-max-grid-cells N] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]`；见下文「主入口」与「配置读取点」 |
+| `run_dynanav_lio.sh` | 在隔离 namespace 下启动 ONLY_LIO 或 LIVO observer，永不启动模拟器；`--check` 只做文件/hash/动态依赖 preflight，不建 run、不起 ROS；livo 另起 `parameter_blackboard` 并用 `--capture-result` 的安装标定校验相机参数。 | `--output-dir`、`--mode lio\|livo`、`--binary-prefix`、`--dependency-prefix`、`--parameter-override`、`--config-dir`、`--capture-result`、`--observer-namespace`、`--lidar-topic`、`--observer-transport auto\|baseline`、`--check`；产物 `preflight.json`、`launch.json`、`ready.json`、`shutdown.json`、`runner.log`、`ros_logs/`、`camera_parameter_ready.json` |
+| `run_dynanav_experiment.py` | 纯委托：`from embodied_navigation.simulation.dynanav.experiment import main`，`raise SystemExit(main())`；参数全在被委托模块。 | `experiment.main`（`--output`、`--scene`、`--duration`/`--until-stopped`、`--point-cloud-source`、`--interactive`、`--interactive-pose-source`、`--interactive-controller` 等） |
+| `run_dynanav_pct_scan.py` | 用 ROS system python 的薄入口：`sys.path` 插入 `<repo>/src` 后调用 `pct_scan_worker.main`；不启动模拟器。 | `pct_scan_worker.main`（`--run-dir`、`--pose-source`、`--cloud-topic`、`--lio-topic`、`--vio-topic`、`--build-scan`、`--build-only`、`--body-support-offset`、`--pct-start-blind-radius`、`--pct-max-grid-cells`） |
+| `run_with_bounded_log.py` | 以冻结的日志预算运行子命令，并保留子进程原始退出码/信号语义；配置来自 `common.process_log.read_log_config`。 | `--config FILE --output-dir DIR -- COMMAND...` |
+| `explore_waypoint_client.py` | 算子侧客户端：往 run mailbox 写请求、维持 heartbeat、读 observation 与 receipts、按实测话题构建粗粒度占用快照；不发速度命令、不 import Isaac、不读真值。 | 9 个子命令（见下节）；退出码 0 完成、1 拒绝/失败、2 超时、3 用法错误 |
+| `dynanav_exploration.py` | 探索工具统一分发入口：`sop`、`collect`、`view` 转给 `.agents/skills/dynanav-explore/scripts/`，`review`/`roi` 转给本目录 `dynanav_exploration/`，`candidates` 转给 `prepare_dynanav_waypoint_candidates.py`；`sop` 自动补 `--repo`。 | `python3 scripts/dynanav_exploration.py COMMAND [ARGS]`；未知命令退出 2 |
+| `dynanav_exploration/review_generation.py` | 只读、显式绑定同一代数据的覆盖审计与渲染：读 binding/snapshot，校验 run_id/cloud_stage/map_frame，绘制 XY/XZ/YZ/3D 视图与 height grid；输出必须是外部新目录，拒绝覆盖。 | `--binding FILE --snapshot NAME [--regions FILE] [--reference-snapshot] [--marker-from-postvio] [--cloud-dir DIR]` |
+| `dynanav_exploration/review_roi.py` | 在显式 XY 裁剪内做 YZ/斜视检查，叠加 post-VIO 轨迹与位姿标记；只写 `<label>_yz_oblique.png` 与 `<label>_record.json`，不下发目标。 | `--binding FILE --snapshot NAME --xy X_MIN X_MAX Y_MIN Y_MAX --label LABEL` |
+| `dynanav_exploration/README.md` | 探索工具的子目录说明（历史版本）：命令表仍列 `multicamera`、`shadow-audit` 等当前未在 `dynanav_exploration.py` 的 `COMMANDS` 中注册的子命令，阅读时以本文件与 `dynanav_exploration.py` 为准。 | — |
+| `prepare_dynanav_waypoint_candidates.py` | 只读的 PCT 路线候选建议工具：结合 run 绑定、扫描快照/观测与显式 LiDAR 偏移，输出候选可行性建议；输出必须位于 action mailbox 之外。 | `--run-dir DIR`（必须）+ `--candidates JSON` 和/或 `--frontier-json`；`--lidar-offset DX DY DZ`（必须）；`--frontier-z`、`--prepare-next`、`--offline`、`--snapshot`、`--observation-json`、`--output`、`--voxel-m`、`--max-range-m`、`--route-spacing-m`、`--max-route-samples`、`--azimuth-samples`、`--body-support-offset`、`--pct-start-blind-radius`、`--pct-binary` |
+| `query_scene_map.py` | 查询一份已落盘 `scene_map.json` 快照；过滤逻辑在 `localization_mapping.semantic_mapping.query`，本文件只做参数解析、快照读取与输出格式化。 | `MAP --label CLASS [--near X Y Z --radius R] [--include-expired] [--context]` |
+| `reconstruct_dynanav_slam_map.py` | 用记录的关键帧与 SQLite bag 里的 LIO 估计离线重建观测点层，每个关键帧必须匹配同帧实测里程计；不读归档真值位姿。 | `--keyframes DIR --bag DIR\|.db3 --output NEW_DIR --observer-label LABEL [--observer-metadata FILE]... [--odom-topic] [--map-frame] [--sensor-frame] [--calibration-id] [--stamp-tolerance-ns] [--epoch] [--map-id] [--voxel-size] [--max-points] [--max-objects]` |
+| `render_dynanav_operator_grid.py` | 把 `operator_grid_export/v1` 的 `.npz` + manifest 渲染成 PNG；occupied 黑、free 浅灰、未知灰、ROI 外白，未知格绝不画成 free；不连 ROS、不改地图。 | `render_dynanav_operator_grid.py <grid.npz> <manifest.json> <out.png>` |
+| `summarize_dynanav_experiment.py` | 汇总 run 目录的 `result.json` 与 journal（速度、位移、建图、导航、执行器指标）；缺证据写 `null`，不把「进程完成」当「导航成功」，不覆盖已存在的输出文件。 | `RUN_DIRECTORY [--output FILE] [--low-count-threshold N]`；schema `dynanav-experiment-summary/v1` |
+| `configure_data.py` | 检查或创建 `assets`、`models`、`runs` 三个数据卷软链；已存在真实内容或指向别处时报错不改。 | `--data-root DIR`（或 `PROJECT_DATA_ROOT`）、`--link`；输出 JSON，缺数据退出 2 |
+| `dynanav_observer_transport.py` | 只读选择 observer 的有界 UDP 接收配置：仅在显式 LIVO/RTX + `rmw_fastrtps_cpp` + `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` 且无既有 DDS 配置时启用 4 MiB 接收 profile，否则保留继承环境；不修改调用方环境。 | `select_transport(mode, policy, environment, repo, cwd, *, lidar_topic=None)`；由 `run_dynanav_lio.sh` 的 preflight 内联导入；profile `configs/simulation/dynanav/observer_udp_rx4m.xml` |
 
-全局产物布局（含 `runs/` 与 `experiments/<run>/` 的完整字段）见 [`../docs/review/dsh-workflow-and-readability-20261109.md`](../docs/review/dsh-workflow-and-readability-20261109.md) §9，本目录不复述。
+## 主入口：`run_dynanav_native_exploration.sh`
 
-### 配置
+前置条件（缺一即退出）：`source /opt/ros/jazzy/setup.bash` 可用、仓库根有 `.env.local`（提供 `PROJECT_DATA_ROOT`）、Isaac 的 `python.sh` 可执行（默认 `$HOME/isaacsim`，用 `--isaac-root` 覆盖）、`--scan-prefix` 指向已构建的 SCAN install（默认 `$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install`）、build prefix 提供 `dynanav_sensor_msgs`（默认 `.../build_cache/dynanav_complete_scan_*/`，用 `BUILD_PREFIX` 覆盖）。
 
-Python 脚本**不直接读 `configs/`**（`grep -rn "configs/" scripts/*.py` 无命中）。配置只有两个真实入口：
+命令形态：
 
-| 谁读 | 读什么 | 何时读 |
+```bash
+scripts/run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] \
+  [--scan-prefix DIR] [--isaac-root DIR] [--pct-max-grid-cells N] \
+  [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]
+```
+
+固定行为：
+
+- run 目录必须不存在；缺省为 `$PROJECT_DATA_ROOT/embodied-navigation/runs/native-exploration/<UTC 时间戳>`，并在 `/tmp/embodied-navigation-native-exploration-current` 写一份当前路径。
+- `ROS_DOMAIN_ID` 缺省 219 且必须在 0..232（Fast DDS 端口映射上限）；固定 `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`、`FASTDDS_BUILTIN_TRANSPORTS=UDPv4`、`DYNANAV_RTX_COMPLETE_SCAN=1`。
+- 独占锁 `/tmp/embodied-navigation-isaac-exclusive.lock`（`flock -n`）；若已有 kit / `fastlivo_mapping` 进程则不动它并退出 4。
+- 冻结 `<run>/configuration/capture_log.json`；SLAM 模式另把 `configs/simulation/dynanav/fastlivo_livo.yaml`、`camera_rgbd.yaml`、`fastlivo_rtx_os1_32.yaml` 复制进 `<run>/configuration/`。
+- 环境变量：`DURATION_SIM_S`（默认 300，必须在 8..1800；配合 `timeout` 墙钟预算 `max(900, 3×duration)`）、`SPEED_MPS`（1.0）、`NAVIGATION_BACKEND`（`pct_scan`，可设 `native_route`）、`CAPTURE_CALIBRATION`、`SIMULATION_SCENE`、`PCT_BODY_SUPPORT_OFFSET_M`、`PCT_START_BLIND_RADIUS_M`、`SPAWN_YAW_RAD`、`PRIOR_MAP`。
+- 退出码：2 用法/前置条件、3 锁被占、4 已有模拟器/估计器、5 观察器提前退出、6 观察器启动超时、7 自有依赖在采集期间退出。
+
+**默认模式（SLAM）**：先 `run_dynanav_pct_scan.py --build-scan --build-only` 构建 SCAN，再启动 `run_dynanav_lio.sh --mode livo`（等 `<run>/observer/ready.json`）与 `localization_mapping.backend.node`（`--spool <run>/observer/native_keyframes --namespace /dynanav/backend`，可选 `--prior-map`），最后用 `run_with_bounded_log.py` 包住 `run_dynanav_experiment.py`（`--point-cloud-source rtx_lidar --semantic-provider none --interactive --interactive-pose-source livo_post_vio --interactive-controller pct_scan --odometry-topic /dynanav/rtx_livo/post_vio_odometry --render-backend fabric`）。等 `<run>/capture/interactive` 出现后，再起 PCT+SCAN 规划进程与 `explore_waypoint_client.py map` 占用图进程。
+
+**`--truth-pose` 模式**：跳过观察器与 SLAM 后端，采集改为 `--interactive-pose-source simulation_truth --odometry-topic /dynanav/truth/control_odometry`；规划进程加 `--pose-source simulation_truth --cloud-topic /dynanav/truth/cloud_deskewed --lio-topic /dynanav/truth/imu_odometry --vio-topic /dynanav/truth/control_odometry`；占用图也改读同一组真值话题。该模式不再复制 SLAM YAML，但仍需要 build prefix 提供 `dynanav_sensor_msgs`。真值链路的内容见 [capture README](../src/embodied_navigation/simulation/dynanav/capture/README.md) 的「200 Hz 真值去畸变接入」。
+
+收尾：`trap cleanup EXIT` 先在 `<run>/capture/interactive` 存在时停掉交互（`explore_waypoint_client.py stop`，最多等 20 s），再对自有进程组发 TERM、等 10 s、必要时 KILL，并把采集退出码写 `<run>/capture_exit.txt`、时序写 `<run>/lifecycle.log`。
+
+## `explore_waypoint_client.py` 子命令
+
+| 子命令 | 作用 | 关键参数 |
 | --- | --- | --- |
-| `run_dynanav_lio.sh:90-91` | `configs/simulation/dynanav/fastlivo_lio.yaml` 或 `fastlivo_livo.yaml`，以及 `configs/simulation/dynanav/camera_rgbd.yaml` | 启动前拼 `--params-file`；`--mode` 决定用哪份 fastlivo 配置 |
-| `run_dynanav_experiment.py` 委托的 `simulation/dynanav/experiment.py` | `configs/simulation/dynanav_basement_to_ground_collision.json`、`dynanav_basement_collision.json` | 只用于 **source_snapshot**：逐字节读入 + sha256 + 复制到输出目录，不是运行参数 |
+| `heartbeat` | 刷新算子存活心跳（`write_heartbeat`），`--loop` 时按 `--interval` 持续写 `--duration` 秒 | `--interval`（1.0）、`--duration`（600） |
+| `goto` | 提交一个航点，本地跟踪器做 50 Hz 执行 | `--x --y --z`、`--reverse`（仅 `native_route`）、`--ttl`（30）、`--pose-source`（`lio_estimate`）、`--wait/--timeout` |
+| `yaw` | 原地转向，需要独占的 SCAN 旋转空间回执 | `--delta-deg` 或 `--target-deg`（配 `--frame-id`）、`--ttl`、`--pose-source`、`--wait/--timeout` |
+| `maneuver` | 短时有界本体系移动 | `--forward --lateral --yaw-rate --duration`、`--ttl`（15） |
+| `scan` | 原地逐步转向并抓取 observation 快照 | `--steps`（4）、`--step-deg`（90）、`--timeout-per-step`（20）、`--settle-s`（1.0） |
+| `cancel` / `stop` | 取消当前航点 / 停住并结束交互 | 仅公共选择器参数 |
+| `observe` | 读 observation bundle 与最近回执 | `--receipts`（8）、`--full` |
+| `map` | 订阅实测点云/里程计/时钟，累积算子侧占用快照并可导出 grid | `--cloud-topic`、`--odometry-topic`（必填）、`--clock-topic`、`--pose-source`、`--sensor-frame`、`--base-frame`、`--imu-mount`、`--extrinsic-translation`/`--extrinsic-quaternion`、`--free-mode`、`--resolution`、`--duration`、`--snapshot-interval`、`--frontier-limit`、`--export-grid`、`--cloud-semantics sensor_imu\|lio_deskewed_map`、`--binary-prefix` |
 
-其余全部靠命令行参数 + 环境变量 + 数据卷路径：
+公共选择器 `--run-dir` / `--mailbox` / `--run-id` 可放在子命令前后；`--run-dir` 与 `--mailbox` 至少给一个。客户端只写 mail 目录（`requests/` 等），从不发 `cmd_vel`。
 
-- `PROJECT_DATA_ROOT`：数据卷根（`project.data_root()` 返回 `<PROJECT_DATA_ROOT>/embodied-navigation`）。缺失时不会回退到仓库内路径：`configure_data.py` 与 `run_dynanav_online_person.py` 直接 `SystemExit`，其余脚本调用 `project.data_root()` 抛 `RuntimeError`。
-- `PYTHONPATH`：`run_dynanav_online_person.py:163` 给子进程注入 `<repo>/src`；7 个脚本自己也做 `sys.path.insert(0, ROOT/"src")`。
-- `ROS_DOMAIN_ID`：`run_dynanav_lio.sh:103` 默认 91；supervisor 用 `--domain`（默认 116）显式指定，并要求 worker/observer/capture 同域。
-- 其它被读取的环境变量：`NAVIGATION_ACTOR_PYTHON`（robogauge benchmark，不属本目录）。
+## 配置读取点
 
-## 模块内文件耦合
+Python 脚本自身没有「启动时扫 configs 目录」的逻辑；真实读取点只有下面三处（其中 `dynanav_observer_transport.py` 由 `run_dynanav_lio.sh` 内联导入调用）：
 
-依赖方向是**星型而不是链式**：16 个 Python 脚本之间没有 `import` 关系（互相 import 会立刻踩到"脚本不是包"的问题），真实的耦合只有 4 条边：
+| 读取方 | 读取什么 | 时机 |
+| --- | --- | --- |
+| [`run_dynanav_lio.sh`](run_dynanav_lio.sh) | `configs/simulation/dynanav/fastlivo_lio.yaml` 或 `fastlivo_livo.yaml`、`camera_rgbd.yaml`；`--lidar-topic /dynanav/lidar_rtx` 时再追加 `fastlivo_rtx_os1_32.yaml` | 拼 `--params-file` 并做模式/post-VIO 一致性 preflight；`--config-dir` 可指向 run 内冻结副本 |
+| [`dynanav_observer_transport.py`](dynanav_observer_transport.py) | `configs/simulation/dynanav/observer_udp_rx4m.xml` | `run_dynanav_lio.sh` preflight 内联导入 `select_transport`，仅在 auto 且满足 FastRTPS/UDPv4/无既有 DDS 配置时选中 |
+| `run_dynanav_experiment.py` 委托的 `simulation/dynanav/experiment.py` | `configs/simulation/dynanav_basement_collision.json`（运行期经 `session_collision.load_config` 读，取 `provenance` 并修复会话碰撞）、`configs/simulation/dynanav_basement_to_ground_collision.json`（只进 source snapshot） | 启动时 |
 
-1. `run_dynanav_online_person.py` → **子进程**调 `run_dynanav_person_worker.py`、`run_dynanav_lio.sh`、`run_dynanav_experiment.py`。脚本路径是模块常量（`WORKER_SCRIPT`/`OBSERVER_SCRIPT`/`CAPTURE_SCRIPT`，L35-37），argv 由纯函数 `build_plan()` 组装，就绪判据是同次启动的原子 `<observer>/ready.json` 中 `state=ready`，由 launcher 确认所拥有 mapper 的相机/IMU/点云订阅后写入；`launch.json` 仅记录来源，不代表估计器初始化或已收到帧。
-2. `reconstruct_dynanav_learned_person_map.py` → 用 `importlib.util.spec_from_file_location` **按路径加载** `reconstruct_dynanav_slam_map.py`（`load_script` L38-44；调用点 L382-385），注入 `sys.modules` 后复用其 `PoseIndex`/`load_keyframe` 等。
+目录与配置语义见 [configs README](../configs/README.md)。
 
-| 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
-| --- | ---: | --- | --- | --- |
-| `build_dynanav_slam_route.py` | 468 | 标准库 + 延迟 import rclpy 解 CDR | 无 | 清楚 |
-| `configure_data.py` | 51 | 标准库 | 无 | 清楚 |
-| `evaluate_dynanav_person_segmentation.py` | 464 | `perception.person_segmentation`、`project` | 无 | 清楚 |
-| `query_scene_map.py` | 76 | `localization_mapping.semantic_mapping(.query)` | 无 | 清楚 |
-| `reconstruct_dynanav_learned_person_map.py` | 452 | 按路径加载 `reconstruct_dynanav_slam_map.py` + `perception.learned_person_mapping`、`person_segmentation` | 无 | 可疑（按路径加载） |
-| `reconstruct_dynanav_slam_map.py` | 602 | `localization_mapping.semantic_mapping` | 被同目录 1 个脚本按路径加载 | 偏重（602 行，同时做 bag 解码/位姿索引/重建/收据） |
-| `run_dynanav_experiment.py` | 7 | `simulation.dynanav.experiment` | 被 supervisor 以子进程调 | 清楚 |
-| `run_dynanav_lio.sh` | 438 | `configs/simulation/dynanav/*.yaml` + 原生二进制 | 被 supervisor 以子进程调 | 偏重（shell 里内嵌 4 段 Python） |
-| `run_dynanav_online_person.py` | 636 | 3 个子进程 + 标准库 | 无（顶层入口） | 偏重（supervisor 职责多，但拆分清楚） |
-| `run_dynanav_person_worker.py` | 436 | `perception.person_worker`、`perception.person_tiling`、`project` | 无 | 偏重（`main()` 242 行） |
-| `summarize_dynanav_experiment.py` | 414 | 标准库 + NumPy | 被 audit 按路径加载 | 清楚 |
+## 验证与测试入口
 
-四类问题：
+```bash
+PYTHONPATH=src python3 -B -m compileall -q src scripts
+PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
+PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
+```
 
-1. **上帝文件（>800 行）**：无。最长的 `run_dynanav_online_person.py` 636 行、`reconstruct_dynanav_slam_map.py` 602 行，都在 600 量级但没有跨过 800。
-2. **重复实现**：**有，且是本目录最主要的复制点**——文件 sha256 助手写了 4 份（`build_dynanav_slam_route.py:281` 的 `sha256_file`、`evaluate_dynanav_person_segmentation.py:34`、`reconstruct_dynanav_learned_person_map.py:46`、`run_dynanav_person_worker.py:32` 的 `digest`，实现几乎一致）；`write_json` 写了 3 份（`evaluate_…:42`、`reconstruct_learned_…:54`、`run_dynanav_online_person.py:374`）；`ROOT = Path(__file__).resolve().parents[1]` 重复 9 份、`sys.path.insert(0, ROOT/"src")` 重复 7 份。没有 `scripts/_common.py` 之类的共享模块。
-3. **跨层直达**：脚本作为 CLI 必须 `sys.path.insert` 后直接 import `src/` 里的包（`perception.person_segmentation`、`localization_mapping.semantic_mapping`、`control.relative_pid` 等），这是"脚本层"的常态；需要注意的是它们直接依赖**内部**模块而不是稳定 API（如 `person_segmentation` 的私有函数、`semantic_mapping.query` 的 re-export）。
-4. **隐式契约**：三处按路径/文件名耦合——`load_script` 按文件路径加载同目录脚本（改名/搬家即断）、supervisor 以 `<observer>/ready.json` 的输入订阅握手作为 observer 就绪判据，并另查 `launch.json` 来源、worker 与 capture 之间以 `requests/`、`results/` 目录里的 `.npz` 文件名（request_id）交互。这些契约没有 schema 常量，只在 docstring 与 receipt 字段里体现。
-
-结论：**耦合清楚**——没有 import 环，没有共享可变状态，进程之间靠命令行与文件契约，这是脚本集合的合理形态；代价是**横向重复**（4 份 digest、3 份 write_json、9 份 ROOT）与**按路径加载**两处脆弱点。真正该抽公共 helper 的信号已经很明确，但抽取会改变"每个脚本可单独拷走运行"的现状，所以只应抽纯函数（hash/原子写），不要抽流程。
-
-## 可读性评估
-
-指标为实测 AST 值（函数总数 / 有 docstring 函数比 / 最长函数 / >80 行函数数 / 注释行），抽查 `evaluate_dynanav_person_segmentation.main`（L305-460，156 行）与 `run_dynanav_online_person.build_plan`（L172-279，108 行，纯函数）确认可信。
-
-**良好**
-
-- `run_dynanav_experiment.py`（7 行）、`configure_data.py`（51 行 / 1 函数 36 行，`main` L12–47） / 只做软链检查）：短、单一目的、无副作用。
-- `query_scene_map.py`（76 行 / `main` 49 行，L24–72）：明确把查询逻辑委托给 `semantic_mapping.query`，自己只做 CLI。
-
-**可接受**
-
-- `run_dynanav_online_person.py`（636 行 / 25 函数 / docstring 10/25，最长 `build_plan` 108 行）：结构是好的——`Child` 数据类、纯 `build_plan()`、纯 `final_verdict()`、`stop()` 单独负责信号与回收；扣分在函数多、docstring 只覆盖四成。
-- `reconstruct_dynanav_slam_map.py`（602 行 / 12 函数 / docstring 4/12，最长 `reconstruct` 158 行，L366–523）：bag 解码、位姿索引、重建、收据分成独立函数，读得下去；长函数在装配段。
-- `summarize_dynanav_experiment.py`（414 行 / 14 函数 / 0 个 >80 行 / docstring 1/14）：结构最好的一批（全是小函数），文档最差的一批；`speed_metrics` 70 行（L124–193）。
-- `build_dynanav_slam_route.py`（468 行 / 14 函数 / docstring 3/14，最长 `build_reference` 122 行（L289–410））。
-- `evaluate_dynanav_person_segmentation.py`（464 行 / 7 函数 / docstring 1/7，最长 `main` 156 行，2 个 >80）：推理/评测/可视化分开，但 `main` 承担全部参数校验与流程。
-
-**需改进**
-
-- `run_dynanav_person_worker.py`（436 行 / 5 函数 / docstring 0/5，`main()` 242 行，L191–432）：模型加载、IPC 轮询、响应写盘、信号与状态机全在一个函数里；`--max-requests` 的语义（0=常驻）只在 CLI help 里。
-- `reconstruct_dynanav_learned_person_map.py`（452 行 / 6 函数 / docstring 0/6，`reconstruct_mode` 232 行（L102–333）、2 个 >80）：逐帧重建 + 多层地图写盘压在一个函数里，与 `reconstruct_dynanav_slam_map.py` 的清晰分层形成对比。
-
-区分说明：`run_dynanav_person_worker.py`/`reconstruct_dynanav_learned_person_map.py` 是**结构问题**（超长函数）；`summarize_dynanav_experiment.py` 只是**文档问题**（结构已足够小）。
-
-## 重构建议
-
-本轮只写建议、不改代码；任何一条都要"先有对照再动"。**没有 P0**：所有入口都是 fail-closed（不存在的输出目录/已存在的 receipt/缺失 `PROJECT_DATA_ROOT`/hash 不符都直接报错退出），replay 类不伪造时间戳，summarize/audit 明确"进程完成 ≠ 导航成功"。
-
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P1 | 把 `reconstruct_dynanav_learned_person_map.reconstruct_mode()`（232 行）按"逐帧预测校验 / 分层地图写入 / 收据汇总"拆成 3 个函数 | 与同目录 `reconstruct_dynanav_slam_map.py` 的分层程度差距明显，是重建类脚本最难改的一处 | 中：顺序与收据字段敏感 | `PYTHONPATH=src python3 -B -m unittest tests.unit.test_learned_person_mapping tests.unit.test_dynanav_source_snapshot -v`；再用一份已有 run 做离线重跑对比 `receipt.json` |
-| P1 | 把 `run_dynanav_person_worker.main()`（242 行）拆出 `run_loop(state)` 与 `handle_request()`，保留 `main()` 只做参数校验 | 常驻 worker 的主循环与模型加载混在一起，改 IPC 语义要读全函数 | 中：涉及信号、`--max-requests`、stop 文件语义 | `python3 -B -m unittest tests.unit.test_person_worker tests.unit.test_person_tiling -v`；用 `--max-requests 1` 做一次离线 smoke |
-| P2 | 抽一个纯函数模块（如 `scripts/_util.py`）承接 `sha256_file`/`digest` 与 `write_json`，替换 4 份 digest 与 3 份 `write_json` | 横向重复最多的就是这两类，行为完全一致 | 低：需保留各脚本"可单独拷走"的用法（加 try-import 回退） | 逐脚本 `--help` + 全量单测 |
-| P2 | 给 `run_dynanav_person_worker.py` 与 `reconstruct_dynanav_learned_person_map.py` 的模块/公开函数补 docstring | 两文件 docstring 均为 0 | 无（纯文档） | 只改文档 |
-
-## 前置条件与常用命令
-
-
-- 手工三终端（路径 D 原始形态）与统一 supervisor 两种用法、以及每步的参数，见 [`../docs/experiments/dynanav-online-person-20261109.md`](../docs/experiments/dynanav-online-person-20261109.md)（第 127 行起"从仓库入口复跑相同配置"给的是实际命令）。
-- 重建地图的完整命令与输出说明见 [`../docs/experiments/reconstruct_dynanav_slam_map.md`](../docs/experiments/reconstruct_dynanav_slam_map.md)。
-- 路径 D 在两条执行路径中的定位见 [`../docs/architecture.md`](../docs/architecture.md)。
-
-## 测试
-
-脚本是**测试覆盖较好的一批**：11 个脚本有直接引用它们的单测/回归测试（`grep -rl` 命中见下），未被引用的有 6 个。
-
-| 脚本 | 测试文件 |
+| 脚本 | 直接覆盖它的测试 |
 | --- | --- |
-| `build_dynanav_slam_route.py` | `tests/unit/test_dynanav_slam_route_builder.py` |
-| `query_scene_map.py` | `tests/unit/test_dynanav_source_snapshot.py`、`test_layered_mapping.py`、`test_learned_person_mapping.py` |
-| `reconstruct_dynanav_learned_person_map.py` | `tests/unit/test_dynanav_source_snapshot.py` |
+| `run_dynanav_lio.sh` | `tests/regression/test_dynanav_lio_launcher.py` |
+| `run_dynanav_native_exploration.sh` | `tests/unit/test_pct_grid_budget.py`（经 `pct_budget_acceptance_fixtures.py` 以替身重放启动命令） |
+| `run_dynanav_pct_scan.py` | `tests/unit/test_pct_grid_budget.py`、`tests/native/dynanav_pct_scan/ros_smoke.py` |
+| `explore_waypoint_client.py` | `tests/unit/test_explore_waypoint_client.py`、`test_native_reverse_waypoint.py`、`test_operator_grid_export.py`、`test_truth_deskew_and_mode.py` |
+| `render_dynanav_operator_grid.py` | `tests/unit/test_operator_grid_export.py` |
+| `dynanav_exploration.py` / `dynanav_exploration/*.py` | `tests/unit/test_dynanav_exploration_tools.py`（含各子命令 `--help` 无动作检查） |
+| `prepare_dynanav_waypoint_candidates.py` | `tests/unit/test_dynanav_waypoint_candidates.py` |
+| `query_scene_map.py` | `tests/unit/test_dynanav_source_snapshot.py`、`test_layered_mapping.py` |
 | `reconstruct_dynanav_slam_map.py` | `tests/unit/test_dynanav_slam_reconstruction.py` |
-| `run_dynanav_lio.sh` | `tests/regression/test_dynanav_lio_launcher.py`、`tests/unit/test_dynanav_learned_wiring.py` |
-| `run_dynanav_online_person.py` | `tests/unit/test_dynanav_online_supervisor.py` |
 | `summarize_dynanav_experiment.py` | `tests/unit/test_dynanav_experiment_summary.py` |
+| `dynanav_observer_transport.py` | `tests/unit/test_dynanav_observer_transport.py` |
+| `configure_data.py`、`run_dynanav_experiment.py`、`run_with_bounded_log.py`、`dynanav_exploration/review_roi.py` | 无独立测试文件；`run_with_bounded_log.py` 经启动器集成用例间接覆盖 |
 
+这些测试不启动 Isaac、GPU 或真实 ROS 图；真实仿真、原生 SCAN build 与 ROS 话题时序仍需在 Linux 主机执行主入口验证。
 
-## 限制
+## 相关入口
 
-- 本目录所有实验脚本都依赖**外部数据卷**与**本机构建产物**；仓库内 `install/`、`assets/`、`models/`、`runs/` 是软链或空目录时，只能读源码，不能据此判断实验可运行。缺文件 ≠ 缺源码，但"有几个文件"也 ≠ ready。
-- 完整 Isaac 运行、GPU 推理、LIVO 视觉更新与实机均未验证；`supervision.json` 的 `ok=true` 只表示进程监督成功，历史记录里已有 `mission_completed=false` 的片段，不要把它当导航或动态感知验收。
-- `--check` 不是零副作用：两个 replay 的 `--check` 仍会写 `validated_check_only` receipt，重复跑到同一路径会因"receipt 已存在"失败。
-- 重建类脚本保留各自来源边界：`reconstruct_dynanav_slam_map.py` 写 `no_GT_pose_used=true` 但 `mask_source="sim_oracle"`、`complete_full_scene=false`；learned 分支的上游仍可能带 oracle 前处理来源，不能称端到端 oracle-free。
+- 主链路说明与模块分层：[DynaNav README](../src/embodied_navigation/simulation/dynanav/README.md)
+- 采集实现与 200 Hz 真值去畸变：[capture README](../src/embodied_navigation/simulation/dynanav/capture/README.md)
+- 配置读取语义：[configs README](../configs/README.md)
+- Agent 探索 skill：`.agents/skills/dynanav-explore/`

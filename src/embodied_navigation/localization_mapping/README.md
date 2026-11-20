@@ -1,127 +1,69 @@
-# localization_mapping
+# localization_mapping：定位建图
 
-本目录是导航系统的定位与建图层：把 FAST-LIVO2 的里程计和点云接入导航坐标系，提供已知场景/地图辅助定位，归档本次运行观测到的地图，并为 D 路径（DynaNav）提供点云 SLAM 后端（回环、位姿图、地图保存/加载、先验地图重定位，输出 map→odom 修正）。导入本包不启动节点、不建线程、不写文件；有副作用的是各 `main()` 入口。
+`localization_mapping` 是七层架构中的定位建图层：把 FAST-LIVO2 前端的关键帧变成回环闭合/先验地图重定位后的 map→odom 修正，并提供纯 CPU 的语义点层与只读查询。它不包含 FAST-LIVO2 算法本体（在 `third_party/fast_livo2`），也不做规划、控制或任务状态机。
 
-## 边界
+盘点日期 2026-11-20（分支 `refactor/06-clean-base`，HEAD 5b880b2）。
 
-- 不包含 FAST-LIVO2 算法本体。真实算法与 ROS 包在 [third_party/fast_livo2/fast_livo2_ros](../../../third_party/fast_livo2/fast_livo2_ros/README.md)，本目录只做接入、包装、校正与状态发布。
-- 不把仿真真值当定位输入；bundle 和状态都显式携带 `robot_truth_pose_used=false` 或 `navigation_ground_truth_used=false`。`semantic_mapping` 里的 `sim_oracle` 是显式诊断来源，不重标为 SLAM/learned。
-- 不负责规划、控制和任务状态机，也不直接生成导航命令。`known_scene_hold_guard.py` 只提供"零保持/恢复"记账函数，真正的停走与碰撞门禁仍在 `control/parking`、`navigation/base_node.py`。
+## 模块定位与架构层级
 
-## 目录结构
+- 架构层级：第 3 层「定位建图」（见仓库根 `AGENTS.md` 第 2 节）。
+- 输入：FAST-LIVO2 的 `snapshot_bridge` 写出的关键帧 spool（`$RUN/observer/native_keyframes/kf_<epoch>_<seq>/`）；先验地图目录（`PRIOR_MAP`）；语义层的观测点、mask 与位姿（由调用方提供）。
+- 输出：TF `map → camera_init`、`/dynanav/backend/corrected_odometry`（`nav_msgs/Odometry`）、`/dynanav/backend/status`（`std_msgs/String` JSON）、`--save-map` 目录下的 `map.json` + 每关键帧 `.npz`；语义层输出 `layered_observed_map/v1` 快照与确定性查询结果。
+- 上游/下游：由 `scripts/run_dynanav_native_exploration.sh` 在 FAST-LIVO2 就绪后启动；被 `scripts/reconstruct_dynanav_slam_map.py`、`scripts/query_scene_map.py`、`simulation/dynanav/capture/ros_interface.py`（只取 `STATIC` 常量）与测试使用。
+- 边界：不改写前端里程计，只发布修正副本；导航当前仍订阅原始 odometry（启动脚本注释明确「Navigation below still consumes the raw odometry」）；语义层不做检测/分割推理、不读 ROS/Isaac、不授予控制权。
+
+## 当前文件夹结构
 
 ```text
 src/embodied_navigation/localization_mapping/
-├── backend/                        # D 路径点云 SLAM 后端，见 backend/README.md
-├── frontend/                       # FAST-LIVO2 接入资料副本，见 frontend/README.md
-├── launch/                         # 本模块 ROS 进程装配，见 launch/README.md
-├── mapping/                        # 运行期观测地图归档，见 mapping/README.md
-├── semantic_mapping/               # 纯 CPU 语义点层与查询，见 semantic_mapping/README.md
-├── README.md                       # 本文件
-├── __init__.py                     # 仅模块 docstring（1 行）
-├── feedback_state.py               # 已接受 SLAM commit 的规范状态字典构造器（33 行）
-├── geometry.py                     # 前端共享的坐标/旋量代数（96 行）
-├── known_scene_adapter.py          # 同源时间槽配对 + 有界后台匹配线程（646 行）
-├── known_scene_hold_guard.py       # 零保持观测与 Teacher 恢复记账，供导航/停车复用（445 行）
-├── known_scene_inputs.py           # 导航节点的已知场景输入 mixin：合流、提交与交接（1138 行）
-├── known_scene_matcher.py          # 对显式静态场景图做 CPU 匹配与门禁（713 行）
-├── known_scene_reference_builder.py # prepare 阶段从 SDF 静态几何生成参考图（81 行）
-├── localization_runtime.py         # 已知场景地图辅助定位节点，发布 corrected 话题（429 行）
-├── odom_adapter.py                 # FAST-LIVO2 IMU 状态 → body/lidar 里程计与有效 twist（237 行）
-├── point_provenance.py             # 点/commit 身份编码、校验与几何证据打包（397 行）
-└── sensor_snapshot.py              # 实时 SLAM 位姿/点云按源时间与 frame 配对（185 行）
+├── backend/                      # 点云 SLAM 后端（9 个 .py），见 backend/README.md
+├── semantic_mapping/             # 纯 CPU 语义点层与查询（4 个 .py），见 semantic_mapping/README.md
+├── README.md                     # 本文件
+└── __init__.py                   # 1 行：模块 docstring
 ```
 
-直接 Python 文件 15 个、合计 4902 行（2026-11-09 磁盘实测，`wc -l`）；最大文件 `known_scene_inputs.py` 1138 行。5 个子目录各有自己的 README，本文件不递归展开。
+17 个跟踪文件（14 个 `.py` + 3 个 README），共 2,211 行。**只有 `backend/node.py` import ROS**（`git grep rclpy` 只命中该文件），其余模块可被纯 CPU 测试直接导入。
 
-## 代码、日志与配置
+## 逐文件职责
 
-| 类别 | 位置 | 含义 |
+| 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
-| 代码（ROS 节点） | `odom_adapter.py`、`localization_runtime.py` | 都有 `main()`，由 launch 以 `python3 -m …` 启动；导入这些模块不会建节点（节点类在 `main()` 内或 `__init__` 里显式构造）。 |
-| 代码（库/契约） | `known_scene_matcher.py`、`known_scene_adapter.py`、`point_provenance.py`、`sensor_snapshot.py`、`geometry.py` | 纯函数/类，无 ROS I/O；`known_scene_adapter.py` 例外：`MatcherWorker` 会起一个后台线程。 |
-| 代码（host 扩展） | `known_scene_inputs.py`、`known_scene_hold_guard.py` | 不是独立节点：前者是被 `navigation/pid_entrypoint.py` 混入的 `KnownSceneInputMixin`，后者是一组接收 `node` 的函数。 |
-| 代码（prepare 期） | `known_scene_reference_builder.py` | 由 `launch/prepare.py` 生成 `known_scene_reference.json`，运行期只被 `localization_runtime` 读取该 JSON。 |
-| 代码（独立入口配套） | `feedback_state.py` | 只被 `navigation/pid_ingress.py` 调用。 |
-| 日志/输出 | `localization_runtime.py` → run 目录 `known_scene_status.json` | 每个 tick 原子写一次，内容含 `schema="known_scene_navigation_status/v1"`、`generation`、`bundles_published`、`robot_truth_pose_used=false`。仓库内没有代码读取它（grep 只命中写入处），属证据/排障文件。 |
-| 日志/输出 | `/demo/navigation/localization_bundle`、`/demo/navigation/localization_status` | 运行期契约话题（`String` JSON），分别由 `localization_runtime` 发布、被导航侧消费；不是日志文件。 |
-| 日志/输出 | 无日志框架 | 本目录 `grep -rn "import logging\|getLogger\|print("` 命中 0：既不写 Python 日志，也不 print；诊断一律走 status JSON/话题或 run 目录 JSONL。进程 stdout/stderr 由 launch 的 `ExecuteProcess(output="screen")` 收走。 |
-| 配置 | 无运行期 `configs/` 读取点（`odom_adapter` 默认值除外） | `odom_adapter.py --scenario` 默认指向 `configs/simulation/scenario.json`，但生产 launch 总是传 `run/navigation_scenario.json` 覆盖它；这是唯一直接指向 `configs/` 的默认值。 |
-| 配置 | `runtime_context.json` | `localization_runtime.main()` 读 `profile`；`launch/components.py` 读 `profile` 和 `path("ros_prefix")`。读取顺序与 pin 规则见 [configs/README.md](../../../configs/README.md)。 |
-| 配置 | run 目录的 prepare 产物 | `localization_runtime` 读 `navigation_scenario.json`、`known_scene_reference.json`、`navigation_status.json`、`navigation_command.json`。这些文件都由 `launch/prepare.py` 或入口进程生成，本目录只读。 |
-| 配置（常量） | `common/integration_limits.py` | 本目录的门限常量是 import 的，不是本地魔法数：`KNOWN_BUNDLE_FRESHNESS_NS=300 ms`、`MATCH_CORRECTION_MAX_AGE_NS=3 s`、`SOURCE_JOIN_SLOT_MAX_AGE_NS=3 s`、`RAY_ABS_P95_LIMIT_M=0.35`、`LIDAR_BODY_TRANSLATION_M=(0.2, 0.0, 0.1177)`。 |
-| 配置 | `configs/localization_mapping/{camera,fastlivo}.yaml` | 不是本目录读的：`launch/prepare.py` 把它们转写成 run 目录的 `navigation_camera.yaml`/`navigation_fastlivo.yaml`，再由 `fastlivo_mapping` 二进制读。 |
+| [README.md](README.md) | 本文件：模块定位、数据流、文件清单、测试与配置注意。 | — |
+| [__init__.py](__init__.py) | 模块 docstring（1 行），无重导出、无副作用。 | 无 |
+| [backend/README.md](backend/README.md) | 后端子模块文档：坐标约定、spool 数据流、配置加载、逐文件职责。 | — |
+| [backend/__init__.py](backend/__init__.py) | 后端包 docstring（6 行），说明只 `node` 依赖 ROS、后端不写前端 odometry。 | 无 |
+| [backend/backend.py](backend/backend.py) | 后端核心：建图（关键帧、回环、位姿图优化）与先验地图重定位，产出 `C = T_world_odom`。 | `BackendConfig`（含 `from_dict`/`from_json` 严格加载与 `anisotropic_information`）、`information`、`SlamBackend.ingest/save_map/T_world_odom` |
+| [backend/correction.py](backend/correction.py) | map→odom 修正的时域准入：在本体位姿处比较候选、两次确认与跳变门。 | `CorrectionAdmission.propose/current` |
+| [backend/keyframes.py](backend/keyframes.py) | 关键帧 spool 读取（`metadata.json` schema `livo_keyframe/v1` + ASCII PCD）与体素降采样。 | `Keyframe`、`ready_directories`、`read_keyframe`、`read_spool`、`voxel_downsample`、`transform_points` |
+| [backend/map_store.py](backend/map_store.py) | 关键帧地图：子图/全局图与 save/load（schema `embodied_navigation_map/v1`）。 | `MapStore.add/update_poses/points_world/submap/global_map/save/load` |
+| [backend/node.py](backend/node.py) | ROS 2 薄封装：轮询 spool、发布 TF/修正里程计/状态、退出时存图。 | `python -m embodied_navigation.localization_mapping.backend.node --spool … --namespace … --odometry-topic … [--prior-map …] [--save-map …] [--config …]`；`parse_args`、`main` |
+| [backend/pose_graph.py](backend/pose_graph.py) | SE(3) 位姿图：稀疏法方程 LM、首节点固定、回环边 Cauchy 核。 | `PoseGraph.add_node/add_edge/pose/optimize`、`se3_exp/se3_log/adjoint/invert/pose_difference` |
+| [backend/registration.py](backend/registration.py) | point-to-plane ICP（目标法向量用 k 近邻 PCA），由粗到细两级配准的基本单元。 | `icp_point_to_plane`、`IcpResult`（fitness/rmse/converged） |
+| [backend/scan_context.py](backend/scan_context.py) | ScanContext 位置识别：描述子、列位移距离、yaw 换算、ring-key KD 树索引。 | `ScanContextConfig`、`descriptor`、`distance`、`shift_to_yaw`、`ScanContextIndex.query` |
+| [semantic_mapping/README.md](semantic_mapping/README.md) | 语义点层子模块文档：来源绑定、掩码规则、查询入口、有界存储。 | — |
+| [semantic_mapping/__init__.py](semantic_mapping/__init__.py) | 唯一门面：重导出 `Observation`/`PointMask`/`LayeredMap`/`SemanticScheduler`/`read_snapshot` 与三个状态常量。 | `__all__` 共 9 项 |
+| [semantic_mapping/core.py](semantic_mapping/core.py) | 点层、对象关联、修订/重投影、快照与原子保存。 | `Observation`、`PointMask`、`LayeredMap.integrate/revise_mask/update_anchor/static_points/query/summary/snapshot/save`、`read_snapshot` |
+| [semantic_mapping/query.py](semantic_mapping/query.py) | 只读、确定性的快照过滤与结构化上下文。 | `select`、`context_text`（schema `observed_scene_map_query/v1`） |
+| [semantic_mapping/scheduler.py](semantic_mapping/scheduler.py) | 传感器时钟上的语义准入（周期/事件/epoch），不做推理。 | `SemanticScheduler.request/complete` |
 
-## 模块内文件耦合
+## 输入输出与启动
 
-依赖方向：两个 ROS 节点（`odom_adapter`、`localization_runtime`）基本是"叶子"——只 import 本目录的库文件，外加 `common/*`、`project` 与 `perception/sensors/*` 的少量工具；库文件之间是**单向**的 `localization_runtime → {sensor_snapshot, known_scene_matcher}`、`known_scene_inputs → {known_scene_adapter → {known_scene_matcher, point_provenance}, known_scene_hold_guard}`。包内不存在 import 环。
+```bash
+python -m embodied_navigation.localization_mapping.backend.node \
+    --spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend \
+    --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map" \
+    [--prior-map "$PRIOR_MAP"] [--config <backend.json>]
+```
 
-| 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
-| --- | ---: | --- | --- | --- |
-| `known_scene_inputs.py` | 1138 | `known_scene_adapter`、`known_scene_hold_guard`、`known_scene_matcher`、`point_provenance`、`common/*`、`perception/sensors/*`、**`control/parking/{causal_join,terminal_owner}`** | `navigation/pid_entrypoint.py`（作为 mixin 混入） | 偏重/可疑：>800 行且跨层 import |
-| `known_scene_matcher.py` | 713 | `common/integration_limits` | `known_scene_adapter`、`known_scene_inputs`、`localization_runtime`、`planning/admission/physical_gate`、`planning/scan_epoch_supervisor` | 可接受但偏重 |
-| `known_scene_adapter.py` | 646 | `known_scene_matcher`、`point_provenance`、`common/integration_limits` | `known_scene_inputs` | 偏重（`_check` 176 行、`_run` 109 行） |
-| `known_scene_hold_guard.py` | 445 | **`control/parking/transition_gate`**（函数内延迟 import） | `control/parking/terminal_owner`、`known_scene_inputs`、`navigation/{base_node,pid_support,ros_node}` | 可疑：双向跨层 + 私有 `_frame` 被外部直接 import |
-| `localization_runtime.py` | 429 | `known_scene_matcher`、`sensor_snapshot`、`common/*`、`perception/sensors/async_writers` | 无 import 方（launch 以 `-m` 启动） | 清楚但 `main()` 272 行 |
-| `point_provenance.py` | 397 | 标准库 + NumPy | `known_scene_adapter`、`known_scene_inputs`、`odom_adapter`、`perception/sensors/self_echo_filter` | 清楚 |
-| `odom_adapter.py` | 237 | `point_provenance`、`geometry`、`project` | 无 import 方（launch 以 `-m` 启动） | 清楚 |
-| `sensor_snapshot.py` | 185 | `common/integration_limits` | `localization_runtime` | 清楚 |
-| `geometry.py` | 96 | 仅 NumPy/SciPy | `mapping/map_archive`、`odom_adapter`、`perception/sensors/self_echo_filter` | 清楚 |
-| `known_scene_reference_builder.py` | 81 | 仅标准库 + SciPy | `launch/prepare.py`（prepare 期一次） | 清楚 |
-| `feedback_state.py` | 33 | 无 | `navigation/pid_ingress.py` | 清楚 |
-| `__init__.py` | 1 | 无 | 无 | 清楚 |
+- 后端每 `--poll-s`（默认 0.2 s）按数值序读取就绪 `kf_*` 目录，`SlamBackend.ingest` 之后删除该目录（确认路径在 `--spool` 之下），因此导出器的 `max_ready_directories` 不会被写满；解码失败的目录改名 `rejected_kf_*` 并记入状态。
+- 输出话题与 TF、spool 文件格式、建图/重定位两种模式的判定流程见 [backend/README.md](backend/README.md)。
+- 语义层的离线入口是 `scripts/reconstruct_dynanav_slam_map.py`（用录制的 LIO 估计重建点层）与 `scripts/query_scene_map.py`（读快照并过滤）；当前 HEAD 的 DynaNav 在线 `publish_cloud` 调用点传的是 `None` mapper，在线 adapter 未接线（`git grep oracle_mapper` 只命中参数与定义）。
 
-四类问题（逐条给证据）：
+## 验证与测试入口 / 配置注意
 
-- **上帝文件**：`known_scene_inputs.py` 1138 行、30 个方法、单函数最长 187 行（`_r86_commit_feedback`）。它同时承担订阅包装、时钟策略、R86/R92/R99/R104 状态机、反馈提交与 map-frame 交接，是典型的"按历史轮次堆叠的 mixin"。
-- **重复实现**：PointCloud2 的 XYZ 解码有 3 份近似实现——`point_provenance.xyz`（无有限性检查）、`sensor_snapshot.xyz`（多的 `np.isfinite` 检查）、`known_scene_adapter.pointcloud_xyz`（另写一遍）；`checked_transform` 有 2 份且容差不一致（`known_scene_matcher.py:28` 末行 `atol=1e-10` vs `backend/geometry.py:13` 末行 `atol=1e-8`）。
-- **跨层直达**：`known_scene_inputs.py:72-77` 直接 import `control.parking.causal_join`/`terminal_owner`；`known_scene_hold_guard.py:252,263` 在函数内 import `control.parking.transition_gate.TeacherHeadingGate`；反向 `control/parking/terminal_owner.py:6` 又 import `known_scene_hold_guard._frame`。于是**包级依赖成环**：`localization_mapping ↔ control.parking`（文件级无 import 环，因为一侧是延迟 import）。`localization_runtime.py:168` 还直接 import `perception.sensors.async_writers`。
-- **隐式契约**：`KnownSceneInputMixin` 假定宿主节点已有 `self.run`、`self.profile`、`self.pose_timeout`、`self.cloud_timeout`、`_admit_matched_spline` 等属性，并用 `getattr(self, "profile", None)` 兜底；`pid_entrypoint.py` 还在运行时替换 `IntegratedNavigation._known_generation_ready`。`known_scene_hold_guard._frame()` 返回 `(generation, C_world_odom, T_navigation_world)` 三元组、`BINDING_KEYS` 十个字符串键，都是靠调用顺序和 dict key 维持的约定，没有类型或协议声明。
-
-结论：**局部清楚、包级偏重**。节点→库的单向分层是好的（四个节点互不 import），纯函数文件的 docstring 与命名也规范；问题集中在"历史轮次 mixin 长大"和"localization ↔ control/navigation 双向 import"两处，属于结构债而非乱写。
-
-## 可读性评估
-
-- **良好**：`geometry.py`（函数 docstring 覆盖 1.0，5 个函数最长 43 行）、`feedback_state.py`（1.0，26 行单函数，docstring 明确写"不是 truth→SLAM 转换器"）、`known_scene_reference_builder.py`（1.0，81 行，`build()` docstring 说明只取静态 box）、`point_provenance.py`（0.312 但 16 个函数最长 71 行，模块 docstring 点明"几何是独立门禁"）、`sensor_snapshot.py`（0.545，最长 45 行）。
-- **可接受**：`known_scene_matcher.py`（713 行 / 17 函数 / docstring 0.118；核心 `score()` 189 行、`match()` 154 行各承担"打分所有门限"和"假设+精配准+接受判定"，门限集中在 `MatchPolicy` dataclass 里、有名字，这是它比 `known_scene_inputs` 好读的主要原因）、`localization_runtime.py`（429 行，docstring 0.273，但 `main()` 272 行内嵌整个 `Localization(Node)` 类，读它必须一口气看完）、`odom_adapter.py`（237 行，**函数 docstring 0.0**，`receive()` 82 行含帧检查/时间单调/外参换算/twist 有效性）。
-- **需改进**：`known_scene_inputs.py`——函数 docstring 0.1（30 个函数只有 3 个有），最长 187 行；文件头 80 行里 `from … import` 与赋值交替出现（`_observer_api` 同一句重复 import 10 次），`import json, time, math, copy, hashlib` 夹在 from-import 中间；Rxx 编号命名（`_r86_*`/`_r92_*`/`_r99_*`/`_r104_*`）对没读过历史轮次的人不可检索。`known_scene_adapter.py` 有 4 处 `except Exception: pass`（`known_scene_adapter.py:587,598,618,630`，其中 630 带注释"no observer exception replaces original result"），诊断信息在诊断捕获路径上被静默丢弃。
-
-区分结构与文档：`odom_adapter`、`map_archive` 等是"缺 docstring/函数偏长"的**文档问题**（它们的分层和命名是清楚的）；只有 `known_scene_inputs.py` 同时有**结构问题**（1138 行 mixin + 跨层 import）。指标抽查：用 AST 复算 `backend/run.py`（4 函数、docstring 0.0）、`odom_adapter.py`（6 函数、0.0）、`known_scene_inputs.py`（30 函数、3 个 docstring、最长 187 行）与事实包一致。
-
-## 重构建议
-
-本轮只写建议、不改代码；任何一条都应"先补测试/对照再动"。本目录的 `known_scene_*` 链路在 `tests/` 里**没有直接用例**（`grep -rn "known_scene" tests/` 命中 0），所以这里的 P1 都标了"先补测试"。
-
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P1 | 把 `known_scene_inputs.py` 按轮次职责拆成 3 个 mixin（订阅/时钟策略、反馈提交、map-frame 交接），保留 `KnownSceneInputMixin` 作为组合门面 | 1138 行 30 方法无法单点修改；`_r86_commit_feedback` 187 行是主路径的反馈提交 | 高：`pid_entrypoint.py` 按方法名 monkeypatch（`_known_generation_ready`），拆分必须保留同名转发 | 先加一个不启 ROS 的契约测试（对假 node 调用 `_known_generation_ready`/`on_localization_bundle` 的最小桩），再逐块搬 |
-| P1 | 断开 `localization_mapping ↔ control.parking` 的包级环：把 `_frame()`/`TeacherHeadingGate` 依赖改为显式参数或 protocol | 现在 `terminal_owner` import `_frame`（私有函数），`hold_guard` 又延迟 import `transition_gate`；`import` 顺序稍变就可能踩到半初始化模块 | 中：两侧都有真实调用者（停车/导航） | 用 `python -c "import embodied_navigation.control.parking.terminal_owner"` 与反向单独 import 各跑一次；补 `tests/unit` 的导入顺序用例 |
-| P1 | 统一 3 份 PointCloud2 XYZ 解码为 `point_provenance.xyz` 一份（保留最严的有限性检查），`sensor_snapshot`/`known_scene_adapter` 改为调用 | 三份实现的错误消息与校验强度不同，修 bug 要改三处 | 中：热路径性能与错误文案变化 | 用一份录制的 PointCloud2 夹具分别调用三份解码，断言逐位相同（`tests/` 目前没有直接覆盖解码的用例，需新增一个）；再跑现有的后端回归确认没有改变行为 |
-| P2 | 给 `odom_adapter.receive()`、`localization_runtime.main()` 补 docstring/拆内嵌类 | 两个入口是接手者第一眼要读的代码，却是 docstring 最少的地方 | 低（纯文档/等价搬移） | 只改注释时人工复核 |
-| P2 | `known_scene_adapter.py` 的 4 处 `except Exception: pass` 改为计数/记录到 result 字段 | 静默吞异常会让"为什么没校正"无从排查 | 低：只加诊断 | 注入会抛异常的假 matcher，断言 result 里出现 `diagnostic_errors>0` |
-| P2 | 在文件头注明 Rxx 编号含义（或集中一张编号→职责表） | `_r86_*`/`_r92_*`/`_r99_*`/`_r104_*` 是本目录最重的隐性词汇表 | 无 | 人工复核 |
-
-没有 P0：本目录不直接发布控制命令，所有校正都经过 `CorrectionState`/`BackendResultReader` 的 schema+年龄+epoch 检查，未发现"能靠改文档绕过安全门"的正确性缺口。
-
-## 组成
-
-- [backend/README.md](backend/README.md)：D 路径点云 SLAM 后端：消费 FAST-LIVO2 关键帧 spool，ScanContext 位置识别、ICP 回环、SE(3) 位姿图、地图保存/加载、先验地图重定位，由 `backend.node` 发布 map→odom。
-- [frontend/README.md](frontend/README.md)：FAST-LIVO2 的 ROS 接入资料。
-- [launch/README.md](launch/README.md)：本模块的 ROS 进程装配。
-- [mapping/README.md](mapping/README.md)：运行期观测地图归档。
-- [semantic_mapping/README.md](semantic_mapping/README.md)：纯 CPU 的动静分层、对象 ID、历史与结构化查询；显式保存 SLAM/oracle 来源，目前由 DynaNav 诊断接入，不代表生产语义感知已完成。
-- 顶层节点：[odom_adapter.py](odom_adapter.py) 把 `/aft_mapped_to_init` 的 IMU 状态换算成 body/lidar 里程计与有效 twist；[localization_runtime.py](localization_runtime.py) 做已知场景地图辅助的实时定位与 bundle 发布。
-- 支撑模块：`geometry.py`（坐标代数）、`sensor_snapshot.py`（同源时间配对）、`point_provenance.py`（点与 commit 身份校验）、`known_scene_*.py`（场景参考、匹配、输入与保持门）、`feedback_state.py`。
-
-## 输入输出
-
-前端输入是 `/aft_mapped_to_init` 与注册点云。注意同名话题在两张图里是不同东西：`odom_adapter` 节点默认发布 `/demo/slam/{body,lidar}_odom`，但默认 launch 把它 remap 成 `/demo/slam/raw_*`；真正的 corrected `/demo/slam/{body,lidar}_odom` 由 `localization_runtime` 发布。完整输出还有 `/cloud_registered_full`、`/demo/navigation/localization_bundle`、`/demo/navigation/localization_status`。名词定义见 [docs/glossary.md](../../../docs/glossary.md) 的 raw/corrected 与 provenance 条目。
-
-A/D 两条执行路径与进程图见 [docs/architecture.md](../../../docs/architecture.md)；本目录只覆盖其中的定位/建图角色。
-
-## 测试与限制
-
-- 后端有专用用例 `tests/unit/test_slam_backend_*.py`（合成世界，纯 numpy/scipy）与 C++ spool 对接用例 [tests/regression/test_snapshot_bridge.py](../../../tests/regression/test_snapshot_bridge.py)；语义层有 [tests/unit/test_layered_mapping.py](../../../tests/unit/test_layered_mapping.py)。
-- 顶层 ROS 节点没有专用 unittest。`known_scene_*` 与 `odom_adapter`/`localization_runtime` 在 `tests/` 中无直接断言（`grep -rn "known_scene\|odom_adapter" tests/` 无命中），只能静态阅读。
-- `fastlivo_mapping` 二进制来自 `install/ros`，缺失只表示本机未构建；`feedback_state` 的 `pose_producer="fast_livo2_async_backend"` 是**标签**，与 `backend/` 的 D 路径后端无关，不要凭标签推断进程存在（未核实）。
-- 本目录没有做端到端验收：没有真实 FAST-LIVO2 吞吐、没有 GPS/回环全局一致性、没有实机验证；本轮只读代码与磁盘，未运行 ROS。
+- 后端单测（合成世界，纯 numpy/scipy）：`tests/unit/` 下的 [test_slam_backend_backend.py](../../../tests/unit/test_slam_backend_backend.py)、[test_slam_backend_config_and_imu_patch.py](../../../tests/unit/test_slam_backend_config_and_imu_patch.py)、[test_slam_backend_correction.py](../../../tests/unit/test_slam_backend_correction.py)、[test_slam_backend_map_store.py](../../../tests/unit/test_slam_backend_map_store.py)、[test_slam_backend_pose_graph.py](../../../tests/unit/test_slam_backend_pose_graph.py)、[test_slam_backend_registration.py](../../../tests/unit/test_slam_backend_registration.py)、[test_slam_backend_scan_context.py](../../../tests/unit/test_slam_backend_scan_context.py)、[test_slam_backend_spool.py](../../../tests/unit/test_slam_backend_spool.py)，共用 [tests/unit/slam_backend_fixtures.py](../../../tests/unit/slam_backend_fixtures.py)（30 m × 20 m 合成房间与 360° 雷达）。
+- 原生 spool 对接回归（需要 g++）：[tests/regression/test_snapshot_bridge.py](../../../tests/regression/test_snapshot_bridge.py) 编译并运行真实的 C++ `snapshot_bridge`，再用 `keyframes.read_keyframe` 解码。
+- 语义层：[tests/unit/test_layered_mapping.py](../../../tests/unit/test_layered_mapping.py) 20 个用例；[tests/unit/test_dynanav_source_snapshot.py](../../../tests/unit/test_dynanav_source_snapshot.py) 用 AST 断言来源快照包含 `semantic_mapping/query.py` 与 `scripts/query_scene_map.py`。
+- 全量 CPU 测试：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`。
+- 配置：后端阈值集中在 `BackendConfig`，可由 `node.py --config <json>` 经 `BackendConfig.from_json` 严格加载（未知键/非法值直接报错）；当前启动脚本没有传 `--config`，因此使用 `BackendConfig()` 默认值。先验地图用环境变量 `PRIOR_MAP` 传给启动脚本，再由脚本转成 `--prior-map`；`--save-map` 指向 `$RUN/map`。`--truth-pose` 模式不启动本模块。
+- 本机只做 `compileall` 与纯 CPU 测试：ROS 节点、真实 FAST-LIVO2 吞吐、回环正确性与先验重定位都需要 Linux + Isaac/ROS 环境，未在本次文档盘点中运行。

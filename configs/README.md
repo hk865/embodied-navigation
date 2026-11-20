@@ -1,106 +1,94 @@
-# 配置入口与生效顺序
+# configs（base 配置与契约数据）
 
-`configs/` 是 base 配置与契约数据，不是每次运行的有效值。普通运行先读 [launch/navigation.json](launch/navigation.json) 列出的六个模块配置，再由入口生成本次参数写入 `runs/`（DynaNav 写外部数据卷的 `experiments/`）。
+盘点日期 2026-11-20。本目录是 DynaNav / Isaac（D 路径）的 base 配置与契约数据，共 12 个 git 跟踪文件，分 `simulation/` 与 `visualization/` 两个子目录。它**不是**某次运行的有效值：一次运行的真实参数是 run 目录里冻结的副本与收据，本目录只提供启动前的基线。
 
-## 目录结构
+## 模块定位与架构层级
+
+- 架构层级：基础设施层（配置数据），不属于七层中的任何业务层。它被仿真层（`simulation/dynanav/`）、估计器启动器（`scripts/run_dynanav_lio.sh`）、主入口（`scripts/run_dynanav_native_exploration.sh`）与人工可视化读取。
+- 输入：维护者对 YAML/XML/JSON 的编辑；文件随 git 跟踪，无生成步骤、无 include/继承。
+- 输出：不作为运行产物写回。运行期消费者把文件内容转成 ROS 参数、USD 会话修复指令、DDS 传输 profile 或 RViz 显示配置。
+- 上游 / 下游：
+  - 被 `scripts/run_dynanav_lio.sh` 读成 `--params-file`（`fastlivo_lio.yaml` / `fastlivo_livo.yaml`、`camera_rgbd.yaml`、按需 `fastlivo_rtx_os1_32.yaml`）；
+  - 被 `scripts/dynanav_observer_transport.py` 选中为 DDS 接收 profile（`observer_udp_rx4m.xml`）；
+  - 被 `src/embodied_navigation/simulation/dynanav/session_collision.py` 运行期读取（`dynanav_basement_collision.json`），并被 `experiment.py` 的 source snapshot 逐字节复制；
+  - 被人工 `rviz2 -d` 加载（`visualization/dynanav_map.rviz`）。
+- 边界：本目录不写日志/产物、不含可执行代码；同一 topic/frame 改名不会在这里报错。不要手改 run 目录里冻结的配置副本当基线，也不要把本目录的文件当成「已经生效」。
+
+## 当前文件夹结构
 
 ```text
 configs/
-├── common/                # 运行目录/通信/遥测：settings.json（39 行）
-├── control/               # cascade 速度界与停车：settings.json（567 行）
-├── launch/                # 模块清单与特性开关：navigation.json（10 行）+ settings.json（70 行）
-├── localization_mapping/  # 前端/后端 base：settings.json（80 行）+ fastlivo.yaml（128 行）+ camera.yaml（17 行）
-├── planning/              # SCAN/PCT 与静态支撑：settings.json（53 行）+ static_support_limits.json（23 行）
-├── scenarios/             # 场景/地形数据（2 文件、103 行），见 scenarios/README.md
-├── simulation/            # 世界/物理/传感器与 DynaNav 场景（10 文件、4660 行）：settings.json（3294 行）+ 2 个 collision JSON + dynanav/ 子目录（7 文件、693 行，其中 2 篇 README 共 435 行）
-├── visualization/         # RViz 配置（2 文件、181 行），见 visualization/README.md
-├── README.md              # 本文件：读取顺序、pin、消费者与边界
+├── README.md                                         # 本文件
+├── simulation/
+│   ├── dynanav_basement_collision.json               # 349 行，地下室+地面碰撞会话修复契约（运行期读取）
+│   ├── dynanav_basement_to_ground_collision.json     # 463 行，地下室→地面路线与碰撞选择（仅 source snapshot）
+│   └── dynanav/
+│       ├── README.md                                 # 68 行，估计器配置索引
+│       ├── README_LIO.md                             # 331 行，LIO/LIVO 长文说明与实验记录
+│       ├── camera_rgbd.yaml                          # 18 行，512×512 pinhole 内参基准
+│       ├── fastlivo_lio.yaml                         # 100 行，ONLY_LIO 模式参数
+│       ├── fastlivo_livo.yaml                        # 129 行，RGB 辅助 LIVO 模式参数
+│       ├── fastlivo_rtx_os1_32.yaml                  # 27 行，RTX OS1 32 线传感器覆盖
+│       └── observer_udp_rx4m.xml                     # 21 行，observer 4 MiB UDPv4 接收 profile
+└── visualization/
+    ├── README.md                                     # 81 行，人工 RViz 查看说明
+    └── dynanav_map.rviz                              # 69 行，RViz2 显示配置
 ```
 
-合计 24 个文件（`find configs -type f | wc -l`，2026-11-09 实测）。
+12 个文件、合计 1762 行（`wc -l`，2026-11-20）。本目录没有 `.py` 代码；早期 base 配置子目录已在本分支退役，**不存在**对应读取点，也不再提供任何模块清单入口。
 
-## 代码、日志与配置
+## 逐文件职责
 
-本目录是**配置与契约数据**，不含可执行代码；按“配置读取点 / 运行产物 / 配置项语义”三问回答：
-
-| 类别 | 位置 | 含义 |
+| 文件 | 核心职责 | 关键接口/读取点 |
 | --- | --- | --- |
-| 代码（读取点） | [`common/config.py`](../src/embodied_navigation/common/config.py) | `read()` 读 `configs/launch/navigation.json` 的 `modules` 列表，按顺序合并六个 JSON；同层重复键报 `ValueError`、越界路径报 `ValueError`、`${PROJECT_ROOT}` 展开、`path()` 解析资产路径。每次调用都重读（无缓存）。 |
-| 代码（生成器） | [`launch/prepare.py`](../src/embodied_navigation/launch/prepare.py)、[`simulation/world/prepare.py`](../src/embodied_navigation/simulation/world/prepare.py)、[`perception/sensors/sampling.py`](../src/embodied_navigation/perception/sensors/sampling.py)、[`planning/scan_runtime_parameters.py`](../src/embodied_navigation/planning/scan_runtime_parameters.py) | `prepare.py` 深拷贝 profile、执行 pin（见“读取顺序”第 2 条），再生成 world/外参/SLAM 覆盖/SCAN 参数/路线并写 run 目录。 |
-| 代码（运行期消费者） | 见“读取顺序”第 4 条 | 分“只读 runtime_context 的业务 profile”和“仍直接重读 configs”两类，不能一概说“configs 不再生效”。 |
-| 日志/输出 | `runs/<run_id>/`（软链到外部数据卷） | 本目录**不写**任何文件。一次运行生成 `runtime_context.json`、`navigation_profile.json`、`navigation_scenario.json`、`navigation_fastlivo.yaml`、`navigation_camera.yaml`、`terrain_target_manifest.json`、`known_scene_reference.json`、`v34_scan_overrides.yaml`、`global_route.json`、`world.sdf` 等；这些是本次证据，不是可编辑配置。全局产物布局见 [readability 报告 §9](../docs/review/dsh-workflow-and-readability-20261109.md)。 |
-| 配置（本目录） | 见“目录”表 | 只有部分文件有代码读取点；`scenarios/terrain_targets/lower12.json` 是当前无代码读取点的保留数据（见该目录 README），不能当作生效配置。 |
+| `README.md` | 本文件：目录边界、逐文件职责、真实读取点与验证入口。 | — |
+| `simulation/dynanav/README.md` | 估计器配置子目录索引：说明估计器 YAML 的模式差异、唯一读取点与不写日志的边界。 | 文档，无代码读取 |
+| `simulation/dynanav/README_LIO.md` | LIO/LIVO 长文说明：启动命令、隔离 namespace、标定契约、post-VIO 评分与生命周期记录；含人工阅读的默认/历史对照。 | 文档，无代码读取 |
+| `simulation/dynanav/camera_rgbd.yaml` | 当前采集相机的 512×512 pinhole 内参基准（`cam_fx=cam_fy=292.5714…`、`cam_cx=cam_cy=256`、畸变 0、`use_sim_time: true`）。 | `run_dynanav_lio.sh` 在 `--mode livo` 下作为参数服务基线；随后用 `--capture-result` 的 `sensor_installation` 覆盖并校验；`--mode lio` 不使用 |
+| `simulation/dynanav/fastlivo_lio.yaml` | ONLY_LIO 模式参数：`common.img_en: 0`、`allow_lio_only: true`，输入 `/dynanav/lidar_static` + `/dynanav/imu`，`evo.pose_output_en: false`；IMU/LIO/local_map 等阈值。 | `run_dynanav_lio.sh --mode lio` 拼成 `fastlivo_lio.yaml`；preflight 校验模式与 post-VIO 开关一致 |
+| `simulation/dynanav/fastlivo_livo.yaml` | RGB 辅助 LIVO 模式参数：`img_en: 1`、`allow_lio_only: false`，增加 `/dynanav/camera`，post-VIO 输出开启；视觉参数是本轮实验设置，不是精度结论。 | `run_dynanav_lio.sh --mode livo`；同样经 preflight 一致性校验 |
+| `simulation/dynanav/fastlivo_rtx_os1_32.yaml` | RTX 旋转 Ouster OS1 覆盖：`allow_ouster_lidar: true`、`lidar_type: 3`、`scan_line: 32`、`feature_extract_enabled: false`、`point_filter_num: 1`、identity LiDAR 外参；另有缓冲硬上限与 `same_pair_vio_handoff`。 | 只在 `--lidar-topic /dynanav/lidar_rtx` 时由 `run_dynanav_lio.sh` 追加为第二个参数文件；主入口在 SLAM 模式下把它复制进 run 的 `configuration/` |
+| `simulation/dynanav/observer_udp_rx4m.xml` | FastRTPS 传输 profile：只声明 UDPv4 与 `receiveBufferSize=4194304`，不设发送缓冲、白名单、消息尺寸或 QoS。 | `scripts/dynanav_observer_transport.py` 的 `select_transport` 只在 auto + `rmw_fastrtps_cpp` + `FASTDDS_BUILTIN_TRANSPORTS=UDPv4` + 无既有 DDS 配置时选中；由 `run_dynanav_lio.sh` preflight 导出给 observer 进程 |
+| `simulation/dynanav_basement_collision.json` | `dynanav_basement_collision/v1` 契约：119 个已审计可见水平楼板 mesh 路径 + 4 条原始楼梯路径 + 地面平面路径，附 provenance、`floor_validation` 与 `support_preflight` 采样与容差。 | `session_collision.load_config`（`CONFIG_PATH = project_root()/configs/simulation/dynanav_basement_collision.json`）在 `capture.scene.open_stage` 的 `basement_collision` 分支执行会话修复；`experiment.py` 另读其 `provenance` 写入 profile，并把它列入 source snapshot |
+| `simulation/dynanav_basement_to_ground_collision.json` | 同一 schema 的地下室→地面路线契约：楼层/楼梯路径、`route.waypoints_xyz`、推荐诊断速度等。 | **无运行期读取点**：只在 `experiment.py` 的 source snapshot 清单里被逐字节读取 + sha256 + 复制；`waypoints_xyz` 不由它驱动（默认航点硬编码在 `experiment.py`） |
+| `visualization/README.md` | 人工 RViz 查看说明：命令、`ROS_DOMAIN_ID`、QoS/frame 约定与「显示证据 ≠ 导航证据」的边界。 | 文档，无代码读取 |
+| `visualization/dynanav_map.rviz` | RViz2 配置：`Fixed Frame=dynanav_lio_map`、PointCloud2 显示 `/dynanav/review/static_map`（Reliable + Transient Local、Keep Last depth 1）、Z 轴着色、0.03 m Flat Squares、Orbit 视角。 | 只有人工 `rviz2 -d configs/visualization/dynanav_map.rviz`；无 Python/ROS 节点自动加载 |
 
-## 读取顺序
+## 真实读取点（以代码为准）
 
-1. **启动器读配置**：`start.py` → `launch/main.py` 调 `common.config.read()` 合并 [launch/navigation.json](launch/navigation.json) 里的六个文件（control、planning、localization_mapping、simulation、common、launch），`path()` 解析资产路径；`launch/prepare.py` 再按同一棵树生成 world/外参/SLAM 覆盖/SCAN 参数/路线。
-2. **prepare 的 pin**：`prepare.py` 把若干键**强制写成固定值**（`daily_navigation`（profile 与 `cascade` 两处）、`experiment=navigation`、`r85_auto_reference_contract.reference_file="global_reference.json"`、`engineering_recording.raw_source_capture=false`、`engineering_recording.registered_cloud_archive="disabled"`）。与配置不一致时会向 stderr 报告旧值/新值/原因，不再静默覆盖。
-3. **本次 profile 写入 run 目录**：`profiles` 写进 `runtime_context.json`（含 `profile`、`run_dir`；`experiment="navigation"`、`navigation_ground_truth_used=false` 等固定字段）与 `navigation_profile.json`。
-4. **运行期消费者分两类，不能一概说"configs 不再生效"**：
-   - 读 **runtime_context** 的进程：`navigation/ros_node.py`、`robot/unitree/bridge.py`、`navigation/mission/mission_runtime.py`、`localization_mapping/localization_runtime.py`、`localization_mapping/launch/components.py`、`perception/sensors/sensor_gate.py`。这些模块的业务 profile 来自本次 run 的 context；这不表示全部配置读取都被冻结，例如 localization launch 仍通过 `path("ros_prefix")` 重读资产路径配置。
-   - 仍**直接重读 configs** 的运行期消费者：`robot/unitree/policy/student.py` 的 `read()["student_runtime"]`；`common/runtime_environment.py` 及部分 planning/simulation/localization launch 组件通过 `path()` 重新读取路径配置。
-   - 另有 `planning/scan_epoch_supervisor.py` 直接读 run 里的 `navigation_profile.json`。
-
-因此"改了配置却没变化"的常见原因依次是：该键被 prepare pin、被 `launch/main.py` 的环境构造覆盖、只有读 runtime_context 的进程不读它、或该键根本没有读取点。
-
-## 目录
-
-| 路径 | 消费者 | 说明 |
+| 读取方 | 读取什么 | 性质 |
 | --- | --- | --- |
-| `launch/navigation.json`、`launch/settings.json` | `common.config.read`、`launch/main.py` | 模块清单与 `features` 开关；`features` 里 45 个键中只有部分在 `src/` 有读取点，探针类键会被启动器强制 `"0"` |
-| `control/settings.json` | `navigation`/`control` 经启动器与 profile | cascade 速度界、停车等参数 |
-| `planning/settings.json`、`planning/static_support_limits.json` | `planning` | SCAN/PCT 与静态支撑 |
-| `localization_mapping/settings.json`、`fastlivo.yaml`、`camera.yaml` | 定位前端/后端 | base 参数；运行时覆盖由 prepare 生成 |
-| `simulation/settings.json`、`simulation/dynanav_*.json` | `simulation` | 世界/物理/传感器与 DynaNav 碰撞场景 |
-| `common/settings.json` | `common` | 运行目录、通信、遥测 |
-| `scenarios/` | `launch/prepare.py` | 路线与地形数据；`terrain_targets/` 当前无代码读取（见该目录 README） |
-| `visualization/` | 人工/脚本 | RViz 配置等可视化资源；`.rviz` 无 Python 读取者（人工 `rviz2 -d`） |
+| [`scripts/run_dynanav_lio.sh`](../scripts/run_dynanav_lio.sh) | `configs/simulation/dynanav/fastlivo_lio.yaml` 或 `fastlivo_livo.yaml`（按 `--mode`）、`camera_rgbd.yaml`、`fastlivo_rtx_os1_32.yaml`（RTX LiDAR 时） | 拼 `--params-file` 启动外部 observer；`--config-dir` 可改指 run 内冻结副本 |
+| [`scripts/dynanav_observer_transport.py`](../scripts/dynanav_observer_transport.py) | `configs/simulation/dynanav/observer_udp_rx4m.xml`（常量 `PROFILE`，相对 `repo` 解析） | 纯函数 `select_transport` 选择传输 profile 并写 hash；不修改环境 |
+| [`scripts/run_dynanav_native_exploration.sh`](../scripts/run_dynanav_native_exploration.sh) | SLAM 模式下复制上述三份 YAML 到 `<run>/configuration/`；`--truth-pose` 模式不复制 | 冻结本次运行使用的配置副本 |
+| [`src/embodied_navigation/simulation/dynanav/session_collision.py`](../src/embodied_navigation/simulation/dynanav/session_collision.py) | `configs/simulation/dynanav_basement_collision.json` | 运行期读：加载楼层/楼梯路径、校验 schema、会话内恢复碰撞 |
+| [`src/embodied_navigation/simulation/dynanav/experiment.py`](../src/embodied_navigation/simulation/dynanav/experiment.py) | 两个 `configs/simulation/dynanav_*.json` | `dynanav_basement_collision.json` 的 `provenance` 被写进 profile；两者都进 `source_snapshot/` + `source_manifest.json`（sha256） |
+| 人工 | `configs/visualization/dynanav_map.rviz` | `rviz2 -d` 手动加载，无自动读取点 |
 
-## 模块内文件耦合
+除上表外没有其他代码读 `configs/`。一个常见误判是把子目录 README 里提到的历史实验约定当成当前生效配置：本目录不提供模块清单合并、无 include 继承、无 prepare 生成的运行期 profile，因此改一个 YAML 只影响上面列出的读取方。
 
-- 依赖方向：配置之间**没有 include/继承**；耦合是“文件 → 读取点”的单向关系。唯一的多文件组合是 `launch/navigation.json` 的 `modules` 列表（固定六个模块，按序合并；重复顶层键直接报错），以及 `prepare.py` 从 base 派生 run 内配置。
-- 与代码的耦合是**字符串键契约**：`settings.json` 的键名、`features` 的 `R\d+_*` 开关、`runtime_paths` 的四个路径键、`fastlivo.yaml`/`camera.yaml` 的 ROS 参数名，都没有 schema 校验（`read()` 只查 JSON 类型/重复键/路径越界）。改键名/类型不会在这里报错，只会让读取方走默认值或失败。
-- 隐式契约（已核实的典型）：
-  - `launch/navigation.json` 的六个模块必须是 JSON object 且顶层键不重复；entry 自身其它顶层键最后覆盖（会静默赢过模块值）。
-  - `prepare.py` 的 pin 覆盖 profile；`runtime_context.write()` 固定写 `experiment="navigation"`、`navigation_ground_truth_used=false`。
+## 验证与测试入口
 
-| 文件/目录 | 行数/规模 | 读取点 | 判断 |
-| --- | ---: | --- | --- |
-| `launch/navigation.json` + `launch/settings.json` | 10 + 70 | `common.config.read` + 启动器 | 清楚：入口清单短 |
-| `control/settings.json` | 567 | 启动器/profile | 偏重：单文件参数多，靠本 README 说明 |
-| `simulation/settings.json` | 3294 | 启动器/profile | **偏重**：全仓最大配置，人工审阅成本高 |
-| `localization_mapping/*` | 225 | 前端/后端 + prepare | 清楚：base 与生成覆盖分离 |
-| `planning/*` | 76 | planning | 清楚 |
-| `common/settings.json` | 39 | common/启动器 | 清楚 |
-| 6 个无读取点文件 | 8–232 | 无 | 可疑（孤儿配置）：易被误当生效值 |
+```bash
+PYTHONPATH=src python3 -B -m compileall -q src scripts
+PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
+PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
+```
 
-结论：配置层**没有循环依赖**，但“文件多、读取点散、无 schema”使隐式契约偏多；这是配置系统的固有成本，不是结构错误。最大的可维护性风险是 `simulation/settings.json`（3294 行）与 6 个无读取点文件。
+直接覆盖本目录契约的测试：
 
-## 可读性评估
+| 测试 | 覆盖 |
+| --- | --- |
+| `tests/regression/test_dynanav_lio_launcher.py` | `run_dynanav_lio.sh` 对 `fastlivo_lio.yaml` / `fastlivo_livo.yaml` / `camera_rgbd.yaml` / `fastlivo_rtx_os1_32.yaml` 的选取与 preflight |
+| `tests/unit/test_dynanav_rtx_source.py` | `fastlivo_rtx_os1_32.yaml` 的 ROS 参数（`allow_ouster_lidar`、type 3、32 线等） |
+| `tests/unit/test_dynanav_observer_transport.py` | `observer_udp_rx4m.xml` 的选择条件与 hash 记录 |
+| `tests/unit/test_dynanav_source_snapshot.py` | 两个 collision JSON 的 source snapshot 行为 |
+| `tests/unit/test_pct_grid_budget.py`（经 `pct_budget_acceptance_fixtures.py`） | 主入口复制三份 YAML 到 run `configuration/` 的清单 |
+| `tests/regression/test_dynanav_session_collision.py` | `dynanav_basement_collision.json` 的 schema、路径与支撑 preflight |
 
-- `README.md`（原 39 行）：**可接受偏高**。读取顺序、pin、运行期消费者分类写得很具体（这是全仓最有价值的配置说明之一），但没有目录树/规模信息，也没有把“无读取点”集中到一处；本轮已补。
-- `JSON/YAML` 配置文件：**可接受**。JSON 不能写注释，键名基本自解释（`duration_s`、`runtime_paths`、`features`、`control_clock_contract`）；问题是数值/开关的**含义**只能靠本 README 和源码，`features` 45 个键是否被读取、哪些被强制 `"0"` 需要 grep 才能确认。
-- `simulation/settings.json`：**需改进（规模）**。3294 行全仓最大配置，无 schema、无分区注释；读者很难判断某段是否还在用。
-- `fastlivo.yaml`/`camera.yaml`：**可接受**。128/17 行，ROS 参数结构清晰；`camera.yaml` 只有 17 行，容易核对。
+## 修改约定与边界
 
-## 重构建议
-
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P2 | 给 6 个无读取点文件加 `_archived_comment` 或统一移到 `configs/archive/`，并在本 README 用一张表集中列出 | 无读取点文件与生效配置同目录同格式，最容易被误改/误读 | 低：移动需同步文档链接；若无读取点则无代码影响 | `grep -rn "<file>" src scripts tests` 仍为空；`check_readmes` 链接通过 |
-| P2 | 把 `features` 45 个键做成“键 → 是否有读取点/是否被启动器强制”的生成表（从源码 grep 生成） | `features` 是“配置写 1 也可能无效”的重灾区 | 无（只读生成文档；键多易过期，需标注生成日期） | 抽查 5 个键的 grep 结果与表一致 |
-| P2 | 给 `simulation/settings.json` 分节（或用多个子文件 + `modules` 顺序合并） | 3294 行单文件难以审阅；`read()` 已支持多模块合并，拆分成本低于想象 | 中：拆分改变 `navigation.json` 的 modules 列表与重复键语义，需回归 | `common.config.read()` 单测 + `start.py --check` + 对比合并后 dict 完全相等 |
-| P3 | 把“读取顺序”第 4 条的消费者清单与源码引用行号做成可再生成脚本 | 消费者会随重构变化，手工清单易过期 | 无 | 脚本输出与本 README 清单 diff 为空 |
-
-没有 P0/P1：配置层是数据不是逻辑，最坏后果是参数不生效/误读；已有 pin 报告、`--check` 与单测保护，不需要为“整洁”重构配置文件。
-
-## 修改约定
-
-- 改数值前先确认读取点与所属时间/控制层；不同层的上限、时钟、阈值不为了"看起来一致"而统一。
-- 不要手改 `runs/` 或 `experiments/` 里的生成参数当配置；那是一次运行的证据。
-- 删除历史字段/兼容结构前，先确认没有读取点和文档引用；`configs/` 中仍有仅供归档、无 Python 读取点的数据。
-
-## 边界
-
-- 本目录是 base 配置，**不是**本次运行的有效值；`runs/<id>/` 与 DynaNav `experiments/<name>/` 里的生成文件才是。
-- 本 README 的读取点清单是 2026-11-09 的 grep 结果，结构重构后可能漂移；改动前以源码为准。
+- 改数值前先确认读取点与所属层；本目录的阈值不会因为「看起来一致」而跨层统一。
+- 两份 collision JSON 是**契约数据**，不是场景资产：`floor_paths`/`stair_paths` 必须指回真实且可见的原始 mesh，改路径会直接让会话修复或 support preflight 失败。
+- `dynanav_basement_to_ground_collision.json` 目前只有 snapshot 作用，其 `route.waypoints_xyz` **不驱动**导航；不要把它当成路线配置来改。
+- 子目录 README（`simulation/dynanav/README.md`、`README_LIO.md`、`visualization/README.md`）与本文件同属文档层，不是运行期配置；其中若出现过期行数/路径，以源码与本文件为准。

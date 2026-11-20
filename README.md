@@ -1,175 +1,199 @@
 # Embodied Navigation · 具身导航
 
-具身导航连接传感器、定位建图、路线规划和 Go2 执行。DynaNav / Isaac Sim 是开发主线，Gazebo 保留历史入口。机器狗策略训练在独立工程 `RL_for_unitree`，本仓库维护部署推理和机器人接口。
+> 盘点日期：2026-11-20 · 分支 `refactor/06-clean-base` · HEAD `5b880b2`
 
-## 从哪里开始
+Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行，上层挂载 Agent 感知与控制介入层。
 
-- **DynaNav / Isaac Sim** 从 [探索启动器](scripts/run_dynanav_native_exploration.sh) 进入。前向 RGB、RTX LiDAR 和 IMU 输入 FAST-LIVO2，生成 post-VIO 里程计和实测点云。人或 Agent 通过 [航点客户端](scripts/explore_waypoint_client.py) 发送目标。默认链路是实测 PCT 全局规划 → 原生 SCAN 局部规划 → 连续路线跟踪 → RoboGauge。`native_route` 保留用于历史跟随器对照。参见 [PCT/SCAN 时序](docs/dynanav-pct-scan.md) 和 [探索 SOP](.agents/skills/dynanav-explore/SKILL.md)。
-- **Gazebo / ROS 2** 从 [start.py](start.py) 进入，走 `launch`、`navigation`、`control` 和 Go2 执行桥。参见 [配置入口](configs/README.md) 和 [原生构建说明](docs/dependencies/BUILD.md)。
-- **复查实验** 从 [experiments](experiments/) 查定义和结论，到报告对应的数据卷 run 核对冻结配置、真值、回执与评分。传感驱动探索和真值辅助录包按各自协议验证。
+本文件面向“新开会话、快速讲透整个项目”的读者。阅读顺序：本文件 → [开发路线图](docs/plan/ROADMAP.md) → [活体任务板](docs/plan/TASKS.md) → [协作规则](AGENTS.md) → 需要的模块 `README.md`。
 
-## 顶层目录
+## 1. 项目定位与端到端架构
+
+项目唯一主线是 **D 路径：Isaac Sim / DynaNav**。Gazebo 旧主线（A 路径，`start.py` / `launch/` / `control/` / 私有 Fast DDS）已在干净底座中整块退役删除，仅保全于历史分支；动态行人支线已移出到参考分支 `ref/dynanav-dynamic-pedestrian`。
+
+```mermaid
+flowchart LR
+  SIM["仿真层<br/>Isaac Sim / DynaNav<br/>RTX RGB-D · RTX LiDAR · IMU"] --> CAP["感知与通信<br/>capture / 200 Hz 真值去畸变<br/>消息适配与健康门"]
+  CAP --> FRONT["定位前端<br/>FAST-LIVO2 post-VIO<br/>或 --truth-pose 真值位姿"]
+  FRONT --> BE["SLAM 后端<br/>关键帧 · 回环 · 位姿图 · 地图存取"]
+  FRONT --> SEM["语义建图 / operator_map"]
+  BE --> PCT["PCT 全局规划<br/>实测分层支撑 A*"]
+  SEM --> AGENT["Agent 介入层<br/>语义查询 · 航点候选 · 交互客户端"]
+  AGENT --> PCT
+  PCT --> SCAN["原生 SCAN 局部规划<br/>3D voxel 占用 + B 样条"]
+  BE --> SCAN
+  SCAN --> CTRL["控制跟踪<br/>RouteTracker · yaw_action<br/>PctScanWaypointTracker"]
+  CTRL --> EXEC["机器人执行<br/>Go2 关节 + RoboGauge MoE-CTS"]
+  EXEC --> SIM
+```
+
+一条命令内的数据流：
+
+1. **仿真层**在 Isaac Sim 中渲染 RTX RGB-D、RTX LiDAR 与 IMU；`--truth-pose` 时额外提供仿真真值位姿与 200 Hz 真值去畸变点云。
+2. **感知与通信层**完成传感器消息适配、时间同步、去畸变配对与健康门；`common/` 提供几何、运行时 IO、进程日志与遥测基础设施。
+3. **定位建图层**默认用 FAST-LIVO2 前端产出 post-VIO 位姿与实测点云，后端做关键帧、回环、位姿图与地图存取；语义建图与 `operator_map` 生成可查询的分层语义地图。
+4. **规划层**用实测分层支撑做 PCT 全局路线，原生 SCAN 在 3D voxel 占用上生成 B 样条局部轨迹；规划输出不含直线兜底。
+5. **控制跟踪层**把全局路线/局部曲线跟踪为身体速度命令：平台无关的 `navigation/` 提供 `RouteTracker` 与 `yaw_action`，仿真侧的 `PctScanWaypointTracker` + `ContinuousScanFollower`（在 `simulation/dynanav/pct_scan_waypoints.py`）负责连续 SCAN 曲线的采样跟随；**机器人执行层**由 RoboGauge MoE-CTS 策略把命令变成 Go2 关节目标。
+6. **Agent 介入层**通过 `scripts/explore_waypoint_client.py` 与 `.agents/skills/dynanav-explore/` 下发稀疏航点、查询状态、读取回执；它不写速度命令、不读仿真真值。
+
+## 2. 顶层目录与职责总览
 
 ```text
 embodied-navigation/
-├── README.md · README_zh.md · AGENTS.md · CLAUDE.md  # 总览和协作规则
-├── start.py                                         # Gazebo / ROS 2 入口
-├── Dockerfile · compose.yaml · docker/               # 构建与运行装配
-├── pyproject.toml · requirements-*.lock/.txt          # 包和依赖
-├── .agents/skills/                                  # 协作 SOP
-├── configs/                                         # 默认参数和资产入口
-├── scripts/                                         # 启动、观测、定位与评测入口
-├── src/embodied_navigation/                         # 自有代码
-├── third_party/                                     # FAST-LIVO2、SCAN、PCT、Vikit、Livox、Fast DDS
-├── experiments/                                     # 实验定义和结论
-├── tests/                                           # unit、regression、native
-└── docs/                                            # 架构、术语、验证和历史审查
+├── README.md · README_zh.md · AGENTS.md · CLAUDE.md   # 总览、中文入口、协作规则
+├── pyproject.toml · requirements-*.lock/.txt          # 包元数据与 CPU/探索依赖
+├── .env.example                                       # PROJECT_DATA_ROOT 等环境模板
+├── .agents/skills/dynanav-explore/                    # Agent 自主探索 SOP（skill + 参考 + 脚本）
+├── configs/                                           # 仿真/GD 相机/LIO 前端/可视化配置（base，非运行期有效值）
+├── docker/                                            # CPU / Native 镜像、原生源码 pin 校验与构建脚本
+├── docs/                                              # 架构、术语、计划、实验历史、审查与验证回执
+├── scripts/                                           # 薄 CLI 入口：启动、探索、重建、评测
+├── src/embodied_navigation/                           # 自有实现（七层包结构）
+├── tests/                                             # unit / regression / native
+└── third_party/                                       # vendored：FAST-LIVO2、SCAN、PCT、Livox 驱动、Vikit
 ```
 
-Linux 检出还包含数据卷 `runtime_assets/{assets,models,runs}` 的三个链接 `assets/`、`models/`、`runs/`。`install/` 是本地构建输出。`dynanav/`、`history/`、`perception_history/` 和 `.dsh-subagents/` 存放本地历史或协作材料。新实验从下文的项目数据根分配目录。
+Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本地构建输出 `install/`；`dynanav/`、`history/`、`perception_history/`、`.dsh-subagents/` 是本地历史/协作材料，不进 Git、不进 Docker 输入。
 
-| 模块 | 职责 |
-| --- | --- |
-| [simulation](src/embodied_navigation/simulation/README.md) / [perception](src/embodied_navigation/perception/README.md) | Gazebo / Isaac 生命周期及 DynaNav 传感采集、仿真侧接口、点云和图像适配 |
-| [localization_mapping](src/embodied_navigation/localization_mapping/README.md) | FAST-LIVO2、里程计、地图、关键帧、回环、位姿图和先验重定位 |
-| [planning](src/embodied_navigation/planning/README.md) | PCT 路线、SCAN 局部轨迹及向控制侧的交付 |
-| [navigation](src/embodied_navigation/navigation/README.md) / [control](src/embodied_navigation/control/README.md) | 航点、任务状态、跟踪、转向与停车。DynaNav 和 Gazebo 各有装配入口 |
-| [robot](src/embodied_navigation/robot/README.md) | Go2 观测、关节契约、策略推理和执行 |
-| [launch](src/embodied_navigation/launch/README.md) / [common](src/embodied_navigation/common/README.md) / `evaluation/` | 进程装配与生命周期、共享类型和工具、资源与轨迹评价 |
-
-更多入口见 [源码模块索引](src/embodied_navigation/README.md)、[术语对照](docs/glossary.md) 和 [测试入口](tests/README.md)。
-
-## 分支与实验基线
-
-2026-11-20 在 Linux 核对本地检出和 GitHub 分支。提交号描述对应的分支头。当前实验工作树还有未提交改动，复现时以各次运行记录的源码为准。
-
-| 分支或基线 | 用途 |
-| --- | --- |
-| `main`、`origin/main`（`51209ba`） | 集成与独立验收入口 |
-| `refactor/00-plan-docs` 至 `refactor/05-agents-rules` | 分包推进重构与协作规则。`05-agents-rules` 尚未进入 `main` |
-| 本地 `refactor/06-clean-base` | 基于 `05-agents-rules` 的代码清理与解耦底座，后续 PCT/SCAN 与各 SLAM 后端实验分支均从此底座按方向切出 |
-| 本地 `exp/two-floor-demo`（`e378b8d`）与 `backup/exp-two-floor-demo-wip-20261120`（`3720814`） | 拆分支前保全的两层 DynaNav、PCT/SCAN、楼梯补丁与 SLAM 联调快照，仅用于按主题提取，不再继续混合叠加 |
-| `refactor/05-loop-evidence-base`（`d582b28`） | 回环共同比较口径与证据 |
-| `exp/loop-measured-submaps`、`exp/loop-surface-gate`、`exp/loop-visual-retrieval` | 多帧实测子图、表面门控、视觉候选检索，详见 [分支协作规则](AGENTS.md#相关分支为何保留) |
-| `improve/module-docs-readability`、本地 `feat/navigation-review-web`（`15d97fb`） | 模块文档与阅读入口 |
-| `archive/pre-review-20261109`、`wip/navigation-local-snapshot-20261115`、`backup/slam-controlled-experiment-20261116` | 迁移前档案、在途源码快照、受控 SLAM 追踪和评价实现 |
-| 官方 `hku-mars/HBA` | 外部离线全局优化对照，产物在数据卷 `runs/20261118-hba-offline/` |
-
-`runs/20261117-loop-comparison/`、`runs/20261119-hba-project-comparison/` 和 `runs/20261119-rtx-pitch-slam/` 是数据卷的评测目录。各次实验的输入和算法以运行配置及来源记录为准。
-
-## 代码、日志与配置
-
-| 类别 | 位置 | 含义 |
+| 顶层目录 | 职责 | 入口文档 |
 | --- | --- | --- |
-| 代码 | `src/embodied_navigation/` | 自有实现与 ROS 2 装配代码（259 py / 60,546 行），按 simulation → perception → localization_mapping → planning → navigation/control → robot 的数据流组织；每个子目录有自己的 README（结构 + 代码/日志/配置 + 耦合 + 可读性 + 重构建议）。 |
-| 代码 | `third_party/` | vendored 开源算法与驱动，本仓库只做接入与构建，不是自有实现；版本、补丁与许可证见 `docs/dependencies/`。 |
-| 代码 | `docker/`、`Dockerfile`、`compose.yaml` | 构建与启动装配；`docker/verify_native_sources.py` 校验原生源码 pin，`docker/build_*.py` 生成本地 `install/`。 |
-| 日志/运行产物 | `$PROJECT_DATA_ROOT/embodied-navigation/runs/<批次>/<run-id>/` | 一次原生运行的**全部**输入与输出：`runtime_context.json`、`navigation_profile.json`、`processes.json`、`ros_logs/`、`*.log`、`component_exit.jsonl`、`exit.json`、`navigation_command.json`、`navigation_status.json`、`navigation_anchor.json`、生成的 `world.sdf`/`navigation_*.yaml` 等。仓库的本地 `runs/` 链接指向 `runtime_assets/runs/`。 |
-| 日志/运行产物 | `$PROJECT_DATA_ROOT/embodied-navigation/experiments/<run>/` | DynaNav/Isaac 实验产物：`capture/`、LIO observer、person-worker、RGB/bag 与各 `*.json` 回执；由 `scripts/run_dynanav_*` 写入，代码强制位于数据根目录下。 |
-| 日志/运行产物 | 进程级遥测与证据 | **默认不落盘**：`common/runtime_telemetry.py` 的 `RuntimeTelemetry.append/enqueue` 是空操作（只有 `.atomic()` 真写实时状态），所以各模块里 `evidence.append(...)` 的历史 `.jsonl` 默认不产生；例外是显式同步写盘（如 `control/parking/causal_join.finish()` 的 `r104_parking_causal_join.json`）。判断某个产物是否真的存在，以 run 目录实际文件为准，不看代码里的 `append` 调用。 |
-| 配置 | `configs/` | base 配置与契约数据，**不是**每次运行的有效值：`launch/navigation.json` 列出六个模块配置，`launch/prepare.py` 生成本次参数并 pin 若干键，运行期消费者分"读 `runtime_context`"与"直接重读 configs"两类。完整读取顺序、pin 与无读取点配置见 [配置入口](configs/README.md)。 |
+| `src/embodied_navigation/` | 自有代码，按仿真 / 感知 / 定位建图 / 规划 / 控制 / 机器人 / Agent 七层组织 | [源码模块索引](src/embodied_navigation/README.md) |
+| `scripts/` | 启动器与 CLI：默认探索入口、PCT/SCAN worker、Agent 客户端、重建与评测脚本 | [scripts/README.md](scripts/README.md) |
+| `configs/` | base 配置与契约数据；运行期以 run 目录冻结副本为准 | [configs/README.md](configs/README.md) |
+| `third_party/` | vendored 开源算法与驱动，逻辑修改走 `patches/` | [third_party/README.md](third_party/README.md)、[依赖与构建](docs/dependencies/README.md) |
+| `tests/` | 离线 CPU 单测与回归，以及原生 C++ fixture | [tests/README.md](tests/README.md) |
+| `docs/` | 架构、术语、开发计划、实验历史、审查与验证回执 | [docs/README.md](docs/README.md) |
+| `docker/` | CPU / Native 镜像构建、源码 pin 与 PCT 原生编译校验 | [依赖与构建](docs/dependencies/BUILD.md) |
+| `.agents/skills/dynanav-explore/` | Agent 自主探索 SOP、参考接口与辅助脚本 | [SKILL.md](.agents/skills/dynanav-explore/SKILL.md) |
 
-"日志"在本仓库统一指**运行产物**（run 目录、实验目录、遥测/证据 JSON、ROS 日志），不是指仓库内某个日志文件夹；仓库不提交任何日志。各模块 README 只写自己产出的那部分，全局布局以 [配置入口](configs/README.md) 与 [数据与产物布局](docs/review/dsh-workflow-and-readability-20261109.md) 为准。
+> 说明：实验定义与结论已不在仓库内单独建目录，统一放数据卷 `$PROJECT_DATA_ROOT/embodied-navigation/` 的 `runs/`、`experiments/`；仓库只保留代码、配置、文档与不超过 300 行的结论报告。
 
-## 历史结构审查 · 模块耦合（2026-11-09）
+## 3. 核心模块导航
 
-按一级模块统计（AST 解析 2026-11-09），包内依赖**不是严格 DAG**：11 个一级模块之间有 9 组 A↔B 双向依赖。大多数是 1–2 条窄依赖（共享小工具/数据结构），真正构成层次倒置、值得优先处理的是下面 5 条（均可 grep 复查）：
+下表列出的活跃模块均有自己的 `README.md`，逐文件职责以该 README 为准；`robot/unitree/policy/` 只是只有 `__init__.py` 的命名空间，其内容并入 `robot/unitree/README.md`。
 
-| 层次倒置 | 证据 | 为什么值得处理 |
-| --- | --- | --- |
-| 规划持有控制器子类 | `planning/reference/global_route_reference.py:11` import `control.tracking.cascade_core.Controller`；反向 `control/tracking/cascade_core.py:16` import `planning.reference.spatial_reference` | 规划与控制互相依赖，二者无法单独测试或替换 |
-| 传感适配层依赖控制内部 | `perception/sensors/feedback_mailbox.py` import `control.tracking.cascade_core`、`control.parking.parking_pose10hz` | 感知/传感层反向拉入控制实现，破坏"感知不依赖控制"的意图 |
-| 策略 ACK 与停车控制双向依赖 | `robot/unitree/policy/lower_loop_ack.py` ↔ `control/parking/integral_unload.py` | 执行桥与控制律互相引用，任一侧改动都要双侧回归 |
-| 安全门禁跨层直达 | `control/safety/duplicate_source.py` import `robot.unitree.bridge`、`planning.admission.physical_gate` | 安全模块同时依赖机器人和规划，边界难判定 |
+| 层 | 模块 | 职责一句话 | 文档 |
+| --- | --- | --- | --- |
+| 包索引 | `embodied_navigation` | 七层包结构与端到端数据流 | [README](src/embodied_navigation/README.md) |
+| 基础设施 | `common/` | 几何、运行时 IO、进程日志、遥测、状态契约 | [README](src/embodied_navigation/common/README.md) |
+| 感知 | `perception/` | 深度包与位姿/速度契约适配 | [README](src/embodied_navigation/perception/README.md) |
+| 定位建图 | `localization_mapping/` | 前端接入、后端 SLAM、语义建图 | [README](src/embodied_navigation/localization_mapping/README.md) |
+| 定位建图 | `localization_mapping/backend/` | 关键帧、回环、位姿图、地图存取、严格配置加载 | [README](src/embodied_navigation/localization_mapping/backend/README.md) |
+| 定位建图 | `localization_mapping/semantic_mapping/` | 语义地图核心、查询与调度 | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
+| 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与来源 | [README](src/embodied_navigation/planning/README.md) |
+| 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
+| 规划 | `planning/exploration/` | 航点候选、路线信息与 OS1 标定 | [README](src/embodied_navigation/planning/exploration/README.md) |
+| 控制跟踪 | `navigation/` | `RouteTracker` 路线跟踪与 `yaw_action` 转向动作（平台无关纯策略，不依赖 ROS/Isaac） | [README](src/embodied_navigation/navigation/README.md) |
+| 控制跟踪 | `navigation/robogauge/` | RoboGauge 路线跟踪接口 | [README](src/embodied_navigation/navigation/robogauge/README.md) |
+| 机器人执行 | `robot/` | Go2 观测、关节契约、策略执行 | [README](src/embodied_navigation/robot/README.md) |
+| 机器人执行 | `robot/unitree/` | Unitree Go2 机器人层 | [README](src/embodied_navigation/robot/unitree/README.md) |
+| 机器人执行 | `robot/unitree/robogauge/` | MoE-CTS 策略契约与运行时 | [README](src/embodied_navigation/robot/unitree/robogauge/README.md) |
+| 机器人执行 | `robot/unitree/policy/native/` | 原生观察向量与策略契约数据 | [README](src/embodied_navigation/robot/unitree/policy/native/README.md) |
+| 仿真 | `simulation/` | Isaac / DynaNav 仿真接入层 | [README](src/embodied_navigation/simulation/README.md) |
+| 仿真 | `simulation/dynanav/` | 场景、采集、真值去畸变、PCT/SCAN worker、连续 SCAN 跟随适配、operator map | [README](src/embodied_navigation/simulation/dynanav/README.md) |
+| 仿真 | `simulation/dynanav/capture/` | 采集编排：暂停、传感器、帧、LiDAR、策略与回执 | [README](src/embodied_navigation/simulation/dynanav/capture/README.md) |
 
-此外还有 `navigation↔simulation`、`robot↔simulation`、`launch↔planning`、`launch↔localization_mapping`、`localization_mapping↔perception` 等窄环，多数是"共享小工具 + 装配 helper"性质，可以接受，但应在对应模块 README 里标注方向与原因，避免继续扩大。依赖密度最高的是 navigation：它 import control 39 处、common 35 处、planning 16 处；navigation 也是最大的模块（11,634 行 / 27 文件）。
+## 4. 快速启动与验证入口
 
-## 可读性评估
+### 4.1 前置条件
 
-> 行数口径：本表是 2026-11-09 修复前的结构快照，后续修复会改变文件/行数；本表与包索引用 facts 包文本口径（`read_text().count("\n")+1`），**每文件比 `wc -l` 多 1**，空文件记 1 行；模块 README 多用 `wc -l`，同文件两处数字差 1 属口径差异，不是笔误。
+- Linux + ROS 2 Jazzy + Isaac Sim（默认路径由 `--isaac-root` 覆盖）；无 Isaac/ROS 时只能做 CPU 单测与文档工作。
+- `cp .env.example .env.local`，填入 `PROJECT_DATA_ROOT`；数据卷布局与清理规则见 [AGENTS.md 第 6 节](AGENTS.md) 与数据根 `AGENTS.md`。
+- Python 3.12，`PYTHONPATH=src`；原生构建需要 CMake 与 ROS Jazzy 环境。
+- 需要数据卷软链时执行 `python3 scripts/configure_data.py --data-root <数据根目录> --link`。
 
-| 一级模块 | 文件 | 行数 | 函数数 | 函数 docstring 覆盖（AST 粗计） | >800 行文件 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| navigation | 27 | 11,634 | 279 | 0.27 | base_node(1618)、pid_control(1174)、pid_support(1031)、pid_admission_apply(892)、ros_node(875) |
-| control | 46 | 9,718 | 282 | 0.33 | cascade_core(1851)、transition_gate(1731) |
-| planning | 32 | 9,361 | 263 | 0.34 | async_admission(1200)、static_geometry(1010)、validate_route_support(1003)、reference_protocol(891) |
-| simulation | 43 | 9,095 | 215 | 0.40 | 无 |
-| localization_mapping | 40 | 8,429 | 241 | 0.25 | known_scene_inputs(1139) |
-| perception | 18 | 4,631 | 151 | 0.29 | person_geometry_tracking(823) |
-| robot | 17 | 4,591 | 129 | 0.39 | bridge(1069)、policy/student(838) |
-| common | 20 | 1,616 | 100 | 0.27 | 无 |
-| launch | 9 | 1,314 | 23 | 0.57 | 无 |
-| evaluation | 3 | 95 | 4 | 0.50 | 无 |
+### 4.2 默认自主探索（FAST-LIVO2 前端 + PCT/SCAN + RoboGauge）
 
-结论：**模块级文档可读性好，代码级可读性不均**。边界、禁入项、未验证声明在每个模块 README 里写得比代码本身清楚；代码侧的主要负债是 15 个 >800 行文件（集中在 navigation/control/planning/robot/localization_mapping/perception）和 0.25–0.57 的函数 docstring 覆盖。"文档说清楚、代码靠单文件承载"是当前的主要可读性风险，而不是命名混乱。docstring 覆盖是 AST 粗计（含嵌套函数），不作为质量评分，只用于横向比较。
+```sh
+# 默认写入数据卷 runs/native-exploration/<UTC 时间戳>/，也可显式传一个不存在的新目录
+bash scripts/run_dynanav_native_exploration.sh
+bash scripts/run_dynanav_native_exploration.sh "$PROJECT_DATA_ROOT/embodied-navigation/runs/native-exploration/my-run"
+```
 
-## 重构建议
+启动器负责构建/装配原生 SCAN 闭包、起 FAST-LIVO2 与 PCT/SCAN worker、绑定采集与估计器进程，并打印 run 目录。可选参数：`--until-stopped`、`--scan-prefix`、`--isaac-root`、`--pct-max-grid-cells`、`--overview-eye-base`、`--overview-focus-base`。完整边界见 [PCT/SCAN 说明](docs/dynanav-pct-scan.md)。
 
-按“收益/风险”排序；本节是 2026-11-09 文档审计提出的建议，不表示本轮没有修复代码。进一步拆分前须先补齐控制、阶段切换和故障生命周期行为测试。
+### 4.3 真值位姿调试模式
 
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P1 | 拆 `control/tracking/cascade_core.py`(1851) 与 `control/parking/transition_gate.py`(1731) | 两个最大文件同时是 control↔planning、control↔robot 循环依赖的中心；拆开才能打断层次倒置 | 高：控制律数值等价必须逐样本对照 | 现有 1000 组只覆盖 relative PID 公式，来源契约测试也不能锁定这两个模块；先补 cascade 控制与阶段切换行为基线，再按职责提取纯函数 |
-| P1 | 先修上表 5 条中的 3 条低风险项：`Observation` 下沉出 navigation；规划不再 import `Controller`（改为协议/回调注入）；`feedback_mailbox` 只依赖消息契约 | 改 import 与构造参数即可，行为不变，是三条低风险项 | 中：需同步改构造点 | Python 规范化 AST 对照 + 相关模块单测；import graph 复查环消失 |
-| P1 | 拆 `navigation/base_node.py`(1618) 与 `pid_*` mixin 家族 | 现役 controller 由 6 个 mixin 组合，隐式契约是 `self` 状态；单类难读、难单测 | 高：默认主路径 | `test_ros_shutdown_lifecycle`、`test_pid_navigation_compat` 与运行链路对照 |
-| P2 | 给 15 个 >800 行文件补模块级/函数级 docstring 与内部分段 | docstring 覆盖 0.25–0.57 与文件规模不匹配 | 低（纯注释） | 人工复核 diff；AST 行为不变 |
-| P2 | 统一"运行产物"口径：root/configs/docs 三处只保留一份权威描述，其余引用 | 当前 run 目录与 experiments 产物的说明分散在多处，容易不同步 | 低 | 交叉引用检查（本轮已做） |
+```sh
+bash scripts/run_dynanav_native_exploration.sh --truth-pose
+```
 
-各项的模块级细节（含 P0/P1/P2 分文件建议）见对应模块 README 的"重构建议"节，以及 [模块结构与耦合总评](docs/review/module-structure-coupling-20261109.md)。
+`--truth-pose` 跳过 SLAM，直接用 `simulation_truth` 的 `go2_imu` 位姿 + 200 Hz 真值去畸变 RTX 点云驱动 PCT + SCAN。它用于隔离规划问题，**不能**当作 SLAM 链路或实机可复现的证据。第一优先验证（地下室→二楼大厅 +3.25 m 净爬升）即在该模式下完成，见 [ROADMAP Phase 2](docs/plan/ROADMAP.md)。
 
-## 两个运行边界
+### 4.4 Agent 交互探索
 
-1. Native Gazebo 系统：start.py 装配已有导航模块。Dockerfile 从公开 ROS Jazzy、Gazebo Harmonic、CPU Torch 2.7.1 构建，必要自建源码均包含，FAST-LIVO2/SCAN/PCT 与补丁也在仓库中。
-2. Isaac / DynaNav：当前 static native 探索使用 `scripts/run_dynanav_native_exploration.sh`（见上方专项架构）；其他隔离实验的入口是 scripts/run_dynanav_experiment.py（实验编排，在本进程内用 runpy 执行 simulation/dynanav/capture_go2_rgbd.py），配合 scripts/run_dynanav_lio.sh（独立观测器）与 scripts/run_dynanav_person_worker.py（独立行人推理）；observer 的 UDP 接收缓冲选择与回退见 [通信说明](docs/dynanav-observer-udp.md)；三者的在线行人组合顺序由 scripts/run_dynanav_online_person.py 监督（`--print-commands`/`--check` 可只打印或只核对；实跑时逐进程日志写到 run 的 `logs/`，失败/超时/SIGINT/SIGTERM 会先停 capture 再停 observer/worker）。它们仍需匹配的 Isaac 安装、场景与机器人资产。原机使用 Isaac Sim 6.0.1 RC；该版本的公开可获取性尚未核实，不能声称一份 Native Docker 镜像就能完整复现 Isaac。
+```sh
+# 保持操作者心跳，然后下发一个航点
+python3 scripts/explore_waypoint_client.py heartbeat --run-dir <RUN> --loop --duration 600
+python3 scripts/explore_waypoint_client.py goto --run-dir <RUN> --x 3.0 --y -1.5 --z -3.3 --ttl 30
+python3 scripts/explore_waypoint_client.py observe --run-dir <RUN>
+python3 scripts/explore_waypoint_client.py map --run-dir <RUN> --pose-source lio_estimate
+python3 scripts/explore_waypoint_client.py stop --run-dir <RUN>
+```
 
-2026-11-09 阶段的 DynaNav 在线感知、速度阶梯与路线状态见 [在线行人实验记录](docs/experiments/dynanav-online-person-20261109.md)；此前的楼梯通行、分层地图、动态行人与 LIO/LIVO 实测见 [实验记录](docs/experiments/dynanav-20261109.md)。历史原话及尚未确定的研究参数见 [动态语义建图约定](docs/research/dynamic-semantic-mapping-agreement.md)，其他文档见 [文档索引](docs/README.md)。这些隔离实验不等于生产导航整栈验收。
+子命令包括 `heartbeat`、`goto`、`yaw`、`maneuver`、`scan`、`observe`、`map`、`stop`；`goto`/`yaw`/`maneuver` 支持 `--wait --timeout` 阻塞等结构化结果。Agent 侧 SOP 见 [dynanav-explore skill](.agents/skills/dynanav-explore/SKILL.md) 与其 [原生接口参考](.agents/skills/dynanav-explore/references/native-interface.md)。
 
-## 快速检查
+### 4.5 CPU 测试、回归与原生校验
 
-新克隆先复制 `cp .env.example .env.local`，编辑其中的 `PROJECT_DATA_ROOT`、`PUID` 和 `PGID`，再按下节准备有权使用的运行资产。`.env.local` 仅留本机，不提交 Git；下列 Compose 命令默认它已经准备好。CPU 单元检查不需要运行资产或 Docker。
+```sh
+# 语法编译检查
+PYTHONPATH=src python3 -B -m compileall -q src scripts
 
-- CPU单元测试：PYTHONPATH=src python3 -B -m unittest discover -s tests/unit -v
-- 既有源码回归：PYTHONPATH=src python3 -B -m unittest discover -s tests/regression -v
-- 干净公共镜像CPU验证：docker build -f docker/Dockerfile.cpu -t embodied-navigation-cpu .
-- 原生源码验证：python3 docker/verify_native_sources.py --compile-pct
-- Native完整镜像：docker compose --env-file .env.local build
-- 依赖和资产检查：python3 start.py --check，或先设置 PROJECT_DATA_ROOT 再运行 docker compose --env-file .env.local run --rm navigation
+# 单元测试：当前基线 646 条全绿
+PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
 
-Docker/Compose默认命令是检查。`python3 start.py --check` 解析配置、校验 ROS domain 的数值范围，并检查所需解释器、资产和构建产物是否为文件；它不验证 ROS 域占用、资产内容或系统可运行性。显式加 `--resource-check` 才检查本机 CPU 负载和可用内存；`--check --resource-check` 也会执行该资源检查。`install/` 缺失通常表示本机尚未构建，应按 [原生构建说明](docs/dependencies/BUILD.md) 或根 Dockerfile 生成，不把二进制加入 Git。直接运行 `python3 start.py` 会实际启动系统；可用有限正数 `--duration` 限制墙钟运行时间。
+# 回归测试：当前基线 60 条全绿（本机 3 条按环境 skip）
+PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 
-## 数据、权重和资产
+# 原生源码 pin 校验与 PCT CPU 编译冒烟（不联网、不加载模型）
+python3 docker/verify_native_sources.py --compile-pct
 
-Linux 通过 `.env.local` 将 `PROJECT_DATA_ROOT` 指向新加卷的 `6.project_data`。项目数据根为 `$PROJECT_DATA_ROOT/embodied-navigation/`。启动前核对解析路径、挂载设备和剩余容量。大录包、点云、帧图像、视频、长日志统一写到项目数据卷。
+# 原生闭包构建（默认只计划，--execute 才真正构建）
+python3 docker/build_native.py --execute
+```
 
-- `runs/<批次>/<run-id>/` 存新运行和回放。`experiments/` 保留既有 Isaac 运行及部分旧入口。`runtime_assets/runs/` 对应既有原生 Compose 数据入口。
-- `runtime_assets/` 存部署资产和模型，`models/` 存独立模型，`build_cache/` 存构建产物，`reports/`、`deliverables/` 存整理后的交付。
-- 在项目数据根打开 `AGENTS.md` 查看放置和清理规则。仓库侧入口见 [协作规则](AGENTS.md#6-数据在项目外)。Git 保存源码、配置、实验定义和结论。换机器时，按配置提供有权使用的部署权重和场景。
+测试边界：不覆盖 Isaac/ROS 图、GPU 推理与实机；`run` 成功只代表进程/计划成功，不代表物理到达。测试细节与 skip 语义见 [tests/README.md](tests/README.md)。
 
-新克隆需要原生数据链接时，使用 `python3 scripts/configure_data.py --data-root <数据根目录> --link`。正式运行应保留本次有效配置和源数据引用。
+## 5. 开发计划、分支与数据管理
 
-## 验证状态与限制
+### 5.1 开发计划
 
-2026-11-09 阶段的生命周期修复与真实重验见 [运行故障修复记录](docs/review/runtime-repair-validation-20261109.md)。本轮真实 Isaac 在线行人仍因缺 RGB 后的原 8 帧缓存守卫中止；Gazebo PID 在 R85 路径证书门保持，未取得到达/5 秒终态停车证明。离线通过、进程退出与路线验收分开记录，未放宽安全门。
+| 文档 | 内容 |
+| --- | --- |
+| [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md) | 唯一主线、七层边界、Phase 1–4 里程碑与状态、分支归属表、数据卷约定 |
+| [docs/plan/TASKS.md](docs/plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办队列，含建议角色、模块与验收标准 |
+| [AGENTS.md](AGENTS.md) | 硬规则、测试与分支验收、数据卷规则、README 维护要求 |
+| [docs/README.md](docs/README.md) | 文档分类索引（权威说明 / 计划 / 实验历史 / 审查 / 验证 / 依赖） |
 
-2026-11-09 较早阶段的独立复核、两项启动参数修复及当时 54 项单元/62 项回归结果见 [独立复核记录](docs/verification/independent-review-2026-11-09.md)。该阶段 5 项可选 Torch 测试跳过，未重跑仿真。后续 DynaNav 实际运行与最新测试另见上方实验记录。
+### 5.2 分支管理（摘要）
 
-2026-11-08 历史验证（针对当时的源码快照，不能代替后续修改的运行验证）：
+| 分支 | 用途 |
+| --- | --- |
+| `main` / `origin/main` | 集成与发布基线；Phase 3 收口后由用户合并推送为新干净 `main` |
+| `refactor/00-plan-docs` … `refactor/06-clean-base` | 分包重构栈；`06-clean-base` 是当前工作基线（含 Phase 2/3 成果） |
+| `exp/pct-scan-stairs-truth` | 真值闭环复现入口（已合入 `bb2eef2`） |
+| `ref/dynanav-dynamic-pedestrian` | 动态行人参考分支，按需重构 |
+| `exp/loop-*`、`refactor/05-loop-evidence-base`、`archive/*`、`backup/*` | 历史回环对照、审查前档案与在途快照，只读查证 |
 
-- 当时源码48项单元测试通过，包括1000组原PID公式精确对比、导航任务、停车来源契约、生产SLAM入口及仿真安全门禁。官方ROS Jazzy纯CPU镜像的当时结果见docs/verification/cpu-container.json。
-- 无数据的干净Git候选导出：62项回归成功结束；7项因未提供Torch或私有测量地图而明确跳过。双后端门禁集成和原native fixture另在装有CPU Torch的公共依赖容器实测通过；RoboGauge真实权重30帧输出与原JIT一致。
-- FAST-LIVO2/SCAN等11个ROS包、PCT、4个自有原生模块、私有DDS补丁测试已在隔离公共依赖环境中从本仓库源码编译。完整Docker镜像已从公开ROS基础镜像构建成功，实际资源preflight通过；最终源码刷新和验证结果记录于docs/verification。
-- 最终自足镜像45秒隔离软件栈通过：只挂本项目assets、models和新runs，不挂源码或其它工程的install；全部关键源码SHA匹配。1330次CPU策略推理、798帧相机、797帧LiDAR、57580个地图点；SCAN接受2条轨迹，22个健康非零命令样本及25个native执行确认样本。103条仿真安全门禁来源遥测全部有效，无物理fault；末段原有命令新鲜度门禁因来源超时拒绝并置零。15个组件全部退出0，日志无Traceback或未取回异常。详见docs/verification/software-startup.json。
-- 此前发现的SIGINT关停竞态已修复：共用信号生命周期先退出spin和排空回调，最后关闭ROS context；真实callback异常仍传播，子组件非零退出会使主入口失败。48项单元包含6项生命周期测试、4项退出汇总测试及7项Building入口测试。
-- 真实记录驾驶层回放1052/1052个样本通过：按目标点、航向误差和距航点距离独立唯一选帧，不用待检命令选帧，最大命令差异1.91e-14。它不是任务状态机或整栈证明。
+分支用途与复核要求的权威版本见 [AGENTS.md 第 5 节](AGENTS.md)；agent 只提交本地分支，**合并与推送由用户完成**。
 
-仍未验收：生产导航整栈的完整路线、实机、策略训练和完整 Isaac 生产链路。docs/robogauge/isaac_closure_audit.json 记录较早的策略闭包审计；本轮 DynaNav 已补齐显式会话碰撞、RoboGauge 执行与采集诊断，并分别记录真值控制路线、首段 LIO 动态闭环和视觉旁路定位证据，不能据此声称生产链路已完整复现。
+### 5.3 数据卷
 
-原测试3个停车样例缺少当前要求的pose_producer字段，在原工程也失败。本仓库更新fixture并纠正一处原源码要求真值标志为true的冲突：现在只接受显式非真值且生产者与时钟有效的SLAM反馈，没有放松阈值。运行源码和来源契约另见docs/architecture.md。
+工程数据根：`$PROJECT_DATA_ROOT/embodied-navigation/`（由 `.env.local` 提供，缺失时脚本 fail-closed，不回退仓库内路径）。
 
-## 许可证和来源
+| 路径 | 内容 |
+| --- | --- |
+| `runs/<批次>/<run-id>/` | 新原生运行与回放：冻结配置、`runtime_context.json`、日志、回执、`manifest.json` |
+| `experiments/<run>/` | DynaNav / Isaac 历史实验产物（capture、observer、点云与逐帧回执） |
+| `build_cache/` | 原生 SCAN / LIO 构建与安装前缀 |
+| `runtime_assets/{assets,models,runs}/` | 仓库根 `assets/`、`models/`、`runs/` 软链指向的资产、权重与历史运行 |
+| `reports/`、`deliverables/` | 整理后的报告与交付物 |
 
-已保留第三方源码、版本、许可证声明和补丁来源，详见 docs/dependencies。尚有Vikit授权来源、组合分发、自有源码/模型与部分资产来源问题需要确认，因此不能宣称公开发布许可已齐备。分发前请核对这些许可边界。
+规则：运行产物不进仓库；单个文件 >200 KB 默认不提交；开跑前用 `findmnt -T` 与 `df` 核对挂载和容量。详见 [AGENTS.md 第 6 节](AGENTS.md)。
 
-## 历史副本
+## 6. 边界与限制
 
-dynanav/、history/、perception_history/ 是保留的原始/阶段副本，已从Git和Docker输入排除，不是本工程开发入口。这些本地目录不属于运行依赖，也不会进入Git或Docker输入。
+- 本仓库只做仿真与 CPU 离线验证；不包含实机安全后端，`REAL_SENSOR` 仅为保留类型。
+- Isaac Sim 版本与场景资产需按配置另行提供，仓库不含权重、场景与运行数据。
+- Fast DDS UDP 端口映射要求 `ROS_DOMAIN_ID` 在 `0..232`；启动器会拒绝越界值。
+- 规划/SCAN 的原生输出、CPU 测试通过、CLI 退出 0 都不等于物理到达或完整探索覆盖；结论必须绑定 run 目录、时间轴与回执。
+- 许可证与来源边界见 [docs/dependencies](docs/dependencies/README.md)，公开发布前需逐项核对。

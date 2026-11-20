@@ -1,67 +1,55 @@
-# robot：机器人契约与策略部署
+# robot：机器人执行层的观测与策略契约
 
-`robot` 是机器人观测、关节契约与策略推理的顶层命名空间，当前只有 Unitree Go2 部署实现。本仓库没有训练流程：视觉策略训练在 RL_for_unitree，这里只保留导航部署所需的策略推理与机器人契约（见 [docs/architecture.md](../../../docs/architecture.md) 的「从入口阅读实际流程」第 6 条）。
+盘点日期 2026-11-20。`robot` 是「机器人执行」层的顶层命名空间：只定义 Unitree Go2 的观测向量、关节顺序、默认姿态与策略推理入口，不含训练、场景、ROS 节点或实机驱动。
 
-## 边界
+## 模块定位与架构层级
 
-- 不训练、不采集数据、不导出模型；没有实机后端。本包自身不注册 ROS 节点，实际节点由子目录的 `bridge.py` 与各模块 `launch/components.py` 启动。
-- [perception/sensors/](../perception/sensors/README.md) 是感知侧 ROS 适配；不是本目录的策略输入。
-- 当前有两条部署路径：Student 使用 exact45 推理，`unitree/policy/native` 保留历史 Teacher 247D 观测用于诊断/适配；`unitree/robogauge` 使用独立的 45D 直接观测接口。两条路径的输入和 actuator 契约不能混用；普通导航不加载 Teacher actor。
+- 架构层级：七层中的第 6 层 —— 机器人执行（body 命令 → 策略观测 → 关节目标 → Go2HV 力矩）。
+- 输入：`state64`（`state[4:8]` 为 wxyz 四元数、`state[8:14]` 为 body COM 线速度/角速度、`state[14:50]` 为 12 关节 q/qd/力矩）、`command3=[vx, vy, wz]`、`last_action12`。真实生产者是 [simulation/dynanav/capture/policy.py](../simulation/dynanav/capture/policy.py)、[control.py](../simulation/dynanav/capture/control.py)、[physics.py](../simulation/dynanav/capture/physics.py)。
+- 输出：12 维原始动作、关节目标 `q_target = q_default + 0.25 * raw_action`、Go2HV PD 力矩包络（`20.2/23.4 Nm`、`13.5/30 rad/s`）。本层不发布 ROS 消息、不写执行器、不接触 `cmd_vel`。
+- 上游 / 下游：被 `simulation/dynanav/` 采集链路调用（策略加载、关节契约、姿态旋转）；反向不依赖任何上层。唯一的外部依赖是 `common/geometry.py`。
+- 边界：不训练、不采集数据、不导出模型；没有实机后端。路线跟踪与停车属于 `navigation/`（`RouteTracker` 输出 body 命令，本层只负责把命令变成关节动作），感知与 SLAM 不经过本层。
 
-## 目录结构
+## 当前文件夹结构
 
 ```text
 src/embodied_navigation/robot/
-├── README.md      # 本文件：顶层职责、边界与三套观测契约
-├── __init__.py    # 1 行，包 docstring，声明"不含策略训练代码"
-└── unitree/       # 子模块，见 unitree/README.md
+├── README.md          # 本文件：层职责、两套观测契约与边界
+├── __init__.py        # 1 行：包 docstring（"No policy training code"）
+└── unitree/           # 唯一实现子包，见 unitree/README.md
+    ├── __init__.py    # 1 行：包 docstring
+    ├── policy/
+    │   ├── __init__.py          # 0 行占位
+    │   └── native/              # 247D 冻结观测契约，见 policy/native/README.md
+    │       ├── __init__.py
+    │       ├── contract.json
+    │       └── observation.py
+    └── robogauge/     # 45D MoE-CTS 契约与运行时，见 robogauge/README.md
+        ├── __init__.py
+        ├── contract.py
+        └── runtime.py
 ```
 
-## 代码、日志与配置
+## 逐文件职责
 
-| 类别 | 位置 | 含义 |
+| 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
-| 代码 | `__init__.py`（1 行） | 只有包 docstring “Robot observation and actuation contracts. No policy training code.”；无符号、无 import、无运行时代码 |
-| 代码 | `unitree/` | 唯一实现子模块，见 [unitree/README.md](unitree/README.md) |
-| 日志/输出 | 无 | 本包自身不写日志、不写文件；所有输出都在 `unitree/` 的进程内产生 |
+| `__init__.py` | 包标记，仅 1 行 docstring "Robot observation and actuation contracts. No policy training code."；无 import、无符号、无运行时副作用 | 无 |
+| `README.md` | 本文件：层级定位、两套观测契约的关系与边界 | 索引页 |
+| `unitree/` | 唯一实现子包：承载全部关节契约与策略代码；子目录内逐文件职责见 [unitree/README.md](unitree/README.md)，本表不重复 | 子包入口 |
 
-证据：`__init__.py` 实测 1 行；事实包对该文件的 grep 统计（写文件 / getLogger / print / env / config）全部为 0。
-
-## 模块内文件耦合
-
-- 依赖方向：`robot/__init__.py` **不 import 任何内部模块，也不被任何模块 import**（事实包 import 图为空）。真正的依赖都在 `unitree/` 里：`unitree/` 单向依赖 `common/`、`control/`、`planning/`、`simulation/`，同时又被 `control/` 反向 import（见 [unitree/README.md](unitree/README.md)）。因此这一层本身无环。
-- 本包不提供门面重导出：调用方一律写全路径，例如 `control/parking/causal_join.py` 直接 `from embodied_navigation.robot.unitree.bridge import validate_controller_source`。好处是没有“robot 包到底导出什么”的歧义，代价是调用点较长。
-
-| 文件 | 行数 | 依赖谁 | 被谁依赖 | 判断 |
-| --- | ---: | --- | --- | --- |
-| `__init__.py` | 1 | 无 | 无 | 清楚 |
-| `unitree/`（子模块） | 1069 行（2 个 py） | 见下级 README | 见下级 README | 见下级评估 |
-
-四类问题：没有上帝文件（本包无 >800 行文件）、没有重复实现、没有跨层直达（本文件不 import 任何东西）、没有隐式契约。结论：**耦合清楚**——这一层只是命名空间与边界声明，跨层耦合全部发生在 `unitree/` 内部，不在本级评价。
-
-## 可读性评估
-
-- `__init__.py`：**良好**。1 行且写明边界；没有函数可评指标。
-- 包级文档：本文件原来把“两条部署路径”写在边界段里，容易被读成“两个子目录”；实际是 Student exact45、历史 Teacher 247D（仅诊断）、RoboGauge 45D 三件不同的契约，本文件已单列一节。
-
-## 重构建议
-
-| 优先级 | 动作 | 理由 | 风险 | 验证方式 |
-| --- | --- | --- | --- | --- |
-| P2 | 在 `robot/__init__.py` 的 docstring 里补一句 “unitree is the only implementation subpackage” | 现在只有契约声明，新读者不知道从哪个子包进入 | 无（只改字符串） | `PYTHONPATH=src python3 -c "import embodied_navigation.robot"` |
-
-没有 P0/P1：本包只有 1 行运行时代码、无配置读取、无日志写入，不存在正确性或结构性风险。本轮只写建议、不改代码；任何建议都应先有测试再动。
-
-## 三条策略观测契约不要混用
+## 两套观测契约（不要混用）
 
 | 契约 | 维度 | 位置 | 当前角色 |
 | --- | ---: | --- | --- |
-| Student exact45 | 45 | [unitree/policy/student.py](unitree/policy/student.py) 的 `exact_student45()`，从 native64 状态算出 | 当前推理输入；实际加载 Student 导出 |
-| 历史 Teacher native 中间观测 | 247 | [unitree/policy/native/observation.py](unitree/policy/native/observation.py) 的 `build_observation()` | 仅诊断/适配；普通导航不加载 Teacher actor（`teacher247_used_for_student_inference=False`） |
-| RoboGauge 直接观测 | 45 | [unitree/robogauge/contract.py](unitree/robogauge/contract.py) 的 `observation()` | 另一条部署路径；独立 scale 与关节顺序，不是 exact45 的裁剪，也不含 Student 的 COM 速度 PID |
+| RoboGauge MoE-CTS 直接观测 | 45 | [unitree/robogauge/contract.py](unitree/robogauge/contract.py) 的 `observation()` | **生产路径**：DynaNav 采集默认策略输入，独立 scale 与关节顺序（策略侧 FL FR RL RR） |
+| 冻结 Teacher native 中间观测 | 247 | [unitree/policy/native/observation.py](unitree/policy/native/observation.py) 的 `build_observation()` | **仅诊断/适配**：`git grep "build_observation|TerrainHeightMap" -- src` 只命中本文件（与文档），生产链路不加载 Teacher actor |
 
-三者不是同一个策略输入或 actuator 契约；术语定义见 [docs/glossary.md](../../../docs/glossary.md)。
+两套契约的观测项、缩放、裁剪、关节顺序和 actuator 参数都不同，不能互相裁剪或替换。45D 观测的 `provenance` 明确 `terrain_input=False`、`COM_linear_velocity_input=False`；247D 契约的 height scan 与 `base_com_offset` 语义只属于冻结 Teacher 契约。
 
-## 测试
+## 验证与测试入口 / 配置注意
 
-本目录无专用测试；[unitree/README.md](unitree/README.md) 所述的策略与仿真安全门禁测试位于 [tests/README.md](../../../tests/README.md) 描述的 `tests/regression`。注意 `test_native_safety_integration.py` 含 AST 源码断言与假 socket，不是实机/物理行为测试。
+- 纯 CPU 契约测试：[tests/regression/test_robogauge_contract.py](../../../tests/regression/test_robogauge_contract.py)（关节顺序、默认姿态、力矩包络、错误权重拒绝，不导入 torch/Isaac）；[tests/unit/test_dynanav_joint_readback.py](../../../tests/unit/test_dynanav_joint_readback.py) 复用 `go2hv_torque`；[tests/unit/test_truth_deskew_and_mode.py](../../../tests/unit/test_truth_deskew_and_mode.py) 用 `quaternion_rotation` 交叉校验四元数约定。
+- 全量入口：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit` 与 `... -s tests/regression`；本层测试不需要 Isaac、ROS 或机器人。
+- 策略权重是外部资产：`$PROJECT_DATA_ROOT/embodied-navigation/runtime_assets/models/robogauge_policy.pt`（SHA256 硬校验，见 robogauge README）；场景与机器人 USD 同样在数据卷，见 [docs/dependencies/BUILD.md](../../../docs/dependencies/BUILD.md)。
+- 本目录没有独立 ROS 节点；DynaNav 主线的策略执行链只有 `robot/unitree/robogauge`，`policy/native` 只提供冻结观测契约与共享四元数工具。
