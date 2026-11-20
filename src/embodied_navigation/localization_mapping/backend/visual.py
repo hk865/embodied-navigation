@@ -28,13 +28,16 @@ class VisualObservation:
         # 外部 ROS 消息或磁盘文件传入的数组必须先校验合法性，防止非法内参/外参污染后续投影。
         if self.gray.ndim != 2 or not np.isfinite(self.gray).all():
             raise ValueError("视觉图像必须为有限值的二维已矫正灰度图")
+        if isinstance(self.stamp_ns, bool) or not isinstance(self.stamp_ns, (int, np.integer)):
+            raise ValueError(f"视觉时间戳 stamp_ns 必须为整数标量，当前收到 {self.stamp_ns!r}")
         if (
             self.K.shape != (3, 3)
             or not np.isfinite(self.K).all()
             or self.K[0, 0] <= 0
             or self.K[1, 1] <= 0
+            or not np.allclose(self.K[2], [0.0, 0.0, 1.0], atol=1e-6)
         ):
-            raise ValueError("相机内参矩阵 K 非法")
+            raise ValueError("相机内参矩阵 K 非法（须满足 fx>0, fy>0 且末行为 [0, 0, 1]）")
         T = self.T_body_camera
         if (
             T.shape != (4, 4)

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 
 import numpy as np
 
 from embodied_navigation.localization_mapping.backend.backend import BackendConfig, SlamBackend
-from embodied_navigation.localization_mapping.backend.keyframes import Keyframe, transform_points
+from embodied_navigation.localization_mapping.backend.keyframes import Keyframe, read_keyframe, transform_points
 from embodied_navigation.localization_mapping.backend.pose_graph import invert, pose_difference
 from embodied_navigation.localization_mapping.backend.visual import (
     VisualObservation,
@@ -348,6 +349,93 @@ class VisualRetrievalUnitTest(unittest.TestCase):
         self.assertTrue(ev_b["loop"])
         self.assertGreaterEqual(backend_b.visual_fallback_count, 1)
         self.assertEqual(backend_b.visual_loops_accepted, 0)
+
+    def test_visual_disagreement_does_not_drop_eligible_lidar_candidate(self) -> None:
+        """双通道命中同一键且视觉验证成功但与 ICP 不一致时，绝不能丢弃原合格 ScanContext 候选。"""
+        K, T_bc = _camera_extrinsics()
+        img_ref = _textured_image(seed=99)
+        pts_ref = _scene_points(seed=17)
+        T_mid = np.eye(4)
+        T_mid[0, 3] = 1.0
+        T_ret = np.eye(4)
+        T_ret[1, 3] = 0.04
+        pts_ret = transform_points(invert(T_ret), pts_ref)
+        img_ret = _render_projected_image(pts_ret, T_bc, K, img_ref, T_ret)
+
+        cfg = BackendConfig(
+            use_visual_retrieval=True,
+            use_visual_verification=False,
+            # 刻意把视觉-ICP 一致性阈值压到极小，强行触发 visual_disagreement_count
+            visual_agree_translation_m=1e-9,
+            visual_agree_rotation_rad=1e-9,
+            map_voxel_m=0.05,
+            icp_voxel_m=0.1,
+            min_loop_gap_s=1.0,
+            exclude_recent=1,
+            loop_submap_neighbors=0,
+            min_fitness=0.5,
+            max_rmse_m=0.15,
+        )
+        backend = SlamBackend(cfg)
+        backend.ingest(
+            Keyframe(
+                key=(0, 0),
+                stamp_ns=0,
+                T_odom_body=np.eye(4),
+                T_body_lidar=np.eye(4),
+                points_lidar=pts_ref,
+                visual=VisualObservation(gray=img_ref, K=K, T_body_camera=T_bc, stamp_ns=0),
+            )
+        )
+        backend.ingest(
+            Keyframe(
+                key=(0, 1),
+                stamp_ns=2_000_000_000,
+                T_odom_body=T_mid,
+                T_body_lidar=np.eye(4),
+                points_lidar=transform_points(invert(T_mid), pts_ref),
+                visual=VisualObservation(gray=_textured_image(seed=101), K=K, T_body_camera=T_bc, stamp_ns=2_000_000_000),
+            )
+        )
+        ev = backend.ingest(
+            Keyframe(
+                key=(0, 2),
+                stamp_ns=4_000_000_000,
+                T_odom_body=T_ret,
+                T_body_lidar=np.eye(4),
+                points_lidar=pts_ret,
+                visual=VisualObservation(gray=img_ret, K=K, T_body_camera=T_bc, stamp_ns=4_000_000_000),
+            )
+        )
+        self.assertTrue(ev["loop"])
+        self.assertGreaterEqual(backend.visual_disagreement_count, 1)
+        self.assertEqual(backend.visual_loops_accepted, 0)
+
+    def test_read_keyframe_ignores_corrupt_visual_npz_by_default_and_checks_K_row(self) -> None:
+        """read_keyframe 默认不触碰 visual.npz（零侵入纯 LiDAR 读取），开启 load_visual 时才校验。"""
+        K, T_bc = _camera_extrinsics()
+        bad_K = K.copy()
+        bad_K[2] = [0.0, 1.0, 1.0]
+        with self.assertRaises(ValueError):
+            VisualObservation(gray=_textured_image(), K=bad_K, T_body_camera=T_bc, stamp_ns=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kf_dir = Path(tmp) / "kf_1_1"
+            kf_dir.mkdir()
+            (kf_dir / "metadata.json").write_text(
+                '{"schema":"livo_keyframe/v1","epoch":1,"sequence":1,"stamp_ns":1000,'
+                '"T_odom_body":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]],'
+                '"T_body_lidar":[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]}',
+                encoding="utf-8",
+            )
+            (kf_dir / "points_lidar.pcd").write_text("VERSION .7\nDATA ascii\n1.0 0.0 0.0\n", encoding="utf-8")
+            # 故意写入损坏的 visual.npz
+            (kf_dir / "visual.npz").write_bytes(b"corrupted-not-a-zip")
+
+            kf_default = read_keyframe(kf_dir)
+            self.assertIsNone(kf_default.visual)
+            with self.assertRaises(ValueError):
+                read_keyframe(kf_dir, load_visual=True)
 
 
 if __name__ == "__main__":

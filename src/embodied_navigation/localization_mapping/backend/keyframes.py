@@ -61,23 +61,35 @@ def ready_directories(directory: Path) -> list[Path]:
     return [path for _, path in sorted(found)]
 
 
-def read_spool(directory: Path) -> list[Keyframe]:
+MAX_VISUAL_IMAGE_DIM = 4096
+
+
+def read_spool(directory: Path, *, load_visual: bool = False) -> list[Keyframe]:
     """Read every ready keyframe in ``directory`` in numeric key order."""
-    return [read_keyframe(path) for path in ready_directories(directory)]
+    return [read_keyframe(path, load_visual=load_visual) for path in ready_directories(directory)]
 
 
-def read_keyframe(path: Path) -> Keyframe:
-    """Decode one ``kf_<epoch>_<sequence>`` directory; ValueError names the path."""
+def read_keyframe(path: Path, *, load_visual: bool = False) -> Keyframe:
+    """Decode one ``kf_<epoch>_<sequence>`` directory; ValueError names the path.
+
+    默认 ``load_visual=False`` 严格保持纯 LiDAR 基线读取路径，不探测也不解码 ``visual.npz``。
+    """
     path = Path(path)
     row = json.loads((path / "metadata.json").read_text())
     if row.get("schema") != SCHEMA:
         raise ValueError(f"{path}: schema is not {SCHEMA}")
     visual = None
-    if (path / "visual.npz").is_file():
-        # 仅当目录存在可选视觉观测文件时解码，不影响纯 LiDAR 关键帧。
+    if load_visual and (path / "visual.npz").is_file():
+        # 仅当显式启用视觉读取时才解码可选旁文件，并对图像尺寸和时间戳标量做边界防护。
         try:
             with np.load(path / "visual.npz", allow_pickle=False) as data:
-                visual = VisualObservation(data["gray"], data["K"], data["T_body_camera"], int(data["stamp_ns"]))
+                gray = data["gray"]
+                if gray.ndim != 2 or max(gray.shape) > MAX_VISUAL_IMAGE_DIM:
+                    raise ValueError(f"灰度图尺寸非法或超过上限 {MAX_VISUAL_IMAGE_DIM}: {gray.shape}")
+                stamp_arr = np.asarray(data["stamp_ns"])
+                if stamp_arr.ndim != 0 or not np.issubdtype(stamp_arr.dtype, np.integer):
+                    raise ValueError(f"stamp_ns 必须为整型标量，当前 dtype={stamp_arr.dtype}, shape={stamp_arr.shape}")
+                visual = VisualObservation(gray, data["K"], data["T_body_camera"], int(stamp_arr.item()))
         except (KeyError, OSError, TypeError, ValueError) as error:
             raise ValueError(f"{path}: 视觉观测 visual.npz 非法: {error}") from error
     return Keyframe(

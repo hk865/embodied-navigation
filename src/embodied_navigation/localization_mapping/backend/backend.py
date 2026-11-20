@@ -408,14 +408,7 @@ class SlamBackend:
         excluded = {
             key
             for key, old in self.map.keyframes.items()
-            if key in recent
-            or keyframe.stamp_ns - old.stamp_ns < gap_ns
-            or (
-                self.config.use_visual_retrieval
-                and isinstance(key, tuple)
-                and isinstance(keyframe.key, tuple)
-                and key[0] != keyframe.key[0]
-            )
+            if key in recent or keyframe.stamp_ns - old.stamp_ns < gap_ns
         }
         match = self._search(
             self.map, keyframe, desc, lambda key: key in excluded, lambda key: self._loop_submap(key, excluded)
@@ -516,47 +509,99 @@ class SlamBackend:
         the lowest RMSE wins.
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
-        # 两种模态的召回名额独立：图像候选不被 ScanContext 距离或名额截断。
-        visual_candidates = [] if self.visual_index is None else self.visual_index.query(keyframe, exclude=exclude)
-        self.visual_candidates_proposed += len(visual_candidates)
-        proposals = {key: [dist, yaw, False] for key, dist, yaw in candidates[: self.config.icp_candidates]}
-        for key, _distance in visual_candidates:
-            if key in proposals:
-                proposals[key][2] = True
-            else:
-                proposals[key] = [None, 0.0, True]
-        source_body = keyframe.points_body()
+        source_body = None
+        target_cache: dict = {}
+
+        def _get_source() -> np.ndarray:
+            nonlocal source_body
+            if source_body is None:
+                source_body = keyframe.points_body()
+            return source_body
+
+        def _get_target(key) -> np.ndarray:
+            if key not in target_cache:
+                target_cache[key] = submap(key)
+            return target_cache[key]
+
         best = None
         best_visual = False
-        for key, (dist, yaw, visual_candidate) in proposals.items():
-            if not visual_candidate and dist > self.config.max_scan_context_distance:
-                continue
-            T_init = store.poses[key] @ yaw_pose(yaw)
-            requires_visual = self.config.use_visual_verification or visual_candidate
-            if requires_visual:
-                visual = verify_visual(keyframe, store.keyframes[key])
-                if visual.status != "verified":
-                    scan_eligible = dist is not None and dist <= self.config.max_scan_context_distance
-                    if self.config.use_visual_verification or not scan_eligible:
-                        continue
-                    # 视觉检索是增补通道：可选图像验证未通过时回退到独立合格的 ScanContext 候选，绝不一票否决。
-                    requires_visual = False
-                    self.visual_fallback_count += 1
-                else:
-                    self.visual_verified_count += 1
-                    T_init = store.poses[key] @ visual.T_target_source
-            result = self._register(source_body, submap(key), T_init)
-            if result is not None and requires_visual:
-                translation, rotation = pose_difference(T_init, result.T_target_source)
-                if (
-                    translation > self.config.visual_agree_translation_m
-                    or rotation > self.config.visual_agree_rotation_rad
-                ):
-                    self.visual_disagreement_count += 1
-                    result = None
-            if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
-                best = (key, result)
-                best_visual = requires_visual
+
+        # 路径一：双视觉开关均关闭时严格走基线逻辑，零额外分支与开销。
+        if not self.config.use_visual_retrieval and not self.config.use_visual_verification:
+            for key, dist, yaw in candidates[: self.config.icp_candidates]:
+                if dist > self.config.max_scan_context_distance:
+                    break
+                T_init = store.poses[key] @ yaw_pose(yaw)
+                result = self._register(_get_source(), _get_target(key), T_init)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+            self._last_match_visual = False
+            return best
+
+        max_dt = self.config.visual_retrieval.max_time_delta_s
+
+        def _try_visual_candidate(key) -> IcpResult | None:
+            visual = verify_visual(keyframe, store.keyframes[key], max_time_delta_s=max_dt)
+            if visual.status != "verified":
+                return None
+            self.visual_verified_count += 1
+            T_init = store.poses[key] @ visual.T_target_source
+            result = self._register(_get_source(), _get_target(key), T_init)
+            if result is None:
+                return None
+            translation, rotation = pose_difference(T_init, result.T_target_source)
+            if (
+                translation > self.config.visual_agree_translation_m
+                or rotation > self.config.visual_agree_rotation_rad
+            ):
+                self.visual_disagreement_count += 1
+                return None
+            return result
+
+        # 路径二：若未开启强制视觉门控，先完整保留原 ScanContext 合格候选，绝不被视觉初值覆写或否决。
+        eligible_sc_keys: set = set()
+        for key, dist, yaw in candidates[: self.config.icp_candidates]:
+            if dist > self.config.max_scan_context_distance:
+                break
+            eligible_sc_keys.add(key)
+            if self.config.use_visual_verification:
+                result = _try_visual_candidate(key)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+                    best_visual = True
+            else:
+                T_init = store.poses[key] @ yaw_pose(yaw)
+                result = self._register(_get_source(), _get_target(key), T_init)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+                    best_visual = False
+
+        # 路径三：独立视觉召回增补通道（独立名额与跨 epoch 过滤，不改变 ScanContext 的排除集与历史窗口）。
+        if self.visual_index is not None:
+            same_epoch_only = self.prior is None and isinstance(keyframe.key, tuple)
+
+            def _visual_exclude(key) -> bool:
+                if exclude is not None and exclude(key):
+                    return True
+                if same_epoch_only and isinstance(key, tuple) and key[0] != keyframe.key[0]:
+                    return True
+                return False
+
+            visual_candidates = self.visual_index.query(keyframe, exclude=_visual_exclude)
+            self.visual_candidates_proposed += len(visual_candidates)
+            for key, _distance in visual_candidates:
+                if self.config.use_visual_verification and key in eligible_sc_keys:
+                    # 强制视觉门控模式下该键已在上面验证过，避免重复验证。
+                    continue
+                result = _try_visual_candidate(key)
+                if result is None:
+                    if not self.config.use_visual_verification and key in eligible_sc_keys:
+                        self.visual_fallback_count += 1
+                    continue
+                if best is None or result.rmse_m < best[1].rmse_m:
+                    best = (key, result)
+                    best_visual = True
+
         self._last_match_visual = best is not None and best_visual
         return best
 
