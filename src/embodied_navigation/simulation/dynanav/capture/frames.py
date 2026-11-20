@@ -181,20 +181,25 @@ class FrameStream:
                 break
         if not result.get("rtx_lidar_connected"):
             result["rtx_lidar_reads_without_new_scan"] = result.get("rtx_lidar_reads_without_new_scan", 0) + 1
-    def _process_rtx_frame(self, it, actual_time, rgb, overview_ann, camera_rows):
+    def _process_rtx_frame(
+        self, it, actual_time, rgb, overview_ann, camera_rows, *, publish_to_slam=True
+    ):
         """RGB stays visual input; the only primary cloud is native RTX LiDAR."""
-        self.publish_rtx_pending(actual_time)
+        if publish_to_slam:
+            self.publish_rtx_pending(actual_time)
         result = self.receipts.result
-        still = self._write_interactive_still(float(it), rgb)
-        if still is not None:
-            result["interactive_still"] = still
+        if publish_to_slam:
+            still = self._write_interactive_still(float(it), rgb)
+            if still is not None:
+                result["interactive_still"] = still
         overview = np.asarray(overview_ann.get_data())[..., :3]
         assert overview.shape == (512, 512, 3), "Invalid overview frame"
         self.video_frames = self.video.write(overview, rgb, it, self.target_speed, self.gt_diagnostic)
-        self.ros.publish_rgb(it, rgb)
-        camera_rows.append({"time": actual_time, "published_time": it,
-                            "point_cloud_source": "isaac_rtx_lidar", "depth_backprojection_enabled": False})
-        self.receipts.journal("camera_frames.jsonl", camera_rows[-1])
+        if publish_to_slam:
+            self.ros.publish_rgb(it, rgb)
+            camera_rows.append({"time": actual_time, "published_time": it,
+                                "point_cloud_source": "isaac_rtx_lidar", "depth_backprojection_enabled": False})
+            self.receipts.journal("camera_frames.jsonl", camera_rows[-1])
 
     def process(
         self,
@@ -202,6 +207,7 @@ class FrameStream:
         iteration,
         measurement,
         camera_rows,
+        publish_to_slam=True,
     ):
         """按原循环块处理一帧 10 Hz RGB-D 数据。
 
@@ -300,7 +306,8 @@ class FrameStream:
             # becomes an apparent mount error as soon as the body moves. Keep the
             # diagnostic and original event/buffer binding checks, but do not turn
             # a cross-epoch residual into an additional navigation stop.
-            if (not native_route
+            if (publish_to_slam
+                    and not native_route
                     and actual_time > 2.0
                     and (position_error > 0.03 or forward_cos < np.cos(0.04))):
                 error = RuntimeError("RTX RGB renderer pose does not follow the physical camera mount")
@@ -313,7 +320,9 @@ class FrameStream:
                     result["camera_quarantine_error"] = repr(secondary)
                 raise error
         if self.rtx_lidar is not None:
-            self._process_rtx_frame(it, actual_time, rgb, overview_ann, camera_rows)
+            self._process_rtx_frame(
+                it, actual_time, rgb, overview_ann, camera_rows, publish_to_slam=publish_to_slam
+            )
             return
         # 这里的内参/外参与 sensors.create_camera_rig 的 USD 相机同源；
         # keep 是深度有效掩码，self_mask 是机身自回波掩码（按有效点计）。
@@ -345,20 +354,21 @@ class FrameStream:
             )
         assert np.isfinite(xyz).all(), "Nonfinite RGB-D point"
         assert gt_diagnostic or len(xyz) > 1000, "Insufficient valid Go2 depth"
-        ros.publish_cloud(
-            it,
-            xyz,
-            None,
-            None,
-            None,
-            None,
-        )
-        ros.publish_depth_and_info(it, zz)
-        if (
-            self.experiment.get("control_mode") == "interactive_waypoint_exploration"
-            and self.experiment.get("interactive_mailbox")
-        ):
-            self._write_interactive_still(float(actual_time), rgb)
+        if publish_to_slam:
+            ros.publish_cloud(
+                it,
+                xyz,
+                None,
+                None,
+                None,
+                None,
+            )
+            ros.publish_depth_and_info(it, zz)
+            if (
+                self.experiment.get("control_mode") == "interactive_waypoint_exploration"
+                and self.experiment.get("interactive_mailbox")
+            ):
+                self._write_interactive_still(float(actual_time), rgb)
         # 快照节奏：第 1000/1400/1600 帧是速度阶梯实验的固定检查点，
         # 另外每 1000 帧落一组；文件名用 1 基帧号。
         if (i + 1) in [1000, 1400, 1600] or (i + 1) % 1000 == 0:
@@ -384,20 +394,21 @@ class FrameStream:
         video_frames = self.video.write(
             overview, rgb, actual_time, target_speed, gt_diagnostic
         )
-        ros.publish_rgb(it, rgb)
-        camera_rows.append(
-            {
-                "time": actual_time,
-                "published_time": it,
-                "valid_depth_points": len(xyz),
-                "finite_depth_fraction": float(keep.mean()),
-                # 世界系高度 >0.12 m 的非地面点数，仅用于离线评分诊断，
-                # 不参与导航或安全判定。
-                "world_nonground_points_scoring_only": int(
-                    (((xyz @ Rb.T + sensor_position)[:, 2]) > 0.12).sum()
-                ),
-            }
-        )
-        journal("camera_frames.jsonl", camera_rows[-1])
+        if publish_to_slam:
+            ros.publish_rgb(it, rgb)
+            camera_rows.append(
+                {
+                    "time": actual_time,
+                    "published_time": it,
+                    "valid_depth_points": len(xyz),
+                    "finite_depth_fraction": float(keep.mean()),
+                    # 世界系高度 >0.12 m 的非地面点数，仅用于离线评分诊断，
+                    # 不参与导航或安全判定。
+                    "world_nonground_points_scoring_only": int(
+                        (((xyz @ Rb.T + sensor_position)[:, 2]) > 0.12).sum()
+                    ),
+                }
+            )
+            journal("camera_frames.jsonl", camera_rows[-1])
 
         self.video_frames = video_frames

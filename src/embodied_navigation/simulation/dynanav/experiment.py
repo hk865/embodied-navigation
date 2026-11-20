@@ -247,6 +247,13 @@ def main(argv=None):
         choices=("none",),
         help="Default: none",
     )
+    parser.add_argument(
+        "--experiment",
+        "--experiment-config",
+        dest="experiment",
+        type=Path,
+        help="Optional JSON overlay for experiment options (e.g. startup_warmup, imu_noise)",
+    )
     args = parser.parse_args(argv)
     interactive_requested = args.interactive or args.interactive_mailbox is not None
     if interactive_requested and args.interactive_pose_source is None:
@@ -433,6 +440,31 @@ def main(argv=None):
     if interactive_requested:
         from embodied_navigation.navigation.yaw_action import yaw_config
         profile["yaw_action"] = yaw_config(profile)
+    if args.experiment is not None:
+        exp_path = args.experiment.expanduser()
+        if not exp_path.is_file():
+            parser.error(f"Experiment config file not found: {exp_path}")
+        try:
+            raw_bytes = exp_path.read_bytes()
+            experiment_overlay = json.loads(raw_bytes.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            parser.error(f"Invalid experiment JSON {exp_path}: {error}")
+        if not isinstance(experiment_overlay, dict):
+            parser.error(f"Experiment config root must be a JSON object: {exp_path}")
+        from embodied_navigation.simulation.dynanav.capture.imu_noise import ImuNoiseConfig
+        from embodied_navigation.simulation.dynanav.capture.startup_gate import StartupWarmupConfig
+
+        try:
+            warmup_cfg = StartupWarmupConfig.from_dict(experiment_overlay.get("startup_warmup"))
+            ImuNoiseConfig.from_dict(experiment_overlay.get("imu_noise"))
+        except ValueError as error:
+            parser.error(f"Invalid experiment config {exp_path}: {error}")
+        if warmup_cfg.enabled and warmup_cfg.walk_vx_mps > float(profile["speed_mps"]) + 1e-6:
+            parser.error(
+                f"startup_warmup.walk_vx_mps ({warmup_cfg.walk_vx_mps}) exceeds speed ({profile['speed_mps']})"
+            )
+        profile.update(experiment_overlay)
+        profile["experiment_config_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
     if args.check:
         print(
             json.dumps(
@@ -465,6 +497,7 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/__init__.py",
         "src/embodied_navigation/simulation/dynanav/capture/control.py",
         "src/embodied_navigation/simulation/dynanav/capture/frames.py",
+        "src/embodied_navigation/simulation/dynanav/capture/imu_noise.py",
         "src/embodied_navigation/simulation/dynanav/capture/lidar.py",
         "src/embodied_navigation/simulation/dynanav/capture/pause.py",
         "src/embodied_navigation/simulation/dynanav/capture/physics.py",
@@ -473,6 +506,7 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/ros_interface.py",
         "src/embodied_navigation/simulation/dynanav/capture/scene.py",
         "src/embodied_navigation/simulation/dynanav/capture/sensors.py",
+        "src/embodied_navigation/simulation/dynanav/capture/startup_gate.py",
         "src/embodied_navigation/simulation/dynanav/capture/video.py",
         "scripts/query_scene_map.py",
         "src/embodied_navigation/localization_mapping/semantic_mapping/query.py",

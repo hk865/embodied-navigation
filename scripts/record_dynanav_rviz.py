@@ -203,35 +203,36 @@ def _cmd_compose(args: argparse.Namespace) -> int:
     if not rviz.is_file():
         raise SystemExit(f"找不到 RViz 视频: {rviz}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    # 上方将 1024x512 等比缩放到 1280x640，下方保持 1280x720，总分辨率 1280x1360（均为偶数）
+    # 支持通过 --overview-offset-s / --rviz-offset-s 将两路画面按真实仿真起始时刻严格对齐。
     filter_complex = "[0:v]scale=1280:640:flags=lanczos,fps=15[top];[1:v]scale=1280:720:flags=lanczos,fps=15[bot];[top][bot]vstack=inputs=2[v]"
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "warning",
-        "-y",
-        "-i",
-        str(overview),
-        "-i",
-        str(rviz),
-        "-filter_complex",
-        filter_complex,
-        "-map",
-        "[v]",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "21",
-        "-pix_fmt",
-        "yuv420p",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        str(output),
-    ]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-y"]
+    if args.overview_offset_s > 0:
+        cmd.extend(["-ss", f"{args.overview_offset_s:.3f}"])
+    cmd.extend(["-i", str(overview)])
+    if args.rviz_offset_s > 0:
+        cmd.extend(["-ss", f"{args.rviz_offset_s:.3f}"])
+    cmd.extend(
+        [
+            "-i",
+            str(rviz),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "21",
+            "-pix_fmt",
+            "yuv420p",
+            "-shortest",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
     subprocess.run(cmd, check=True)
     print(f"[record_rviz] composed 3-view video -> {output}", flush=True)
     return 0
@@ -260,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     p_comp.add_argument("--overview-mp4", required=True, help="仿真自带的 multiwaypoint05_overview_and_rgb.mp4")
     p_comp.add_argument("--rviz-mp4", required=True, help="RViz 录制的 rviz_pointcloud.mp4")
     p_comp.add_argument("--output", required=True, help="输出三画面合成视频路径")
+    p_comp.add_argument("--overview-offset-s", type=float, default=0.0, help="overview 视频起点裁剪偏移（秒），用于与 RViz 起点对齐")
+    p_comp.add_argument("--rviz-offset-s", type=float, default=0.0, help="RViz 视频起点裁剪偏移（秒）")
 
     args = parser.parse_args(argv)
     if args.command == "start":

@@ -1,0 +1,36 @@
+{
+  "startup_warmup": {
+    "enabled": true,
+    "settle_s": 0.5,
+    "walk_vx_mps": 0.35,
+    "walk_duration_s": 1.5,
+    "max_stop_wait_s": 12.0,
+    "gate_slam_sensors_until_settled": true,
+    "stability": {
+      "window_samples": 200,
+      "max_pos_slope_mps": 0.005,
+      "max_att_slope_radps": 0.003,
+      "max_pos_resid_std_m": 0.003,
+      "max_att_resid_std_rad": 0.003,
+      "max_half_window_pos_diff_m": 0.005,
+      "max_half_window_att_diff_rad": 0.004,
+      "max_direction_consistency": 0.55,
+      "eta_pos_deadband_m": 0.002,
+      "eta_att_deadband_rad": 0.0015,
+      "min_support_fraction": 0.98,
+      "max_joint_speed_radps": 0.15,
+      "max_joint_slope_radps": 0.03
+    }
+  },
+  "imu_noise": {
+    "enabled": true,
+    "seed": 20261121,
+    "gyro_bias_init_radps": [0.015, -0.010, 0.020],
+    "accel_bias_init_mps2": [0.10, -0.08, 0.10],
+    "gyro_noise_density_radps_sqrthz": 0.0005,
+    "accel_noise_density_mps2_sqrthz": 0.005,
+    "gyro_bias_rw_radps_sqrts": 0.0002,
+    "accel_bias_rw_mps2_sqrts": 0.002,
+    "mount_tilt_rpy_rad": [0.0, 0.0, 0.0]
+  }
+}

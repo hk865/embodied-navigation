@@ -5,7 +5,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z] [--experiment-config JSON_PATH] [--livo-config YAML_PATH]"
         exit 0
     fi
 done
@@ -27,6 +27,8 @@ UNTIL_STOPPED=false
 TRUTH_POSE=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
+EXPERIMENT_CONFIG=""
+LIVO_CONFIG="configs/simulation/dynanav/fastlivo_livo.yaml"
 EXTRA_CAPTURE_ARGS=()
 EXTRA_PLANNER_ARGS=()
 while (($#)); do
@@ -43,6 +45,24 @@ while (($#)); do
             else
                 ISAAC_ROOT="$CALLER_PWD/$2"
             fi
+            shift 2 ;;
+        --experiment-config)
+            (($# >= 2)) || { echo "Missing value for --experiment-config"; exit 2; }
+            if [[ "$2" = /* ]]; then
+                EXPERIMENT_CONFIG=$2
+            else
+                EXPERIMENT_CONFIG="$CALLER_PWD/$2"
+            fi
+            [[ -f "$EXPERIMENT_CONFIG" ]] || { echo "Experiment config not found: $EXPERIMENT_CONFIG"; exit 2; }
+            EXTRA_CAPTURE_ARGS+=(--experiment "$EXPERIMENT_CONFIG"); shift 2 ;;
+        --livo-config)
+            (($# >= 2)) || { echo "Missing value for --livo-config"; exit 2; }
+            if [[ "$2" = /* ]]; then
+                LIVO_CONFIG=$2
+            else
+                LIVO_CONFIG="$CALLER_PWD/$2"
+            fi
+            [[ -f "$LIVO_CONFIG" ]] || { echo "LIVO config not found: $LIVO_CONFIG"; exit 2; }
             shift 2 ;;
         --pct-max-grid-cells)
             (($# >= 2)) || { echo "Missing value for --pct-max-grid-cells"; exit 2; }
@@ -107,8 +127,8 @@ mkdir "$RUN/configuration"
 printf '%s\n' '{"head_bytes":4194304,"tail_bytes":29360128,"error_head_bytes":4194304,"error_tail_bytes":12582912}' \
     > "$RUN/configuration/capture_log.json"
 if ! $TRUTH_POSE; then
-    cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
-        configs/simulation/dynanav/camera_rgbd.yaml \
+    cp -- "$LIVO_CONFIG" "$RUN/configuration/fastlivo_livo.yaml"
+    cp -- configs/simulation/dynanav/camera_rgbd.yaml \
         configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
 fi
 # BUILD provides dynanav_sensor_msgs (CompleteLidarScan) required by DYNANAV_RTX_COMPLETE_SCAN=1

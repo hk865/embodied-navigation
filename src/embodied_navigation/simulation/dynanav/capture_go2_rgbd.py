@@ -29,7 +29,7 @@ import pathlib
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 
@@ -40,6 +40,10 @@ from embodied_navigation.simulation.dynanav.capture.control import (
     resolve_limits,
 )
 from embodied_navigation.simulation.dynanav.capture.frames import FrameStream
+from embodied_navigation.simulation.dynanav.capture.imu_noise import (
+    ImuNoiseConfig,
+    ImuNoiseInjector,
+)
 from embodied_navigation.simulation.dynanav.capture.physics import PhysicsStepper
 from embodied_navigation.simulation.dynanav.capture.policy import (
     compute_torque,
@@ -72,6 +76,10 @@ from embodied_navigation.simulation.dynanav.capture.sensors import (
     create_overview,
     create_rgbd_annotators,
     sensor_installation_receipt,
+)
+from embodied_navigation.simulation.dynanav.capture.startup_gate import (
+    StartupWarmupConfig,
+    StartupWarmupController,
 )
 from embodied_navigation.simulation.dynanav.capture.video import OverviewVideo
 
@@ -133,6 +141,9 @@ def parse_config(argv=None):
         raise ValueError(
             "Interactive waypoint exploration cannot be a ground-truth navigation mode"
         )
+    # 提前校验热身门禁与 IMU 噪声配置，确保错误在 configuration 阶段显式失败
+    StartupWarmupConfig.from_dict(experiment.get("startup_warmup"))
+    ImuNoiseConfig.from_dict(experiment.get("imu_noise"))
     return CaptureConfig(
         output=out,
         scene=argv[2],
@@ -380,19 +391,49 @@ def run_capture(config):
         receipts.result["stage"] = "physics_running"
         receipts.save()
         cancellation.check()
+        startup_warmup_cfg = StartupWarmupConfig.from_dict(
+            config.experiment.get("startup_warmup")
+        )
+        imu_noise_cfg = ImuNoiseConfig.from_dict(config.experiment.get("imu_noise"))
+        startup_warmup = (
+            StartupWarmupController(startup_warmup_cfg)
+            if startup_warmup_cfg.enabled
+            else None
+        )
+        if startup_warmup is not None:
+            if startup_warmup_cfg.walk_vx_mps > target_speed + 1e-6:
+                raise ValueError(
+                    f"startup_warmup.walk_vx_mps ({startup_warmup_cfg.walk_vx_mps}) "
+                    f"exceeds target_speed ({target_speed})"
+                )
+            receipts.result["startup_warmup"] = startup_warmup.summary()
+        imu_noise_injector = (
+            ImuNoiseInjector(imu_noise_cfg) if imu_noise_cfg.enabled else None
+        )
+        if imu_noise_injector is not None:
+            receipts.result["imu_noise"] = asdict(imu_noise_cfg)
+        prev_slam_sensors_enabled = (
+            True if startup_warmup is None else startup_warmup.slam_sensors_enabled
+        )
+
         play()
+        rgb_minimum_stamp_ns = [0]
         if rtx_lidar is not None:
             from isaacsim.core.simulation_manager import SimulationManager
-            rtx_lidar.minimum_scan_start_ns = round(float(SimulationManager.get_simulation_time()) * 1e9)
+            play_start_ns = round(float(SimulationManager.get_simulation_time()) * 1e9)
+            rtx_lidar.minimum_scan_start_ns = (
+                play_start_ns if prev_slam_sensors_enabled else 10**18
+            )
             rtx_lidar.pending.clear()
             rtx_lidar.scans = 0
             rtx_lidar.last_key = None
-            rgbd_annotators.minimum_stamp_ns = rtx_lidar.minimum_scan_start_ns
+            rgb_minimum_stamp_ns[0] = play_start_ns
+            rgbd_annotators.minimum_stamp_ns = play_start_ns
             rgbd_annotators.rtx_cache.clear()
             rgbd_annotators.rtx_last_native_ns = None
             receipts.result["rtx_minimum_scan_start_ns"] = rtx_lidar.minimum_scan_start_ns
 
-        control = ControlLoop(
+        control_kwargs = dict(
             experiment=config.experiment,
             gt_diagnostic=config.gt_diagnostic,
             interactive_control=config.interactive_control,
@@ -406,9 +447,12 @@ def run_capture(config):
             latest_nav=ros.latest_nav,
             latest_odom=ros.latest_odom,
         )
+        if startup_warmup is not None:
+            control_kwargs["startup_warmup"] = startup_warmup
+        control = ControlLoop(**control_kwargs)
         def capture_render_outputs():
             rtx_lidar.capture()
-            rgbd_annotators.capture_rtx_frame(rtx_lidar.minimum_scan_start_ns)
+            rgbd_annotators.capture_rtx_frame(rgb_minimum_stamp_ns[0])
 
         stepper = PhysicsStepper(
             art=art,
@@ -544,10 +588,45 @@ def run_capture(config):
                 rtx_lidar.capture()
             control.observe_imu(measurement.reading)
             previous_completed_tau = measurement.previous_completed_tau
+            slam_sensors_enabled = (
+                True if startup_warmup is None else startup_warmup.slam_sensors_enabled
+            )
+            if not prev_slam_sensors_enabled and slam_sensors_enabled:
+                gate_ns = round(measurement.actual_time * 1e9)
+                receipts.result["slam_sensors_gate_released_ns"] = gate_ns
+                if rtx_lidar is not None:
+                    rtx_lidar.minimum_scan_start_ns = gate_ns
+                    rtx_lidar.pending.clear()
+                    rtx_lidar.scans = 0
+                    rtx_lidar.last_key = None
+                    receipts.result["rtx_minimum_scan_start_ns"] = gate_ns
+                if rgbd_annotators is not None and hasattr(rgbd_annotators, "rtx_cache"):
+                    rgb_minimum_stamp_ns[0] = gate_ns
+                    rgbd_annotators.minimum_stamp_ns = gate_ns
+                    rgbd_annotators.rtx_cache.clear()
+                    rgbd_annotators.rtx_last_native_ns = None
+                    if hasattr(rgbd_annotators, "reset_native_binding"):
+                        rgbd_annotators.reset_native_binding()
+                receipts.save()
+            prev_slam_sensors_enabled = slam_sensors_enabled
             if (i + 1) % imu_stride == 0:
-                ros.publish_imu_and_clock(
-                    measurement.it, measurement.reading, imu_orientation_available
-                )
+                imu_reading = measurement.reading
+                if imu_noise_injector is not None and imu_noise_injector.config.enabled:
+                    imu_reading, bias_row = imu_noise_injector.apply(
+                        measurement.reading, dt_s=0.005 * imu_stride
+                    )
+                    receipts.journal("imu_bias_truth.jsonl", bias_row)
+                if slam_sensors_enabled:
+                    ros.publish_imu_and_clock(
+                        measurement.it, imu_reading, imu_orientation_available
+                    )
+                else:
+                    ros.publish_imu_and_clock(
+                        measurement.it,
+                        imu_reading,
+                        imu_orientation_available,
+                        publish_imu=False,
+                    )
                 if config.experiment.get("record_simulation_truth", False):
                     ros.publish_truth(
                         measurement.actual_time,
@@ -557,7 +636,7 @@ def run_capture(config):
                         measurement.w.numpy()[0],
                         receipts.result["link_coms_local"][0][0][0],
                     )
-            if truth_pose_buffer is not None and (i + 1) % 4 == 0:
+            if truth_pose_buffer is not None and (i + 1) % 4 == 0 and slam_sensors_enabled:
                 clock_ref = getattr(ros, "last_clock_ns", None)
                 clock_ns = (
                     clock_ref[0]
@@ -576,15 +655,23 @@ def run_capture(config):
                     if last_truth_vio_stamp_ns is None or vio_stamp_ns > last_truth_vio_stamp_ns:
                         ros.publish_truth_vio(vio_stamp_ns, vio_pos_wi, vio_quat_wi)
                         last_truth_vio_stamp_ns = vio_stamp_ns
-            if rtx_lidar is not None:
+            if rtx_lidar is not None and slam_sensors_enabled:
                 stream.publish_rtx_pending(measurement.actual_time)
             if (i + 1) % 20 == 0:
                 while rtx_lidar is None or rgbd_annotators.has_rtx_frame():
-                    stream.process(
-                        iteration=i,
-                        measurement=measurement,
-                        camera_rows=camera_rows,
-                    )
+                    if slam_sensors_enabled:
+                        stream.process(
+                            iteration=i,
+                            measurement=measurement,
+                            camera_rows=camera_rows,
+                        )
+                    else:
+                        stream.process(
+                            iteration=i,
+                            measurement=measurement,
+                            camera_rows=camera_rows,
+                            publish_to_slam=False,
+                        )
                     if rtx_lidar is None:
                         break
             cancellation.check()
