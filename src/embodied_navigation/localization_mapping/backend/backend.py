@@ -34,11 +34,12 @@ from pathlib import Path
 import numpy as np
 
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe
+from .keyframes import Keyframe, transform_points
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .submaps import SubmapConfig, build_submap
 
 
 @dataclass
@@ -87,6 +88,9 @@ class BackendConfig:
     odometry_sigma_yaw_rad: float | None = None
     loop_sigma_z_m: float | None = None
     loop_sigma_yaw_rad: float | None = None
+    # 多帧实测子图实验分支专用开关与参数（默认关闭以保持主线基线兼容）。
+    use_measured_submaps: bool = False
+    measured_submap: SubmapConfig = field(default_factory=SubmapConfig)
 
     def __post_init__(self) -> None:
         self.odometry_information()
@@ -116,6 +120,10 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "measured_submap" in values:
+            values["measured_submap"] = _submap_from_dict(values["measured_submap"])
+        if "use_measured_submaps" in values and not isinstance(values["use_measured_submaps"], bool):
+            raise ValueError(f"use_measured_submaps 必须为布尔值，当前收到 {values['use_measured_submaps']!r}")
         config = cls(**values)
         config._validate()
         return config
@@ -189,6 +197,16 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     _count("scan_context.sectors", config.sectors)
     _positive("scan_context.max_range_m", config.max_range_m)
     return config
+
+
+def _submap_from_dict(data: dict) -> SubmapConfig:
+    """严格解析嵌套的 SubmapConfig，拒绝未知键或非法边界值。"""
+    if not isinstance(data, dict):
+        raise ValueError(f"measured_submap 必须为字典，当前收到 {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(SubmapConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"measured_submap 包含未知键: {unknown}")
+    return SubmapConfig(**data)
 
 
 def _positive(name: str, value) -> float:
@@ -271,6 +289,9 @@ class SlamBackend:
         self.loop_count = 0
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
+        self._source_frames: list[Keyframe] = []  # 供查询侧连续实测子图累积使用的历史关键帧缓存
+        self.measured_query_submaps = 0
+        self.measured_target_submaps = 0
         self._path_m: dict = {}  # key -> cumulative odom path length
         self._correction: np.ndarray | None = None
         self._tracking = False
@@ -293,6 +314,11 @@ class SlamBackend:
         try:
             if len(keyframe.points_lidar) == 0:
                 raise ValueError(f"keyframe {keyframe.key} has no points")
+            if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                self._source_frames.append(keyframe)
+                max_keep = max(self.config.measured_submap.max_frames, 1)
+                if len(self._source_frames) > max_keep:
+                    self._source_frames = self._source_frames[-max_keep:]
             desc = descriptor(keyframe.points_body(), self.config.scan_context)
             if self.prior is None:
                 event.update(self._map_step(keyframe, desc))
@@ -378,10 +404,13 @@ class SlamBackend:
         rejected = self._odometry_inconsistency(key, keyframe, T_world_new)
         if rejected is not None:
             return None, rejected
-        anchor = min(
-            self._loop_window(key, excluded),
-            key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
-        )
+        if self.config.use_measured_submaps and self.config.measured_submap.anchor_mode == "candidate":
+            anchor = key
+        else:
+            anchor = min(
+                self._loop_window(key, excluded),
+                key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
+            )
         loop = self.config.loop_information()
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
         return anchor, None
@@ -399,7 +428,13 @@ class SlamBackend:
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
-        """World cloud of the candidate's ``_loop_window`` (the ICP target of a loop check)."""
+        """构建回环候选的世界系 ICP 目标点云；开启历史侧多帧子图时改用局部实测子图。"""
+        if self.config.use_measured_submaps and self.config.measured_submap.use_history_submap:
+            anchor = self.map.keyframes[key]
+            frames = [self.map.keyframes[k] for k in self._loop_window(key, excluded)]
+            measured = build_submap(frames, anchor, self.config.measured_submap)
+            self.measured_target_submaps += 1
+            return transform_points(self.map.poses[key], measured.points_body)
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
@@ -467,11 +502,17 @@ class SlamBackend:
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         best = None
+        source = keyframe.points_body()
+        if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap and self._source_frames:
+            # 查询侧多帧实测子图：用前端近期连续帧拼成更完整的当前机体系点云做 ICP。
+            measured = build_submap(self._source_frames, keyframe, self.config.measured_submap)
+            source = measured.points_body
+            self.measured_query_submaps += 1
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init)
+            result = self._register(source, submap(key), T_init)
             if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                 best = (key, result)
         return best
