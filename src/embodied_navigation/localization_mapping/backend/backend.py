@@ -39,6 +39,8 @@ from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference
 from .registration import IcpResult, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .visual import verify_visual
+from .visual_retrieval import VisualIndex, VisualRetrievalConfig
 
 
 @dataclass
@@ -87,10 +89,20 @@ class BackendConfig:
     odometry_sigma_yaw_rad: float | None = None
     loop_sigma_z_m: float | None = None
     loop_sigma_yaw_rad: float | None = None
+    # 视觉召回与几何校验实验分支专用开关与参数（默认关闭，不改变基线行为）。
+    use_visual_retrieval: bool = False
+    use_visual_verification: bool = False
+    visual_agree_translation_m: float = 0.3
+    visual_agree_rotation_rad: float = 0.05
+    visual_retrieval: VisualRetrievalConfig = field(default_factory=VisualRetrievalConfig)
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.visual_retrieval, VisualRetrievalConfig):
+            raise ValueError(
+                f"visual_retrieval 必须为 VisualRetrievalConfig 实例，当前收到 {type(self.visual_retrieval).__name__}"
+            )
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -116,6 +128,11 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "visual_retrieval" in values:
+            values["visual_retrieval"] = _visual_retrieval_from_dict(values["visual_retrieval"])
+        for flag in ("use_visual_retrieval", "use_visual_verification"):
+            if flag in values and not isinstance(values[flag], bool):
+                raise ValueError(f"{flag} 必须为布尔值，当前收到 {values[flag]!r}")
         config = cls(**values)
         config._validate()
         return config
@@ -147,6 +164,8 @@ class BackendConfig:
             "window_s",
             "agree_translation_m",
             "agree_rotation_rad",
+            "visual_agree_translation_m",
+            "visual_agree_rotation_rad",
         ):
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("min_fitness", self.min_fitness) <= 1.0:
@@ -189,6 +208,16 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     _count("scan_context.sectors", config.sectors)
     _positive("scan_context.max_range_m", config.max_range_m)
     return config
+
+
+def _visual_retrieval_from_dict(data: dict) -> VisualRetrievalConfig:
+    """严格解析嵌套的 VisualRetrievalConfig，拒绝未知键与非法边界。"""
+    if not isinstance(data, dict):
+        raise ValueError(f"visual_retrieval 必须为映射对象，当前收到 {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(VisualRetrievalConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"未知的 visual_retrieval 配置键: {unknown}")
+    return VisualRetrievalConfig(**data)
 
 
 def _positive(name: str, value) -> float:
@@ -267,8 +296,15 @@ class SlamBackend:
         self.map = MapStore(config.map_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
         self.index = ScanContextIndex(config.scan_context)
+        self.visual_index = VisualIndex(config.visual_retrieval) if config.use_visual_retrieval else None
         self.admission = self._new_admission()
         self.loop_count = 0
+        self.visual_candidates_proposed = 0
+        self.visual_verified_count = 0
+        self.visual_fallback_count = 0
+        self.visual_disagreement_count = 0
+        self.visual_loops_accepted = 0
+        self._last_match_visual = False
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._path_m: dict = {}  # key -> cumulative odom path length
@@ -279,6 +315,8 @@ class SlamBackend:
         if prior_map is not None:
             for key, desc in prior_map.descriptors.items():
                 self.index.add(key, desc)
+                if self.visual_index is not None:
+                    self.visual_index.add(prior_map.keyframes[key])
 
     @property
     def T_world_odom(self) -> np.ndarray | None:
@@ -311,8 +349,12 @@ class SlamBackend:
         loop_key, rejected = self._find_loop(keyframe, desc)
         self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
         self.index.add(keyframe.key, desc)
+        if self.visual_index is not None:
+            self.visual_index.add(self.map.keyframes[keyframe.key])
         if loop_key is not None:
             self.loop_count += 1
+            if self._last_match_visual:
+                self.visual_loops_accepted += 1
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
@@ -366,7 +408,14 @@ class SlamBackend:
         excluded = {
             key
             for key, old in self.map.keyframes.items()
-            if key in recent or keyframe.stamp_ns - old.stamp_ns < gap_ns
+            if key in recent
+            or keyframe.stamp_ns - old.stamp_ns < gap_ns
+            or (
+                self.config.use_visual_retrieval
+                and isinstance(key, tuple)
+                and isinstance(keyframe.key, tuple)
+                and key[0] != keyframe.key[0]
+            )
         }
         match = self._search(
             self.map, keyframe, desc, lambda key: key in excluded, lambda key: self._loop_submap(key, excluded)
@@ -459,21 +508,56 @@ class SlamBackend:
     # Shared ---------------------------------------------------------------
 
     def _search(self, store: MapStore, keyframe: Keyframe, desc, exclude, submap):
-        """Best ICP-verified ScanContext candidate as ``(key, IcpResult)``, or None.
+        """Best ICP-verified ScanContext (and optional visual) candidate as ``(key, IcpResult)``, or None.
 
         ``submap(key)`` builds the world-frame ICP target around a candidate;
         the initial guess is the candidate's pose rotated by the ScanContext
-        yaw. Among verified candidates the lowest RMSE wins.
+        yaw (or the verified visual relative pose). Among verified candidates
+        the lowest RMSE wins.
         """
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        # 两种模态的召回名额独立：图像候选不被 ScanContext 距离或名额截断。
+        visual_candidates = [] if self.visual_index is None else self.visual_index.query(keyframe, exclude=exclude)
+        self.visual_candidates_proposed += len(visual_candidates)
+        proposals = {key: [dist, yaw, False] for key, dist, yaw in candidates[: self.config.icp_candidates]}
+        for key, _distance in visual_candidates:
+            if key in proposals:
+                proposals[key][2] = True
+            else:
+                proposals[key] = [None, 0.0, True]
+        source_body = keyframe.points_body()
         best = None
-        for key, dist, yaw in candidates[: self.config.icp_candidates]:
-            if dist > self.config.max_scan_context_distance:
-                break
+        best_visual = False
+        for key, (dist, yaw, visual_candidate) in proposals.items():
+            if not visual_candidate and dist > self.config.max_scan_context_distance:
+                continue
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init)
+            requires_visual = self.config.use_visual_verification or visual_candidate
+            if requires_visual:
+                visual = verify_visual(keyframe, store.keyframes[key])
+                if visual.status != "verified":
+                    scan_eligible = dist is not None and dist <= self.config.max_scan_context_distance
+                    if self.config.use_visual_verification or not scan_eligible:
+                        continue
+                    # 视觉检索是增补通道：可选图像验证未通过时回退到独立合格的 ScanContext 候选，绝不一票否决。
+                    requires_visual = False
+                    self.visual_fallback_count += 1
+                else:
+                    self.visual_verified_count += 1
+                    T_init = store.poses[key] @ visual.T_target_source
+            result = self._register(source_body, submap(key), T_init)
+            if result is not None and requires_visual:
+                translation, rotation = pose_difference(T_init, result.T_target_source)
+                if (
+                    translation > self.config.visual_agree_translation_m
+                    or rotation > self.config.visual_agree_rotation_rad
+                ):
+                    self.visual_disagreement_count += 1
+                    result = None
             if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                 best = (key, result)
+                best_visual = requires_visual
+        self._last_match_visual = best is not None and best_visual
         return best
 
     def _register(self, source_body, target_world, T_init) -> IcpResult | None:
