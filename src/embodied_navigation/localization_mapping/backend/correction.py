@@ -79,10 +79,12 @@ class CorrectionAdmission:
         if not self._within_jump_gate(T_world_odom, T_odom_body, stamp_ns, reference_C=reference_C):
             return None
         self._pending_entries = [
-            entry for entry in self._pending_entries if stamp_ns - entry[0] <= self.window_ns
+            entry for entry in self._pending_entries if 0 <= stamp_ns - entry[0] <= self.window_ns
         ]
-        agreeing = sum(self._agrees(C, T_world_odom, T_odom_body) for _, C, _, _ in self._pending_entries)
-        if agreeing + 1 < self.confirmations:
+        agreeing = [
+            entry for entry in self._pending_entries if self._agrees(entry[1], T_world_odom, T_odom_body)
+        ]
+        if not self._has_mutual_cluster(agreeing, self.confirmations - 1, T_odom_body):
             world_pos = (T_world_odom @ T_odom_body)[:3, 3]
             self._pending_entries.append((stamp_ns, T_world_odom, world_pos, False))
             return None
@@ -118,28 +120,67 @@ class CorrectionAdmission:
         world_pos = (T_world_odom @ T_odom_body)[:3, 3]
         R_corr = T_world_odom[:3, :3]
         self._pending_entries = [
-            entry for entry in self._pending_entries if stamp_ns - entry[0] <= self.window_ns
+            entry for entry in self._pending_entries if 0 <= stamp_ns - entry[0] <= self.window_ns
         ]
-        if self._anchored_seed is not None and stamp_ns - self._anchored_seed[0] > self.window_ns:
+        if self._anchored_seed is not None and not (0 <= stamp_ns - self._anchored_seed[0] <= self.window_ns):
             self._anchored_seed = None
-        agreeing = 0
+        agreeing: list[tuple[int, np.ndarray, np.ndarray, bool]] = []
         if self._anchored_seed is not None:
-            _, seed_C, seed_pos = self._anchored_seed
+            seed_stamp, seed_C, seed_pos = self._anchored_seed
             if self._anchored_agrees(seed_pos, seed_C[:3, :3], world_pos, R_corr):
-                agreeing += 1
-        for _, entry_C, entry_pos, is_anchored in self._pending_entries:
+                agreeing.append((seed_stamp, seed_C, seed_pos, True))
+        for entry in self._pending_entries:
+            _, entry_C, entry_pos, is_anchored = entry
             if is_anchored:
                 if self._anchored_agrees(entry_pos, entry_C[:3, :3], world_pos, R_corr):
-                    agreeing += 1
+                    agreeing.append(entry)
             elif self._agrees(entry_C, T_world_odom, T_odom_body):
-                agreeing += 1
-        if agreeing + 1 < self.confirmations:
+                agreeing.append(entry)
+        if not self._has_mutual_cluster(agreeing, self.confirmations - 1, T_odom_body):
             self._pending_entries.append((stamp_ns, T_world_odom, world_pos, True))
             return None
         self._pending_entries = []
         self._anchored_seed = (stamp_ns, np.array(T_world_odom, dtype=np.float64), world_pos)
         self._current = np.array(T_world_odom, dtype=np.float64)
         return self._current
+
+    def _entries_agree(
+        self,
+        a: tuple[int, np.ndarray, np.ndarray, bool],
+        b: tuple[int, np.ndarray, np.ndarray, bool],
+        T_odom_body: np.ndarray,
+    ) -> bool:
+        if a[3] and b[3]:
+            return self._anchored_agrees(a[2], a[1][:3, :3], b[2], b[1][:3, :3])
+        return self._agrees(a[1], b[1], T_odom_body)
+
+    def _has_mutual_cluster(
+        self,
+        entries: list[tuple[int, np.ndarray, np.ndarray, bool]],
+        needed: int,
+        T_odom_body: np.ndarray,
+    ) -> bool:
+        """True iff ``entries`` contains a pairwise mutually agreeing subset of size ``needed``."""
+        if needed <= 0:
+            return True
+        if len(entries) < needed:
+            return False
+        if needed == 1:
+            return True
+
+        def _search(start: int, chosen: list[int]) -> bool:
+            if len(chosen) == needed:
+                return True
+            remaining_needed = needed - len(chosen)
+            for idx in range(start, len(entries) - remaining_needed + 1):
+                if all(self._entries_agree(entries[c], entries[idx], T_odom_body) for c in chosen):
+                    chosen.append(idx)
+                    if _search(idx + 1, chosen):
+                        return True
+                    chosen.pop()
+            return False
+
+        return _search(0, [])
 
     def _anchored_agrees(
         self, pos_a: np.ndarray, R_a: np.ndarray, pos_b: np.ndarray, R_b: np.ndarray

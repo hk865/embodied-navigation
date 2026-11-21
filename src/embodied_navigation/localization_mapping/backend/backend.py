@@ -449,7 +449,10 @@ class SlamBackend:
             shift += step
             if float(np.linalg.norm(step)) < 1e-4:
                 break
-        rms = float(np.sqrt(np.mean(res * res)))
+        _, res_final, _ = _correspondences(p_rot + shift, prev_pts, normals, tree, inlier_dist_m)
+        if len(res_final) < 50:
+            return None
+        rms = float(np.sqrt(np.mean(res_final * res_final)))
         return shift, rms
 
     def _shift_is_zero(self, est: tuple[np.ndarray, float] | None) -> bool:
@@ -708,7 +711,7 @@ class SlamBackend:
                 self._stats["loops_skipped_spacing"] += 1
                 return None, None, None
 
-        recent = set(list(self.map.keyframes)[-c.exclude_recent :])
+        recent = set(list(self.map.keyframes)[-c.exclude_recent :]) if c.exclude_recent > 0 else set()
         gap_ns = c.min_loop_gap_s * 1e9
         excluded = {
             key
@@ -717,22 +720,20 @@ class SlamBackend:
             or keyframe.stamp_ns - old.stamp_ns < gap_ns
             or (c.min_loop_travel_m > 0.0 and (curr_path - self._path_m.get(key, curr_path)) < c.min_loop_travel_m)
         }
-        match, tilt_rejected = self._search_with_rejection(
+        match, rejected, rejected_kind = self._search_with_rejection(
             self.map,
             keyframe,
             desc,
             lambda key: key in excluded,
             lambda key: self._loop_submap(key, excluded),
             apply_tilt_gate=True,
+            apply_odom_gate=True,
             use_gravity_prior=True,
         )
         if match is None:
-            return None, tilt_rejected, ("tilt" if tilt_rejected is not None else None)
+            return None, rejected, rejected_kind
         key, result = match
         T_world_new = result.T_target_source
-        rejected = self._odometry_inconsistency(key, keyframe, T_world_new)
-        if rejected is not None:
-            return None, rejected, "odom"
         if self.config.use_measured_submaps and self.config.measured_submap.anchor_mode == "candidate":
             anchor = key
         else:
@@ -830,15 +831,18 @@ class SlamBackend:
 
     # Shared ---------------------------------------------------------------
 
+    def _verified_up_body(self, keyframe: Keyframe) -> np.ndarray:
+        """Consistent body-frame gravity-up unit vector shared by ICP, tilt gate, and graph prior."""
+        vec = self._up_body.get(keyframe.key, keyframe.T_odom_body[2, :3])
+        norm = float(np.linalg.norm(vec))
+        return (vec / norm) if norm > 1e-6 else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
     def _tilt_rejection_reason(self, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
         limit = self.config.max_loop_tilt_rad
         if limit is None:
             return None
-        up_body = keyframe.T_odom_body[2, :3]
-        up_norm = float(np.linalg.norm(up_body))
-        if up_norm <= 1e-6:
-            return None
-        u_world = T_world_body[:3, :3] @ (up_body / up_norm)
+        up_body = self._verified_up_body(keyframe)
+        u_world = T_world_body[:3, :3] @ up_body
         tilt_rad = float(np.arctan2(np.hypot(u_world[0], u_world[1]), u_world[2]))
         if tilt_rad > limit:
             return f"gravity tilt {np.degrees(tilt_rad):.2f} deg exceeds {np.degrees(limit):.2f} deg"
@@ -853,15 +857,17 @@ class SlamBackend:
         submap,
         *,
         apply_tilt_gate: bool = False,
+        apply_odom_gate: bool = False,
         use_gravity_prior: bool = False,
     ):
-        """Best ICP-verified ScanContext candidate as ``((key, IcpResult) | None, reject_reason)``."""
+        """Best admissible ICP-verified candidate as ``((key, IcpResult) | None, reject_reason, reject_kind)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         best = None
-        last_tilt_reject = None
+        last_reject = None
+        last_reject_kind = None
         source = None
         up_body = (
-            keyframe.T_odom_body[2, :3]
+            self._verified_up_body(keyframe)
             if (use_gravity_prior and self.config.icp_gravity_sigma_rad is not None)
             else None
         )
@@ -889,11 +895,20 @@ class SlamBackend:
                 tilt_reject = self._tilt_rejection_reason(keyframe, result.T_target_source)
                 if tilt_reject is not None:
                     self._stats["loops_rejected_tilt"] += 1
-                    last_tilt_reject = tilt_reject
+                    last_reject = tilt_reject
+                    last_reject_kind = "tilt"
+                    continue
+            if apply_odom_gate:
+                odom_reject = self._odometry_inconsistency(key, keyframe, result.T_target_source)
+                if odom_reject is not None:
+                    last_reject = odom_reject
+                    last_reject_kind = "odom"
                     continue
             if best is None or result.rmse_m < best[1].rmse_m:
                 best = (key, result)
-        return best, (None if best is not None else last_tilt_reject)
+        if best is not None:
+            return best, None, None
+        return None, last_reject, last_reject_kind
 
     def _search(self, store: MapStore, keyframe: Keyframe, desc, exclude, submap):
         """Best ICP-verified ScanContext candidate as ``(key, IcpResult)``, or None.
@@ -902,7 +917,7 @@ class SlamBackend:
         the initial guess is the candidate's pose rotated by the ScanContext
         yaw. Among verified candidates the lowest RMSE wins.
         """
-        best, _ = self._search_with_rejection(store, keyframe, desc, exclude, submap)
+        best, _, _ = self._search_with_rejection(store, keyframe, desc, exclude, submap)
         return best
 
     def _register(

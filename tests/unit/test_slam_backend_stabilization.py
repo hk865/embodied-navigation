@@ -691,6 +691,128 @@ class SlamBackendStabilizationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     BackendConfig.from_dict(bad)
 
+    def test_pose_graph_exact_se3_jacobians_and_zero_gradient_at_convergence(self) -> None:
+        # P0-2 regression: verify exact SE(3) right-Jacobian-inverse derivatives on both endpoints
+        # and verify true cost gradient vanishes at convergence on an anisotropic robust two-node graph.
+        from embodied_navigation.localization_mapping.backend.backend import anisotropic_information
+        from embodied_navigation.localization_mapping.backend.pose_graph import (
+            adjoint,
+            invert,
+            se3_exp,
+            se3_log,
+            se3_right_jacobian_inv,
+        )
+
+        T_a = _make_pose([1.2, -0.7, 0.4], (6.0, -9.0, 28.0))
+        T_b = _make_pose([2.7, 0.5, 1.1], (-4.0, 12.0, -17.0))
+        Z = _make_pose([0.9, 0.8, 0.3], (2.0, -3.0, 14.0))
+        Z_inv = invert(Z)
+        e0 = se3_log(Z_inv @ invert(T_a) @ T_b)
+        Jr_inv = se3_right_jacobian_inv(e0)
+        Ja_ana = -(Jr_inv @ adjoint(invert(T_b) @ T_a))
+        Jb_ana = Jr_inv
+
+        eps = 1e-7
+        Ja_num = np.zeros((6, 6))
+        Jb_num = np.zeros((6, 6))
+        for k in range(6):
+            d = np.zeros(6)
+            d[k] = eps
+            Ja_num[:, k] = (
+                se3_log(Z_inv @ invert(T_a @ se3_exp(d)) @ T_b)
+                - se3_log(Z_inv @ invert(T_a @ se3_exp(-d)) @ T_b)
+            ) / (2.0 * eps)
+            Jb_num[:, k] = (
+                se3_log(Z_inv @ invert(T_a) @ (T_b @ se3_exp(d)))
+                - se3_log(Z_inv @ invert(T_a) @ (T_b @ se3_exp(-d)))
+            ) / (2.0 * eps)
+        np.testing.assert_allclose(Ja_ana, Ja_num, atol=1e-6)
+        np.testing.assert_allclose(Jb_ana, Jb_num, atol=1e-6)
+
+        # Two-node graph with one ordinary edge + one conflicting anisotropic robust edge.
+        graph = PoseGraph(cauchy_scale=2.0)
+        graph.add_node(0, np.eye(4))
+        graph.add_node(1, _make_pose([1.0, 0.0, 0.0], (0.0, 0.0, 15.0)))
+        info_odom = anisotropic_information(0.05, 0.15, 0.02, 0.05)
+        info_loop = anisotropic_information(0.10, 0.25, 0.03, 0.04)
+        graph.add_edge(0, 1, _make_pose([1.0, 0.0, 0.0], (0.0, 0.0, 15.0)), info_odom, robust=False)
+        graph.add_edge(0, 1, _make_pose([2.0, 0.2, -0.1], (4.0, -5.0, 32.0)), info_loop, robust=True)
+        res = graph.optimize(iterations=40)
+        self.assertTrue(res["converged"])
+
+        # True finite-difference cost gradient wrt node 1 must be near zero.
+        grad_num = np.zeros(6)
+        p0, p1 = graph.poses[0], graph.poses[1]
+        for k in range(6):
+            d = np.zeros(6)
+            d[k] = eps
+            cp = graph._cost([p0, p1 @ se3_exp(d)])
+            cm = graph._cost([p0, p1 @ se3_exp(-d)])
+            grad_num[k] = (cp - cm) / (2.0 * eps)
+        self.assertLess(float(np.max(np.abs(grad_num))), 1e-4)
+
+    def test_pose_graph_rejects_duplicate_node_key(self) -> None:
+        graph = PoseGraph()
+        graph.add_node((1, 0), np.eye(4))
+        with self.assertRaises(ValueError):
+            graph.add_node((1, 0), np.eye(4))
+
+    def test_icp_is_invariant_to_large_world_origin_offset(self) -> None:
+        # P2-1 regression: shifting target and T_init by +300 m along X must not trigger rank failure.
+        room = _room_cloud(71)
+        offset = np.array([300.0, -150.0, 25.0], dtype=np.float64)
+        target_shifted = room + offset
+        T_init = _make_pose(offset + np.array([0.08, -0.06, 0.04]), (0.5, -0.5, 2.0))
+        res = icp_point_to_plane(room, target_shifted, T_init, max_correspondence_m=0.8, voxel_m=0.25)
+        self.assertTrue(res.converged)
+        self.assertGreater(res.fitness, 0.95)
+        np.testing.assert_allclose(res.T_target_source[:3, 3], offset, atol=0.02)
+
+    def test_exclude_recent_zero_allows_loop_closure(self) -> None:
+        # P1-9a regression: exclude_recent=0 must NOT exclude all history via keys[-0:].
+        room = _room_cloud(73)
+        cfg = BackendConfig(
+            exclude_recent=0,
+            min_loop_gap_s=0.0,
+            min_loop_travel_m=0.0,
+            min_loop_spacing_m=0.0,
+            zupt_enabled=False,
+        )
+        backend = SlamBackend(cfg)
+        backend.ingest(Keyframe((1, 0), 0, np.eye(4), np.eye(4), room))
+        ev = backend.ingest(Keyframe((1, 1), 1_000_000_000, _make_pose([0.05, 0.0, 0.0]), np.eye(4), room))
+        self.assertTrue(ev["loop"])
+
+    def test_correction_admission_rejects_backward_stamp_and_non_mutual_3_cluster(self) -> None:
+        # P1-10 & P2-3 regressions: backward timestamps cannot confirm, and confirmations=3
+        # requires pairwise mutual agreement within the cluster.
+        from embodied_navigation.localization_mapping.backend.correction import CorrectionAdmission
+
+        adm = CorrectionAdmission(confirmations=3, window_s=10.0, agree_translation_m=0.15)
+        body = np.eye(4)
+        self.assertIsNone(adm.propose(_make_pose([-0.14, 0.0, 0.0]), body, 1_000_000_000))
+        self.assertIsNone(adm.propose(_make_pose([0.14, 0.0, 0.0]), body, 2_000_000_000))
+        # 0.0 agrees with both -0.14 and +0.14 individually, but |-0.14 - 0.14| = 0.28 > 0.15!
+        self.assertIsNone(adm.propose(_make_pose([0.0, 0.0, 0.0]), body, 3_000_000_000))
+        # Backward timestamp must not confirm either.
+        adm2 = CorrectionAdmission(confirmations=2, window_s=10.0, agree_translation_m=0.15)
+        self.assertIsNone(adm2.propose(np.eye(4), body, 100_000_000_000))
+        self.assertIsNone(adm2.propose(np.eye(4), body, 1_000_000_000))
+
+    def test_all_committed_stabilization_presets_load_cleanly(self) -> None:
+        from pathlib import Path
+
+        cfg_dir = Path(__file__).resolve().parents[2] / "configs" / "localization_mapping"
+        presets = sorted(cfg_dir.glob("slam_backend_*.json"))
+        self.assertGreaterEqual(len(presets), 4)
+        for path in presets:
+            cfg = BackendConfig.from_json(path)
+            self.assertIsInstance(cfg, BackendConfig)
+        stab = BackendConfig.from_json(cfg_dir / "slam_backend_stabilized.json")
+        self.assertIsNone(stab.graph_gravity_sigma_rad)
+        self.assertAlmostEqual(stab.icp_gravity_sigma_rad, 0.02)
+        self.assertAlmostEqual(stab.min_loop_travel_m, 5.0)
+
 
 if __name__ == "__main__":
     unittest.main()
