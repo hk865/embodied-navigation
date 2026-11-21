@@ -360,7 +360,15 @@ class SlamBackend:
         return self._correction
 
     def observability_stats(self) -> dict:
-        return dict(self._stats)
+        stats = dict(self._stats)
+        stats.update(
+            {
+                "surface_checks": int(self.surface_checks),
+                "surface_accepted": int(self.surface_accepted),
+                "surface_rejected_by_reason": dict(self.surface_rejected_by_reason),
+            }
+        )
+        return stats
 
     def save_map(self, directory: Path) -> None:
         self.map.save(directory)
@@ -489,8 +497,9 @@ class SlamBackend:
         )
         if step_dxy > c.zupt_max_odom_xy_m or anchor_dxy > c.zupt_max_odom_xy_m:
             return None, None
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None, None
         delta_anchor = invert(anchor.T_odom_body) @ keyframe.T_odom_body
@@ -544,8 +553,9 @@ class SlamBackend:
         intermediate sparse frames before recovery succeeded).
         """
         c = self.config
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None
         T_anchor_prev = invert(self.graph.pose(anchor.key)) @ self.graph.pose(previous.key)
