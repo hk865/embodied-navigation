@@ -4,7 +4,9 @@
 
 **开发计划入口**：当前阶段目标、里程碑与分支归属见 [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md)；活体待办、角色分工与验收标准见 [docs/plan/TASKS.md](docs/plan/TASKS.md)。新会话先读这两份再动手。
 
-## 1. 项目现状与推进顺序（2026-11-20）
+**新接手者 3 分钟导读**：本文件（规则）→ [README.md](README.md)（架构与启动入口）→ [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md)（阶段状态与**活跃分支关键提交 Log 摘要**）→ [docs/plan/TASKS.md](docs/plan/TASKS.md)（活体任务与 Phase 4 后端主线）→ [ADR-0001](docs/plan/adr/0001-livo-yaw-pipeline-overlap.md) · [ADR-0002](docs/plan/adr/0002-embodied-agent-async-and-map-outlook.md) · [ADR-0003](docs/plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md) · [ADR-0004](docs/plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) → 目标模块 `README.md`。验证（仓库根）：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`（当前工作树 679 OK）与 `... tests/regression`（60 OK，本机 3 条按环境 skip），完整命令见第 4 节。开工先核对 `git status --short --branch` 与 `git branch -avv`。
+
+## 1. 项目现状与推进顺序（2026-11-21）
 
 - **唯一开发主线是 D 路径**：DynaNav / Isaac Sim。入口是 `scripts/run_dynanav_native_exploration.sh`，仿真侧代码在 `src/embodied_navigation/simulation/dynanav/`。
 - **A 路径**（Gazebo 旧主线，`start.py → launch/main.py` 与私有 Fast DDS）已于 `refactor/06-clean-base` 整块退役删除（历史保全于 `main`、`archive/pre-review-20261109` 与 `refactor/05-agents-rules`），不要恢复。
@@ -13,9 +15,9 @@
 - **Agent 感知与控制介入层**（`operator_map.py`、`semantic_mapping/`、`planning/exploration/`、`explore_waypoint_client.py`、`dynanav_exploration.py`、`native_waypoints.py`、`pct_scan_waypoints.py`、`.agents/skills/dynanav-explore/`）是具身导航的核心能力，作为独立接口层完整保留并持续清晰化。
 - **运行环境**：Linux 主机已具备 Isaac Sim 与 ROS 2 环境，可直接进行仿真与原生验证；若在无 Isaac/ROS 的 Windows + WSL 环境工作，仅运行 CPU 单元测试与回归，仿真验证留待 Linux 主机。
 - **当前推进顺序**：
-  1. **干净底座已成型并吸收第一优先验证成果**（`refactor/06-clean-base`，`bb2eef2`，70 个 `.py` / 16,978 行，0 失败单测）：已完成 P1+P2 死代码/废弃实验清理、P3 动态行人移出主线、A 路径整块退役；后续继续按“仿真 / 通信 / 前端 / 后端 / 规划导航 / 控制执行 / Agent 接口”七层边界保持清晰；
-  2. **第一优先验证分支已完成并合入底座**（`exp/pct-scan-stairs-truth`，`bb2eef2`）：基于干净底座切出，直接用 **仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云**（跳过 SLAM 定位漂移干扰）完成 **PCT + SCAN 地下室至二楼大厅全链路真值闭环**（净爬升 +3.25 m、零楼梯特化规则、零撞墙/扶手、零 SCAN 失败）；
-  3. **第二优先验证分支（当前推进重点）**：在干净底座上推进 SLAM 公共前端/后端规范化（配置加载、各向异性信息矩阵、IMU 偏置协方差等方程与参数统一），并按不同 SLAM 后端分别切出 3 个精简独立分支进行横向对照，避免各方向互相耦合。
+  1. **干净底座已成型并吸收第一优先验证成果**（`refactor/06-clean-base`，`f061a7e`；Phase 2 成果 `bb2eef2`，70 个 `.py` / 16,978 行）：已完成 P1+P2 死代码/废弃实验清理、P3 动态行人移出主线、A 路径整块退役；继续按“仿真 / 通信 / 前端 / 后端 / 规划导航 / 控制执行 / Agent 接口”七层边界保持清晰。
+  2. **Phase 3 已收口并合入 `main`**（`main` = `origin/main` = `2144e5f`）：`fix/livo-yaw-and-imu-patch`（`5049ec7`）经 merge `9b6dc85` 合入，ADR-0001/0002 落在 `9816a2b`，RViz 实时点云配置/录制 CLI 落在 `ca754ab`/`2144e5f`；测试基线 **679 单测 0 失败 0 跳过、60 回归 0 失败（本机 3 条按环境跳过）**（当前工作树；`main` 为 650 单测）。
+  3. **Phase 4 当前重点（SLAM 后端优化）**：3 条互不耦合的后端对照分支（`exp/slam-measured-submaps`、`exp/slam-surface-gate`、`exp/slam-visual-retrieval`）已完成初版与 Codex 审计；当前开发推进分支 `exp/startup-walk-imu-bias` 承载前端/规划实机闭环修复与 ADR-0003/0004。下一步按 [ADR-0004](docs/plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) 先做离线关键帧缓存 + 三层轨迹评测器，再做三项后端修复（重力 Roll/Pitch 强先验、原地/近邻过密回环抑制、Agent 停驻期 ZUPT 停车锚定）。
 
 ### 多 Agent 分工与协作（2026-11-20 确立）
 
@@ -72,7 +74,7 @@
 
 - 测试用 unittest。共用的 fixture 放在不以 `test_` 开头的模块里（例如 `tests/unit/slam_backend_fixtures.py`）。
 - **不得为了让测试通过而删除或放松旧断言、加 skip、调大超时。** 某个旧测试只有改了才能通过时，停下来，写清楚冲突在哪。
-- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前干净底座（`refactor/06-clean-base`）基线为 **646 条单测 0 失败 0 跳过、60 条回归 0 失败（本机 3 条按环境跳过）**（旧 5 条历史失败已随死代码清理全部归零）。
+- 验收标准是：全量单测和回归的失败名单，相对起点不能新增。当前工作树（`exp/startup-walk-imu-bias` `9e3408d`）基线为 **679 条单测 0 失败 0 跳过、60 条回归 0 失败（本机 3 条按环境跳过）**；集成基线 `main`（`2144e5f`）为 **650 条单测 0 失败 0 跳过**（旧 5 条历史失败已随死代码清理全部归零，Phase 3/4 新增测试已计入）。
 - 删除一个包时，只测试被删代码的测试文件可以一起删掉，但必须在提交信息里点名。
 
 ## 5. 分支、提交与验收
@@ -84,13 +86,18 @@
 
 ### 相关分支为何保留
 
-以下为 2026-11-20 的盘点。开工先核对 `git status --short --branch`、`git branch -avv` 和相应报告。远端可用 `git ls-remote --heads origin` 只读核对。运行报告记录实际提交及工作树差异。
+以下为 2026-11-21 的盘点。开工先核对 `git status --short --branch`、`git branch -avv` 和相应报告。远端可用 `git ls-remote --heads origin` 只读核对。运行报告记录实际提交及工作树差异。完整关键提交 Log 摘要见 [docs/plan/ROADMAP.md 第 3 节](docs/plan/ROADMAP.md)。
 
 | 分支 | 用途和复核要求 |
 | --- | --- |
-| `main` / `origin/main` | 集成、发布和独立验收入口。按验收和审阅结果由用户决定合并及推送 |
+| `main` / `origin/main`（`2144e5f`，一致） | 集成、发布和独立验收入口；已含 `fix/livo-yaw-and-imu-patch`（`5049ec7`，merge `9b6dc85`）、ADR-0001/0002（`9816a2b`）与 RViz 实时点云配置/录制 CLI（`ca754ab`、`2144e5f`）。按验收和审阅结果由用户决定合并及推送 |
+| **`exp/startup-walk-imu-bias`（当前开发推进分支，`9e3408d`，领先 origin 6）** | 起步预热稳态门 + 物理级带噪 IMU、RViz RGB8 彩色重建图层、局部滑窗建图与 `--backend-pose` 订阅、PCT 净空 0.95 m、不依赖 PCT/SCAN 的直通脱困 `maneuver`、ADR-0003/0004；基线 `main`，共 12 个提交。合入前需用户逐行审阅 diff 并跑全量测试 |
+| `fix/livo-yaw-and-imu-patch`（`5049ec7`，已并入 `main`） | LIVO 独立 `yaw` 延迟修复 + 0011 IMU patch 原生构建接线；保留作证据与回归基线，不再继续叠加 |
 | `refactor/00-plan-docs` 至 `refactor/05-agents-rules` | `00` 计划、`01` 几何去重、`02` 死代码、`03` 移除旧路径、`04` SLAM 后端、`05` 协作规则。逐包验收 |
-| `refactor/06-clean-base`（当前干净底座） | 基于 `refactor/05-agents-rules` 完成 P1+P2 清理、P3 动态行人移出、A 路径整块退役（累计精简 >8.1 万行，0 失败单测）；已并入第一优先验证分支 `exp/pct-scan-stairs-truth`（`bb2eef2`）的 PCT + SCAN 多层真值闭环成果，后续各专项实验分支均从此干净底座切出 |
+| `refactor/06-clean-base`（干净底座，`f061a7e`） | 基于 `refactor/05-agents-rules` 完成 P1+P2 清理、P3 动态行人移出、A 路径整块退役（累计精简 >8.1 万行，0 失败单测）；已并入第一优先验证分支 `exp/pct-scan-stairs-truth`（`bb2eef2`）的 PCT + SCAN 多层真值闭环成果，Phase 3 已合入 `main` |
+| `exp/slam-measured-submaps`（`5b300b0`，远端一致） | Phase 4 后端对照分支：多帧实测 LiDAR 子图对回环配准的影响；已过 Codex 审计，待同输入同时间轴评测 |
+| `exp/slam-surface-gate`（`958ec01`，远端一致） | Phase 4 后端对照分支：平面/表面覆盖门控对 ICP 回环误配与漏配的影响；已过 Codex 审计，待同输入同时间轴评测 |
+| `exp/slam-visual-retrieval`（`16883d1`，远端一致） | Phase 4 后端对照分支：图像检索补充候选、视角不变特征与几何验证；已过 Codex 审计，待同输入同时间轴评测 |
 | `exp/pct-scan-stairs-truth`（第一优先验证分支，已完成并合入 `refactor/06-clean-base` 的 `bb2eef2`） | 基于 `refactor/06-clean-base` 切出，直接用仿真真值位姿 + 200 Hz 真值去畸变 RTX 点云驱动 PCT + SCAN 地下室至二楼大厅全链路真值闭环（净爬升 +3.25 m、零楼梯特化规则、零撞墙/扶手、零 SCAN 失败；跳过 SLAM 干扰）。分支保留作复现入口 |
 | `ref/dynanav-dynamic-pedestrian`（动态行人参考分支） | 保全移除前的全部动态行人/学习分割支线代码与测试，供后续动态场景开发参考 |
 | 本地 `exp/two-floor-demo`（`e378b8d`）及 `backup/exp-two-floor-demo-wip-20261120`（`3720814`） | 隔离并完整保全拆分支前的两层联调代码、楼梯补丁、SLAM 评测与采集改动，供按主题提取到干净分支，不在原分支继续叠加混合改动 |

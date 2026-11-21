@@ -1,10 +1,21 @@
 # Embodied Navigation · 具身导航
 
-> 盘点日期：2026-11-20 · 分支 `refactor/06-clean-base` · HEAD `5b880b2`
+> 盘点日期：2026-11-21 · 集成基线 `main` `2144e5f`（已推送 `origin/main`） · 当前开发推进分支 `exp/startup-walk-imu-bias` `9e3408d`（本地领先 `origin/exp/startup-walk-imu-bias` 6 个提交） · 活体文档
 
 Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行，上层挂载 Agent 感知与控制介入层。
 
-本文件面向“新开会话、快速讲透整个项目”的读者。阅读顺序：本文件 → [开发路线图](docs/plan/ROADMAP.md) → [活体任务板](docs/plan/TASKS.md) → [协作规则](AGENTS.md) → 需要的模块 `README.md`。
+## 0. 新接手者 3 分钟导读
+
+1. **读**（按顺序）：本文件 → [开发路线图](docs/plan/ROADMAP.md)（阶段状态、**活跃分支关键提交 Log 摘要**、数据卷约定）→ [活体任务板](docs/plan/TASKS.md)（已完成 / 进行中 / 下一阶段主线）→ 架构决策记录 [ADR-0001](docs/plan/adr/0001-livo-yaw-pipeline-overlap.md) · [ADR-0002](docs/plan/adr/0002-embodied-agent-async-and-map-outlook.md) · [ADR-0003](docs/plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md) · [ADR-0004](docs/plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) → 需要的模块 `README.md`；协作与提交规则见 [AGENTS.md](AGENTS.md)。
+2. **核**：开工先跑 `git status --short --branch` 与 `git branch -avv`，核对实际分支、HEAD 与远端同步状态，不要只看旧结论。
+3. **验**（仓库根，CPU 离线，约 30 s；完整入口见 §4.5）：
+
+   ```bash
+   PYTHONPATH=src python3 -B -m unittest discover -s tests/unit        # 679 条 OK、0 跳过
+   PYTHONPATH=src python3 -B -m unittest discover -s tests/regression  # 60 条 OK（本机 3 条按环境 skip）
+   ```
+
+4. **接手切入点**：下一阶段主线是 **Phase 4 SLAM 后端优化**（见 [ROADMAP](docs/plan/ROADMAP.md) 与 [TASKS](docs/plan/TASKS.md)）：先做离线关键帧抽取缓存 + 三层轨迹评测器，再做三项后端修复（重力 Roll/Pitch 强先验、原地/近邻过密回环抑制、Agent 停驻期 ZUPT）。两份评测数据集入口在 `$PROJECT_DATA_ROOT/embodied-navigation/runs/20261121-noisy-imu-rgb-twofloor-explore/`。
 
 ## 1. 项目定位与端到端架构
 
@@ -138,10 +149,10 @@ python3 scripts/explore_waypoint_client.py stop --run-dir <RUN>
 # 语法编译检查
 PYTHONPATH=src python3 -B -m compileall -q src scripts
 
-# 单元测试：当前基线 646 条全绿
+# 单元测试：当前工作树 679 条全绿（0 失败 0 跳过；集成基线 main 为 650 条）
 PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
 
-# 回归测试：当前基线 60 条全绿（本机 3 条按环境 skip）
+# 回归测试：当前基线 60 条全绿 0 失败（本机 3 条按环境 skip）
 PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 
 # 原生源码 pin 校验与 PCT CPU 编译冒烟（不联网、不加载模型）
@@ -160,21 +171,25 @@ python3 docker/build_native.py --execute
 | 文档 | 内容 |
 | --- | --- |
 | [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md) | 唯一主线、七层边界、Phase 1–4 里程碑与状态、分支归属表、数据卷约定 |
-| [docs/plan/TASKS.md](docs/plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办队列，含建议角色、模块与验收标准 |
+| [docs/plan/TASKS.md](docs/plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办队列，含建议角色、模块与验收标准；Phase 4 后端评测数据集入口 |
+| [docs/plan/adr/](docs/plan/adr/) | 架构决策记录 ADR-0001–ADR-0004：yaw 延迟边界、具身 Agent 异步与语义地图、流式 Fork + 关键帧语义图、增量 Mesh/3DGS 与三层后端评测口径 |
 | [AGENTS.md](AGENTS.md) | 硬规则、测试与分支验收、数据卷规则、README 维护要求 |
 | [docs/README.md](docs/README.md) | 文档分类索引（权威说明 / 计划 / 实验历史 / 审查 / 验证 / 依赖） |
 
-### 5.2 分支管理（摘要）
+### 5.2 分支管理（摘要，2026-11-21）
 
-| 分支 | 用途 |
-| --- | --- |
-| `main` / `origin/main` | 集成与发布基线；Phase 3 收口后由用户合并推送为新干净 `main` |
-| `refactor/00-plan-docs` … `refactor/06-clean-base` | 分包重构栈；`06-clean-base` 是当前工作基线（含 Phase 2/3 成果） |
-| `exp/pct-scan-stairs-truth` | 真值闭环复现入口（已合入 `bb2eef2`） |
-| `ref/dynanav-dynamic-pedestrian` | 动态行人参考分支，按需重构 |
-| `exp/loop-*`、`refactor/05-loop-evidence-base`、`archive/*`、`backup/*` | 历史回环对照、审查前档案与在途快照，只读查证 |
+| 分支 | HEAD / 远端同步 | 用途 |
+| --- | --- | --- |
+| `main` / `origin/main` | `2144e5f`（一致） | 集成、发布与独立验收入口；已含 `fix/livo-yaw-and-imu-patch`（`5049ec7`，merge `9b6dc85`）、ADR-0001/0002（`9816a2b`）与 RViz 实时点云配置/录制 CLI（`ca754ab`、`2144e5f`） |
+| **`exp/startup-walk-imu-bias`**（当前开发分支） | `9e3408d`（领先 origin 6） | 起步预热稳态门 + 物理级带噪 IMU、RViz RGB8 彩色重建图层、局部滑窗建图与 `--backend-pose` 订阅、PCT 净空 0.95 m、不依赖 PCT/SCAN 的直通脱困 `maneuver`、ADR-0003/0004；共 12 个提交（基线 `main`） |
+| `refactor/00-plan-docs` … `refactor/06-clean-base` | 已验收栈 | 分包重构历史；`06-clean-base`（`f061a7e`）是干净底座，Phase 1/2 成果所在 |
+| `exp/slam-measured-submaps` / `exp/slam-surface-gate` / `exp/slam-visual-retrieval` | `5b300b0` / `958ec01` / `16883d1`（与远端一致） | Phase 4 三条后端对照分支（Codex 审计后，待同输入、同时间轴评测）；均基于 `9816a2b` 切出 |
+| `exp/pct-scan-stairs-truth` | `bb2eef2`（已并入 `refactor/06-clean-base` 历史） | 真值闭环复现入口（Phase 2） |
+| `fix/livo-yaw-and-imu-patch` | `5049ec7`（已并入 `main`） | LIVO 独立 `yaw` 延迟修复 + 0011 IMU patch 原生构建接线，保留作证据 |
+| `ref/dynanav-dynamic-pedestrian` | `f62c83c` | 动态行人参考分支，按需提取重构 |
+| `exp/loop-*`、`refactor/05-loop-evidence-base`、`archive/*`、`backup/*`、`wip/*` | 历史 | 历史回环对照、审查前档案与在途快照，只读查证 |
 
-分支用途与复核要求的权威版本见 [AGENTS.md 第 5 节](AGENTS.md)；agent 只提交本地分支，**合并与推送由用户完成**。
+各活跃分支的完整关键提交 Log 摘要见 [ROADMAP 第 3 节](docs/plan/ROADMAP.md)；分支复核要求见 [AGENTS.md 第 5 节](AGENTS.md)。agent 只提交本地分支，**合并与推送由用户完成**。
 
 ### 5.3 数据卷
 
@@ -183,6 +198,7 @@ python3 docker/build_native.py --execute
 | 路径 | 内容 |
 | --- | --- |
 | `runs/<批次>/<run-id>/` | 新原生运行与回放：冻结配置、`runtime_context.json`、日志、回执、`manifest.json` |
+| `runs/20261121-noisy-imu-rgb-twofloor-explore/` | 两份带噪 IMU 13 话题双层评测包（Phase 4 输入）：`20261121T133734Z`（一楼窄角前后端双失效，≈9.3 GB）与 `20261121T142308Z`（双层 46 分钟 70 m × 27 m，≈80 GB） |
 | `experiments/<run>/` | DynaNav / Isaac 历史实验产物（capture、observer、点云与逐帧回执） |
 | `build_cache/` | 原生 SCAN / LIO 构建与安装前缀 |
 | `runtime_assets/{assets,models,runs}/` | 仓库根 `assets/`、`models/`、`runs/` 软链指向的资产、权重与历史运行 |
