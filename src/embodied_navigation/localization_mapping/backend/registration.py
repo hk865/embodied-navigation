@@ -79,7 +79,7 @@ def icp_point_to_plane(
             J_g = np.zeros((3, 6), dtype=np.float64)
             J_g[:, 3:] = -hat(u)
             r_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
-            w_g = float(len(points)) * (gravity_ref_point_sigma_m / gravity_sigma_rad) ** 2
+            w_g = (gravity_ref_point_sigma_m / gravity_sigma_rad) ** 2
             hessian = hessian + w_g * (J_g.T @ J_g)
             rhs = rhs + w_g * (J_g.T @ r_g)
         eigen = np.linalg.eigvalsh(hessian)

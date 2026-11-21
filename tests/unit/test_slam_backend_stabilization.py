@@ -654,6 +654,25 @@ class SlamBackendStabilizationTests(unittest.TestCase):
         self.assertEqual(summary["runtime"]["loops_rejected_odom"], 0)
         self.assertGreaterEqual(summary["runtime"]["loops_rejected_tilt"], 1)
 
+    def test_icp_gravity_prior_does_not_override_well_observed_floor_plane(self) -> None:
+        # Regression: MAP gravity weight must NOT scale with len(points); a well-observed 3D room
+        # (floor + walls) must correct a 1.0 deg biased source_up_body instead of locking to it.
+        room = _room_cloud(67)
+        biased_up = Rotation.from_euler("y", 1.0, degrees=True).as_matrix()[2, :3]
+        T_init = _make_pose([0.05, -0.05, 0.05], (0.0, 1.0, 0.0))
+        res = icp_point_to_plane(
+            room,
+            room,
+            T_init,
+            max_correspondence_m=0.6,
+            voxel_m=0.25,
+            source_up_body=biased_up,
+            gravity_sigma_rad=0.02,
+        )
+        self.assertTrue(res.converged)
+        pitch_deg = abs(float(Rotation.from_matrix(res.T_target_source[:3, :3]).as_euler("xyz", degrees=True)[1]))
+        self.assertLess(pitch_deg, 0.15)
+
     def test_config_strict_validation_rejects_bad_stabilization_values(self) -> None:
         for bad in (
             {"min_loop_travel_m": -1.0},
