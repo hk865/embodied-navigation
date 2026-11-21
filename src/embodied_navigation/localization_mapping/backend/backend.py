@@ -40,6 +40,8 @@ from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .visual import verify_visual
+from .visual_retrieval import VisualIndex, VisualRetrievalConfig
 
 
 @dataclass
@@ -106,10 +108,20 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Visual retrieval & geometric verification options (disabled by default to keep stabilized baseline exact).
+    use_visual_retrieval: bool = False
+    use_visual_verification: bool = False
+    visual_agree_translation_m: float = 0.3
+    visual_agree_rotation_rad: float = 0.05
+    visual_retrieval: VisualRetrievalConfig = field(default_factory=VisualRetrievalConfig)
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.visual_retrieval, VisualRetrievalConfig):
+            raise ValueError(
+                f"visual_retrieval must be a VisualRetrievalConfig, got {type(self.visual_retrieval).__name__}"
+            )
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -135,6 +147,11 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "visual_retrieval" in values:
+            values["visual_retrieval"] = _visual_retrieval_from_dict(values["visual_retrieval"])
+        for flag in ("use_visual_retrieval", "use_visual_verification"):
+            if flag in values and not isinstance(values[flag], bool):
+                raise ValueError(f"{flag} must be a bool, got {values[flag]!r}")
         config = cls(**values)
         config._validate()
         return config
@@ -166,6 +183,8 @@ class BackendConfig:
             "window_s",
             "agree_translation_m",
             "agree_rotation_rad",
+            "visual_agree_translation_m",
+            "visual_agree_rotation_rad",
         ):
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("min_fitness", self.min_fitness) <= 1.0:
@@ -225,6 +244,16 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     _count("scan_context.sectors", config.sectors)
     _positive("scan_context.max_range_m", config.max_range_m)
     return config
+
+
+def _visual_retrieval_from_dict(data: dict) -> VisualRetrievalConfig:
+    """Strict nested VisualRetrievalConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"visual_retrieval must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(VisualRetrievalConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown visual_retrieval keys: {unknown}")
+    return VisualRetrievalConfig(**data)
 
 
 def _positive(name: str, value) -> float:
@@ -303,8 +332,18 @@ class SlamBackend:
         self.map = MapStore(config.map_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
         self.index = ScanContextIndex(config.scan_context)
+        self.visual_index = VisualIndex(config.visual_retrieval) if config.use_visual_retrieval else None
         self.admission = self._new_admission()
         self.loop_count = 0
+        self.visual_candidates_proposed = 0
+        self.visual_verified_count = 0
+        self.visual_fallback_count = 0
+        self.visual_disagreement_count = 0
+        self.visual_loops_accepted = 0
+        self.visual_only_loops_accepted = 0
+        self._last_match_visual = False
+        self._last_match_visual_only = False
+        self._current_visual_pair = None
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._up_body: dict = {}
@@ -327,6 +366,8 @@ class SlamBackend:
         if prior_map is not None:
             for key, desc in prior_map.descriptors.items():
                 self.index.add(key, desc)
+                if self.visual_index is not None:
+                    self.visual_index.add(prior_map.keyframes[key])
 
     @property
     def T_world_odom(self) -> np.ndarray | None:
@@ -359,11 +400,21 @@ class SlamBackend:
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
         zupt_mode, _ = self._add_node(keyframe)
-        loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
-        self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
-        self.index.add(keyframe.key, desc)
+        self._current_visual_pair = self.visual_index.extract(keyframe) if self.visual_index is not None else None
+        try:
+            loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
+            self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
+            self.index.add(keyframe.key, desc)
+            if self.visual_index is not None:
+                self.visual_index.add(self.map.keyframes[keyframe.key], precomputed=self._current_visual_pair)
+        finally:
+            self._current_visual_pair = None
         if loop_key is not None:
             self.loop_count += 1
+            if self._last_match_visual:
+                self.visual_loops_accepted += 1
+                if self._last_match_visual_only:
+                    self.visual_only_loops_accepted += 1
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
@@ -807,30 +858,147 @@ class SlamBackend:
         apply_tilt_gate: bool = False,
         use_gravity_prior: bool = False,
     ):
-        """Best ICP-verified ScanContext candidate as ``((key, IcpResult) | None, reject_reason)``."""
+        """Best ICP-verified ScanContext (and optional visual) candidate as ``((key, IcpResult) | None, reject_reason)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        source_body = None
+        target_cache: dict = {}
+
+        def _get_source() -> np.ndarray:
+            nonlocal source_body
+            if source_body is None:
+                source_body = keyframe.points_body()
+            return source_body
+
+        def _get_target(key) -> np.ndarray:
+            if key not in target_cache:
+                target_cache[key] = submap(key)
+            return target_cache[key]
+
         best = None
+        best_visual = False
         last_tilt_reject = None
         up_body = (
             keyframe.T_odom_body[2, :3]
             if (use_gravity_prior and self.config.icp_gravity_sigma_rad is not None)
             else None
         )
+
+        def _check_tilt(result: IcpResult | None) -> IcpResult | None:
+            nonlocal last_tilt_reject
+            if result is None or not apply_tilt_gate:
+                return result
+            tilt_reject = self._tilt_rejection_reason(keyframe, result.T_target_source)
+            if tilt_reject is not None:
+                self._stats["loops_rejected_tilt"] += 1
+                last_tilt_reject = tilt_reject
+                return None
+            return result
+
+        # Fast path: both visual switches off -> identical to stabilized baseline.
+        if not self.config.use_visual_retrieval and not self.config.use_visual_verification:
+            for key, dist, yaw in candidates[: self.config.icp_candidates]:
+                if dist > self.config.max_scan_context_distance:
+                    break
+                T_init = store.poses[key] @ yaw_pose(yaw)
+                result = _check_tilt(
+                    self._register(_get_source(), _get_target(key), T_init, source_up_body=up_body)
+                )
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+            self._last_match_visual = False
+            self._last_match_visual_only = False
+            return best, (None if best is not None else last_tilt_reject)
+
+        vr = self.config.visual_retrieval
+        query_vdesc = None
+        query_vfeat = None
+        if self._current_visual_pair is not None:
+            query_vdesc, query_vfeat = self._current_visual_pair
+        elif self.visual_index is not None:
+            query_vdesc, query_vfeat = self.visual_index.extract(keyframe)
+
+        def _try_visual_candidate(key) -> IcpResult | None:
+            target_vfeat = None if self.visual_index is None else self.visual_index.local_features.get(key)
+            visual = verify_visual(
+                keyframe,
+                store.keyframes[key],
+                feature_type=vr.feature_type,
+                max_time_delta_s=vr.max_time_delta_s,
+                inlier_m=vr.verify_inlier_m,
+                min_inliers=vr.verify_min_inliers,
+                ratio_threshold=vr.verify_ratio_threshold,
+                max_features=vr.max_features,
+                lidar_px_radius=vr.lidar_px_radius,
+                source_features=query_vfeat,
+                target_features=target_vfeat,
+            )
+            if visual.status != "verified":
+                return None
+            self.visual_verified_count += 1
+            T_init = store.poses[key] @ visual.T_target_source
+            result = _check_tilt(
+                self._register(_get_source(), _get_target(key), T_init, source_up_body=up_body)
+            )
+            if result is None:
+                return None
+            translation, rotation = pose_difference(T_init, result.T_target_source)
+            if (
+                translation > self.config.visual_agree_translation_m
+                or rotation > self.config.visual_agree_rotation_rad
+            ):
+                self.visual_disagreement_count += 1
+                return None
+            return result
+
+        eligible_sc_keys: set = set()
+        sc_had_match = False
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
-            T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
-            if result is None:
-                continue
-            if apply_tilt_gate:
-                tilt_reject = self._tilt_rejection_reason(keyframe, result.T_target_source)
-                if tilt_reject is not None:
-                    self._stats["loops_rejected_tilt"] += 1
-                    last_tilt_reject = tilt_reject
+            eligible_sc_keys.add(key)
+            if self.config.use_visual_verification:
+                result = _try_visual_candidate(key)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+                    best_visual = True
+            else:
+                T_init = store.poses[key] @ yaw_pose(yaw)
+                result = _check_tilt(
+                    self._register(_get_source(), _get_target(key), T_init, source_up_body=up_body)
+                )
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+                    best_visual = False
+                    sc_had_match = True
+
+        if self.visual_index is not None:
+            same_epoch_only = self.prior is None and isinstance(keyframe.key, tuple)
+
+            def _visual_exclude(key) -> bool:
+                if exclude is not None and exclude(key):
+                    return True
+                if same_epoch_only and isinstance(key, tuple) and key[0] != keyframe.key[0]:
+                    return True
+                return False
+
+            visual_candidates = self.visual_index.query(
+                keyframe, exclude=_visual_exclude, precomputed_desc=query_vdesc
+            )
+            self.visual_candidates_proposed += len(visual_candidates)
+            for key, _distance in visual_candidates:
+                if self.config.use_visual_verification and key in eligible_sc_keys:
                     continue
-            if best is None or result.rmse_m < best[1].rmse_m:
-                best = (key, result)
+                result = _try_visual_candidate(key)
+                if result is None:
+                    if not self.config.use_visual_verification and key in eligible_sc_keys:
+                        self.visual_fallback_count += 1
+                    continue
+                if best is None or result.rmse_m < best[1].rmse_m:
+                    best = (key, result)
+                    best_visual = True
+
+        self._last_match_visual = best is not None and best_visual
+        self._last_match_visual_only = self._last_match_visual and not sc_had_match
         return best, (None if best is not None else last_tilt_reject)
 
     def _search(self, store: MapStore, keyframe: Keyframe, desc, exclude, submap):

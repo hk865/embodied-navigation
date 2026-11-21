@@ -29,6 +29,7 @@ from .backend import SlamBackend
 from .keyframes import Keyframe, _read_ascii_pcd
 from .map_store import MapStore
 from .pose_graph import invert, project_so3
+from .visual import VisualObservation
 
 
 @dataclass(frozen=True)
@@ -90,13 +91,39 @@ def load_truth_stream(path: Path) -> TruthTrajectory:
     )
 
 
-def load_map_keyframes(map_dir: Path) -> list[Keyframe]:
+def _load_visual_npz(path: Path) -> VisualObservation | None:
+    if not path.is_file():
+        return None
+    with np.load(path, allow_pickle=False) as data:
+        return VisualObservation(
+            gray=np.asarray(data["gray"]),
+            K=np.asarray(data["K"], dtype=np.float64),
+            T_body_camera=np.asarray(data["T_body_camera"], dtype=np.float64),
+            stamp_ns=int(np.asarray(data["stamp_ns"]).item()),
+        )
+
+
+def load_map_keyframes(map_dir: Path, *, visual_dir: Path | None = None) -> list[Keyframe]:
     """Load keyframes in insertion order from a saved ``MapStore`` directory."""
     store = MapStore.load(Path(map_dir))
-    return list(store.keyframes.values())
+    kfs = list(store.keyframes.values())
+    if visual_dir is not None:
+        vdir = Path(visual_dir)
+        kfs = [
+            Keyframe(
+                key=kf.key,
+                stamp_ns=kf.stamp_ns,
+                T_odom_body=kf.T_odom_body,
+                T_body_lidar=kf.T_body_lidar,
+                points_lidar=kf.points_lidar,
+                visual=_load_visual_npz(vdir / f"{kf.stamp_ns}.npz"),
+            )
+            for kf in kfs
+        ]
+    return kfs
 
 
-def load_input_json_keyframes(input_json: Path) -> list[Keyframe]:
+def load_input_json_keyframes(input_json: Path, *, visual_dir: Path | None = None) -> list[Keyframe]:
     """Load keyframes from an offline comparison ``input.json`` manifest."""
     path = Path(input_json)
     document = json.loads(path.read_text(encoding="utf-8"))
@@ -107,6 +134,14 @@ def load_input_json_keyframes(input_json: Path) -> list[Keyframe]:
         if not pts_path.is_absolute():
             pts_path = path.parent / pts_path
         points = _read_ascii_pcd(pts_path)
+        visual = None
+        if row.get("visual_file"):
+            vpath = Path(row["visual_file"])
+            if not vpath.is_absolute():
+                vpath = path.parent / vpath
+            visual = _load_visual_npz(vpath)
+        elif visual_dir is not None:
+            visual = _load_visual_npz(Path(visual_dir) / f"{int(row['stamp_ns'])}.npz")
         keyframes.append(
             Keyframe(
                 key=(int(row["key"][0]), int(row["key"][1])),
@@ -114,6 +149,7 @@ def load_input_json_keyframes(input_json: Path) -> list[Keyframe]:
                 T_odom_body=np.asarray(row["T_odom_body"], dtype=np.float64),
                 T_body_lidar=np.asarray(row["T_body_lidar"], dtype=np.float64),
                 points_lidar=points,
+                visual=visual,
             )
         )
     return keyframes
