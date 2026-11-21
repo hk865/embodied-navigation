@@ -103,7 +103,10 @@ class BackendNode(Node):
         if directory.parent != self.spool:
             raise RuntimeError(f"refusing to remove {directory} outside {self.spool}")
         try:
-            keyframe = read_keyframe(directory)
+            load_visual = (
+                self.backend.config.use_visual_retrieval or self.backend.config.use_visual_verification
+            )
+            keyframe = read_keyframe(directory, load_visual=load_visual)
         except ValueError as error:
             self.backend.last_error = str(error)
             directory.rename(directory.with_name("rejected_" + directory.name))

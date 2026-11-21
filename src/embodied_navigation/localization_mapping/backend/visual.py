@@ -317,18 +317,35 @@ def verify_visual(
         if support.sum() > best.sum():
             best = support
 
-    inlier_count = int(best.sum())
-    inlier_ratio = float(best.mean())
+    if int(best.sum()) < 3:
+        return VisualResult("geometry_rejected", matches=len(a), inliers=int(best.sum()))
+    T = _rigid(a[best], b[best])
+    final_mask = np.linalg.norm(transform_points(T, a) - b, axis=1) < inlier_m
+    if int(final_mask.sum()) < min_inliers:
+        return VisualResult("geometry_rejected", matches=len(a), inliers=int(final_mask.sum()))
+    # Deduplicate by 1 mm quantized 3D correspondence pair so multiple pixel features
+    # bound to the same LiDAR return cannot inflate inlier count or geometric spread.
+    a_in = a[final_mask]
+    b_in = b[final_mask]
+    _, uniq_idx = np.unique(
+        np.round(np.hstack([a_in, b_in]) * 1000.0).astype(np.int64), axis=0, return_index=True
+    )
+    a_uniq = a_in[uniq_idx]
+    b_uniq = b_in[uniq_idx]
+    inlier_count = int(len(a_uniq))
+    inlier_ratio = float(inlier_count) / float(len(a))
     # patch7x7 维持原 50% 内点率；多尺度视角不变特征在宽视角下允许 >=25% 或内点总数 >= 2*min_inliers。
     ratio_ok = (inlier_ratio >= 0.5) if feature_type == "patch7x7" else (
         inlier_ratio >= 0.25 or inlier_count >= 2 * min_inliers
     )
     if inlier_count < min_inliers or not ratio_ok:
         return VisualResult("geometry_rejected", matches=len(a), inliers=inlier_count)
-    if min(np.linalg.svd(p[best] - p[best].mean(axis=0), compute_uv=False)[1] for p in (a, b)) < 0.1:
+    if min(np.linalg.svd(p - p.mean(axis=0), compute_uv=False)[1] for p in (a_uniq, b_uniq)) < 0.1:
         return VisualResult("degenerate_geometry", matches=len(a), inliers=inlier_count)
-    T = _rigid(a[best], b[best])
-    residual = np.linalg.norm(transform_points(T, a[best]) - b[best], axis=1)
+    T = _rigid(a_uniq, b_uniq)
+    residual = np.linalg.norm(transform_points(T, a_uniq) - b_uniq, axis=1)
+    if int(np.sum(residual < inlier_m)) < min_inliers:
+        return VisualResult("geometry_rejected", matches=len(a), inliers=int(np.sum(residual < inlier_m)))
     return VisualResult("verified", T, len(a), inlier_count, float(np.sqrt(np.mean(residual**2))))
 
 

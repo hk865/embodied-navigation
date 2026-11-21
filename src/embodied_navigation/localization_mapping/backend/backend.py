@@ -374,7 +374,18 @@ class SlamBackend:
         return self._correction
 
     def observability_stats(self) -> dict:
-        return dict(self._stats)
+        stats = dict(self._stats)
+        stats.update(
+            {
+                "visual_candidates_proposed": int(self.visual_candidates_proposed),
+                "visual_verified_count": int(self.visual_verified_count),
+                "visual_fallback_count": int(self.visual_fallback_count),
+                "visual_disagreement_count": int(self.visual_disagreement_count),
+                "visual_loops_accepted": int(self.visual_loops_accepted),
+                "visual_only_loops_accepted": int(self.visual_only_loops_accepted),
+            }
+        )
+        return stats
 
     def save_map(self, directory: Path) -> None:
         self.map.save(directory)

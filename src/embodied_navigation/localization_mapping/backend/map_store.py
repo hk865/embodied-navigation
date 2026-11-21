@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .keyframes import Keyframe, transform_points, voxel_downsample
+from .keyframes import Keyframe, VisualObservation, transform_points, voxel_downsample
 
 SCHEMA = "embodied_navigation_map/v1"
 
@@ -72,16 +72,25 @@ class MapStore:
         for key, keyframe in self.keyframes.items():
             name = f"kf_{key[0]}_{key[1]}.npz"
             np.savez(directory / name, points_lidar=keyframe.points_lidar, descriptor=self.descriptors[key])
-            rows.append(
-                {
-                    "key": list(key),
-                    "stamp_ns": keyframe.stamp_ns,
-                    "T_odom_body": keyframe.T_odom_body.tolist(),
-                    "T_world_body": self.poses[key].tolist(),
-                    "T_body_lidar": keyframe.T_body_lidar.tolist(),
-                    "file": name,
-                }
-            )
+            row = {
+                "key": list(key),
+                "stamp_ns": keyframe.stamp_ns,
+                "T_odom_body": keyframe.T_odom_body.tolist(),
+                "T_world_body": self.poses[key].tolist(),
+                "T_body_lidar": keyframe.T_body_lidar.tolist(),
+                "file": name,
+            }
+            if keyframe.visual is not None:
+                vname = f"kf_{key[0]}_{key[1]}_visual.npz"
+                np.savez_compressed(
+                    directory / vname,
+                    gray=keyframe.visual.gray,
+                    K=keyframe.visual.K,
+                    T_body_camera=keyframe.visual.T_body_camera,
+                    stamp_ns=np.int64(keyframe.visual.stamp_ns),
+                )
+                row["visual_file"] = vname
+            rows.append(row)
         document = {"schema": SCHEMA, "voxel_m": self.voxel_m, "keyframes": rows}
         (directory / "map.json").write_text(json.dumps(document))
 
@@ -96,8 +105,25 @@ class MapStore:
             key = tuple(row["key"])
             with np.load(directory / Path(row["file"]).name) as arrays:
                 points, descriptor = arrays["points_lidar"], arrays["descriptor"]
+            visual = None
+            vfile = row.get("visual_file")
+            if vfile:
+                vpath = directory / Path(vfile).name
+                if vpath.is_file():
+                    with np.load(vpath, allow_pickle=False) as vdata:
+                        visual = VisualObservation(
+                            gray=np.asarray(vdata["gray"]),
+                            K=np.asarray(vdata["K"], dtype=np.float64),
+                            T_body_camera=np.asarray(vdata["T_body_camera"], dtype=np.float64),
+                            stamp_ns=int(np.asarray(vdata["stamp_ns"]).item()),
+                        )
             keyframe = Keyframe(
-                key, row["stamp_ns"], np.array(row["T_odom_body"]), np.array(row["T_body_lidar"]), points
+                key,
+                row["stamp_ns"],
+                np.array(row["T_odom_body"]),
+                np.array(row["T_body_lidar"]),
+                points,
+                visual=visual,
             )
             store.keyframes[key] = keyframe
             store.poses[key] = np.array(row["T_world_body"])
