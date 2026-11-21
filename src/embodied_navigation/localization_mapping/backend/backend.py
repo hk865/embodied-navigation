@@ -35,11 +35,12 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe, voxel_downsample
+from .keyframes import Keyframe, transform_points, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .submaps import SubmapConfig, build_submap
 
 
 @dataclass
@@ -106,10 +107,17 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Measured multi-frame submap options (disabled by default to keep stabilized baseline exact).
+    use_measured_submaps: bool = False
+    measured_submap: SubmapConfig = field(default_factory=SubmapConfig)
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.measured_submap, SubmapConfig):
+            raise ValueError(
+                f"measured_submap must be a SubmapConfig, got {type(self.measured_submap).__name__}"
+            )
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -135,6 +143,10 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "measured_submap" in values:
+            values["measured_submap"] = _submap_from_dict(values["measured_submap"])
+        if "use_measured_submaps" in values and not isinstance(values["use_measured_submaps"], bool):
+            raise ValueError(f"use_measured_submaps must be a bool, got {values['use_measured_submaps']!r}")
         config = cls(**values)
         config._validate()
         return config
@@ -227,6 +239,16 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     return config
 
 
+def _submap_from_dict(data: dict) -> SubmapConfig:
+    """Strict nested SubmapConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"measured_submap must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(SubmapConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown measured_submap keys: {unknown}")
+    return SubmapConfig(**data)
+
+
 def _positive(name: str, value) -> float:
     """Finite positive real; rejects bools and non-numeric input from JSON."""
     if isinstance(value, bool) or not isinstance(value, Real) or not np.isfinite(value) or value <= 0:
@@ -307,6 +329,11 @@ class SlamBackend:
         self.loop_count = 0
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
+        self._source_frames: list[Keyframe] = []
+        self.measured_query_submaps = 0
+        self.measured_target_submaps = 0
+        self.measured_query_frames_total = 0
+        self.measured_target_frames_total = 0
         self._up_body: dict = {}
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
@@ -349,6 +376,12 @@ class SlamBackend:
                 event.update(self._map_step(keyframe, desc))
             else:
                 event.update(self._relocalize_step(keyframe, desc))
+            if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                keep_history = self.config.measured_submap.max_frames - 1
+                if keep_history > 0:
+                    self._source_frames.append(keyframe)
+                    if len(self._source_frames) > keep_history:
+                        self._source_frames = self._source_frames[-keep_history:]
         except Exception as error:  # one bad keyframe must not stop the backend
             self.last_error = f"{type(error).__name__}: {error}"
             event["error"] = self.last_error
@@ -700,10 +733,13 @@ class SlamBackend:
         rejected = self._odometry_inconsistency(key, keyframe, T_world_new)
         if rejected is not None:
             return None, rejected, "odom"
-        anchor = min(
-            self._loop_window(key, excluded),
-            key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
-        )
+        if self.config.use_measured_submaps and self.config.measured_submap.anchor_mode == "candidate":
+            anchor = key
+        else:
+            anchor = min(
+                self._loop_window(key, excluded),
+                key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
+            )
         loop = c.loop_information()
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
         self._last_loop_path_m = curr_path
@@ -723,7 +759,19 @@ class SlamBackend:
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
-        """World cloud of the candidate's ``_loop_window`` (the ICP target of a loop check)."""
+        """World cloud of the candidate's ``_loop_window`` or measured multi-frame submap."""
+        if self.config.use_measured_submaps and self.config.measured_submap.use_history_submap:
+            anchor = self.map.keyframes[key]
+            measured = build_submap(
+                self.map.keyframes.values(),
+                anchor,
+                self.config.measured_submap,
+                excluded=excluded,
+                track_sources=False,
+            )
+            self.measured_target_submaps += 1
+            self.measured_target_frames_total += len(measured.source_keys)
+            return transform_points(self.map.poses[key], measured.points_body)
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
@@ -811,6 +859,7 @@ class SlamBackend:
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         best = None
         last_tilt_reject = None
+        source = None
         up_body = (
             keyframe.T_odom_body[2, :3]
             if (use_gravity_prior and self.config.icp_gravity_sigma_rad is not None)
@@ -819,8 +868,21 @@ class SlamBackend:
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
+            if source is None:
+                if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                    measured = build_submap(
+                        [*self._source_frames, keyframe],
+                        keyframe,
+                        self.config.measured_submap,
+                        track_sources=False,
+                    )
+                    source = measured.points_body
+                    self.measured_query_submaps += 1
+                    self.measured_query_frames_total += len(measured.source_keys)
+                else:
+                    source = keyframe.points_body()
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
+            result = self._register(source, submap(key), T_init, source_up_body=up_body)
             if result is None:
                 continue
             if apply_tilt_gate:
