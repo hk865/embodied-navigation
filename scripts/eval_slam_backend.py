@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import inspect
 import json
 import subprocess
 import sys
@@ -12,6 +14,7 @@ from pathlib import Path
 from embodied_navigation.localization_mapping.backend.backend import BackendConfig, SlamBackend
 from embodied_navigation.localization_mapping.backend.evaluation import (
     evaluate_replay,
+    load_imu_in_base_from_preflight,
     load_input_json_keyframes,
     load_map_keyframes,
     load_truth_stream,
@@ -20,18 +23,23 @@ from embodied_navigation.localization_mapping.backend.evaluation import (
 )
 
 
-def _git_provenance(repo_root: Path) -> dict:
+def _git_provenance(path: Path) -> dict:
     def _run(args: list[str]) -> str:
         try:
-            return subprocess.check_output(args, cwd=repo_root, text=True, stderr=subprocess.DEVNULL).strip()
+            return subprocess.check_output(args, cwd=path, text=True, stderr=subprocess.DEVNULL).strip()
         except Exception:
             return ""
 
     return {
+        "repo_root": _run(["git", "rev-parse", "--show-toplevel"]),
         "branch": _run(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
         "commit": _run(["git", "rev-parse", "HEAD"]),
         "dirty": bool(_run(["git", "status", "--porcelain"])),
     }
+
+
+def _config_to_dict(config: BackendConfig) -> dict:
+    return dataclasses.asdict(config)
 
 
 def _save_plots(output_dir: Path, arrays: dict) -> list[str]:
@@ -137,9 +145,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--init-window-s", type=float, default=5.0, help="Initial SE(3) alignment window (s)")
     parser.add_argument("--bucket-s", type=float, default=1.0, help="Layer 3 revision bucket size (s)")
     parser.add_argument("--snapshot-stride", type=int, default=50, help="Periodic snapshot stride in KFs")
+    origin = parser.add_mutually_exclusive_group()
+    origin.add_argument(
+        "--imu-in-base-xyz",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        default=None,
+        help="IMU translation in robot base frame (m) so IMU estimates are converted to base origin before scoring",
+    )
+    origin.add_argument(
+        "--preflight-json",
+        type=Path,
+        default=None,
+        help="observer/preflight.json containing camera_calibration.selected_fields.imu_translation_in_base",
+    )
+    parser.add_argument("--allow-errors", action="store_true", help="Exit 0 even if replay had ingest errors")
     parser.add_argument("--no-tum", action="store_true", help="Skip TUM trajectory export")
     parser.add_argument("--plot", action="store_true", help="Save PNG diagnostic plots if matplotlib is installed")
     args = parser.parse_args(argv)
+
+    imu_in_base_xyz = None
+    if args.imu_in_base_xyz is not None:
+        imu_in_base_xyz = list(args.imu_in_base_xyz)
+    elif args.preflight_json is not None:
+        imu_in_base_xyz = load_imu_in_base_from_preflight(args.preflight_json).tolist()
 
     keyframes = (
         load_map_keyframes(args.map_dir, visual_dir=args.visual_dir)
@@ -151,19 +181,42 @@ def main(argv: list[str] | None = None) -> int:
     backend = SlamBackend(config)
 
     record = replay_backend(backend, keyframes, snapshot_stride=args.snapshot_stride)
-    summary, arrays = evaluate_replay(record, truth, init_window_s=args.init_window_s, bucket_s=args.bucket_s)
+    summary, arrays = evaluate_replay(
+        record,
+        truth,
+        init_window_s=args.init_window_s,
+        bucket_s=args.bucket_s,
+        imu_in_base_xyz=imu_in_base_xyz,
+    )
 
-    save_evaluation_bundle(args.output_dir, summary, arrays, export_tum=not args.no_tum)
+    save_evaluation_bundle(
+        args.output_dir,
+        summary,
+        arrays,
+        export_tum=not args.no_tum,
+        loop_events=record.loop_events,
+    )
     plots = _save_plots(args.output_dir, arrays) if args.plot else []
+    backend_file = Path(inspect.getfile(SlamBackend)).resolve()
     manifest = {
         "provenance": _git_provenance(Path(__file__).resolve().parents[1]),
+        "backend_module": str(backend_file),
+        "backend_provenance": _git_provenance(backend_file.parent),
         "source": str(args.map_dir or args.input_json),
         "truth": str(args.truth),
         "config_path": None if args.config is None else str(args.config),
+        "resolved_config": _config_to_dict(config),
+        "imu_in_base_xyz": imu_in_base_xyz,
+        "preflight_json": None if args.preflight_json is None else str(args.preflight_json),
+        "argv": list(sys.argv[1:] if argv is None else argv),
         "plots": plots,
     }
-    (args.output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (args.output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8"
+    )
     _print_summary(summary)
+    if not args.allow_errors and (record.errors > 0 or record.missing_graph_nodes > 0):
+        return 1
     return 0
 
 

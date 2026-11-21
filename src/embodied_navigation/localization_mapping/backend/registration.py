@@ -44,9 +44,13 @@ def icp_point_to_plane(
     """Refine ``T_init`` (an estimate of T_target_source).
 
     When ``source_up_body`` (unit gravity-up direction in the source frame) and
-    ``gravity_sigma_rad`` are given, each Gauss-Newton step adds a soft world-Z
-    Roll/Pitch prior ``u_xy = (R @ g_b)[:2] -> 0`` while leaving world Yaw and
-    translation unconstrained.
+    ``gravity_sigma_rad`` are given, each Gauss-Newton step adds a soft 3D
+    world-Z Roll/Pitch prior ``r_g = (R @ g_b) - e_z -> 0`` with exact MAP
+    weight ``(gravity_ref_point_sigma_m / gravity_sigma_rad)^2`` while leaving
+    world Yaw and translation unconstrained.
+
+    Linearization is centered at the target centroid so the normal equations
+    and conditioning check are invariant to arbitrary world-origin offsets.
 
     Returns ``converged=False`` (never raises) when either cloud has fewer than
     50 points after downsampling, too few correspondences remain, or the
@@ -63,18 +67,24 @@ def icp_point_to_plane(
         norm = float(np.linalg.norm(vec))
         if norm > 1e-6:
             up_body = vec / norm
-    tree = cKDTree(target)
-    normals = _normals(target, tree)
+    center = target.mean(axis=0)
+    target_c = target - center
+    T_c = T.copy()
+    T_c[:3, 3] -= center
+    tree = cKDTree(target_c)
+    normals = _normals(target_c, tree)
     for _ in range(iterations):
-        moved = transform_points(T, source)
-        points, residual, plane = _correspondences(moved, target, normals, tree, max_correspondence_m)
+        moved = transform_points(T_c, source)
+        points, residual, plane = _correspondences(moved, target_c, normals, tree, max_correspondence_m)
         if len(points) < MIN_POINTS:
-            return IcpResult(T, 0.0, float("inf"), False)
+            T_out = T_c.copy()
+            T_out[:3, 3] += center
+            return IcpResult(T_out, 0.0, float("inf"), False)
         jacobian = np.hstack([plane, np.cross(points, plane)])
         hessian = jacobian.T @ jacobian
         rhs = jacobian.T @ residual
         if up_body is not None and gravity_sigma_rad is not None:
-            u = T[:3, :3] @ up_body
+            u = T_c[:3, :3] @ up_body
             # Left perturbation: u(exp(delta) T) ≈ u + phi x u = u - [u]_x phi.
             J_g = np.zeros((3, 6), dtype=np.float64)
             J_g[:, 3:] = -hat(u)
@@ -82,14 +92,25 @@ def icp_point_to_plane(
             w_g = (gravity_ref_point_sigma_m / gravity_sigma_rad) ** 2
             hessian = hessian + w_g * (J_g.T @ J_g)
             rhs = rhs + w_g * (J_g.T @ r_g)
-        eigen = np.linalg.eigvalsh(hessian)
+        scale = max(float(np.sqrt(np.mean(np.sum(points * points, axis=1)))), 1.0)
+        inv_scale = np.array([1.0, 1.0, 1.0, 1.0 / scale, 1.0 / scale, 1.0 / scale], dtype=np.float64)
+        scaled_h = hessian * np.outer(inv_scale, inv_scale)
+        eigen = np.linalg.eigvalsh(scaled_h)
         if eigen[0] <= 1e-9 * eigen[-1]:
-            return IcpResult(T, 0.0, float("inf"), False)
+            T_out = T_c.copy()
+            T_out[:3, 3] += center
+            return IcpResult(T_out, 0.0, float("inf"), False)
         step = np.linalg.solve(hessian, -rhs)
-        T = se3_exp(step) @ T
+        T_c = se3_exp(step) @ T_c
         if np.linalg.norm(step[:3]) < 1e-3 and np.linalg.norm(step[3:]) < 1e-4:
-            return _score(T, source, target, normals, tree, max_correspondence_m, True)
-    return _score(T, source, target, normals, tree, max_correspondence_m, False)
+            res = _score(T_c, source, target_c, normals, tree, max_correspondence_m, True)
+            T_out = res.T_target_source.copy()
+            T_out[:3, 3] += center
+            return IcpResult(T_out, res.fitness, res.rmse_m, res.converged)
+    res = _score(T_c, source, target_c, normals, tree, max_correspondence_m, False)
+    T_out = res.T_target_source.copy()
+    T_out[:3, 3] += center
+    return IcpResult(T_out, res.fitness, res.rmse_m, res.converged)
 
 
 def _normals(points: np.ndarray, tree: cKDTree) -> np.ndarray:
