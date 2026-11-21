@@ -133,16 +133,16 @@ class MeasuredPctTests(unittest.TestCase):
         self.assertEqual(wall_res['reason'], 'start_support_unobserved')
         self.assertEqual(wall_res['provenance']['start_footprint_snap']['reason'], 'start_cell_obstacle')
 
-        # 2) Cliff / unobserved drop cell right next to floor must be rejected.
-        cliff = base[~((np.floor(base[:, 0] / 0.15) == 10) & (np.floor(base[:, 1] / 0.15) == 5))]
-        cliff_res = self.planner(cliff).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
-        self.assertFalse(cliff_res['found'])
-        self.assertEqual(cliff_res['reason'], 'start_support_unobserved')
-        self.assertEqual(cliff_res['provenance']['start_footprint_snap']['reason'], 'start_cell_unobserved')
+        # 2) Single unobserved belly blind cell on a flat floor snaps cleanly inside footprint;
+        # a deep void beyond footprint radius (>0.30 m) without blind-ring model still fails.
+        single_blind = base[~((np.floor(base[:, 0] / 0.15) == 10) & (np.floor(base[:, 1] / 0.15) == 5))]
+        blind_res = self.planner(single_blind).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
+        self.assertTrue(blind_res['found'], blind_res)
+        self.assertTrue(blind_res['provenance']['start_footprint_snap']['applied'])
 
         # 2b) Cliff-lip overhang (foot-level lip plus deep drop in same start cell) must be rejected.
         cliff_lip = np.vstack([
-            cliff,
+            single_blind,
             [[10.5 * 0.15, 5.5 * 0.15, z] for z in (0.0, -0.05, -0.10, -0.45)],
         ])
         lip_res = self.planner(cliff_lip).plan([10.5 * 0.15, 5.5 * 0.15, 0.32], goal)
@@ -165,6 +165,28 @@ class MeasuredPctTests(unittest.TestCase):
         self.assertFalse(diag_res['found'])
         self.assertEqual(diag_res['reason'], 'start_support_unobserved')
         self.assertEqual(diag_res['provenance']['start_footprint_snap']['reason'], 'no_adjacent_support')
+
+    def test_start_footprint_snap_handles_indoor_ceiling_only_belly_blind_cell_on_stairs(self):
+        # Stair flight where the single cell under the robot has only ceiling returns (z=4.3m).
+        stairs = plane(30, 10, height=lambda x, y: min(x, 16) * 0.15)
+        mask = (np.floor(stairs[:, 0] / 0.15) == 10) & (np.floor(stairs[:, 1] / 0.15) == 5)
+        stairs = stairs[~mask]
+        ceiling = np.array([[10.5 * 0.15, 5.5 * 0.15, z] for z in (4.28, 4.31, 4.33)])
+        start = [10.5 * 0.15, 5.5 * 0.15, 10 * 0.15 + 0.32]
+        goal = [24.5 * 0.15, 5.5 * 0.15, 16 * 0.15 + 0.32]
+        res = self.planner(np.vstack([stairs, ceiling])).plan(start, goal)
+        self.assertTrue(res['found'], res)
+        self.assertTrue(res['provenance']['start_footprint_snap']['applied'])
+
+    def test_blind_ring_model_ignores_overhead_ceiling_above_clearance(self):
+        floor = plane(60, 40) + np.array([-3.0, -3.0, 0.0])
+        floor = floor[np.linalg.norm(floor[:, :2], axis=1) > 1.3]
+        ceiling = plane(20, 20) + np.array([-1.5, -1.5, 3.0])
+        start = [0.025, 0.025, 0.32]
+        goal = [4.125, 0.075, 0.32]
+        res = self.planner(np.vstack([floor, ceiling]), start_blind_radius_m=1.5).plan(start, goal)
+        self.assertTrue(res['found'], res)
+        self.assertTrue(res['provenance']['start_surface_model']['inferred_support_cells'] > 0)
 
     def test_empty_and_invalid(self):
         self.assertEqual(self.planner(np.empty((0,3))).plan([0,0,.32],[1,1,.32])['reason'],'no_measured_support')

@@ -224,13 +224,16 @@ class MeasuredPctPlanner:
         yy=self.origin[1]+(rr+.5)*self.resolution-start[1]
         plane=coefficients[0]*xx+coefficients[1]*yy+coefficients[2]
         allowed=(np.hypot(xx,yy)<=self.blind_radius)
-        # Never overwrite a measured cell, including a measured blocked cell.
-        # A one-cell halo around incompatible elevations prevents interpolation
-        # from bridging observed obstacles or observed stair/drop boundaries.
+        # Never overwrite a measured cell below overhead clearance, including a
+        # measured blocked cell. Ceiling returns above clearance do not occupy
+        # the ground blind region. A one-cell halo around incompatible elevations
+        # prevents interpolation from bridging observed obstacles or drop edges.
         for (r,c),zs in self.measured_buckets.items():
-            allowed[r,c]=False
             values=np.asarray(zs)
-            incompatible=np.any((values<plane[r,c]-.12) | ((values>plane[r,c]+.10)&(values<plane[r,c]+self.clearance)))
+            below_ceiling=values < plane[r,c] + self.clearance
+            if np.any(below_ceiling):
+                allowed[r,c]=False
+            incompatible=np.any((values<plane[r,c]-.12) | ((values>plane[r,c]+.10)&below_ceiling))
             if incompatible:
                 allowed[max(0,r-1):r+2,max(0,c-1):c+2]=False
         c0,r0=np.floor((start[:2]-self.origin)/self.resolution+1e-9).astype(int)
@@ -267,53 +270,59 @@ class MeasuredPctPlanner:
         layer = int(eligible[np.argmin(dz[eligible])])
         return [layer, int(col), int(row)]
 
-    def _footprint_start_node(self, body, max_radius_m=0.25):
-        """Attach start to a directly 4-adjacent measured support cell within the robot footprint.
+    def _cell_blocks_start_snap(self, r, c, foot_z):
+        """Return blocking reason if cell (r, c) contains a torso obstacle or cliff drop."""
+        cell_zs = self.measured_buckets.get((int(r), int(c)))
+        if not cell_zs:
+            return None
+        vals = np.asarray(cell_zs, dtype=float)
+        if np.any((vals > foot_z + self.tolerance) & (vals < foot_z + self.clearance)):
+            return 'start_cell_obstacle'
+        if np.any(vals < foot_z - self.tolerance - 0.10):
+            return 'start_cell_cliff_drop'
+        return None
 
-        Only applies when the robot's own cell already has measured surface returns near
-        the expected foot elevation (e.g. a stair nosing or slope edge whose mixed heights
-        fail single-cell horizontal clustering) and has NO measured obstacle returns above
-        foot level inside the clearance band. Rejects unobserved holes, cliffs, walls,
-        and diagonal corner cuts; never fabricates cells and never widens goal admission.
+    def _footprint_start_node(self, body, max_radius_m=0.30):
+        """Attach start to a nearby orthogonal measured support cell within Go2's footprint.
+
+        Rejects torso-band obstacles, measured cliff drops below foot level, and
+        diagonal-only corner cuts. Allows a start cell whose ground return is
+        missing (e.g. LiDAR belly self-filter blind cell or ceiling-only column)
+        or split across a step nosing to attach to measured support inside the
+        robot's physical standing footprint without widening goal admission.
         """
         c0, r0 = np.floor((body[:2] - self.origin) / self.resolution + 1e-9).astype(int)
         if r0 < 0 or c0 < 0 or r0 >= self.cost.shape[1] or c0 >= self.cost.shape[2]:
             return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_out_of_bounds')
-        own_zs = self.measured_buckets.get((int(r0), int(c0)))
-        if not own_zs:
-            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_unobserved')
         foot_z = float(body[2] - self.offset)
-        own = np.asarray(own_zs, dtype=float)
-        # Reject if the start cell contains an obstacle inside torso clearance above foot+tolerance.
-        if np.any((own > foot_z + self.tolerance) & (own < foot_z + self.clearance)):
-            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_obstacle')
-        # Reject if the start cell contains a deep drop (> tolerance + 0.10 m below foot), e.g. cliff lip.
-        if np.any(own < foot_z - self.tolerance - 0.10):
-            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_cliff_drop')
-        # Require actual measured surface returns at foot level (prevents snapping out of cliffs/drops).
-        if not np.any(np.abs(own - foot_z) <= self.tolerance):
-            return None, dict(applied=False, max_radius_m=max_radius_m, reason='start_cell_no_foot_elevation')
+        block_reason = self._cell_blocks_start_snap(r0, c0, foot_z)
+        if block_reason is not None:
+            return None, dict(applied=False, max_radius_m=max_radius_m, reason=block_reason)
 
         target = foot_z - self.z_origin
         best = None
         for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-            r, c = int(r0 + dr), int(c0 + dc)
-            if r < 0 or c < 0 or r >= self.cost.shape[1] or c >= self.cost.shape[2]:
-                continue
-            cx = self.origin[0] + (c + 0.5) * self.resolution
-            cy = self.origin[1] + (r + 0.5) * self.resolution
-            horiz = float(np.hypot(cx - body[0], cy - body[1]))
-            if horiz > max_radius_m + 1e-9:
-                continue
-            dz = np.abs(self.height[:, r, c] - target)
-            eligible = np.flatnonzero((self.cost[:, r, c] < 20) & (dz <= self.tolerance))
-            if not len(eligible):
-                continue
-            layer = int(eligible[np.argmin(dz[eligible])])
-            vert = float(dz[layer])
-            key = (horiz, vert, layer, r, c)
-            if best is None or key < best[0]:
-                best = (key, [layer, c, r], horiz, vert)
+            for step in (1, 2):
+                r, c = int(r0 + dr * step), int(c0 + dc * step)
+                if r < 0 or c < 0 or r >= self.cost.shape[1] or c >= self.cost.shape[2]:
+                    break
+                if step == 2 and self._cell_blocks_start_snap(r0 + dr, c0 + dc, foot_z) is not None:
+                    break
+                cx = self.origin[0] + (c + 0.5) * self.resolution
+                cy = self.origin[1] + (r + 0.5) * self.resolution
+                horiz = float(np.hypot(cx - body[0], cy - body[1]))
+                if horiz > max_radius_m + 1e-9:
+                    break
+                dz = np.abs(self.height[:, r, c] - target)
+                eligible = np.flatnonzero((self.cost[:, r, c] < 20) & (dz <= self.tolerance))
+                if not len(eligible):
+                    continue
+                layer = int(eligible[np.argmin(dz[eligible])])
+                vert = float(dz[layer])
+                key = (horiz, vert, layer, r, c)
+                if best is None or key < best[0]:
+                    best = (key, [layer, c, r], horiz, vert)
+                break
         if best is None:
             return None, dict(applied=False, max_radius_m=max_radius_m, reason='no_adjacent_support')
         _, node, horiz, vert = best
@@ -334,7 +343,7 @@ class MeasuredPctPlanner:
             return result
         cost, heights = self.cost, self.height
         first = self._node(start, cost, heights)
-        footprint_snap = dict(applied=False, max_radius_m=0.25)
+        footprint_snap = dict(applied=False, max_radius_m=0.30)
         if first is None:
             first, footprint_snap = self._footprint_start_node(start)
         result['provenance']['start_footprint_snap'] = footprint_snap
