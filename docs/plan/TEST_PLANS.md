@@ -62,7 +62,21 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 | --- | --- | --- | --- |
 | **D1** | `20261121-noisy-imu-rgb-twofloor-explore/20261121T133734Z/` | 414.5 s；`map/` 219 关键帧；真值流 + 带噪 IMU + 13 话题 MCAP（≈9.3 GB） | **双失效黄金回归包**：① `t≈211 s` 无重力约束 6-DoF ICP 将 Roll/Pitch 拉歪 `6°–8.3°`、Z 跳变 `+22 cm`（前端误差接近 0）；② `t=261–362 s` 贴白墙长停滞诱发前端 `-43 cm` Z 发散 |
 | **D2** | `20261121-noisy-imu-rgb-twofloor-explore/20261121T142308Z/` | 2770 s（46 min）；双层 16 区域 `70 m × 27 m`；`map/` 1,567 关键帧；真值流 + 带噪 IMU + 13 话题 MCAP（≈80 GB） | **超长双层漂移与过密回环包**：前端自然漂移（`dx≈-0.86 m, dz≈-0.24 m`），旧后端 407+ 过密回环把二楼 Z 拽偏至 **`-0.74 m`**（典型负优化） |
-| **D3** | `20261119-hba-project-comparison/same-876/` | `inputs/input.json` + `inputs/input_visual.json` + `inputs/gravity.json` + `inputs/images/`（876 关键帧） | **历史口径对照包**：保留与 2026-11-19 旧版及外部离线基线 `hku-mars/HBA` 的同输入对比能力 |
+| **D3** | `20261119-hba-project-comparison/same-876/` | `inputs/input.json` + `inputs/input_visual.json` + `inputs/gravity.json` + `inputs/images/`（876 关键帧） | **历史口径对照包**：保留与 2026-11-19/20 旧版及外部离线基线 `hku-mars/HBA` 的同输入对比能力 |
+
+### 3.1.1 `D3`（`same-876`）已有历史基准快照（2026-11-20 实测，仅终图 ATE）
+
+> 数据源：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261120-slam-phase4-comparison/{same-876,same-876-visual-features}/manifest.json` 与 `20261118-hba-offline/REPORT.zh-CN.md`。本轮仅统计终图 ATE（尚未跑 ADR-0004 在线因果曲线与逐秒分布，也未在带噪 IMU 双层包 `D1/D2` 上验证），作为 Phase 4 新评测的回归参照：
+
+| 方案（分支） | 配置摘要 | 回环数 | 终图 ATE RMSE (Max) | 终图 Z RMSE (上层 Z) | 耗时 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 原前端（FAST-LIVO2） | 无后端 | 0 | `0.2395 m` | `0.2383 m` (`0.3396 m`) | — |
+| 外部基线 HBA | `hku-mars/HBA` 3 层离线 BA | — | `0.2947 m` | `0.2906 m` (`0.4014 m`) | `11.8 s` |
+| `main_aniso`（`main` `9816a2b`） | 默认后端 + 各向异性权重（`loop_sigma_rad=0.03 / yaw=0.01 / cauchy=3.0`） | 329 | `0.1692 m` (`0.4724 m`) | `0.1520 m` (`0.1889 m`) | `346.3 s` |
+| `measured_aniso`（`exp/slam-measured-submaps` `5b300b0`） | 查询+历史 5 帧实测子图 + 各向异性权重 | 324 | `0.1008 m` (`0.2840 m`) | `0.0930 m` (`0.1149 m`) | `326.0 s` |
+| `surface_aniso`（`exp/slam-surface-gate` `958ec01`） | 平面/表面覆盖门控 + 各向异性权重 | 318 | `0.1651 m` (`0.4716 m`) | `0.1545 m` (`0.1918 m`) | `525.1 s` |
+| `visual_akaze`（`exp/slam-visual-retrieval` `16883d1`） | ScanContext + AKAZE 视觉补充 | 345 | `0.1899 m` (`0.5361 m`) | `0.1834 m` (`0.2265 m`) | `397.9 s` |
+| `visual_akaze_only`（`exp/slam-visual-retrieval` `16883d1`） | 仅 AKAZE 视觉候选（关 ScanContext）+ 各向异性权重 | 107 | `0.0827 m` (`0.2628 m`) | `0.0620 m` (`0.0700 m`) | `93.3 s` |
 
 ### 3.2 离线关键帧缓存原则
 
