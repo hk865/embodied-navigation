@@ -35,11 +35,12 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe, voxel_downsample
+from .keyframes import Keyframe, transform_points, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .surfaces import SurfaceConfig, compare_surfaces, model_surfaces
 
 
 @dataclass
@@ -106,10 +107,18 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Surface coverage gate options (disabled by default to keep stabilized baseline exact).
+    use_surface_verification: bool = False
+    gravity_aligned: bool = False
+    surface: SurfaceConfig = field(default_factory=SurfaceConfig)
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.surface, SurfaceConfig):
+            raise ValueError(f"surface must be a SurfaceConfig, got {type(self.surface).__name__}")
+        if self.use_surface_verification and not self.gravity_aligned:
+            raise ValueError("use_surface_verification requires gravity_aligned=True")
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -135,6 +144,11 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "surface" in values:
+            values["surface"] = _surface_from_dict(values["surface"])
+        for flag in ("use_surface_verification", "gravity_aligned"):
+            if flag in values and not isinstance(values[flag], bool):
+                raise ValueError(f"{flag} must be a bool, got {values[flag]!r}")
         config = cls(**values)
         config._validate()
         return config
@@ -227,6 +241,16 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     return config
 
 
+def _surface_from_dict(data: dict) -> SurfaceConfig:
+    """Strict nested SurfaceConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"surface must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(SurfaceConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown surface keys: {unknown}")
+    return SurfaceConfig(**data)
+
+
 def _positive(name: str, value) -> float:
     """Finite positive real; rejects bools and non-numeric input from JSON."""
     if isinstance(value, bool) or not isinstance(value, Real) or not np.isfinite(value) or value <= 0:
@@ -305,6 +329,9 @@ class SlamBackend:
         self.index = ScanContextIndex(config.scan_context)
         self.admission = self._new_admission()
         self.loop_count = 0
+        self.surface_checks = 0
+        self.surface_accepted = 0
+        self.surface_rejected_by_reason: dict[str, int] = {}
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._up_body: dict = {}
@@ -809,6 +836,7 @@ class SlamBackend:
     ):
         """Best ICP-verified ScanContext candidate as ``((key, IcpResult) | None, reject_reason)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        source_body = None
         best = None
         last_tilt_reject = None
         up_body = (
@@ -819,8 +847,11 @@ class SlamBackend:
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
+            if source_body is None:
+                source_body = keyframe.points_body()
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
+            target = submap(key)
+            result = self._register(source_body, target, T_init, source_up_body=up_body)
             if result is None:
                 continue
             if apply_tilt_gate:
@@ -828,6 +859,21 @@ class SlamBackend:
                 if tilt_reject is not None:
                     self._stats["loops_rejected_tilt"] += 1
                     last_tilt_reject = tilt_reject
+                    continue
+            if self.config.use_surface_verification:
+                self.surface_checks += 1
+                aligned_source = transform_points(result.T_target_source, source_body)
+                check = compare_surfaces(
+                    model_surfaces(aligned_source, config=self.config.surface),
+                    model_surfaces(target, config=self.config.surface),
+                    self.config.surface,
+                )
+                if check.accepted:
+                    self.surface_accepted += 1
+                else:
+                    self.surface_rejected_by_reason[check.reason] = (
+                        self.surface_rejected_by_reason.get(check.reason, 0) + 1
+                    )
                     continue
             if best is None or result.rmse_m < best[1].rmse_m:
                 best = (key, result)
