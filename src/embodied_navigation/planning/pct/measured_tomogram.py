@@ -282,6 +282,20 @@ class MeasuredPctPlanner:
             return 'start_cell_cliff_drop'
         return None
 
+    def _has_traversable_neighbor(self, layer, r, c):
+        """Return True iff cell (layer, r, c) has >=1 reachable 8-neighbor in PCT."""
+        z = float(self.height[layer, r, c])
+        rows, cols = self.cost.shape[1], self.cost.shape[2]
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    if np.any((self.cost[:, nr, nc] < 20) & (np.abs(self.height[:, nr, nc] - z) <= 0.200001)):
+                        return True
+        return False
+
     def _footprint_start_node(self, body, max_radius_m=0.30):
         """Attach start to a nearby orthogonal measured support cell within Go2's footprint.
 
@@ -318,6 +332,8 @@ class MeasuredPctPlanner:
                 if not len(eligible):
                     continue
                 layer = int(eligible[np.argmin(dz[eligible])])
+                if not self._has_traversable_neighbor(layer, r, c):
+                    continue
                 vert = float(dz[layer])
                 key = (horiz, vert, layer, r, c)
                 if best is None or key < best[0]:
@@ -343,6 +359,8 @@ class MeasuredPctPlanner:
             return result
         cost, heights = self.cost, self.height
         first = self._node(start, cost, heights)
+        if first is not None and not self._has_traversable_neighbor(first[0], first[2], first[1]):
+            first = None
         footprint_snap = dict(applied=False, max_radius_m=0.30)
         if first is None:
             first, footprint_snap = self._footprint_start_node(start)

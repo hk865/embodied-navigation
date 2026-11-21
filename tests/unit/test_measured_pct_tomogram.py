@@ -188,6 +188,27 @@ class MeasuredPctTests(unittest.TestCase):
         self.assertTrue(res['found'], res)
         self.assertTrue(res['provenance']['start_surface_model']['inferred_support_cells'] > 0)
 
+    def test_start_footprint_snap_skips_isolated_zero_neighbor_island(self):
+        # Create a floor plane where cell (10,5) is missing, (10,6) is an isolated 1-cell island
+        # surrounded by missing cells on its 8-neighbors, while (12,5) (0.30m away) is connected.
+        pts = plane(30, 12, height=lambda x, y: 0.0)
+        cx = np.floor(pts[:, 0] / 0.15).astype(int)
+        cy = np.floor(pts[:, 1] / 0.15).astype(int)
+        # Carve a ring around (10,6) so (10,6) has 0 traversable neighbors, leaving (12,5) connected
+        ring = ((np.abs(cx - 10) <= 1) & (np.abs(cy - 6) <= 1) & ~((cx == 10) & (cy == 6)))
+        pts = pts[~ring]
+        p = self.planner(pts)
+        # Manually keep (10,6) as an isolated 0-neighbor cell in the grid to simulate partial step island
+        p.cost[0, 6, 10] = 0.0
+        p.height[0, 6, 10] = 0.0 - p.z_origin
+        start = [10.5 * 0.15, 5.5 * 0.15, 0.32]
+        goal = [24.5 * 0.15, 5.5 * 0.15, 0.32]
+        res = p.plan(start, goal)
+        self.assertTrue(res['found'], res)
+        snap = res['provenance']['start_footprint_snap']
+        self.assertTrue(snap['applied'])
+        self.assertNotEqual(snap['cell_layer_row_col'][1:], [6, 10])
+
     def test_empty_and_invalid(self):
         self.assertEqual(self.planner(np.empty((0,3))).plan([0,0,.32],[1,1,.32])['reason'],'no_measured_support')
         with self.assertRaises(ValueError):
