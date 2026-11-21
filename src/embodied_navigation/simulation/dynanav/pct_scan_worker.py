@@ -231,7 +231,7 @@ def compute_backend_correction(backend_pose_mat, raw_vio_pose_mat):
     return np.asarray(backend_pose_mat, dtype=float) @ np.linalg.inv(np.asarray(raw_vio_pose_mat, dtype=float))
 
 
-def correction_delta_exceeds(delta, *, trans_m=0.03, rot_deg=0.3):
+def correction_delta_exceeds(delta, *, trans_m=0.05, rot_deg=0.5):
     """Check whether an incremental backend correction merits re-aligning cached voxels."""
     delta = np.asarray(delta, dtype=float)
     if float(np.linalg.norm(delta[:3, 3])) >= trans_m:
