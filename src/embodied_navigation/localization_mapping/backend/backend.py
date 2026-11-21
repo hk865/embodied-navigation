@@ -360,7 +360,16 @@ class SlamBackend:
         return self._correction
 
     def observability_stats(self) -> dict:
-        return dict(self._stats)
+        stats = dict(self._stats)
+        stats.update(
+            {
+                "measured_query_submaps": int(self.measured_query_submaps),
+                "measured_query_frames_total": int(self.measured_query_frames_total),
+                "measured_target_submaps": int(self.measured_target_submaps),
+                "measured_target_frames_total": int(self.measured_target_frames_total),
+            }
+        )
+        return stats
 
     def save_map(self, directory: Path) -> None:
         self.map.save(directory)
