@@ -79,7 +79,7 @@ class MeasuredPctPlanner:
     def __init__(self, points_world, trajectory_body_xyz=None, *, resolution_m=0.15,
                  body_support_offset_m=0.32, native_binary=None, generation=None,
                  source_metadata=None, endpoint_height_tolerance_m=0.22,
-                 support_cluster_m=0.06, clearance_m=0.65,
+                 support_cluster_m=0.06, clearance_m=0.95,
                  max_grid_cells=DEFAULT_MAX_GRID_CELLS, timeout_s=10.0, start_blind_radius_m=0.0):
         self.points = _xyz(points_world, 'points_world')
         self.trajectory = _xyz([] if trajectory_body_xyz is None else trajectory_body_xyz,
