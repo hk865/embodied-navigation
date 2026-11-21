@@ -108,7 +108,7 @@ class NativeWaypointTracker:
 
     @property
     def phase(self):
-        return ("terminal" if self.terminal_reason or self.failure else "yaw"
+        return ("terminal" if self.terminal_reason or self.failure else self._action["kind"]
                 if self._action is not None else self.tracker.phase if self.tracker else "idle")
 
     @property
@@ -210,7 +210,7 @@ class NativeWaypointTracker:
             if self.terminal_reason or self.failure:
                 raise ValueError("run_terminal")
             action = payload.get("action")
-            if action not in ("goto", "waypoint", "cancel", "stop", "yaw"):
+            if action not in ("goto", "waypoint", "cancel", "stop", "yaw", "maneuver"):
                 raise ValueError("unsupported_action")
             if payload.get("pose_source", self.pose_source) != self.pose_source:
                 raise ValueError("pose_source_mismatch")
@@ -222,6 +222,50 @@ class NativeWaypointTracker:
                 if action == "stop":
                     self._terminal_reason = "interactive_stop"
                 self._receipt(action + "_accepted", seq=seq)
+                return
+            if action == "maneuver":
+                forward = _number(payload.get("body_forward_mps", 0.0), "body_forward_mps")
+                lateral = _number(payload.get("body_lateral_mps", 0.0), "body_lateral_mps")
+                yaw_rate = _number(payload.get("yaw_rate_rps", 0.0), "yaw_rate_rps")
+                duration = _number(payload.get("duration_s"), "duration_s")
+                if abs(forward) > self.speed:
+                    raise ValueError("invalid_body_forward_mps")
+                if abs(lateral) > 0.05:
+                    raise ValueError("invalid_body_lateral_mps")
+                if abs(yaw_rate) > 0.15:
+                    raise ValueError("invalid_yaw_rate_rps")
+                if not 0.1 <= duration <= 2.0:
+                    raise ValueError("invalid_duration_s")
+                created = _number(payload.get("created_wall_s"), "created_wall_s")
+                ttl = _number(payload.get("ttl_s", 30.), "ttl_s")
+                if not 1. <= ttl <= 120.:
+                    raise ValueError("invalid_ttl")
+                if now_wall is not None:
+                    if created > now_wall + 2.:
+                        raise ValueError("request_from_future")
+                    if now_wall - created > ttl:
+                        raise ValueError("request_expired")
+                self._close_yaw("action_cancelled", reason="superseded_by_maneuver")
+                if self.tracker is not None:
+                    self._events.extend(self.tracker.events)
+                    self._receipt("waypoint_dropped", **self.active_waypoint,
+                                  reason="operator_maneuver")
+                while self._pending:
+                    self._receipt("waypoint_dropped", **self._pending.popleft(),
+                                  reason="operator_maneuver")
+                self.tracker = self.active_waypoint = None
+                self.invalidate_measurement()
+                command = [float(forward), float(lateral), float(yaw_rate)]
+                self._action = dict(
+                    kind="maneuver", seq=seq, command=command, duration_s=float(duration),
+                    start_sim_s=None, start_position_xyz_m=None, expires_wall_s=created + ttl,
+                )
+                self._receipt(
+                    "maneuver_accepted", seq=seq, action="maneuver",
+                    body_forward_mps=command[0], body_lateral_mps=command[1],
+                    yaw_rate_rps=command[2], duration_s=float(duration),
+                    ttl_s=ttl, pose_source=self.pose_source,
+                )
                 return
             if action == "yaw":
                 parameters = yaw_request_parameters(payload)
@@ -273,11 +317,35 @@ class NativeWaypointTracker:
         return RouteTracker([candidate["goal_xyz_m"]], position[:2].tolist(), reverse=candidate.get("reverse", False), **self._route_kwargs)
 
     def _close_yaw(self, event, *, reason=None, evidence=None, completion=None):
-        """Close this action's own sequence, leaving the sensing session alive."""
+        """Close the active local action (yaw or direct maneuver), leaving the sensing session alive."""
         action = self._action
         if action is None:
             return
         evidence = self._last_pose_evidence if evidence is None else evidence
+        if action["kind"] == "maneuver":
+            close_event = "action_cancelled" if event == "yaw_failed" else event
+            start_sim = action.get("start_sim_s")
+            cur_sim = evidence.get("current_sim_s")
+            elapsed = (
+                max(0.0, float(cur_sim) - float(start_sim))
+                if start_sim is not None and cur_sim is not None else 0.0
+            )
+            fields = dict(
+                seq=action["seq"], action="maneuver",
+                requested_command=list(action["command"]), duration_s=action["duration_s"],
+                elapsed_sim_s=elapsed,
+                start_position_xyz_m=action.get("start_position_xyz_m"),
+                frame_id=evidence.get("frame_id"), child_frame_id=evidence.get("child_frame_id"),
+                pose_source=self.pose_source, odom_stamp_s=evidence.get("odom_stamp_s"),
+                position_xyz_m=evidence.get("aligned_position_xyz_m"),
+                command=[0., 0., 0.], run_continues=True,
+            )
+            if reason is not None:
+                fields["reason"] = reason
+            self._receipt(close_event, **fields)
+            self._action = None
+            self.invalidate_measurement()
+            return
         actual = evidence.get("aligned_yaw_rad")
         target = action["target_yaw_rad"]
         fields = dict(completion or {})
@@ -300,6 +368,17 @@ class NativeWaypointTracker:
                               reason="preceding_yaw_failed", failed_seq=action["seq"])
         self._action = None
         self.invalidate_measurement()
+
+    def _tick_maneuver(self, evidence, sim):
+        """Execute a bounded direct body-velocity recovery maneuver without PCT/SCAN dependency."""
+        action = self._action
+        if action["start_sim_s"] is None:
+            action["start_sim_s"] = sim
+            action["start_position_xyz_m"] = evidence.get("aligned_position_xyz_m")
+        if sim - action["start_sim_s"] >= action["duration_s"]:
+            self._close_yaw("maneuver_complete", evidence=evidence)
+            return self._finish("idle", "maneuver_complete", evidence)
+        return self._finish("tracking", "maneuver_recovery", evidence, action["command"])
 
     def _yaw_clearance(self, evidence):
         """Use the owned SCAN map reply; missing or stale evidence permits no turn."""
@@ -394,15 +473,20 @@ class NativeWaypointTracker:
             speed=dict(pose_window_mps=evidence.get("pose_window_speed_mps"), command_ceiling_mps=self.speed),
             waypoints=dict(active_seq=self._action["seq"] if self._action is not None
                 else self.active_waypoint["seq"] if self.active_waypoint else None,
-                active_action="yaw" if self._action is not None else "goto" if self.active_waypoint else None,
+                active_action=self._action["kind"] if self._action is not None else "goto" if self.active_waypoint else None,
                 active_goal_xyz_m=self.active_waypoint["goal_xyz_m"] if self.active_waypoint else None,
                 queued=len(self._pending), phase=self.phase, completed_goals=self.stage,
                 failed_goals=self._failed, last_failure=self._last_waypoint_failure,
                 failure=self.failure, terminal_reason=self.terminal_reason, last_result=self._last_result))
         if self._action is not None:
-            observation["yaw_action"] = dict(seq=self._action["seq"],
-                target_yaw_rad=self._action["target_yaw_rad"], parameters=self._action["parameters"],
-                expires_wall_s=self._action["expires_wall_s"], completion=self._yaw_config)
+            if self._action["kind"] == "yaw":
+                observation["yaw_action"] = dict(seq=self._action["seq"],
+                    target_yaw_rad=self._action["target_yaw_rad"], parameters=self._action["parameters"],
+                    expires_wall_s=self._action["expires_wall_s"], completion=self._yaw_config)
+            else:
+                observation["maneuver_action"] = dict(seq=self._action["seq"],
+                    command=list(self._action["command"]), duration_s=self._action["duration_s"],
+                    start_sim_s=self._action["start_sim_s"], expires_wall_s=self._action["expires_wall_s"])
         observation["command"] = dict(last_request=self._command[:], bounds=self.parameters["command_bounds"], source=self.controller_name)
         current = evidence.get("aligned_position_xyz_m")
         observation["waypoints"]["distance_to_goal_m"] = (
@@ -430,6 +514,10 @@ class NativeWaypointTracker:
             now = _number(now_wall, "now_wall", nonnegative=True)
             evidence.update(current_sim_s=sim, now_wall_s=now)
             if self._action is not None and now > self._action["expires_wall_s"]:
+                expired_kind = self._action["kind"]
+                if expired_kind == "maneuver":
+                    self._close_yaw("action_expired", reason="maneuver_ttl_expired")
+                    return self._finish("hold", "maneuver_ttl_expired", evidence)
                 self._close_yaw("yaw_failed", reason="yaw_ttl_expired")
                 # This tick has not admitted a pose; do not label an empty pose
                 # fresh merely because the expired action returned to idle.
@@ -491,6 +579,10 @@ class NativeWaypointTracker:
         evidence["pose_window_speed_mps"] = speed
         self._last_pose_evidence = dict(evidence)
         if self._action is not None:
+            if self._action["kind"] == "maneuver":
+                result = self._tick_maneuver(evidence, sim)
+                self._last_consumed = stamp
+                return result
             context = dict(sim=sim, stamp=stamp, raw_age=age, wall_age=wall_age,
                 distinct=distinct, imu_yaw_rate=omega, imu_source_stamp_s=imu_source_stamp_s,
                 imu_arrival_wall_s=imu_arrival_wall_s, imu_frame=imu_frame, imu_valid=imu_valid)
