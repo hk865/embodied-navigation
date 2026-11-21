@@ -2,7 +2,7 @@
 
 D 路径（DynaNav/Isaac，FAST-LIVO2 前端）的点云 SLAM 后端：消费 FAST-LIVO2 导出的关键帧 spool，做关键帧管理、ScanContext 位置识别、ICP 回环与 SE(3) 位姿图优化、地图保存/加载、先验地图重定位，输出 map→odom 修正 `C = T_world_odom`。算法取成熟方案的简单实现，追求可读与可离线测试，不追求论文级性能。
 
-盘点日期 2026-11-20（分支 `refactor/06-clean-base`，HEAD 5b880b2）。
+盘点日期 2026-11-22（分支 `exp/slam-backend-stabilization`）。
 
 ## 模块定位与架构层级
 
@@ -23,32 +23,34 @@ D 路径（DynaNav/Isaac，FAST-LIVO2 前端）的点云 SLAM 后端：消费 FA
 ```text
 src/embodied_navigation/localization_mapping/backend/
 ├── README.md        # 本文件
-├── __init__.py      # 6 行：包 docstring（只 node 依赖 ROS）
-├── backend.py       # 513 行：BackendConfig（严格加载 + 各向异性信息矩阵）与 SlamBackend
-├── correction.py    # 65 行：CorrectionAdmission（两次确认、在本体位姿处比较、跳变门）
-├── keyframes.py     # 111 行：Keyframe、spool 读取、体素降采样
-├── map_store.py     # 105 行：关键帧地图 save/load、子图/全局图
-├── node.py          # 165 行：ROS 2 薄封装（唯一 import ROS 的文件）
-├── pose_graph.py    # 166 行：SE(3) 位姿图，稀疏 LM，Cauchy 核
-├── registration.py  # 94 行：point-to-plane ICP
-└── scan_context.py  # 110 行：ScanContext 描述子与检索
+├── __init__.py      # 包 docstring（只 node 依赖 ROS）
+├── backend.py       # BackendConfig（严格加载 + 各向异性信息矩阵 + B1/B2/B3 稳定化配置）与 SlamBackend
+├── correction.py    # CorrectionAdmission（两次确认、在本体位姿处比较、跳变门）
+├── evaluation.py    # ADR-0004 三层离线轨迹评测器（纯 NumPy/SciPy，支持 TUM 导出与回放）
+├── keyframes.py     # Keyframe、spool 读取、体素降采样
+├── map_store.py     # 关键帧地图 save/load、子图/全局图
+├── node.py          # ROS 2 薄封装（唯一 import ROS 的文件）
+├── pose_graph.py    # SE(3) 位姿图，稀疏 LM，Cauchy 核与一元重力先验因子
+├── registration.py  # point-to-plane ICP（支持可选重力 Roll/Pitch 先验）
+└── scan_context.py  # ScanContext 描述子与检索
 ```
 
-10 个跟踪文件（9 个 `.py` / 1,335 行 + 本 README）。
+11 个跟踪文件（10 个 `.py` + 本 README）。
 
 ## 逐文件职责
 
 | 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
 | [README.md](README.md) | 本文件：坐标约定、文件清单、配置加载、数据流、测试注意。 | — |
-| [__init__.py](__init__.py) | 包 docstring（6 行）：说明关键帧/ScanContext/ICP/位姿图/地图/修正的归属，以及「只 `node` import ROS、不动前端里程计」。 | 无重导出 |
-| [backend.py](backend.py) | 后端核心：建图模式（逐帧加节点 + 回环检测 + 图优化）与先验地图重定位模式（全局搜索 → 两次确认 → 局部跟踪 → 失落回退）。 | `BackendConfig`（`from_dict`/`from_json`/各阈值）、`anisotropic_information`、`information`、`yaw_pose`、`SlamBackend.ingest/save_map/T_world_odom`、`_search/_register/_propose` |
+| [__init__.py](__init__.py) | 包 docstring：说明关键帧/ScanContext/ICP/位姿图/地图/修正的归属，以及「只 `node` import ROS、不动前端里程计」。 | 无重导出 |
+| [backend.py](backend.py) | 后端核心：建图模式（逐帧加节点 + 可选 ZUPT 零位移锚定 + 过密回环抑制 + 重力倾角门 + 图优化）与先验地图重定位模式。 | `BackendConfig`（`from_dict`/`from_json`/各阈值）、`anisotropic_information`、`information`、`yaw_pose`、`SlamBackend.ingest/save_map/observability_stats/T_world_odom` |
 | [correction.py](correction.py) | map→odom 修正的时域准入：`window_s` 内 `confirmations` 个一致候选才采纳（采纳最后一个）；首次采纳不做跳变检查，之后超跳变门限的候选记入 `rejections` 且不清掉已采纳值。 | `CorrectionAdmission.propose(T_world_odom, T_odom_body, stamp_ns)`、`current`；比较发生在 `C @ T_odom_body`（本体位姿处），不是 `C` 平移之差 |
+| [evaluation.py](evaluation.py) | ADR-0004 三层离线轨迹评测器：离线回放 `SlamBackend`，输出在线因果与终图两条轨迹的 ATE/AOE/RTE/ROE、逐优化快照演化曲线、逐秒历史位姿修订分布与 TUM 轨迹导出。 | `load_truth_stream`、`load_map_keyframes`、`load_input_json_keyframes`、`replay_backend`、`evaluate_replay`、`save_evaluation_bundle`（薄 CLI 入口见 `scripts/eval_slam_backend.py`） |
 | [keyframes.py](keyframes.py) | FAST-LIVO2 关键帧 spool 编解码与体素降采样。 | `SCHEMA = "livo_keyframe/v1"`、`Keyframe`（`key=(epoch, sequence)`、`stamp_ns`、`T_odom_body`、`T_body_lidar`、`points_lidar`）、`ready_directories`（按数值 `(epoch, seq)` 排序、跳过缺文件目录）、`read_keyframe`、`read_spool`、`transform_points`、`voxel_downsample` |
 | [map_store.py](map_store.py) | 关键帧地图：点云存 lidar 系、`add` 时降采样一次，`points_world` 用 `T_world_body @ T_body_lidar` 按需变换，因此图优化不重写点数据。 | `MapStore.add/update_poses/points_world/submap/global_map/save/load`；磁盘格式 `map.json`（schema `embodied_navigation_map/v1`，插入顺序）+ 每帧 `kf_<epoch>_<seq>.npz`（`points_lidar`、`descriptor`） |
 | [node.py](node.py) | ROS 2 薄封装：定时轮询 spool、`SlamBackend.ingest` 后删目录、发布 TF/修正里程计/状态、SIGINT/SIGTERM 时存图退出 0。 | `parse_args`（`--spool`/`--odometry-topic`/`--namespace` 必填；`--prior-map`/`--save-map`/`--config`/`--world-frame`/`--odom-frame`/`--poll-s`）、`BackendNode`、`main` |
-| [pose_graph.py](pose_graph.py) | SE(3) 位姿图：节点 `T_world_body`、边 `(a, b, T_a_b)`，切线向量顺序 `(translation rho, rotation phi)`，更新右乘 `T <- T @ exp(delta)`，首节点固定；鲁棒边用 Mahalanobis 范数的 Cauchy 核。 | `PoseGraph.add_node/add_edge/pose/optimize`、`se3_exp`/`se3_log`/`adjoint`/`invert`/`pose_difference` |
-| [registration.py](registration.py) | point-to-plane ICP：目标法向量由 k 近邻 PCA 得到，每个 Gauss-Newton 步在 target 系左乘 `(rho, phi)`；点数不足/对应不足/法方程奇异返回 `converged=False` 而不抛异常。 | `icp_point_to_plane(source, target, T_init, *, max_correspondence_m, iterations, voxel_m)`、`IcpResult`（`T_target_source`、`fitness`、`rmse_m`、`converged`）、常量 `MIN_POINTS=50`、`NORMAL_NEIGHBORS=10` |
+| [pose_graph.py](pose_graph.py) | SE(3) 位姿图：节点 `T_world_body`、边 `(a, b, T_a_b)`，切线向量顺序 `(translation rho, rotation phi)`，更新右乘 `T <- T @ exp(delta)`，首节点固定；鲁棒边与一元重力先验支持 Cauchy 核。 | `PoseGraph.add_node/add_edge/add_gravity_prior/pose/optimize`、`se3_exp`/`se3_log`/`adjoint`/`invert`/`pose_difference` |
+| [registration.py](registration.py) | point-to-plane ICP：目标法向量由 k 近邻 PCA 得到，每个 Gauss-Newton 步在 target 系左乘 `(rho, phi)`；支持可选世界 Z 轴重力 Roll/Pitch 软先验（保持 Yaw 与平移自由）。 | `icp_point_to_plane(..., source_up_body=None, gravity_sigma_rad=None)`、`IcpResult`、常量 `MIN_POINTS=50`、`NORMAL_NEIGHBORS=10` |
 | [scan_context.py](scan_context.py) | ScanContext 位置识别（Kim & Kim, IROS 2018）：body 系点云按 `rings × sectors` 极坐标格取最大高度；列位移余弦距离给出候选与 yaw 初值；ring-key KD 树做预筛。 | `ScanContextConfig(rings=20, sectors=60, max_range_m=20.0)`、`descriptor`、`ring_key`、`distance`（返回 `(dist, shift)`）、`shift_to_yaw`、`ScanContextIndex.add/query`（返回 `(key, dist, yaw)`） |
 
 ## 配置加载：BackendConfig（严格）与各向异性信息矩阵

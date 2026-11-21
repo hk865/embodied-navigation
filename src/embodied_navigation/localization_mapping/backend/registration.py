@@ -15,7 +15,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .keyframes import transform_points, voxel_downsample
-from .pose_graph import se3_exp
+from .pose_graph import hat, se3_exp
 
 MIN_POINTS = 50
 NORMAL_NEIGHBORS = 10
@@ -37,8 +37,16 @@ def icp_point_to_plane(
     max_correspondence_m: float = 1.0,
     iterations: int = 30,
     voxel_m: float = 0.2,
+    source_up_body: np.ndarray | None = None,
+    gravity_sigma_rad: float | None = None,
+    gravity_ref_point_sigma_m: float = 0.05,
 ) -> IcpResult:
     """Refine ``T_init`` (an estimate of T_target_source).
+
+    When ``source_up_body`` (unit gravity-up direction in the source frame) and
+    ``gravity_sigma_rad`` are given, each Gauss-Newton step adds a soft world-Z
+    Roll/Pitch prior ``u_xy = (R @ g_b)[:2] -> 0`` while leaving world Yaw and
+    translation unconstrained.
 
     Returns ``converged=False`` (never raises) when either cloud has fewer than
     50 points after downsampling, too few correspondences remain, or the
@@ -49,6 +57,12 @@ def icp_point_to_plane(
     T = np.array(T_init, dtype=np.float64)
     if len(source) < MIN_POINTS or len(target) < MIN_POINTS:
         return IcpResult(T, 0.0, float("inf"), False)
+    up_body = None
+    if source_up_body is not None and gravity_sigma_rad is not None:
+        vec = np.asarray(source_up_body, dtype=np.float64).reshape(3)
+        norm = float(np.linalg.norm(vec))
+        if norm > 1e-6:
+            up_body = vec / norm
     tree = cKDTree(target)
     normals = _normals(target, tree)
     for _ in range(iterations):
@@ -58,10 +72,20 @@ def icp_point_to_plane(
             return IcpResult(T, 0.0, float("inf"), False)
         jacobian = np.hstack([plane, np.cross(points, plane)])
         hessian = jacobian.T @ jacobian
+        rhs = jacobian.T @ residual
+        if up_body is not None and gravity_sigma_rad is not None:
+            u = T[:3, :3] @ up_body
+            # Left perturbation: u(exp(delta) T) ≈ u + phi x u = u - [u]_x phi.
+            J_g = np.zeros((3, 6), dtype=np.float64)
+            J_g[:, 3:] = -hat(u)
+            r_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            w_g = float(len(points)) * (gravity_ref_point_sigma_m / gravity_sigma_rad) ** 2
+            hessian = hessian + w_g * (J_g.T @ J_g)
+            rhs = rhs + w_g * (J_g.T @ r_g)
         eigen = np.linalg.eigvalsh(hessian)
         if eigen[0] <= 1e-9 * eigen[-1]:
             return IcpResult(T, 0.0, float("inf"), False)
-        step = np.linalg.solve(hessian, -jacobian.T @ residual)
+        step = np.linalg.solve(hessian, -rhs)
         T = se3_exp(step) @ T
         if np.linalg.norm(step[:3]) < 1e-3 and np.linalg.norm(step[3:]) < 1e-4:
             return _score(T, source, target, normals, tree, max_correspondence_m, True)

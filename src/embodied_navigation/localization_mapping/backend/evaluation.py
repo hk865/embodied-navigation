@@ -28,7 +28,7 @@ from scipy.spatial.transform import Rotation, Slerp
 from .backend import SlamBackend
 from .keyframes import Keyframe, _read_ascii_pcd
 from .map_store import MapStore
-from .pose_graph import invert
+from .pose_graph import invert, project_so3
 
 
 @dataclass(frozen=True)
@@ -218,6 +218,7 @@ def replay_backend(
                     "loop_key": list(event["loop_key"]) if event.get("loop_key") is not None else None,
                     "adopted": bool(event.get("adopted", False)),
                     "loop_rejected": event.get("loop_rejected"),
+                    "loop_rejected_kind": event.get("loop_rejected_kind"),
                 }
             )
 
@@ -302,11 +303,7 @@ def compute_initial_se3_alignment(
         t_i = truth_poses[i, :3, 3] - R_i @ est_poses[i, :3, 3]
         R_sum += R_i
         t_sum += t_i
-    U, _, Vt = np.linalg.svd(R_sum)
-    R_avg = U @ Vt
-    if np.linalg.det(R_avg) < 0:
-        U[:, -1] *= -1.0
-        R_avg = U @ Vt
+    R_avg = project_so3(R_sum)
     # Recompute translation using R_avg for exact geometric consistency.
     t_avg = np.mean(
         truth_poses[idx, :3, 3] - np.einsum("ij,nj->ni", R_avg, est_poses[idx, :3, 3]),
@@ -750,12 +747,18 @@ def evaluate_replay(
     arrays.update(l23_arrays)
 
     loops_accepted = sum(1 for e in record.loop_events if e["loop"])
-    loops_rejected = sum(1 for e in record.loop_events if e.get("loop_rejected") is not None)
+    loops_rejected_tilt = sum(
+        1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") == "tilt"
+    )
+    loops_rejected_odom = sum(
+        1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") != "tilt"
+    )
     summary = {
         "runtime": {
             "keyframes": int(len(record.stamps_s)),
             "loops_accepted": int(loops_accepted),
-            "loops_rejected_odom": int(loops_rejected),
+            "loops_rejected_odom": int(loops_rejected_odom),
+            "loops_rejected_tilt": int(loops_rejected_tilt),
             "errors": int(record.errors),
             "total_wall_s": float(record.total_wall_s),
             "step_wall_mean_ms": float(np.mean(record.step_wall_s) * 1000.0),

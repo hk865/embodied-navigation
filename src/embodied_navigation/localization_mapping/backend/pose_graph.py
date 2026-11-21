@@ -65,11 +65,25 @@ def invert(T: np.ndarray) -> np.ndarray:
     return inverse
 
 
+def project_so3(R: np.ndarray) -> np.ndarray:
+    """Nearest proper rotation matrix in SO(3) via SVD."""
+    U, _, Vt = np.linalg.svd(R)
+    R_proj = U @ Vt
+    if np.linalg.det(R_proj) < 0.0:
+        U[:, -1] *= -1.0
+        R_proj = U @ Vt
+    return R_proj
+
+
+def rotation_angle(R_a: np.ndarray, R_b: np.ndarray) -> float:
+    """Geodesic angle (rad) between two 3x3 rotation matrices."""
+    return float(np.arccos(np.clip((np.trace(R_a.T @ R_b) - 1.0) * 0.5, -1.0, 1.0)))
+
+
 def pose_difference(A: np.ndarray, B: np.ndarray) -> tuple[float, float]:
     """(translation m, rotation rad) of ``inv(A) @ B``."""
     delta = invert(A) @ B
-    angle = np.arccos(np.clip((np.trace(delta[:3, :3]) - 1) / 2, -1.0, 1.0))
-    return float(np.linalg.norm(delta[:3, 3])), float(angle)
+    return float(np.linalg.norm(delta[:3, 3])), rotation_angle(A[:3, :3], B[:3, :3])
 
 
 class PoseGraph:
@@ -79,6 +93,7 @@ class PoseGraph:
         self.index: dict = {}
         self.poses: list[np.ndarray] = []
         self.edges: list[tuple[int, int, np.ndarray, np.ndarray, bool]] = []
+        self.gravity_priors: list[tuple[int, np.ndarray, float, bool]] = []
 
     def add_node(self, key, T_world_body: np.ndarray) -> None:
         self.index[key] = len(self.keys)
@@ -87,6 +102,19 @@ class PoseGraph:
 
     def add_edge(self, a, b, T_a_b: np.ndarray, information: np.ndarray, *, robust: bool = False) -> None:
         self.edges.append((self.index[a], self.index[b], invert(T_a_b), information, robust))
+
+    def add_gravity_prior(self, key, up_body: np.ndarray, sigma_rad: float, *, robust: bool = False) -> None:
+        """Constrain node's world-frame up vector ``R_world_body @ up_body`` toward ``+e_z``.
+
+        Leaves translation and world-Z yaw completely unconstrained.
+        """
+        vec = np.asarray(up_body, dtype=np.float64).reshape(3)
+        norm = float(np.linalg.norm(vec))
+        if norm <= 1e-6 or not np.isfinite(norm):
+            raise ValueError("up_body must be a finite non-zero 3-vector")
+        if sigma_rad <= 0.0 or not np.isfinite(sigma_rad):
+            raise ValueError(f"sigma_rad must be finite and positive, got {sigma_rad!r}")
+        self.gravity_priors.append((self.index[key], vec / norm, 1.0 / (sigma_rad * sigma_rad), robust))
 
     def pose(self, key) -> np.ndarray:
         return self.poses[self.index[key]].copy()
@@ -124,11 +152,16 @@ class PoseGraph:
 
     def _cost(self, poses) -> float:
         total = 0.0
+        c2 = self.cauchy_scale**2
         for edge in self.edges:
             e = self._residual(poses, edge)
             s = e @ edge[3] @ e
-            c2 = self.cauchy_scale**2
             total += c2 * np.log1p(s / c2) if edge[4] else s
+        for node_idx, g_body, weight, robust in self.gravity_priors:
+            u = poses[node_idx][:3, :3] @ g_body
+            e_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            s = weight * float(e_g @ e_g)
+            total += c2 * np.log1p(s / c2) if robust else s
         return float(total)
 
     def _normal_equations(self, poses):
@@ -136,6 +169,7 @@ class PoseGraph:
         size = 6 * (len(poses) - 1)
         rows, cols, values = [], [], []
         g = np.zeros(size)
+        c2 = self.cauchy_scale**2
         for edge in self.edges:
             a, b, _, information, robust = edge
             e = self._residual(poses, edge)
@@ -154,6 +188,23 @@ class PoseGraph:
                     rows.append(block_rows.ravel())
                     cols.append(block_cols.ravel())
                     values.append((Ji.T @ weighted @ Jj).ravel())
+        for node_idx, g_body, weight, robust in self.gravity_priors:
+            if node_idx == 0:
+                continue
+            R = poses[node_idx][:3, :3]
+            u = R @ g_body
+            e_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            s = weight * float(e_g @ e_g)
+            w_eff = (weight / (1.0 + s / c2)) if robust else weight
+            # Right perturbation: R exp(phi^) g_b ≈ R (g_b - [g_b]_x phi)
+            J_rot = -(R @ hat(g_body))  # (3, 3)
+            slot = 6 * (node_idx - 1) + 3
+            g[slot : slot + 3] += w_eff * (J_rot.T @ e_g)
+            H_rot = w_eff * (J_rot.T @ J_rot)
+            br, bc = np.meshgrid(np.arange(slot, slot + 3), np.arange(slot, slot + 3), indexing="ij")
+            rows.append(br.ravel())
+            cols.append(bc.ravel())
+            values.append(H_rot.ravel())
         H = sparse.coo_matrix(
             (np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(size, size)
         )

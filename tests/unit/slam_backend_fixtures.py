@@ -56,6 +56,12 @@ def pose(x=0.0, y=0.0, yaw=0.0, z=0.0, roll=0.0, pitch=0.0):
     return T
 
 
+def pose_deg(xyz, rpy_deg=(0.0, 0.0, 0.0)):
+    """4x4 pose from ``(x, y, z)`` and ``(roll, pitch, yaw)`` in degrees."""
+    r, p, y = np.radians(rpy_deg)
+    return pose(xyz[0], xyz[1], yaw=y, z=xyz[2], roll=r, pitch=p)
+
+
 def inverse(T):
     out = np.eye(4)
     out[:3, :3] = T[:3, :3].T

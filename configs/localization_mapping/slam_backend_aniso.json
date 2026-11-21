@@ -1,0 +1,8 @@
+{
+  "odometry_sigma_m": 0.2,
+  "odometry_sigma_rad": 0.02,
+  "loop_sigma_m": 0.05,
+  "loop_sigma_rad": 0.03,
+  "loop_sigma_yaw_rad": 0.01,
+  "cauchy_scale": 3.0
+}

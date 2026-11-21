@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from slam_backend_fixtures import pose_deg as _pose
 from embodied_navigation.localization_mapping.backend.evaluation import (
     ReplayRecord,
     TruthTrajectory,
@@ -20,13 +21,6 @@ from embodied_navigation.localization_mapping.backend.evaluation import (
     load_truth_stream,
     save_evaluation_bundle,
 )
-
-
-def _pose(xyz, rpy_deg=(0.0, 0.0, 0.0)) -> np.ndarray:
-    T = np.eye(4, dtype=np.float64)
-    T[:3, :3] = Rotation.from_euler("xyz", rpy_deg, degrees=True).as_matrix()
-    T[:3, 3] = xyz
-    return T
 
 
 def _make_truth(n: int = 40, dt: float = 0.5) -> tuple[np.ndarray, TruthTrajectory, np.ndarray]:
