@@ -42,11 +42,13 @@ class TruthTrajectory:
     def interpolate(self, query_stamps_s: np.ndarray) -> np.ndarray:
         """Interpolate world->body 4x4 SE(3) poses at ``query_stamps_s``."""
         q = np.asarray(query_stamps_s, dtype=np.float64)
-        if q.ndim != 1 or len(q) == 0:
-            raise ValueError("query_stamps_s must be a non-empty 1D array")
-        if q[0] < self.stamps_s[0] - 1e-3 or q[-1] > self.stamps_s[-1] + 1e-3:
+        if q.ndim != 1 or len(q) == 0 or not np.isfinite(q).all():
+            raise ValueError("query_stamps_s must be a non-empty finite 1D array")
+        q_min = float(np.min(q))
+        q_max = float(np.max(q))
+        if q_min < self.stamps_s[0] - 1e-3 or q_max > self.stamps_s[-1] + 1e-3:
             raise ValueError(
-                f"query timestamps [{q[0]:.3f}, {q[-1]:.3f}] lie outside truth "
+                f"query timestamps [{q_min:.3f}, {q_max:.3f}] lie outside truth "
                 f"range [{self.stamps_s[0]:.3f}, {self.stamps_s[-1]:.3f}]"
             )
         clamped = np.clip(q, self.stamps_s[0], self.stamps_s[-1])
@@ -68,13 +70,17 @@ def load_truth_stream(path: Path) -> TruthTrajectory:
     quats_xyzw: list[list[float]] = []
     last_t = -float("inf")
     with Path(path).open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for line_no, line in enumerate(handle, start=1):
             line = line.strip()
             if not line:
                 continue
             row = json.loads(line)
             t = float(row["time"])
-            if t <= last_t:
+            if not np.isfinite(t):
+                raise ValueError(f"{path}:{line_no}: non-finite timestamp {t!r}")
+            if t < last_t:
+                raise ValueError(f"{path}:{line_no}: non-monotonic truth timestamp {t} < {last_t}")
+            if t == last_t:
                 continue
             last_t = t
             stamps.append(t)
@@ -88,6 +94,36 @@ def load_truth_stream(path: Path) -> TruthTrajectory:
         positions=np.asarray(positions, dtype=np.float64),
         rotations=Rotation.from_quat(np.asarray(quats_xyzw, dtype=np.float64)),
     )
+
+
+def load_imu_in_base_from_preflight(path: Path) -> np.ndarray:
+    """Read ``imu_translation_in_base`` (3,) from a run's ``observer/preflight.json``."""
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    selected = doc.get("camera_calibration", {}).get("selected_fields", {})
+    vec = selected.get("imu_translation_in_base")
+    if vec is None:
+        raise ValueError(f"{path}: missing camera_calibration.selected_fields.imu_translation_in_base")
+    arr = np.asarray(vec, dtype=np.float64).reshape(3)
+    if not np.isfinite(arr).all():
+        raise ValueError(f"{path}: non-finite imu_translation_in_base {vec!r}")
+    return arr
+
+
+def _build_imu_to_base_transform(imu_in_base_xyz: Iterable[float] | None) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(T_imu_base, imu_in_base_vec)`` so ``T_world_base = T_world_imu @ T_imu_base``."""
+    if imu_in_base_xyz is None:
+        return np.eye(4, dtype=np.float64), np.zeros(3, dtype=np.float64)
+    vec = np.asarray(list(imu_in_base_xyz), dtype=np.float64).reshape(3)
+    if not np.isfinite(vec).all():
+        raise ValueError(f"imu_in_base_xyz must contain 3 finite numbers, got {imu_in_base_xyz!r}")
+    T = np.eye(4, dtype=np.float64)
+    T[:3, 3] = -vec
+    return T, vec
+
+
+def apply_right_transform(poses: np.ndarray, T_right: np.ndarray) -> np.ndarray:
+    """Apply a single 4x4 right transform ``T_right`` to a batch ``(N, 4, 4)`` of poses."""
+    return np.einsum("nij,jk->nik", poses, T_right)
 
 
 def load_map_keyframes(map_dir: Path) -> list[Keyframe]:
@@ -136,8 +172,11 @@ class ReplayRecord:
     step_wall_s: np.ndarray  # (N,) wall seconds per keyframe
     loop_events: list[dict] = field(default_factory=list)
     errors: int = 0
+    missing_graph_nodes: int = 0
     total_wall_s: float = 0.0
     extra_stats: dict = field(default_factory=dict)
+    snapshot_pre_pos: np.ndarray | None = None  # (S, N, 3) float32 pre-loop poses for same-prefix delta
+    snapshot_pre_quat_xyzw: np.ndarray | None = None  # (S, N, 4) float32 pre-loop quats for same-prefix delta
 
 
 def _poses_to_pos_quat(poses: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -178,23 +217,38 @@ def replay_backend(
     snap_is_loop: list[bool] = []
     snap_pos_list: list[np.ndarray] = []
     snap_quat_list: list[np.ndarray] = []
+    snap_pre_pos_list: list[np.ndarray] = []
+    snap_pre_quat_list: list[np.ndarray] = []
     loop_events: list[dict] = []
     errors = 0
 
-    def _capture_snapshot(kf_idx: int, is_loop: bool) -> None:
+    def _capture_snapshot(kf_idx: int, is_loop: bool, pre_poses: list[np.ndarray] | None) -> None:
         prefix = np.stack(backend.graph.poses[: kf_idx + 1], axis=0)
         pos_f32, quat_f32 = _poses_to_pos_quat(prefix)
         pos_row = np.full((n, 3), np.nan, dtype=np.float32)
         quat_row = np.full((n, 4), np.nan, dtype=np.float32)
         pos_row[: kf_idx + 1] = pos_f32
         quat_row[: kf_idx + 1] = quat_f32
+        pre_pos_row = np.full((n, 3), np.nan, dtype=np.float32)
+        pre_quat_row = np.full((n, 4), np.nan, dtype=np.float32)
+        if is_loop and pre_poses is not None and len(pre_poses) > 0:
+            k_pre = min(len(pre_poses), kf_idx)
+            pre_stack = np.stack(pre_poses[:k_pre], axis=0)
+            p_pre, q_pre = _poses_to_pos_quat(pre_stack)
+            pre_pos_row[:k_pre] = p_pre
+            pre_quat_row[:k_pre] = q_pre
         snap_indices.append(kf_idx)
         snap_is_loop.append(is_loop)
         snap_pos_list.append(pos_row)
         snap_quat_list.append(quat_row)
+        snap_pre_pos_list.append(pre_pos_row)
+        snap_pre_quat_list.append(pre_quat_row)
 
     t_total_0 = time.perf_counter()
     for idx, kf in enumerate(keyframes):
+        # Shallow copy of pose references before ingest: PoseGraph never mutates
+        # pose arrays in place, so this captures exact pre-optimization poses in O(N).
+        pre_poses_ref = list(backend.graph.poses)
         t0 = time.perf_counter()
         event = backend.ingest(kf)
         step_wall[idx] = time.perf_counter() - t0
@@ -213,6 +267,7 @@ def replay_backend(
             loop_events.append(
                 {
                     "kf_idx": idx,
+                    "key": list(kf.key),
                     "stamp_s": float(stamps_s[idx]),
                     "loop": is_loop,
                     "loop_key": list(event["loop_key"]) if event.get("loop_key") is not None else None,
@@ -229,12 +284,13 @@ def replay_backend(
             or (snapshot_stride > 0 and idx % snapshot_stride == 0)
         )
         if need_snap and len(backend.graph.poses) == idx + 1:
-            _capture_snapshot(idx, is_loop)
+            _capture_snapshot(idx, is_loop, pre_poses_ref if is_loop else None)
 
         if on_progress is not None:
             on_progress(idx, n, event)
 
     total_wall = time.perf_counter() - t_total_0
+    missing_nodes = sum(1 for k in keys if k not in backend.graph.index)
     final_poses = np.stack(
         [
             backend.graph.pose(k) if k in backend.graph.index else online_graph[i]
@@ -263,8 +319,11 @@ def replay_backend(
         step_wall_s=step_wall,
         loop_events=loop_events,
         errors=errors,
+        missing_graph_nodes=missing_nodes,
         total_wall_s=float(total_wall),
         extra_stats=extra,
+        snapshot_pre_pos=np.stack(snap_pre_pos_list, axis=0),
+        snapshot_pre_quat_xyzw=np.stack(snap_pre_quat_list, axis=0),
     )
 
 
@@ -344,13 +403,14 @@ def apply_left_transform(A: np.ndarray, poses: np.ndarray) -> np.ndarray:
 # Layer 1: Scalar metrics (ATE / AOE / RTE / ROE) ----------------------------
 
 
-def _summary_stats(values: np.ndarray) -> dict[str, float]:
+def _summary_stats(values: np.ndarray) -> dict[str, float | None]:
     arr = np.asarray(values, dtype=np.float64)
     if len(arr) == 0:
-        return {"rmse": float("nan"), "mean": float("nan"), "p95": float("nan"), "max": float("nan")}
+        return {"rmse": None, "mean": None, "median": None, "p95": None, "max": None}
     return {
         "rmse": float(np.sqrt(np.mean(arr * arr))),
         "mean": float(np.mean(arr)),
+        "median": float(np.median(arr)),
         "p95": float(np.percentile(arr, 95)),
         "max": float(np.max(arr)),
     }
@@ -386,10 +446,18 @@ def _relative_errors(
     truth_poses: np.ndarray,
     idx_a: np.ndarray,
     idx_b: np.ndarray,
-) -> dict[str, float]:
+) -> dict[str, float | int | None]:
     """Vectorized RTE (m) and ROE (deg) over index pairs ``(idx_a, idx_b)``."""
     if len(idx_a) == 0:
-        return {"pairs": 0, "rte_rmse_m": float("nan"), "rte_max_m": float("nan"), "roe_rmse_deg": float("nan"), "roe_max_deg": float("nan")}
+        return {
+            "pairs": 0,
+            "rte_rmse_m": None,
+            "rte_mean_m": None,
+            "rte_max_m": None,
+            "roe_rmse_deg": None,
+            "roe_mean_deg": None,
+            "roe_max_deg": None,
+        }
 
     Ra_e, ta_e = est_poses[idx_a, :3, :3], est_poses[idx_a, :3, 3]
     Rb_e, tb_e = est_poses[idx_b, :3, :3], est_poses[idx_b, :3, 3]
@@ -520,8 +588,15 @@ def compute_evolution_and_revisions(
     A_align: np.ndarray,
     *,
     bucket_s: float = 1.0,
+    imu_in_base_xyz: Iterable[float] | None = None,
 ) -> tuple[dict, dict[str, np.ndarray]]:
     """Compute Layer 2 per-snapshot evolution curves and Layer 3 per-second revision distributions."""
+    if bucket_s <= 0.0 or not np.isfinite(bucket_s):
+        raise ValueError(f"bucket_s must be finite and positive, got {bucket_s!r}")
+    T_imu_base, _ = _build_imu_to_base_transform(imu_in_base_xyz)
+    t_offset = T_imu_base[:3, 3]  # -imu_in_base_xyz
+    has_offset = bool(np.any(t_offset != 0.0))
+
     s_count, n = record.snapshot_pos.shape[:2]
     R_A = A_align[:3, :3]
     t_A = A_align[:3, 3]
@@ -549,9 +624,11 @@ def compute_evolution_and_revisions(
         k = int(record.snapshot_kf_indices[s]) + 1
         pos_raw = record.snapshot_pos[s, :k].astype(np.float64)
         quat_raw = record.snapshot_quat_xyzw[s, :k].astype(np.float64)
+        R_raw = Rotation.from_quat(quat_raw).as_matrix()
+        if has_offset:
+            pos_raw = pos_raw + np.einsum("nij,j->ni", R_raw, t_offset)
 
         pos_aligned = pos_raw @ R_A.T + t_A
-        R_raw = Rotation.from_quat(quat_raw).as_matrix()
         R_aligned = np.einsum("ij,njk->nik", R_A, R_raw)
 
         diff = pos_aligned - truth_pos[:k]
@@ -582,16 +659,52 @@ def compute_evolution_and_revisions(
         evo_aoe_max[s] = float(np.max(aoe))
         evo_tilt_max[s] = float(np.max(tilt))
 
-    # Layer 2 loop-step deltas (between consecutive snapshots where the second is a loop)
-    loop_delta_ate = []
-    loop_delta_z = []
-    for s in range(1, s_count):
-        if record.snapshot_is_loop[s]:
-            loop_delta_ate.append(float(evo_ate_rmse[s] - evo_ate_rmse[s - 1]))
-            loop_delta_z.append(float(evo_z_rmse[s] - evo_z_rmse[s - 1]))
+    # Layer 2 same-prefix per-loop deltas: compare post-opt vs pre-opt on the EXACT same node set.
+    loop_delta_ate: list[float] = []
+    loop_delta_z: list[float] = []
+    loop_delta_by_kf: dict[int, tuple[float, float]] = {}
+    for s in range(s_count):
+        if not record.snapshot_is_loop[s]:
+            continue
+        k_curr = int(record.snapshot_kf_indices[s]) + 1
+        d_ate: float | None = None
+        d_z: float | None = None
+        if record.snapshot_pre_pos is not None:
+            valid_pre = np.isfinite(record.snapshot_pre_pos[s, :, 0])
+            k_pre = int(np.sum(valid_pre))
+            if k_pre > 0:
+                pre_pos = record.snapshot_pre_pos[s, :k_pre].astype(np.float64)
+                if has_offset and record.snapshot_pre_quat_xyzw is not None:
+                    pre_R = Rotation.from_quat(record.snapshot_pre_quat_xyzw[s, :k_pre].astype(np.float64)).as_matrix()
+                    pre_pos = pre_pos + np.einsum("nij,j->ni", pre_R, t_offset)
+                pre_aligned = pre_pos @ R_A.T + t_A
+                pre_diff = pre_aligned - truth_pos[:k_pre]
+                pre_e3d = np.linalg.norm(pre_diff, axis=1)
+                pre_ez = np.abs(pre_diff[:, 2])
+                post_e3d = err_3d_mat[s, :k_pre].astype(np.float64)
+                post_ez = err_z_mat[s, :k_pre].astype(np.float64)
+                d_ate = float(np.sqrt(np.mean(post_e3d * post_e3d)) - np.sqrt(np.mean(pre_e3d * pre_e3d)))
+                d_z = float(np.sqrt(np.mean(post_ez * post_ez)) - np.sqrt(np.mean(pre_ez * pre_ez)))
+        elif s > 0:
+            k_common = min(int(record.snapshot_kf_indices[s - 1]) + 1, k_curr)
+            if k_common > 0:
+                pre_e3d = err_3d_mat[s - 1, :k_common].astype(np.float64)
+                pre_ez = err_z_mat[s - 1, :k_common].astype(np.float64)
+                post_e3d = err_3d_mat[s, :k_common].astype(np.float64)
+                post_ez = err_z_mat[s, :k_common].astype(np.float64)
+                d_ate = float(np.sqrt(np.mean(post_e3d * post_e3d)) - np.sqrt(np.mean(pre_e3d * pre_e3d)))
+                d_z = float(np.sqrt(np.mean(post_ez * post_ez)) - np.sqrt(np.mean(pre_ez * pre_ez)))
+        if d_ate is not None and d_z is not None:
+            loop_delta_ate.append(d_ate)
+            loop_delta_z.append(d_z)
+            loop_delta_by_kf[int(record.snapshot_kf_indices[s])] = (d_ate, d_z)
 
-    # Layer 3: Per-keyframe historical revision statistics across all snapshots >= first observation
-    # For each keyframe i, valid snapshots are rows where err_3d_mat[:, i] is finite.
+    # Layer 3: Per-keyframe historical revision statistics starting from insertion pose
+    # so the first revision between insertion and the next snapshot is never missed.
+    online_base = apply_right_transform(record.online_graph_poses, T_imu_base) if has_offset else record.online_graph_poses
+    init_aligned_pos = apply_left_transform(A_align, online_base)[:, :3, 3]
+    init_err_3d = np.linalg.norm(init_aligned_pos - truth_pos, axis=1)
+
     kf_err_p05 = np.full(n, np.nan, dtype=np.float64)
     kf_err_p25 = np.full(n, np.nan, dtype=np.float64)
     kf_err_p50 = np.full(n, np.nan, dtype=np.float64)
@@ -599,13 +712,18 @@ def compute_evolution_and_revisions(
     kf_err_p95 = np.full(n, np.nan, dtype=np.float64)
     kf_err_max = np.full(n, np.nan, dtype=np.float64)
     kf_rev_max_shift = np.zeros(n, dtype=np.float64)
+    kf_rev_max_step = np.zeros(n, dtype=np.float64)
     kf_rev_cum_jitter = np.zeros(n, dtype=np.float64)
 
     for i in range(n):
-        valid = np.isfinite(err_3d_mat[:, i])
-        if not np.any(valid):
+        valid_idx = np.flatnonzero(np.isfinite(err_3d_mat[:, i]))
+        if len(valid_idx) == 0:
             continue
-        vals = err_3d_mat[valid, i].astype(np.float64)
+        vals = err_3d_mat[valid_idx, i].astype(np.float64)
+        pts = aligned_pos_mat[valid_idx, i, :].astype(np.float64)
+        if int(record.snapshot_kf_indices[valid_idx[0]]) > i:
+            vals = np.concatenate(([init_err_3d[i]], vals))
+            pts = np.vstack((init_aligned_pos[i : i + 1], pts))
         p05, p25, p50, p75, p95 = np.percentile(vals, [5, 25, 50, 75, 95])
         kf_err_p05[i] = p05
         kf_err_p25[i] = p25
@@ -614,11 +732,12 @@ def compute_evolution_and_revisions(
         kf_err_p95[i] = p95
         kf_err_max[i] = float(np.max(vals))
 
-        pts = aligned_pos_mat[valid, i, :].astype(np.float64)
         if len(pts) >= 2:
             shifts = np.linalg.norm(pts - pts[0], axis=1)
+            step_norms = np.linalg.norm(np.diff(pts, axis=0), axis=1)
             kf_rev_max_shift[i] = float(np.max(shifts))
-            kf_rev_cum_jitter[i] = float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
+            kf_rev_max_step[i] = float(np.max(step_norms))
+            kf_rev_cum_jitter[i] = float(np.sum(step_norms))
 
     # Aggregate into 1-second buckets
     rel_t = record.stamps_s - record.stamps_s[0]
@@ -649,6 +768,7 @@ def compute_evolution_and_revisions(
         "layer2_evolution": {
             "snapshots": int(s_count),
             "loop_snapshots": int(np.sum(record.snapshot_is_loop)),
+            "same_prefix_loop_evals": int(len(loop_delta_ate)),
             "peak_prefix_ate_rmse_m": float(np.max(evo_ate_rmse)),
             "peak_prefix_ate_max_m": float(np.max(evo_ate_max)),
             "peak_prefix_z_rmse_m": float(np.max(evo_z_rmse)),
@@ -666,6 +786,7 @@ def compute_evolution_and_revisions(
             "p95_iqr_m": float(np.nanpercentile(kf_err_p75 - kf_err_p25, 95)),
             "mean_max_shift_m": float(np.mean(kf_rev_max_shift)),
             "max_shift_m": float(np.max(kf_rev_max_shift)),
+            "max_single_step_shift_m": float(np.max(kf_rev_max_step)),
             "mean_cum_jitter_m": float(np.mean(kf_rev_cum_jitter)),
             "max_cum_jitter_m": float(np.max(kf_rev_cum_jitter)),
         },
@@ -682,6 +803,8 @@ def compute_evolution_and_revisions(
         "evo_aoe_mean_deg": evo_aoe_mean,
         "evo_aoe_max_deg": evo_aoe_max,
         "evo_tilt_max_deg": evo_tilt_max,
+        "same_prefix_loop_delta_ate_m": np.asarray(loop_delta_ate, dtype=np.float64),
+        "same_prefix_loop_delta_z_m": np.asarray(loop_delta_z, dtype=np.float64),
         "bucket_t_s": b_t,
         "bucket_err_p05_m": b_p05,
         "bucket_err_p25_m": b_p25,
@@ -692,8 +815,14 @@ def compute_evolution_and_revisions(
         "bucket_mean_jitter_m": b_jitter,
         "bucket_max_shift_m": b_max_shift,
         "kf_rev_max_shift_m": kf_rev_max_shift,
+        "kf_rev_max_step_m": kf_rev_max_step,
         "kf_rev_cum_jitter_m": kf_rev_cum_jitter,
     }
+    for ev in record.loop_events:
+        if ev.get("loop") and ev.get("kf_idx") in loop_delta_by_kf:
+            d_ate, d_z = loop_delta_by_kf[ev["kf_idx"]]
+            ev["same_prefix_delta_ate_m"] = d_ate
+            ev["same_prefix_delta_z_m"] = d_z
     return summary, arrays
 
 
@@ -703,22 +832,30 @@ def evaluate_replay(
     *,
     init_window_s: float = 5.0,
     bucket_s: float = 1.0,
+    imu_in_base_xyz: Iterable[float] | None = None,
 ) -> tuple[dict, dict[str, np.ndarray]]:
     """Run full ADR-0004 3-layer evaluation on a ``ReplayRecord``."""
     truth_poses = truth.interpolate(record.stamps_s)
+    T_imu_base, imu_vec = _build_imu_to_base_transform(imu_in_base_xyz)
+    has_offset = bool(np.any(imu_vec != 0.0))
 
-    # Fixed initial-window alignment computed ONCE on the raw frontend trajectory
-    # so every backend variant shares the exact same world alignment.
-    A_init = compute_initial_se3_alignment(
-        record.frontend_poses, truth_poses, record.stamps_s, init_window_s=init_window_s
-    )
-
-    trajectories = {
+    raw_trajectories = {
         "frontend": record.frontend_poses,
         "online_adopted": record.online_adopted_poses,
         "online_graph": record.online_graph_poses,
         "final": record.final_poses,
     }
+    trajectories = {
+        name: (apply_right_transform(poses, T_imu_base) if has_offset else poses)
+        for name, poses in raw_trajectories.items()
+    }
+
+    # Fixed initial-window alignment computed ONCE on the raw frontend trajectory
+    # (already transformed to the truth body origin) so every backend variant shares
+    # the exact same world alignment.
+    A_init = compute_initial_se3_alignment(
+        trajectories["frontend"], truth_poses, record.stamps_s, init_window_s=init_window_s
+    )
 
     layer1_init: dict[str, dict] = {}
     layer1_umeyama: dict[str, dict] = {}
@@ -726,6 +863,7 @@ def evaluate_replay(
         "stamps_s": record.stamps_s,
         "truth_poses": truth_poses,
         "A_init": A_init,
+        "imu_in_base_xyz": imu_vec,
     }
 
     for name, raw_poses in trajectories.items():
@@ -742,7 +880,7 @@ def evaluate_replay(
         layer1_umeyama[name] = m_um
 
     l23_summary, l23_arrays = compute_evolution_and_revisions(
-        record, truth_poses, A_init, bucket_s=bucket_s
+        record, truth_poses, A_init, bucket_s=bucket_s, imu_in_base_xyz=imu_in_base_xyz
     )
     arrays.update(l23_arrays)
 
@@ -760,6 +898,7 @@ def evaluate_replay(
             "loops_rejected_odom": int(loops_rejected_odom),
             "loops_rejected_tilt": int(loops_rejected_tilt),
             "errors": int(record.errors),
+            "missing_graph_nodes": int(record.missing_graph_nodes),
             "total_wall_s": float(record.total_wall_s),
             "step_wall_mean_ms": float(np.mean(record.step_wall_s) * 1000.0),
             "step_wall_p95_ms": float(np.percentile(record.step_wall_s, 95) * 1000.0),
@@ -768,6 +907,8 @@ def evaluate_replay(
         },
         "alignment": {
             "init_window_s": float(init_window_s),
+            "eval_origin": "base_via_imu_in_base" if has_offset else "estimated_origin",
+            "imu_in_base_xyz": imu_vec.tolist(),
             "A_init": A_init.tolist(),
         },
         "layer1_init_se3": layer1_init,
@@ -796,13 +937,18 @@ def save_evaluation_bundle(
     arrays: dict[str, np.ndarray],
     *,
     export_tum: bool = True,
+    loop_events: list[dict] | None = None,
 ) -> Path:
-    """Persist ``summary.json``, compressed ``metrics.npz``, and optional TUM files."""
+    """Persist ``summary.json``, compressed ``metrics.npz``, optional ``loop_events.json`` and TUM files."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(summary, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8"
     )
+    if loop_events is not None:
+        (output_dir / "loop_events.json").write_text(
+            json.dumps(loop_events, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8"
+        )
     np.savez_compressed(output_dir / "metrics.npz", **arrays)
     if export_tum:
         tum_dir = output_dir / "tum"

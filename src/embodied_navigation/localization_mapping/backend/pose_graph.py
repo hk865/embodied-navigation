@@ -24,15 +24,67 @@ def hat(v: np.ndarray) -> np.ndarray:
 
 
 def _left_jacobian(phi: np.ndarray) -> np.ndarray:
-    theta = np.linalg.norm(phi)
+    theta = float(np.linalg.norm(phi))
     K = hat(phi)
-    if theta < 1e-6:
-        return np.eye(3) + K / 2 + K @ K / 6
+    K2 = K @ K
+    t2 = theta * theta
+    if theta < 1e-3:
+        return np.eye(3) + (0.5 - t2 / 24.0) * K + (1.0 / 6.0 - t2 / 120.0) * K2
     return (
         np.eye(3)
-        + (1 - np.cos(theta)) / theta**2 * K
-        + (theta - np.sin(theta)) / theta**3 * K @ K
+        + (1.0 - np.cos(theta)) / t2 * K
+        + (theta - np.sin(theta)) / (t2 * theta) * K2
     )
+
+
+def _so3_left_jacobian_inv(phi: np.ndarray) -> np.ndarray:
+    theta = float(np.linalg.norm(phi))
+    K = hat(phi)
+    K2 = K @ K
+    t2 = theta * theta
+    if theta < 1e-3:
+        return np.eye(3) - 0.5 * K + (1.0 / 12.0 + t2 / 720.0) * K2
+    coef = (1.0 / t2) - (1.0 + np.cos(theta)) / (2.0 * theta * np.sin(theta))
+    return np.eye(3) - 0.5 * K + coef * K2
+
+
+def _se3_Q_left(rho: np.ndarray, phi: np.ndarray) -> np.ndarray:
+    theta = float(np.linalg.norm(phi))
+    P = hat(rho)
+    K = hat(phi)
+    K2 = K @ K
+    t2 = theta * theta
+    if theta < 1e-2:
+        t4 = t2 * t2
+        c1 = 1.0 / 6.0 - t2 / 120.0 + t4 / 5040.0
+        c2 = 1.0 / 24.0 - t2 / 720.0 + t4 / 40320.0
+        c3 = 1.0 / 120.0 - t2 / 2520.0 + t4 / 120960.0
+    else:
+        t3 = t2 * theta
+        t4 = t2 * t2
+        t5 = t4 * theta
+        s = np.sin(theta)
+        c = np.cos(theta)
+        c1 = (theta - s) / t3
+        c2 = (t2 + 2.0 * c - 2.0) / (2.0 * t4)
+        c3 = (2.0 * theta - 3.0 * s + theta * c) / (2.0 * t5)
+    return (
+        0.5 * P
+        + c1 * (K @ P + P @ K + K @ P @ K)
+        + c2 * (K2 @ P + P @ K2 - 3.0 * K @ P @ K)
+        + c3 * (K @ P @ K2 + K2 @ P @ K)
+    )
+
+
+def se3_right_jacobian_inv(xi: np.ndarray) -> np.ndarray:
+    """Exact SE(3) inverse right Jacobian ``J_r^{-1}(xi)`` for ``(rho, phi)`` twists."""
+    Jr_phi_inv = _so3_left_jacobian_inv(-xi[3:])
+    Qr = _se3_Q_left(-xi[:3], -xi[3:])
+    J = np.zeros((6, 6), dtype=np.float64)
+    J[:3, :3] = Jr_phi_inv
+    J[3:, 3:] = Jr_phi_inv
+    J[:3, 3:] = -(Jr_phi_inv @ Qr @ Jr_phi_inv)
+    return J
 
 
 def se3_exp(xi: np.ndarray) -> np.ndarray:
@@ -96,6 +148,8 @@ class PoseGraph:
         self.gravity_priors: list[tuple[int, np.ndarray, float, bool]] = []
 
     def add_node(self, key, T_world_body: np.ndarray) -> None:
+        if key in self.index:
+            raise ValueError(f"duplicate pose-graph node key: {key!r}")
         self.index[key] = len(self.keys)
         self.keys.append(key)
         self.poses.append(np.array(T_world_body, dtype=np.float64))
@@ -174,7 +228,11 @@ class PoseGraph:
             a, b, _, information, robust = edge
             e = self._residual(poses, edge)
             weighted = self._weight(e, information, robust) * information
-            jacobians = {a: -adjoint(invert(poses[b]) @ poses[a]), b: np.eye(6)}
+            J_r_inv = se3_right_jacobian_inv(e)
+            jacobians = {
+                a: -(J_r_inv @ adjoint(invert(poses[b]) @ poses[a])),
+                b: J_r_inv,
+            }
             for i, Ji in jacobians.items():
                 if i == 0:
                     continue
