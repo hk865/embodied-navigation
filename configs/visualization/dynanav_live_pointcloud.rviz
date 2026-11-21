@@ -16,8 +16,27 @@ Visualization Manager:
       Plane Cell Count: 60
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/PointCloud2
-      Name: Accumulated 3D Cloud (Z Color)
+      Name: Accumulated 3D RGB Cloud (LIVO2)
       Enabled: true
+      Topic:
+        Value: /dynanav/rtx_livo/cloud_registered
+        Depth: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Position Transformer: XYZ
+      Color Transformer: RGB8
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.035
+      Size (Pixels): 3
+      Alpha: 1.0
+      Decay Time: 3600
+      Selectable: false
+      Queue Size: 20
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Accumulated 3D Geometry Cloud (Z Color, 360°)
+      Enabled: false
       Topic:
         Value: /dynanav/rtx_livo/cloud_registered_full
         Depth: 10
@@ -76,6 +95,28 @@ Visualization Manager:
         Value: Arrow
         Alpha: 0.9
         Color: 40; 220; 140
+        Head Length: 0.12
+        Head Radius: 0.06
+        Shaft Length: 0.35
+        Shaft Radius: 0.025
+    - Class: rviz_default_plugins/Odometry
+      Name: Backend Corrected Trajectory
+      Enabled: false
+      Topic:
+        Value: /dynanav/backend/corrected_odometry
+        Depth: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+      Angle Tolerance: 0.05
+      Position Tolerance: 0.05
+      Keep: 5000
+      Covariance:
+        Value: false
+      Shape:
+        Value: Arrow
+        Alpha: 0.9
+        Color: 60; 170; 255
         Head Length: 0.12
         Head Radius: 0.06
         Shaft Length: 0.35
