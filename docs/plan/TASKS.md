@@ -84,7 +84,7 @@
 | 测试基线 | 当前工作树 `tests/unit` **679 条 OK、0 失败 0 跳过**（集成基线 `main` 为 650 条 OK）；`tests/regression` **60 条 OK、0 失败**（本机 3 条按环境 skip） |
 | 默认入口 | `scripts/run_dynanav_native_exploration.sh`（默认 FAST-LIVO2 + PCT/SCAN + RoboGauge），`--truth-pose` 切真值模式 |
 | 数据卷 | `$PROJECT_DATA_ROOT/embodied-navigation/`；Phase 4 评测数据集在 `runs/20261121-noisy-imu-rgb-twofloor-explore/` |
-| 文档入口 | 根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md)、本文件、[ADR-0001–0004](adr/)、各模块 `README.md` |
+| 文档入口 | 根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md)、本文件、[TEST_PLANS.md](TEST_PLANS.md)、[ADR-0001–0004](adr/)、各模块 `README.md` |
 
 ## 新任务登记模板
 

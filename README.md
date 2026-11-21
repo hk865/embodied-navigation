@@ -172,6 +172,7 @@ python3 docker/build_native.py --execute
 | --- | --- |
 | [docs/plan/ROADMAP.md](docs/plan/ROADMAP.md) | 唯一主线、七层边界、Phase 1–4 里程碑与状态、分支归属表、数据卷约定 |
 | [docs/plan/TASKS.md](docs/plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办队列，含建议角色、模块与验收标准；Phase 4 后端评测数据集入口 |
+| [docs/plan/TEST_PLANS.md](docs/plan/TEST_PLANS.md) | 活跃分支测试与验收计划：合入底线、`exp/startup-walk-imu-bias` 核销表、Phase 4 统一数据集矩阵（D1/D2/D3）与三层评测口径 |
 | [docs/plan/adr/](docs/plan/adr/) | 架构决策记录 ADR-0001–ADR-0004：yaw 延迟边界、具身 Agent 异步与语义地图、流式 Fork + 关键帧语义图、增量 Mesh/3DGS 与三层后端评测口径 |
 | [AGENTS.md](AGENTS.md) | 硬规则、测试与分支验收、数据卷规则、README 维护要求 |
 | [docs/README.md](docs/README.md) | 文档分类索引（权威说明 / 计划 / 实验历史 / 审查 / 验证 / 依赖） |
