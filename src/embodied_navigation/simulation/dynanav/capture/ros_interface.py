@@ -255,10 +255,10 @@ def create_ros_interface(
                 m.pose.pose.orientation.y,
                 m.pose.pose.orientation.z,
             ],
-            # 纯位姿后端（livo_post_vio / simulation_truth）不提供可信速度，显式置 None，
+            # 纯位姿后端（livo_post_vio / backend_corrected / simulation_truth）不提供可信速度，显式置 None，
             # 而不是把 Twist 里的零当成“静止”。
             "estimated_velocity": None
-            if experiment.get("slam_pose_source") in ("livo_post_vio", "simulation_truth")
+            if experiment.get("slam_pose_source") in ("livo_post_vio", "backend_corrected", "simulation_truth")
             else [
                 m.twist.twist.linear.x,
                 m.twist.twist.linear.y,

@@ -132,7 +132,7 @@ def prepare_candidates(run_dir, candidates, *, prepare_next=False, scorer_option
         raise ValueError('snapshot_observation_run_mismatch')
     if provenance.get('map_frame') != pose.get('map_frame') or provenance.get('child_frame') != pose.get('sensor_frame'):
         raise ValueError('snapshot_observation_frame_mismatch')
-    if pose.get('source') != 'livo_post_vio':
+    if pose.get('source') not in ('livo_post_vio', 'backend_corrected'):
         raise ValueError('candidate_start_requires_post_vio')
     current = _xyz(pose.get('position_xyz_m'), 'current pose')
     source = dict(provenance, **binding, map_sha256=hashlib.sha256(raw).hexdigest(),

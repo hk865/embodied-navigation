@@ -49,7 +49,7 @@ class NativeWaypointTracker:
 
     def __init__(self, experiment, *, speed_mps=None, mailbox=None):
         self.pose_source = experiment.get("slam_pose_source")
-        if self.pose_source not in ("lio_estimate", "livo_post_vio", "simulation_truth") or experiment.get("ground_truth_navigation"):
+        if self.pose_source not in ("lio_estimate", "livo_post_vio", "backend_corrected", "simulation_truth") or experiment.get("ground_truth_navigation"):
             raise ValueError("Native waypoints require measured SLAM or explicit simulation_truth, never ground truth")
         self.mailbox = Path(mailbox or experiment["interactive_mailbox"])
         if not self.mailbox.is_absolute():

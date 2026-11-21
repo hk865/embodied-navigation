@@ -117,8 +117,8 @@ def configure_point_cloud_source(profile, source, semantic_provider=None):
 
 
 def slam_odometry_topic(pose_source, requested=None):
-    """Bind post-VIO or simulation_truth control to its dedicated output topic."""
-    if pose_source not in ("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE):
+    """Bind post-VIO, backend-corrected, or simulation_truth control to its dedicated output topic."""
+    if pose_source not in ("lio_estimate", "livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE):
         raise ValueError("unsupported measured navigation pose source")
     if pose_source == TRUTH_POSE_SOURCE:
         topic = TRUTH_VIO_ODOM_TOPIC if requested is None else requested
@@ -128,11 +128,14 @@ def slam_odometry_topic(pose_source, requested=None):
             )
         return topic
     post_vio = pose_source == "livo_post_vio"
+    backend_corrected = pose_source == "backend_corrected"
     topic = (
         requested
         if requested is not None
         else (
-            "/dynanav/lio_observer/post_vio_odometry"
+            "/dynanav/backend/corrected_odometry"
+            if backend_corrected
+            else "/dynanav/lio_observer/post_vio_odometry"
             if post_vio
             else "/dynanav/lio_observer/aft_mapped_to_init"
         )
@@ -207,7 +210,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--interactive-pose-source",
-        choices=("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE),
+        choices=("lio_estimate", "livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE),
         help="Pose source that drives interactive waypoints",
     )
     parser.add_argument("--interactive-waypoint-ttl-s", type=float, default=30.0)
@@ -262,10 +265,10 @@ def main(argv=None):
         )
     if args.interactive_controller == "pct_scan" and (
         not interactive_requested
-        or args.interactive_pose_source not in ("livo_post_vio", TRUTH_POSE_SOURCE)
+        or args.interactive_pose_source not in ("livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE)
     ):
         parser.error(
-            "pct_scan requires --interactive --interactive-pose-source livo_post_vio or simulation_truth"
+            "pct_scan requires --interactive --interactive-pose-source livo_post_vio, backend_corrected, or simulation_truth"
         )
     if (
         args.interactive_controller == "pct_scan"
@@ -368,7 +371,8 @@ def main(argv=None):
             parser.error("Interactive mailbox directory must not exist yet")
         is_truth = args.interactive_pose_source == TRUTH_POSE_SOURCE
         post_vio = args.interactive_pose_source == "livo_post_vio"
-        pose_window_only = post_vio or is_truth
+        backend_corrected = args.interactive_pose_source == "backend_corrected"
+        pose_window_only = post_vio or backend_corrected or is_truth
         if is_truth and args.point_cloud_source == "rtx_lidar":
             profile["lidar_motion_compensation"] = (
                 "simulation_truth 200 Hz per-point pose interpolation to "
@@ -383,6 +387,8 @@ def main(argv=None):
             navigation_pose_source=(
                 "simulation_truth_imu"
                 if is_truth
+                else "measured_backend_corrected"
+                if backend_corrected
                 else "measured_livo_post_vio"
                 if post_vio
                 else "measured_lio"
