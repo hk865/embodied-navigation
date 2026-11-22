@@ -139,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     src.add_argument("--map-dir", type=Path, help="Saved MapStore directory (map.json + kf_*.npz)")
     src.add_argument("--input-json", type=Path, help="Offline input.json manifest")
     parser.add_argument("--truth", type=Path, required=True, help="capture/truth_scoring_stream.jsonl")
+    parser.add_argument("--visual-dir", type=Path, default=None, help="Optional directory of <stamp_ns>.npz visual frames")
     parser.add_argument("--config", type=Path, default=None, help="BackendConfig JSON overlay")
     parser.add_argument("--output-dir", type=Path, required=True, help="Output directory on data disk")
     parser.add_argument("--init-window-s", type=float, default=5.0, help="Initial SE(3) alignment window (s)")
@@ -170,7 +171,11 @@ def main(argv: list[str] | None = None) -> int:
     elif args.preflight_json is not None:
         imu_in_base_xyz = load_imu_in_base_from_preflight(args.preflight_json).tolist()
 
-    keyframes = load_map_keyframes(args.map_dir) if args.map_dir else load_input_json_keyframes(args.input_json)
+    keyframes = (
+        load_map_keyframes(args.map_dir, visual_dir=args.visual_dir)
+        if args.map_dir
+        else load_input_json_keyframes(args.input_json, visual_dir=args.visual_dir)
+    )
     truth = load_truth_stream(args.truth)
     config = BackendConfig.from_json(args.config) if args.config else BackendConfig()
     backend = SlamBackend(config)
