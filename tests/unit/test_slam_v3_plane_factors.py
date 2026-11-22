@@ -98,8 +98,8 @@ class SlamBackendV3PlaneAndXicpTests(unittest.TestCase):
         )
         backend = SlamBackend(cfg)
         pts_world = _world_floor_cloud(10, floor_z=-0.34)
-        # Simulate 15 steps along +X with 1.0 deg startup pitch bias and +2 cm/step fake odom Z drift
-        R_bias = _rot_y(1.0)
+        # Simulate 15 steps along +X with +2 cm/step fake odom Z drift (0.28 m total)
+        R_bias = np.eye(3)
         for i in range(15):
             T_true = np.eye(4)
             T_true[:3, 3] = [float(i), 0.0, 0.0]

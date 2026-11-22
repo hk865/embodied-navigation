@@ -198,22 +198,10 @@ def project_coplanar_odom_delta(
     if cos_ang < math.cos(math.radians(max_normal_disagreement_deg)):
         return delta_odom, False
 
-    # Project out vertical drift along n_a (exact coplanar constraint)
+    # Project out vertical drift along n_a ONLY; keep R untouched so yaw is never perturbed!
     t_clean = t + (dz_floor - dz_odom) * n_a
 
-    # Minimal geodesic rotation in frame a aligning n_b_in_a -> n_a (preserves yaw!)
-    axis = np.cross(n_b_in_a, n_a)
-    sin_ang = float(np.linalg.norm(axis))
-    if sin_ang > 1e-9:
-        u = axis / sin_ang
-        angle = math.atan2(sin_ang, cos_ang)
-        K = np.array([[0.0, -u[2], u[1]], [u[2], 0.0, -u[0]], [-u[1], u[0], 0.0]], dtype=np.float64)
-        R_corr = np.eye(3) + math.sin(angle) * K + (1.0 - math.cos(angle)) * (K @ K)
-        R_clean = R_corr @ R
-    else:
-        R_clean = R
-
     out = np.eye(4, dtype=np.float64)
-    out[:3, :3] = R_clean
+    out[:3, :3] = R
     out[:3, 3] = t_clean
     return out, True

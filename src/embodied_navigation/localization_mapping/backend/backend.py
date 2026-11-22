@@ -679,18 +679,9 @@ class SlamBackend:
                 if c.floor_normal_gravity_enabled:
                     self._floor_normal_body[keyframe.key] = floor_meas.normal_body
         if previous is None:
-            init_pose = (
-                self._level_initial_pose(keyframe.T_odom_body, floor_meas.normal_body)
-                if (c.floor_plane_enabled and floor_meas is not None)
-                else keyframe.T_odom_body
-            )
-            self.graph.add_node(keyframe.key, init_pose)
+            self.graph.add_node(keyframe.key, keyframe.T_odom_body)
             self._path_m[keyframe.key] = 0.0
-            up_body = (
-                floor_meas.normal_body.copy()
-                if (c.floor_plane_enabled and floor_meas is not None)
-                else keyframe.T_odom_body[2, :3].copy()
-            )
+            up_body = keyframe.T_odom_body[2, :3].copy()
         else:
             delta = invert(previous.T_odom_body) @ keyframe.T_odom_body
             zupt_mode, pivot_rot = self._detect_zupt(previous, keyframe, delta)
@@ -773,7 +764,7 @@ class SlamBackend:
                 c.graph_gravity_sigma_rad,
                 robust=c.graph_gravity_robust,
             )
-        if c.floor_normal_graph_sigma_rad is not None and floor_meas is not None:
+        if c.floor_normal_graph_sigma_rad is not None and floor_meas is not None and zupt_mode is None:
             self.graph.add_gravity_prior(
                 keyframe.key,
                 floor_meas.normal_body,
