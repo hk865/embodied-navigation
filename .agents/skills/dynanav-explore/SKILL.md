@@ -17,7 +17,7 @@ DSH still selects and explicitly sends goto. It never dispatches or adds goto ga
 Native RouteTracker-specific descriptions below apply to explicit
 `NAVIGATION_BACKEND=native_route`; sensor, source and receipt rules still apply.
 
-Replace the human waypoint choice, preserving `NativeWaypointTracker → RouteTracker → RoboGauge` and its native control law. This skill does not authorize starting another experiment or operating real hardware. Read [the native interface and executable SOP](references/native-interface.md) for the current checkout's commands, evidence products and receipt semantics.
+Replace the human waypoint choice, preserving `NativeWaypointTracker → RouteTracker → RoboGauge` and its native control law. This skill does not authorize starting another experiment or operating real hardware. Read [the native interface and executable SOP](references/native-interface.md) for the current checkout's commands, evidence products and receipt semantics, and [the reusable two-floor exploration prompt template](references/two-floor-exploration-prompt.md) when launching an autonomous multi-floor exploration session.
 
 ## Bind the current generation
 
@@ -50,11 +50,18 @@ Send normal exploration decisions with `scripts/explore_waypoint_client.py goto 
   - When pausing to inspect RGB, 3D clouds, or operator maps between waypoints, keep the robot idle (do not send tiny micro-nudges). Under the default `slam_backend_stabilized.json` preset (`zupt_enabled=true`, `zupt_full_stop_rot_rad=0.0`, `zupt_skip_loop_search=true`), the SLAM backend applies geometric `pivot` zero-translation anchoring whenever LiDAR geometry supports zero translation (`stats.zupt_active` / `stats.zupt_pivot_count`), bounding backend map drift during pauses. Note that default control still navigates on raw `livo_post_vio` (unless `--backend-pose` is explicitly enabled), so avoid unnecessarily long idle waits.
   - Avoid parking `< 0.6 m` nose-first facing a blank, textureless wall for `> 15 s`; stop in a position with open 3D wall/floor geometry and visible visual texture whenever practical.
 - **Stop-and-spin panoramic `scan` for multi-view visual coverage & loop closure**:
-  - At key topological anchors — entering a new open room center, arriving at a multi-way junction or stair landing, or when `/dynanav/backend/status` reports `stats.travel_since_last_loop_m > 15.0` — stop cleanly and run an in-place slow 360° scan (`<= 0.15 rad/s` per step; requires the default PCT/SCAN worker for rotation-space clearance; pass matching wall-clock `--ttl` and `--timeout-per-step` for slow simulation RTF):
-    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir <capture> --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --ttl 45 --timeout-per-step 45`
-    (or `--steps 4 --step-deg 90 --settle-s 0.8 --ttl 45 --timeout-per-step 45` when a coarser 4-view sweep suffices).
+  - At key topological anchors — entering a new open room center, arriving at a multi-way junction or stair landing, or when `/dynanav/backend/status` reports `stats.travel_since_last_loop_m > 15.0` — stop cleanly and run an in-place slow 360° scan (`<= 0.15 rad/s` per step; requires the default PCT/SCAN worker for rotation-space clearance; pass generous wall-clock `--ttl` and `--timeout-per-step` matched to slow simulation RTF when RViz/rosbag recording is active):
+    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir <capture> --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --ttl 90 --timeout-per-step 90`
+    (or `--steps 8 --step-deg 45 --settle-s 0.8 --ttl 75 --timeout-per-step 75` for smaller per-step turns).
   - Because `zupt_skip_loop_search=true` suppresses loop queries during stationary `pivot` frames, a panoramic `scan` primarily enriches multi-heading RGB + LiDAR keyframes and visual evidence; loop closure itself fires once the robot resumes moving into previously visited space. Each `scan` writes non-overwriting per-step snapshots under `interactive/scan/seq_<first_seq>/`.
   - Inspect the resulting `sim_frames` / `scan_dir` snapshots before picking the next branch. Do not run `scan` inside a narrow doorway or `< 0.6 m` from an obstacle where rotation-space clearance would block `yaw`; step into open space first (or use `maneuver` to clear the doorway).
+- **2D occupancy grid frontier audit before leaving a floor**:
+  - Do not rely solely on front RGB memory to decide a floor is complete. Before transitioning to stairs or stopping, inspect the current 2D occupancy grid (`operator_grid/level_*_operator_map_partial.npz` and rendered `height_chart_*.png`) for every unvisited free-to-unknown doorway or side-room opening, and optionally rank candidate openings with the read-only advisory tool:
+    `PYTHONPATH=src python3 scripts/dynanav_exploration.py candidates --run-dir <capture> --frontier-json <capture>/operator_map/level_<key>.json --frontier-z <current_z> --lidar-offset 0 0 0 --pct-max-grid-cells 8000000`
+  - Close out remaining visible side rooms on the current floor (via doorway centerlines) before climbing to the next floor.
+- **Multi-floor PCT grid budget & stepwise stair climbing**:
+  - For full two-floor runs (`> 50 m` travel + stairs), launch `scripts/run_dynanav_native_exploration.sh` with `--pct-max-grid-cells 8000000` so PCT does not hit its default 2M-cell multilayer allocation ceiling after mapping the basement.
+  - Climb stairs in progressive observed legs rather than shooting straight to an unobserved upper-floor target: (1) align on the stair-entry centerline (`~0.5 m` past the bottom riser), (2) advance onto the mid-landing once its treads/support appear in the XZ/YZ 3D cloud and RGB, (3) exit onto the upper-floor landing (`~1.0 m` past the top riser), then perform a panoramic `scan` before sweeping the upper floor.
 - **Closed-loop room sweeps**:
   - When exploring a large room or hallway loop, prefer closing a physical loop back through a previously observed doorway/junction rather than purely dead-reckoning open spurs, so the SLAM backend closes geometric/visual loops and bounds global drift.
 
