@@ -1,0 +1,134 @@
+# 带物理级 MEMS IMU 偏置与噪声注入的 LIVO 实验配置（基于 fastlivo_livo.yaml）。
+# 开启在线零偏估计 ba_bg_est_en，并根据 200 Hz 注入噪声密度/随机游走调整协方差，
+# 同时将静止初始化角速度门限放宽至 0.08 rad/s 以兼容约 0.027 rad/s 初始陀螺零偏。
+/**:
+  ros__parameters:
+    common:
+      img_en: 1
+      allow_lio_only: false
+      lidar_en: 1
+      lid_topic: /dynanav/lidar_static
+      imu_topic: /dynanav/imu
+      ros_driver_bug_fix: false
+      use_gps: false
+      require_complete_imu: true
+      img_topic: /dynanav/camera
+    debug:
+      sensor_sync_diagnostics: true
+    evo:
+      pose_output_en: false
+      seq_name: DynaNav_static_RGBD_LIVO_noisy_imu_observer
+    extrin_calib:
+      extrinsic_T:
+      - 0.0
+      - 0.0
+      - 0.0
+      extrinsic_R:
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1.0
+      Rcl:
+      - 0.0
+      - -1.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - -1.0
+      - 1.0
+      - 0.0
+      - 0.0
+      Pcl:
+      - 0.0
+      - 0.13510895531624556
+      - -0.2798469357192516
+    image_save:
+      img_save_en: false
+      interval: 1
+    imu:
+      # 200 Hz 下 accel 白噪声离散方差约 (0.005^2)/0.005 = 0.005，保留 0.2 以覆盖足式冲击高频振动
+      acc_cov: 0.2
+      # 200 Hz 下 accel bias RW (0.002^2)/0.005 = 8e-4，取 1.0e-3
+      b_acc_cov: 0.001
+      # 200 Hz 下 gyro bias RW (0.0002^2)/0.005 = 8e-6，取 1.0e-5
+      b_gyr_cov: 1.0e-05
+      ba_bg_est_en: true
+      gravity_est_en: false
+      # 200 Hz 下 gyro 白噪声离散方差约 (0.0005^2)/0.005 = 5e-5，留 2 倍裕度取 1.0e-4
+      gyr_cov: 1.0e-04
+      imu_en: true
+      imu_int_frame: 300
+      init_max_acc_axis_std: 0.4
+      init_max_acc_norm_error: 1.2
+      # 初始陀螺零偏范数约 0.027 rad/s 叠加 3σ 白噪声后峰值约 0.05 rad/s，取 0.08 放行静止初始化
+      init_max_gyro_norm: 0.08
+      init_max_sample_gap: 0.03
+      init_min_span: 2.9
+      stationary_initialization_en: true
+    lio:
+      beam_err: 0.05
+      dept_err: 0.02
+      layer_init_num:
+      - 5
+      - 5
+      - 5
+      - 5
+      - 5
+      max_iterations: 5
+      max_layer: 2
+      max_points_num: 50
+      min_eigen_value: 0.005
+      voxel_size: 0.5
+    local_map:
+      half_map_size: 100
+      map_sliding_en: false
+      sliding_thresh: 8.0
+    pcd_save:
+      colmap_output_en: false
+      filter_size_pcd: 0.15
+      interval: 200
+      pcd_save_en: false
+      type: 0
+    preprocess:
+      blind: 0.3
+      filter_size_surf: 0.15
+      lidar_type: 0
+      point_filter_num: 1
+      scan_line: 32
+    publish:
+      post_vio_odometry_en: true
+      base_frame: go2_imu
+      blind_rgb_points: 0.0
+      dense_map_en: true
+      pub_effect_point_en: false
+      pub_plane_en: false
+      pub_scan_num: 1
+      publish_base_tf: false
+      child_frame: go2_imu
+      odom_frame: dynanav_lio_map
+    time_offset:
+      exposure_time_init: 0.0
+      img_time_offset: 0.0
+      imu_time_offset: 0.0
+    uav:
+      gravity_align_en: true
+      imu_rate_odom: false
+    use_sim_time: true
+    vio:
+      max_iterations: 5
+      img_point_cov: 100
+      outlier_threshold: 100
+      patch_size: 8
+      patch_pyrimid_level: 4
+      normal_en: true
+      raycast_en: false
+      inverse_composition_en: false
+      exposure_estimate_en: true
+      inv_expo_cov: 0.1
+      grid_size: 5
+      grid_n_height: 17

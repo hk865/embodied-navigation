@@ -29,6 +29,7 @@ def main(argv=None):
         help='Explicit LiDAR minus route child-origin XYZ, modeled in route frame')
     parser.add_argument('--body-support-offset',type=float,default=.32)
     parser.add_argument('--pct-start-blind-radius',type=float,default=0.)
+    parser.add_argument('--pct-max-grid-cells',type=int,default=2_000_000)
     parser.add_argument('--pct-binary',type=Path)
     args=parser.parse_args(argv)
     capture,_=run_binding(args.run_dir)
@@ -46,7 +47,8 @@ def main(argv=None):
             route_spacing_m=args.route_spacing_m,max_route_samples=args.max_route_samples,
             azimuth_samples=args.azimuth_samples,lidar_offset_in_route_frame=args.lidar_offset),
         planner_options=dict(body_support_offset_m=args.body_support_offset,
-            start_blind_radius_m=args.pct_start_blind_radius,native_binary=args.pct_binary))
+            start_blind_radius_m=args.pct_start_blind_radius,
+            max_grid_cells=args.pct_max_grid_cells,native_binary=args.pct_binary))
     content=json.dumps(result,indent=2,allow_nan=False)+'\n'
     if args.output:
         args.output.parent.mkdir(parents=True,exist_ok=True)

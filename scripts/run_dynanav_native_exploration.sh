@@ -5,7 +5,7 @@
 set -Eeo pipefail
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
-        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--truth-pose] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z]"
+        echo "Usage: run_dynanav_native_exploration.sh [NEW_RUN_DIRECTORY] [--until-stopped] [--backend-pose] [--truth-pose] [--with-slam-observer] [--scan-prefix INSTALL_DIRECTORY] [--isaac-root DIRECTORY] [--pct-max-grid-cells COUNT] [--local-map-window-s SECONDS] [--local-map-radius-m METERS] [--local-recovery-window-s SECONDS] [--overview-eye-base X Y Z] [--overview-focus-base X Y Z] [--experiment-config JSON_PATH] [--livo-config YAML_PATH]"
         exit 0
     fi
 done
@@ -25,14 +25,20 @@ BUILD="${BUILD_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynana
 RUN=""
 UNTIL_STOPPED=false
 TRUTH_POSE=false
+BACKEND_POSE=false
+WITH_SLAM_OBSERVER=false
 ISAAC_ROOT="$HOME/isaacsim"
 SCAN_PREFIX="${SCAN_PREFIX:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/dynanav_scan_native/install}"
+EXPERIMENT_CONFIG=""
+LIVO_CONFIG="configs/simulation/dynanav/fastlivo_livo.yaml"
 EXTRA_CAPTURE_ARGS=()
 EXTRA_PLANNER_ARGS=()
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
         --truth-pose) TRUTH_POSE=true; shift ;;
+        --backend-pose) BACKEND_POSE=true; shift ;;
+        --with-slam-observer) WITH_SLAM_OBSERVER=true; shift ;;
         --scan-prefix)
             (($# >= 2)) || { echo "Missing value for --scan-prefix"; exit 2; }
             SCAN_PREFIX=$2; shift 2 ;;
@@ -44,8 +50,26 @@ while (($#)); do
                 ISAAC_ROOT="$CALLER_PWD/$2"
             fi
             shift 2 ;;
-        --pct-max-grid-cells)
-            (($# >= 2)) || { echo "Missing value for --pct-max-grid-cells"; exit 2; }
+        --experiment-config)
+            (($# >= 2)) || { echo "Missing value for --experiment-config"; exit 2; }
+            if [[ "$2" = /* ]]; then
+                EXPERIMENT_CONFIG=$2
+            else
+                EXPERIMENT_CONFIG="$CALLER_PWD/$2"
+            fi
+            [[ -f "$EXPERIMENT_CONFIG" ]] || { echo "Experiment config not found: $EXPERIMENT_CONFIG"; exit 2; }
+            EXTRA_CAPTURE_ARGS+=(--experiment "$EXPERIMENT_CONFIG"); shift 2 ;;
+        --livo-config)
+            (($# >= 2)) || { echo "Missing value for --livo-config"; exit 2; }
+            if [[ "$2" = /* ]]; then
+                LIVO_CONFIG=$2
+            else
+                LIVO_CONFIG="$CALLER_PWD/$2"
+            fi
+            [[ -f "$LIVO_CONFIG" ]] || { echo "LIVO config not found: $LIVO_CONFIG"; exit 2; }
+            shift 2 ;;
+        --pct-max-grid-cells|--local-map-window-s|--local-map-radius-m|--local-recovery-window-s)
+            (($# >= 2)) || { echo "Missing value for $1"; exit 2; }
             EXTRA_PLANNER_ARGS+=("$1" "$2"); shift 2 ;;
         --overview-eye-base|--overview-focus-base)
             (($# >= 4)) || { echo "Missing XYZ values for $1"; exit 2; }
@@ -102,13 +126,20 @@ flock -n 9 || { echo "An experiment already owns the simulator"; exit 3; }
 if pgrep -f '^([^[:space:]]*/kit/python/bin/python3|[^[:space:]]*/kit/kit|[^[:space:]]*/fastlivo_mapping)([[:space:]]|$)' >/dev/null; then
     echo "A simulator or estimator is already running; left it unchanged"; exit 4
 fi
-# Freeze run logging config; SLAM YAML configs are copied only in SLAM mode.
+if $TRUTH_POSE && $BACKEND_POSE; then
+    echo "--truth-pose and --backend-pose are mutually exclusive"; exit 2
+fi
+RUN_SLAM=true
+if $TRUTH_POSE && ! $WITH_SLAM_OBSERVER; then
+    RUN_SLAM=false
+fi
+# Freeze run logging config; SLAM YAML configs are copied whenever SLAM runs.
 mkdir "$RUN/configuration"
 printf '%s\n' '{"head_bytes":4194304,"tail_bytes":29360128,"error_head_bytes":4194304,"error_tail_bytes":12582912}' \
     > "$RUN/configuration/capture_log.json"
-if ! $TRUTH_POSE; then
-    cp -- configs/simulation/dynanav/fastlivo_livo.yaml \
-        configs/simulation/dynanav/camera_rgbd.yaml \
+if $RUN_SLAM; then
+    cp -- "$LIVO_CONFIG" "$RUN/configuration/fastlivo_livo.yaml"
+    cp -- configs/simulation/dynanav/camera_rgbd.yaml \
         configs/simulation/dynanav/fastlivo_rtx_os1_32.yaml "$RUN/configuration/"
 fi
 # BUILD provides dynanav_sensor_msgs (CompleteLidarScan) required by DYNANAV_RTX_COMPLETE_SCAN=1
@@ -205,6 +236,21 @@ if $TRUTH_POSE; then
         --pose-source simulation_truth
         --cloud-semantics lio_deskewed_map
     )
+elif $BACKEND_POSE; then
+    CAPTURE_POSE_SOURCE="backend_corrected"
+    CAPTURE_ODOM_TOPIC="/dynanav/backend/corrected_odometry"
+    PLANNER_POSE_ARGS=(
+        --pose-source backend_corrected
+        --vio-topic /dynanav/backend/corrected_odometry
+        --raw-vio-topic /dynanav/rtx_livo/post_vio_odometry
+    )
+    MAP_SOURCE_ARGS=(
+        --cloud-topic /dynanav/rtx_livo/cloud_registered_full
+        --odometry-topic /dynanav/rtx_livo/aft_mapped_to_init
+        --pose-source lio_estimate
+        --cloud-semantics lio_deskewed_map
+        --binary-prefix "$BUILD"
+    )
 else
     CAPTURE_POSE_SOURCE="livo_post_vio"
     CAPTURE_ODOM_TOPIC="/dynanav/rtx_livo/post_vio_odometry"
@@ -216,6 +262,8 @@ else
         --cloud-semantics lio_deskewed_map
         --binary-prefix "$BUILD"
     )
+fi
+if $RUN_SLAM; then
     # The same override file also enables the bounded native keyframe export that
     # the SLAM backend node consumes (and deletes) below.
     printf '/**:\n  ros__parameters:\n    common:\n      same_pair_vio_handoff: true\n      complete_scan_watermark: true\n    backend.snapshot_directory: "%s"\n' \
@@ -233,8 +281,7 @@ else
     done
     [[ -f "$RUN/observer/ready.json" ]] || { echo "Estimator startup timed out"; exit 6; }
     # Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
-    # map->camera_init and /dynanav/backend/corrected_odometry. Navigation below
-    # still consumes the raw odometry. PRIOR_MAP is an optional saved map directory.
+    # map->camera_init and /dynanav/backend/corrected_odometry. PRIOR_MAP is an optional saved map directory.
     BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
         --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map")
     if [[ -n "${PRIOR_MAP:-}" ]]; then
@@ -259,7 +306,7 @@ fi
 CAP=$!; PIDS=("$CAP" "${PIDS[@]}")
 printf '%s\n' "${PIDS[@]}" > "$RUN/owned_pids.txt"
 for _ in $(seq 1 900); do
-    if ! $TRUTH_POSE; then
+    if $RUN_SLAM; then
         for pid in "$OBS" "$BACKEND"; do
             owned_child_running "$pid" || { echo "Owned dependency exited during capture startup: $pid"; exit 7; }
         done

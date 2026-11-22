@@ -255,10 +255,10 @@ def create_ros_interface(
                 m.pose.pose.orientation.y,
                 m.pose.pose.orientation.z,
             ],
-            # 纯位姿后端（livo_post_vio / simulation_truth）不提供可信速度，显式置 None，
+            # 纯位姿后端（livo_post_vio / backend_corrected / simulation_truth）不提供可信速度，显式置 None，
             # 而不是把 Twist 里的零当成“静止”。
             "estimated_velocity": None
-            if experiment.get("slam_pose_source") in ("livo_post_vio", "simulation_truth")
+            if experiment.get("slam_pose_source") in ("livo_post_vio", "backend_corrected", "simulation_truth")
             else [
                 m.twist.twist.linear.x,
                 m.twist.twist.linear.y,
@@ -320,7 +320,7 @@ def create_ros_interface(
         for _ in range(times):
             rclpy.spin_once(node, timeout_sec=0.0)
 
-    def publish_imu_and_clock(it, reading, orientation_available):
+    def publish_imu_and_clock(it, reading, orientation_available, *, publish_imu: bool = True):
         # 先发布 /clock 再发布 IMU，保证订阅方看到的时间不落后于同批数据；
         # it 为本迭代的传感器时间（秒），不是墙钟。
         clock = Clock()
@@ -329,6 +329,8 @@ def create_ros_interface(
         clock.clock.nanosec = ns % 1000000000
         pub_clock.publish(clock)
         last_clock_ns[0] = ns
+        if not publish_imu:
+            return
         msg = Imu()
         header(msg, it, "go2_imu")
         aa = reading["linear_acceleration"]

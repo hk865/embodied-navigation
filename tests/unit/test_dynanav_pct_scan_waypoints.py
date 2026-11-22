@@ -106,9 +106,11 @@ class PctScanMailboxTests(unittest.TestCase):
             interactive_mailbox=str(self.box))
         self.adapter = PctScanWaypointTracker(self.profile)
 
-    def request(self, seq=1, action="goto"):
-        self.adapter._handle_request(dict(version=1, run_id="run", seq=seq, action=action,
-            pose_source="livo_post_vio", goal_xyz_m=[4., 0., 0.]))
+    def request(self, seq=1, action="goto", **extra):
+        payload = dict(version=1, run_id="run", seq=seq, action=action,
+            pose_source="livo_post_vio", goal_xyz_m=[4., 0., 0.])
+        payload.update(extra)
+        self.adapter._handle_request(payload)
 
     def tick(self, stamp=10., **changes):
         args = dict(current_sim_s=stamp, odom_stamp_s=stamp, position=[0., 0., 0.],
@@ -162,6 +164,63 @@ class PctScanMailboxTests(unittest.TestCase):
     def test_post_vio_only(self):
         with self.assertRaises(ValueError):
             PctScanWaypointTracker(dict(self.profile, slam_pose_source="lio_estimate"))
+
+    def test_direct_maneuver_executes_without_pct_scan_and_completes(self):
+        # No planner_path.json or SCAN clearance reply exists; maneuver must still execute directly.
+        self.request(
+            1, "maneuver",
+            body_forward_mps=-0.35, body_lateral_mps=0.0, yaw_rate_rps=0.15,
+            duration_s=1.0, ttl_s=30.0, created_wall_s=10.0,
+        )
+        cmd, receipt = self.tick(10.0)
+        self.assertEqual(cmd, [-0.35, 0.0, 0.15])
+        self.assertEqual(receipt["status"], "tracking")
+        self.assertEqual(receipt["reason"], "maneuver_recovery")
+        self.assertEqual(self.adapter.phase, "maneuver")
+        obs = json.loads(self.adapter.observation_path.read_text())
+        self.assertEqual(obs["waypoints"]["active_action"], "maneuver")
+        self.assertEqual(obs["maneuver_action"]["command"], [-0.35, 0.0, 0.15])
+
+        # Mid-maneuver still commands direct recovery velocity
+        cmd_mid, _ = self.tick(10.5)
+        self.assertEqual(cmd_mid, [-0.35, 0.0, 0.15])
+
+        # At duration_s elapsed (sim_s = 11.0), stops cleanly and emits maneuver_complete
+        cmd_end, receipt_end = self.tick(11.0)
+        self.assertEqual(cmd_end, [0.0, 0.0, 0.0])
+        self.assertEqual(receipt_end["status"], "idle")
+        self.assertEqual(receipt_end["reason"], "maneuver_complete")
+        receipts = [json.loads(line) for line in self.adapter.receipts_path.read_text().splitlines()]
+        self.assertEqual([r["event"] for r in receipts], ["maneuver_accepted", "maneuver_complete"])
+        self.assertAlmostEqual(receipts[-1]["elapsed_sim_s"], 1.0, places=6)
+
+    def test_direct_maneuver_cancel_and_bounds_rejection(self):
+        # Out-of-bounds duration is rejected
+        self.request(
+            1, "maneuver",
+            body_forward_mps=-0.35, body_lateral_mps=0.0, yaw_rate_rps=0.0,
+            duration_s=5.0, ttl_s=30.0, created_wall_s=10.0,
+        )
+        cmd_rej, _ = self.tick(10.0)
+        self.assertEqual(cmd_rej, [0.0, 0.0, 0.0])
+        receipts = [json.loads(line) for line in self.adapter.receipts_path.read_text().splitlines()]
+        self.assertEqual(receipts[-1]["event"], "request_rejected")
+        self.assertEqual(receipts[-1]["reason"], "invalid_duration_s")
+
+        # Valid maneuver cancelled cleanly before completion
+        self.request(
+            2, "maneuver",
+            body_forward_mps=-0.30, body_lateral_mps=0.0, yaw_rate_rps=-0.10,
+            duration_s=1.5, ttl_s=30.0, created_wall_s=10.1,
+        )
+        self.assertEqual(self.tick(10.1)[0], [-0.30, 0.0, -0.10])
+        self.request(3, "cancel")
+        cmd_cancel, _ = self.tick(10.2)
+        self.assertEqual(cmd_cancel, [0.0, 0.0, 0.0])
+        self.assertEqual(self.adapter.phase, "idle")
+        receipts = [json.loads(line) for line in self.adapter.receipts_path.read_text().splitlines()]
+        self.assertIn("action_cancelled", [r["event"] for r in receipts])
+        self.assertEqual(receipts[-1]["event"], "cancel_accepted")
 
 
 if __name__ == "__main__":

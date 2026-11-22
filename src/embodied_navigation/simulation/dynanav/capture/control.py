@@ -125,6 +125,7 @@ class ControlLoop:
         receipts,
         latest_nav,
         latest_odom,
+        startup_warmup=None,
     ):
         self.experiment = experiment
         self.gt_diagnostic = gt_diagnostic
@@ -138,6 +139,7 @@ class ControlLoop:
         self.receipts = receipts
         self.latest_nav = latest_nav
         self.latest_odom = latest_odom
+        self.startup_warmup = startup_warmup
         self.stand_gate_done = False
         self.policy_stand_gate_done = False
         self.odometry_hold_started = None
@@ -211,59 +213,80 @@ class ControlLoop:
             state[38:50] = previous_completed_tau
             state[50:55] = contact_state
             tcontrol = i * 0.005
-            if tcontrol >= 2.0 and not stand_gate_done:
-                rr = rows[-100:]
-                vv = np.array([r["root_velocity_world"][0][0] for r in rr])
-                ww = np.array([r["root_velocity_world"][1][0] for r in rr])
-                pp = np.array([r["root_pose_wxyz"][0] for r in rr])
-                cc = np.array([r["contacts"] for r in rr])
-                gate = {
-                    "v95": float(np.percentile(np.linalg.norm(vv, axis=1), 95)),
-                    "omega95": float(np.percentile(np.linalg.norm(ww, axis=1), 95)),
-                    "xy_span_m": float(np.linalg.norm(np.ptp(pp[:, :2], axis=0))),
-                    "body_contact_max": int(cc[:, 0].max()),
-                    "support_fraction": float(
-                        (np.sum(cc[:, 1:] > 0, axis=1) >= 3).mean()
-                    ),
-                }
-                result["stand_gate"] = gate
-                save()
-                assert (
-                    gate["v95"] < 0.02
-                    and gate["omega95"] < 0.05
-                    and gate["xy_span_m"] < 0.02
-                    and gate["body_contact_max"] == 0
-                    and gate["support_fraction"] > 0.9
-                ), "Stand gate failed; refuse walking"
-                stand_gate_done = True
-            if robogauge and tcontrol >= 6.0 and not policy_stand_gate_done:
-                rr = rows[-200:]
-                vv = np.array([r["root_velocity_world"][0][0] for r in rr])
-                ww = np.array([r["root_velocity_world"][1][0] for r in rr])
-                pp = np.array([r["root_pose_wxyz"][0] for r in rr])
-                cc = np.array([r["contacts"] for r in rr])
-                gate = {
-                    "v95": float(np.percentile(np.linalg.norm(vv, axis=1), 95)),
-                    "omega95": float(np.percentile(np.linalg.norm(ww, axis=1), 95)),
-                    "xy_span_m": float(np.linalg.norm(np.ptp(pp[:, :2], axis=0))),
-                    "body_contact_max": int(cc[:, 0].max()),
-                    "support_fraction": float(
-                        (np.sum(cc[:, 1:] > 0, axis=1) >= 3).mean()
-                    ),
-                }
-                result["policy_stand_gate"] = gate
-                save()
-                assert (
-                    gate["v95"] < 0.02
-                    and gate["omega95"] < 0.05
-                    and gate["xy_span_m"] < 0.02
-                    and gate["body_contact_max"] == 0
-                    and gate["support_fraction"] > 0.9
-                ), "RoboGauge policy stand gate failed"
-                policy_stand_gate_done = True
-            request = np.zeros(3)
+            warmup_active = (
+                self.startup_warmup is not None and self.startup_warmup.config.enabled
+            )
+            if warmup_active:
+                warmup_cmd, _slam_sensors_enabled, phase_event = self.startup_warmup.step(
+                    state[0], rows
+                )
+                if phase_event is not None:
+                    journal("startup_lifecycle.jsonl", phase_event)
+                result["startup_warmup"] = self.startup_warmup.summary()
+                if phase_event is not None:
+                    save()
+                tracker_ready = self.startup_warmup.ready_for_slam
+                request = (
+                    np.zeros(3)
+                    if tracker_ready
+                    else np.asarray(warmup_cmd, dtype=float).copy()
+                )
+            else:
+                if tcontrol >= 2.0 and not stand_gate_done:
+                    rr = rows[-100:]
+                    vv = np.array([r["root_velocity_world"][0][0] for r in rr])
+                    ww = np.array([r["root_velocity_world"][1][0] for r in rr])
+                    pp = np.array([r["root_pose_wxyz"][0] for r in rr])
+                    cc = np.array([r["contacts"] for r in rr])
+                    gate = {
+                        "v95": float(np.percentile(np.linalg.norm(vv, axis=1), 95)),
+                        "omega95": float(np.percentile(np.linalg.norm(ww, axis=1), 95)),
+                        "xy_span_m": float(np.linalg.norm(np.ptp(pp[:, :2], axis=0))),
+                        "body_contact_max": int(cc[:, 0].max()),
+                        "support_fraction": float(
+                            (np.sum(cc[:, 1:] > 0, axis=1) >= 3).mean()
+                        ),
+                    }
+                    result["stand_gate"] = gate
+                    save()
+                    assert (
+                        gate["v95"] < 0.02
+                        and gate["omega95"] < 0.05
+                        and gate["xy_span_m"] < 0.02
+                        and gate["body_contact_max"] == 0
+                        and gate["support_fraction"] > 0.9
+                    ), "Stand gate failed; refuse walking"
+                    stand_gate_done = True
+                if robogauge and tcontrol >= 6.0 and not policy_stand_gate_done:
+                    rr = rows[-200:]
+                    vv = np.array([r["root_velocity_world"][0][0] for r in rr])
+                    ww = np.array([r["root_velocity_world"][1][0] for r in rr])
+                    pp = np.array([r["root_pose_wxyz"][0] for r in rr])
+                    cc = np.array([r["contacts"] for r in rr])
+                    gate = {
+                        "v95": float(np.percentile(np.linalg.norm(vv, axis=1), 95)),
+                        "omega95": float(np.percentile(np.linalg.norm(ww, axis=1), 95)),
+                        "xy_span_m": float(np.linalg.norm(np.ptp(pp[:, :2], axis=0))),
+                        "body_contact_max": int(cc[:, 0].max()),
+                        "support_fraction": float(
+                            (np.sum(cc[:, 1:] > 0, axis=1) >= 3).mean()
+                        ),
+                    }
+                    result["policy_stand_gate"] = gate
+                    save()
+                    assert (
+                        gate["v95"] < 0.02
+                        and gate["omega95"] < 0.05
+                        and gate["xy_span_m"] < 0.02
+                        and gate["body_contact_max"] == 0
+                        and gate["support_fraction"] > 0.9
+                    ), "RoboGauge policy stand gate failed"
+                    policy_stand_gate_done = True
+                tracker_ready = policy_stand_gate_done
+                request = np.zeros(3)
             if (
-                not gt_diagnostic
+                (not warmup_active or tracker_ready)
+                and not gt_diagnostic
                 and not interactive_control
                 and 7 <= tcontrol < float(os.environ.get("NAV_END_SIM", "38"))
                 and latest_nav[0] is not None
@@ -288,7 +311,7 @@ class ControlLoop:
                         float(gyro[2])
                         if gyro is not None and len(gyro) == 3
                         else None,
-                        ready=policy_stand_gate_done,
+                        ready=tracker_ready,
                         now_wall=time.perf_counter(),
                         arrival_wall=odom.get("arrival_wall"),
                         frame_id=odom.get("frame_id"),
@@ -311,21 +334,24 @@ class ControlLoop:
                             and np.isfinite(float(gyro[2]))
                         ),
                     )
-                    request = np.asarray(measured_command)
+                    if not warmup_active or tracker_ready:
+                        request = np.asarray(measured_command)
                     result["interactive_waypoint_control"] = control_receipt
                     journal("interactive_waypoint_control.jsonl", control_receipt)
                 else:
                     yaw = float(np.arctan2(R[1, 0], R[0, 0]))
-                    request = np.asarray(
+                    tracked_command = np.asarray(
                         tracker.tick(
                             state[0],
                             pos0.tolist(),
                             yaw,
                             float(np.linalg.norm(v0.numpy()[0])),
                             float(w0.numpy()[0][2]),
-                            ready=policy_stand_gate_done,
+                            ready=tracker_ready,
                         )
                     )
+                    if not warmup_active or tracker_ready:
+                        request = tracked_command
                 result["route_tracker"] = {
                     "phase": tracker.phase,
                     "stage": tracker.stage,
@@ -346,7 +372,8 @@ class ControlLoop:
                 np.abs(request) <= [target_speed + 1e-6, 0.050001, 0.150001]
             ), "Invalid navigation command"
             if (
-                not gt_diagnostic
+                (not warmup_active or tracker_ready)
+                and not gt_diagnostic
                 and not interactive_control
                 and 7 <= tcontrol < float(os.environ.get("NAV_END_SIM", "210"))
                 and (np.any(request) or odometry_hold_started is not None)

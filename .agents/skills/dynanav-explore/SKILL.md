@@ -38,7 +38,17 @@ Choose a useful visible opening, nearby vantage or unexplored branch from curren
 
 Express each target in the current estimator map frame. For a deliberate body-relative `(forward,left)` displacement, use measured yaw: `dx=forward*cos(yaw)-left*sin(yaw)`, `dy=forward*sin(yaw)+left*cos(yaw)`. Add these to the current measured pose. Target z refers to that same estimated child-pose origin, not world/floor z. Never replay an earlier route or reuse an old generation's coordinates.
 
-Send one decision with `scripts/explore_waypoint_client.py goto --pose-source livo_post_vio`. Use only its native `goto/cancel/stop` path; do not add direct velocities, yaw/maneuver/scan, heartbeat, action TTL, floor-clearance, model-proof or map-readiness prerequisites. The SOP wrapper calls this official client once per explicit command; it neither chooses nor queues targets automatically.
+Send normal exploration decisions with `scripts/explore_waypoint_client.py goto --pose-source <active_pose_source>`. Use `cancel` to abort a stalled or undesired active leg, and `stop` to terminate the run cleanly.
+
+### Anti-trapping & direct recovery (`maneuver`, bypasses PCT/SCAN)
+
+- **Avoid narrow-door / low-ceiling traps proactively**:
+  - When entering or exiting a hinged door, place intermediate waypoints on the **doorway centerline** (at least 1.0 m before and 1.0 m past the threshold) rather than hugging the door leaf hinge or cutting sharply behind an open door panel.
+  - Never drive into wedges where overhead clearance narrows (e.g., under-stair sloped ceilings); exit such corridors along the reverse centerline in short legs.
+- **Direct recovery when wedged against a door leaf or tight corner**:
+  - If `goto` stalls or `yaw` is blocked by rotation-space occupancy, first run `explore_waypoint_client.py cancel --run-dir <capture>`, then invoke the native **direct body-velocity recovery** action `maneuver` (bypasses PCT/SCAN planning and rotation-space checks; bounded to `|forward| <= speed`, `|lateral| <= 0.05 m/s`, `|yaw_rate| <= 0.15 rad/s`, `duration in [0.1, 2.0] s`; mild contact with door panels is tolerated by `body_contact_report_only` in simulation):
+    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py maneuver --run-dir <capture> --pose-source <active_pose_source> --forward -0.35 --yaw-rate 0.15 --duration 1.5 --wait`
+  - Chain 1–3 short `maneuver` pulses (e.g. straight reverse `-0.35`, then reverse+yaw `-0.25 / ±0.15`) until `observe` + RGB confirm clear separation from the door leaf/corner, then resume normal `goto` exploration. Do not abandon a multi-floor run solely because a door-leaf corner blocks in-place `yaw`.
 
 Record request sequence, acceptance, measured progress/command and the closing receipt. **A request file or client exit 0 is not an executed/reached goal.** Native `stop_accepted` and `cancel_accepted` must match the mailbox run id and sequence. Stop ack starts terminal parking; verify parking, capture exit and owned-process cleanup separately. Cancel ack clears active/queued work and permits another decision.
 

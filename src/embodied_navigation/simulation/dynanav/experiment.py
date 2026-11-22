@@ -117,8 +117,8 @@ def configure_point_cloud_source(profile, source, semantic_provider=None):
 
 
 def slam_odometry_topic(pose_source, requested=None):
-    """Bind post-VIO or simulation_truth control to its dedicated output topic."""
-    if pose_source not in ("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE):
+    """Bind post-VIO, backend-corrected, or simulation_truth control to its dedicated output topic."""
+    if pose_source not in ("lio_estimate", "livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE):
         raise ValueError("unsupported measured navigation pose source")
     if pose_source == TRUTH_POSE_SOURCE:
         topic = TRUTH_VIO_ODOM_TOPIC if requested is None else requested
@@ -128,11 +128,14 @@ def slam_odometry_topic(pose_source, requested=None):
             )
         return topic
     post_vio = pose_source == "livo_post_vio"
+    backend_corrected = pose_source == "backend_corrected"
     topic = (
         requested
         if requested is not None
         else (
-            "/dynanav/lio_observer/post_vio_odometry"
+            "/dynanav/backend/corrected_odometry"
+            if backend_corrected
+            else "/dynanav/lio_observer/post_vio_odometry"
             if post_vio
             else "/dynanav/lio_observer/aft_mapped_to_init"
         )
@@ -207,7 +210,7 @@ def main(argv=None):
     )
     parser.add_argument(
         "--interactive-pose-source",
-        choices=("lio_estimate", "livo_post_vio", TRUTH_POSE_SOURCE),
+        choices=("lio_estimate", "livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE),
         help="Pose source that drives interactive waypoints",
     )
     parser.add_argument("--interactive-waypoint-ttl-s", type=float, default=30.0)
@@ -247,6 +250,13 @@ def main(argv=None):
         choices=("none",),
         help="Default: none",
     )
+    parser.add_argument(
+        "--experiment",
+        "--experiment-config",
+        dest="experiment",
+        type=Path,
+        help="Optional JSON overlay for experiment options (e.g. startup_warmup, imu_noise)",
+    )
     args = parser.parse_args(argv)
     interactive_requested = args.interactive or args.interactive_mailbox is not None
     if interactive_requested and args.interactive_pose_source is None:
@@ -255,10 +265,10 @@ def main(argv=None):
         )
     if args.interactive_controller == "pct_scan" and (
         not interactive_requested
-        or args.interactive_pose_source not in ("livo_post_vio", TRUTH_POSE_SOURCE)
+        or args.interactive_pose_source not in ("livo_post_vio", "backend_corrected", TRUTH_POSE_SOURCE)
     ):
         parser.error(
-            "pct_scan requires --interactive --interactive-pose-source livo_post_vio or simulation_truth"
+            "pct_scan requires --interactive --interactive-pose-source livo_post_vio, backend_corrected, or simulation_truth"
         )
     if (
         args.interactive_controller == "pct_scan"
@@ -361,7 +371,8 @@ def main(argv=None):
             parser.error("Interactive mailbox directory must not exist yet")
         is_truth = args.interactive_pose_source == TRUTH_POSE_SOURCE
         post_vio = args.interactive_pose_source == "livo_post_vio"
-        pose_window_only = post_vio or is_truth
+        backend_corrected = args.interactive_pose_source == "backend_corrected"
+        pose_window_only = post_vio or backend_corrected or is_truth
         if is_truth and args.point_cloud_source == "rtx_lidar":
             profile["lidar_motion_compensation"] = (
                 "simulation_truth 200 Hz per-point pose interpolation to "
@@ -376,6 +387,8 @@ def main(argv=None):
             navigation_pose_source=(
                 "simulation_truth_imu"
                 if is_truth
+                else "measured_backend_corrected"
+                if backend_corrected
                 else "measured_livo_post_vio"
                 if post_vio
                 else "measured_lio"
@@ -433,6 +446,31 @@ def main(argv=None):
     if interactive_requested:
         from embodied_navigation.navigation.yaw_action import yaw_config
         profile["yaw_action"] = yaw_config(profile)
+    if args.experiment is not None:
+        exp_path = args.experiment.expanduser()
+        if not exp_path.is_file():
+            parser.error(f"Experiment config file not found: {exp_path}")
+        try:
+            raw_bytes = exp_path.read_bytes()
+            experiment_overlay = json.loads(raw_bytes.decode("utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            parser.error(f"Invalid experiment JSON {exp_path}: {error}")
+        if not isinstance(experiment_overlay, dict):
+            parser.error(f"Experiment config root must be a JSON object: {exp_path}")
+        from embodied_navigation.simulation.dynanav.capture.imu_noise import ImuNoiseConfig
+        from embodied_navigation.simulation.dynanav.capture.startup_gate import StartupWarmupConfig
+
+        try:
+            warmup_cfg = StartupWarmupConfig.from_dict(experiment_overlay.get("startup_warmup"))
+            ImuNoiseConfig.from_dict(experiment_overlay.get("imu_noise"))
+        except ValueError as error:
+            parser.error(f"Invalid experiment config {exp_path}: {error}")
+        if warmup_cfg.enabled and warmup_cfg.walk_vx_mps > float(profile["speed_mps"]) + 1e-6:
+            parser.error(
+                f"startup_warmup.walk_vx_mps ({warmup_cfg.walk_vx_mps}) exceeds speed ({profile['speed_mps']})"
+            )
+        profile.update(experiment_overlay)
+        profile["experiment_config_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
     if args.check:
         print(
             json.dumps(
@@ -465,6 +503,7 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/__init__.py",
         "src/embodied_navigation/simulation/dynanav/capture/control.py",
         "src/embodied_navigation/simulation/dynanav/capture/frames.py",
+        "src/embodied_navigation/simulation/dynanav/capture/imu_noise.py",
         "src/embodied_navigation/simulation/dynanav/capture/lidar.py",
         "src/embodied_navigation/simulation/dynanav/capture/pause.py",
         "src/embodied_navigation/simulation/dynanav/capture/physics.py",
@@ -473,6 +512,7 @@ def main(argv=None):
         "src/embodied_navigation/simulation/dynanav/capture/ros_interface.py",
         "src/embodied_navigation/simulation/dynanav/capture/scene.py",
         "src/embodied_navigation/simulation/dynanav/capture/sensors.py",
+        "src/embodied_navigation/simulation/dynanav/capture/startup_gate.py",
         "src/embodied_navigation/simulation/dynanav/capture/video.py",
         "scripts/query_scene_map.py",
         "src/embodied_navigation/localization_mapping/semantic_mapping/query.py",

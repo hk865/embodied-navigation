@@ -1,15 +1,16 @@
 # 工程文档索引
 
-本目录是工程文档与证据的入口：活体开发计划、当前功能说明、历史实验记录、审查与验证回执、依赖与部署专题。文档不参与运行时，也没有代码读取本目录。盘点日期 2026-11-20，基线 `refactor/06-clean-base`（HEAD `5b880b2`）。
+本目录是工程文档与证据的入口：活体开发计划、当前功能说明、历史实验记录、审查与验证回执、依赖与部署专题。文档不参与运行时，也没有代码读取本目录。盘点日期 2026-11-21：集成基线 `main`（`2144e5f`，已推送 `origin/main`），当前开发推进分支 `exp/startup-walk-imu-bias`（`9e3408d`）。
 
 ## 开发计划入口（新会话先读）
 
 - [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–4 里程碑与当前状态、分支归属、数据卷约定。
 - [活体任务板 TASKS](plan/TASKS.md)：已完成 / 进行中 / 待办队列与远期触发式架构优化，每条任务带建议角色、对应模块与验收标准。
-- 架构决策记录 `plan/adr/`：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）。
+- [活跃分支测试计划 TEST_PLANS](plan/TEST_PLANS.md)：每个活跃分支的合入验收清单、Phase 4 统一评测数据集（D1/D2/D3）与 `B0–B3` / 三条回环分支消融口径。
+- 架构决策记录 `plan/adr/`（4 篇，状态与关联分支见各文件首部）：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界，已采纳）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）、[ADR-0003](plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md)（单主干流式 Fork 异步控制、关键帧锚定语义图片图数据库与停驻期 ZUPT 约束）、[ADR-0004](plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)（面向 FAST-LIVO2 的增量 Mesh / 3DGS 演进与三层 SLAM 后端评测口径）。
 - 协作、分支与提交规则以 [AGENTS.md](../AGENTS.md) 为准；项目整体入口见根 [README.md](../README.md)。
 
-`docs/plan/` 是 2026-11-20 文档重建时新增的活体计划目录，会随阶段推进更新；本文件其余各节是**相对稳定**的说明与历史证据索引。
+`docs/plan/` 是 2026-11-20 文档重建时新增的活体计划目录（2026-11-21 起含 `plan/adr/` 架构决策记录），会随阶段推进更新；本文件其余各节是**相对稳定**的说明与历史证据索引。
 
 ## 文档体系与职责
 
@@ -31,7 +32,7 @@
 
 ```text
 docs/
-├── plan/                    # 活体开发计划（2026-11-20 新增，2 文件）：ROADMAP.md、TASKS.md
+├── plan/                    # 活体开发计划与 ADR：ROADMAP.md、TASKS.md、adr/（ADR-0001–0004）
 ├── dependencies/            # 依赖闭包、构建、许可与来源核验（9 文件），见 dependencies/README.md
 ├── experiments/             # 按日期保存的实验记录与机器可读回执（45 文件）
 ├── refactor/                # 能力盘点、SLAM 后端审计、不必要校验清查（3 文件）
@@ -52,13 +53,14 @@ docs/
 
 子目录 README（`dependencies/README.md`、`robogauge/README.md`、`review/full-readability/README.md`）本身的文件数与测试计数停留在 2026-11-08/09 快照，**以本文件与 `git ls-files` 为准**。
 
-## 权威说明与顶层文件（11 项：9 个跟踪文件 + 2 个新增计划文件；状态列标明是否为当前事实）
+## 权威说明与顶层文件（12 项：9 个跟踪文件 + 2 个计划文件 + ADR 目录；状态列标明是否为当前事实）
 
 | 文件 | 核心职责 | 状态 |
 | --- | --- | --- |
 | [`README.md`](README.md) | 本文件：文档分类索引、时效分层与链接 | 当前 |
 | [`plan/ROADMAP.md`](plan/ROADMAP.md) | 唯一主线、七层边界、Phase 1–4 里程碑、分支归属、数据卷约定 | 活体 |
-| [`plan/TASKS.md`](plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办，带角色与验收标准 | 活体 |
+| [`plan/TASKS.md`](plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办，带角色与验收标准；Phase 4 后端评测数据集入口 | 活体 |
+| [`plan/adr/`](plan/adr/) | 架构决策记录 ADR-0001–ADR-0004（yaw 延迟边界、具身 Agent 异步与语义地图、流式 Fork + 关键帧语义图、增量 Mesh/3DGS 与三层后端评测口径） | 活体 |
 | [`dynanav-pct-scan.md`](dynanav-pct-scan.md) | 默认 `NAVIGATION_BACKEND=pct_scan`：实测支撑格网、原生 PCT A*、worker 归属的 SCAN 子进程、样条跟随、planner 收据与原生限制 | 当前（英文） |
 | [`dynanav-exploration.md`](dynanav-exploration.md) | 2026-11-11 native 探索：功能分层、ROS 话题/QoS、线程与缓存、时钟规则；页首声明 `native_route` 只是历史基线，默认链已切 PCT+SCAN | 历史基线说明 |
 | [`dynanav-waypoint-utility.md`](dynanav-waypoint-utility.md) | `scripts/dynanav_exploration.py candidates` 只读建议：收益代理量定义、`--prepare-next`、冻结数据重放边界 | 当前 |
@@ -244,4 +246,4 @@ docs/
 - 源码模块职责见 [src/embodied_navigation/README.md](../src/embodied_navigation/README.md)；配置入口见 [configs/README.md](../configs/README.md)；脚本入口见 [scripts/README.md](../scripts/README.md)。
 - 引用规则：活体计划与当前说明可以直接引；`experiments/`、`review/`、`verification/`、`dependencies/*.json`、`robogauge/*.json` 是**快照**，行号/计数/哈希会过期，引用前核对磁盘与对应 run 目录。
 - 数据与产物：运行日志、bag、点云、视频、逐帧 JSON 与审计台账都在 `$PROJECT_DATA_ROOT/embodied-navigation/`，不进仓库；文档只写占位符路径与结论。
-- 维护约定：`docs/experiments/`、`docs/review/` 不再新增文件；新的过程记录写 `experiments/<批次>/REPORT.md`。文档体系或入口变化时同步本文件与 [`plan/ROADMAP.md`](plan/ROADMAP.md)、[`plan/TASKS.md`](plan/TASKS.md)。
+- 维护约定：`docs/experiments/`、`docs/review/` 不再新增文件；新的过程记录写 `experiments/<批次>/REPORT.md`。文档体系或入口变化时同步本文件与 [`plan/ROADMAP.md`](plan/ROADMAP.md)、[`plan/TASKS.md`](plan/TASKS.md)；新增/修订架构决策时同时维护 [`plan/adr/`](plan/adr/)。
