@@ -51,6 +51,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--prior-map", type=Path)
     parser.add_argument("--save-map", type=Path)
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--status-file", type=Path, default=None)
     parser.add_argument("--world-frame", default="map")
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
@@ -149,15 +150,26 @@ class BackendNode(Node):
         self.tf.sendTransform(message)
 
     def publish_status(self) -> None:
+        C = self.backend.T_world_odom
         status = {
-            "adopted": self.backend.T_world_odom is not None,
+            "adopted": C is not None,
             "loops": self.backend.loop_count,
             "keyframes": len(self.backend.map.keyframes),
             "last_error": self.backend.last_error,
             "config_path": None if self.args.config is None else str(self.args.config),
+            "world_frame": self.args.world_frame,
+            "odom_frame": self._last_odom_header[0] if self._last_odom_header is not None else self.args.odom_frame,
+            "T_world_odom": None if C is None else C.tolist(),
             "stats": self.backend.observability_stats(),
         }
-        self.status_pub.publish(String(data=json.dumps(status, allow_nan=False)))
+        payload = json.dumps(status, allow_nan=False)
+        self.status_pub.publish(String(data=payload))
+        status_file = getattr(self.args, "status_file", None)
+        if status_file is not None:
+            path = Path(status_file)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(payload + "\n", encoding="utf-8")
+            tmp.replace(path)
 
 
 def main(argv=None) -> int:

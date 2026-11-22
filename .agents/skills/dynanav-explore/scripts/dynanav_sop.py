@@ -177,12 +177,17 @@ def status(args):
 
 
 def send(args):
-    command = [args.command]
-    if args.command == 'goto':
-        command += ['--pose-source', 'livo_post_vio', '--x', str(args.x),
-                    '--y', str(args.y), '--z', str(args.z)]
     before = load(mailbox(args) / 'request.json', {})
     prior_observation = load(mailbox(args) / 'observation.json', {}) or {}
+    active_pose_source = (
+        prior_observation.get('pose_source')
+        or (prior_observation.get('pose') or {}).get('source')
+        or 'livo_post_vio'
+    )
+    command = [args.command]
+    if args.command == 'goto':
+        command += ['--pose-source', active_pose_source, '--x', str(args.x),
+                    '--y', str(args.y), '--z', str(args.z)]
     try:
         result = subprocess.run(client(args, *command), cwd=args.repo,
                                 capture_output=True, text=True, timeout=30)
@@ -230,14 +235,52 @@ def wait_command(args):
     return 0 if outcome['state'] in ('reached', 'acknowledged', 'accepted') else 2 if outcome['state'] == 'timeout_uncertain' else 1
 
 
-def plot_levels(metadata, observation, destination, run_dir):
+def _load_nav_trace_xyz(run_dir, expected_frame=None, max_points=400):
+    """Load subsampled visited XYZ positions from the current generation's control log."""
     import numpy as np
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+
+    log_path = run_dir / 'capture/interactive_waypoint_control.jsonl'
+    if not log_path.is_file():
+        return None
+    pts = []
+    try:
+        with log_path.open('r', encoding='utf-8') as fh:
+            for line in fh:
+                if 'aligned_position_xyz_m' not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get('no_gt_pose_used') is False:
+                    continue
+                if expected_frame and row.get('frame_id') and row.get('frame_id') != expected_frame:
+                    continue
+                pos = row.get('aligned_position_xyz_m')
+                if isinstance(pos, list) and len(pos) == 3 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in pos):
+                    if not pts or math.hypot(pos[0] - pts[-1][0], pos[1] - pts[-1][1]) >= 0.15 or abs(pos[2] - pts[-1][2]) >= 0.10:
+                        pts.append(pos)
+    except OSError:
+        return None
+    if not pts:
+        return None
+    if len(pts) > max_points:
+        step = max(1, len(pts) // max_points)
+        pts = pts[::step] + [pts[-1]]
+    return np.asarray(pts, dtype=np.float64)
+
+
+def plot_levels(metadata, observation, destination, run_dir, repo=None):
+    import numpy as np
+    if repo is not None and str(Path(repo) / 'src') not in sys.path:
+        sys.path.insert(0, str(Path(repo) / 'src'))
+    from embodied_navigation.planning.exploration.visual_map_overlay import render_annotated_2d_maps
+
     pose = observation.get('pose', {})
     position, yaw = pose.get('position_xyz_m'), pose.get('yaw_rad')
     active = (metadata.get('last_frame') or {}).get('level_index')
+    backend_status = load(run_dir / 'backend_status.json', {}) or {}
+    trace_xyz = _load_nav_trace_xyz(run_dir, expected_frame=pose.get('frame'))
     products, notes = [], []
     for number, (key, level) in enumerate(metadata.get('levels', {}).items()):
         export = level.get('grid_export') or {}
@@ -264,26 +307,51 @@ def plot_levels(metadata, observation, destination, run_dir):
         chart_state = 'active' if is_active else 'retained' if active is not None and layer_index is not None else 'active status unknown'
         with np.load(local, allow_pickle=False) as data:
             resolution = float(export['resolution_m'])
-            x, y, codes = (data['ix'] + .5)*resolution, (data['iy'] + .5)*resolution, data['code']
-        fig, ax = plt.subplots(figsize=(9, 9))
-        if len(x):
-            ax.scatter(x, y, c=np.where(codes == 0, '#c9dfe8', '#142431'), s=5)
-        matching_frame = pose.get('frame') and pose.get('frame') == layer_manifest.get('odometry_map_frame')
-        if position is not None and yaw is not None and matching_frame:
-            ax.plot(position[0], position[1], 'ro', markersize=6)
-            ax.arrow(position[0], position[1], math.cos(yaw), math.sin(yaw),
-                     color='#df342e', width=.025, length_includes_head=True)
-        ax.set(xlabel='map x (m)', ylabel='map y (m)',
-               title=f'Height chart {key} / {chart_state}\n'
-                     'Layer index is not a physical-floor count; heading arrow = 1 m')
-        ax.set_aspect('equal', adjustable='datalim'); ax.grid(alpha=.3)
-        fig.text(.1, .02, 'Absent cells remain unknown. Layer projection does not certify stairs, support, or clearance.', fontsize=8)
+            ix, iy, codes = data['ix'], data['iy'], data['code']
+        pose_frame = pose.get('frame')
+        grid_frame = layer_manifest.get('odometry_map_frame')
+        transform_se3 = None
+        matching_frame = bool(pose_frame and pose_frame == grid_frame)
+        if not matching_frame and pose_frame and grid_frame:
+            if (
+                pose_frame == backend_status.get('world_frame', 'map')
+                and grid_frame == backend_status.get('odom_frame')
+                and isinstance(backend_status.get('T_world_odom'), list)
+            ):
+                mat = np.asarray(backend_status['T_world_odom'], dtype=np.float64)
+                if mat.shape == (4, 4) and np.isfinite(mat).all():
+                    transform_se3 = mat
+                    matching_frame = True
+        level_z_m = float(level.get('level_z_m', 0.0) or 0.0)
         image = destination / f'height_chart_{number:03d}.png'
-        fig.savefig(image, dpi=140); plt.close(fig)
+        local_image = (destination / f'height_chart_{number:03d}_local.png') if is_active else None
+        overlay = render_annotated_2d_maps(
+            ix,
+            iy,
+            codes,
+            resolution,
+            robot_xyz=position if (position is not None and matching_frame) else None,
+            yaw=yaw if (yaw is not None and matching_frame) else None,
+            level_z_m=level_z_m,
+            global_path=image,
+            local_path=local_image,
+            title=f'Height chart {key} / {chart_state}',
+            trace_xyz=trace_xyz if matching_frame else None,
+            transform_se3=transform_se3,
+        )
         if not matching_frame:
             notes.append(f'height chart {key}: estimated robot marker omitted because matching map-frame provenance is unavailable')
-        products.append(dict(level_key=key, level_index=layer_index, active=is_active, image=str(image),
-                             grid=str(local), metadata=level))
+        products.append(dict(
+            level_key=key,
+            level_index=layer_index,
+            active=is_active,
+            image=overlay['image'],
+            local_image=overlay['local_image'],
+            turning_circle=overlay['turning_circle'],
+            candidates=overlay['candidates'],
+            grid=str(local),
+            metadata=level,
+        ))
     return products, notes
 
 
@@ -329,12 +397,18 @@ def snapshot(args):
     if metadata:
         write(destination / 'map.json', metadata)
         try:
-            products['height_charts'], level_notes = plot_levels(metadata, summary, destination, args.run_dir)
+            products['height_charts'], level_notes = plot_levels(metadata, summary, destination, args.run_dir, repo=args.repo)
             notes += level_notes
         except (OSError, ValueError, KeyError) as exc:
             notes.append(f'Per-height-chart view unavailable: {exc}; reread current map sources.')
     else:
         notes.append('Current-run operator map is not available.')
+    backend_live = load(args.run_dir / 'backend_status.json')
+    if isinstance(backend_live, dict):
+        products['backend_status'] = {
+            k: backend_live.get(k)
+            for k in ('adopted', 'loops', 'keyframes', 'last_error', 'world_frame', 'odom_frame', 'stats')
+        }
     if args.cloud_dir:
         cloud_dir = args.cloud_dir.resolve()
         cloud_summary = load(cloud_dir / 'summary.json', {}) or {}

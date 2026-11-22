@@ -319,7 +319,8 @@ if $RUN_SLAM; then
     # map->dynanav_lio_map and /dynanav/backend/corrected_odometry. PRIOR_MAP is an optional saved map directory.
     BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
         --odometry-topic /dynanav/rtx_livo/post_vio_odometry --odom-frame dynanav_lio_map
-        --save-map "$RUN/map" --config "$RUN/configuration/slam_backend_config.json")
+        --save-map "$RUN/map" --config "$RUN/configuration/slam_backend_config.json"
+        --status-file "$RUN/backend_status.json")
     if [[ -n "${PRIOR_MAP:-}" ]]; then
         BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
     fi
