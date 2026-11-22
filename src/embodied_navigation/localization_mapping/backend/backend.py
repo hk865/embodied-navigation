@@ -34,12 +34,16 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
+from ...common.geometry import wrap_angle
+from .color_scan_context import ColorScanContextIndex
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe, voxel_downsample
+from .keyframes import Keyframe, transform_points, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .visual import verify_visual
+from .visual_retrieval import VisualIndex, VisualRetrievalConfig
 
 
 @dataclass
@@ -106,10 +110,30 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Visual retrieval, Color-ScanContext & heading-gated hybrid options (disabled by default).
+    use_visual_retrieval: bool = False
+    use_visual_verification: bool = False
+    visual_agree_translation_m: float = 0.3
+    visual_agree_rotation_rad: float = 0.05
+    visual_retrieval: VisualRetrievalConfig = field(default_factory=VisualRetrievalConfig)
+    color_sc_enabled: bool = False
+    color_sc_weight: float = 0.25
+    color_sc_min_bins: int = 12
+    color_sc_max_distance: float | None = None
+    visual_multiview_radius: int = 0
+    visual_seq_consistency: int = 1
+    hybrid_heading_gate_deg: float | None = None
+    reverse_icp_fitness_min: float | None = None
+    reverse_icp_rmse_max: float | None = None
+    fine_icp_voxel_m: float | None = None
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.visual_retrieval, VisualRetrievalConfig):
+            raise ValueError(
+                f"visual_retrieval must be a VisualRetrievalConfig, got {type(self.visual_retrieval).__name__}"
+            )
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -135,6 +159,8 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "visual_retrieval" in values:
+            values["visual_retrieval"] = _visual_retrieval_from_dict(values["visual_retrieval"])
         config = cls(**values)
         config._validate()
         return config
@@ -166,6 +192,8 @@ class BackendConfig:
             "window_s",
             "agree_translation_m",
             "agree_rotation_rad",
+            "visual_agree_translation_m",
+            "visual_agree_rotation_rad",
         ):
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("min_fitness", self.min_fitness) <= 1.0:
@@ -180,9 +208,10 @@ class BackendConfig:
             "loop_max_jump_rotation_rad",
             "max_jump_translation_m",
             "max_jump_rotation_rad",
+            "color_sc_weight",
         ):
             _nonnegative(name, getattr(self, name))
-        for name in ("loop_submap_neighbors", "exclude_recent"):
+        for name in ("loop_submap_neighbors", "exclude_recent", "visual_multiview_radius"):
             _nonnegative_int(name, getattr(self, name))
         for name in (
             "icp_iterations",
@@ -192,6 +221,8 @@ class BackendConfig:
             "relocalize_every",
             "lost_after",
             "confirmations",
+            "color_sc_min_bins",
+            "visual_seq_consistency",
         ):
             _count(name, getattr(self, name))
         for name in ("min_loop_travel_m", "min_loop_spacing_m", "min_loop_interval_s", "zupt_full_stop_rot_rad"):
@@ -200,17 +231,49 @@ class BackendConfig:
             value = getattr(self, name)
             if value is not None:
                 _inv_variance(name, value)
-        if self.max_loop_tilt_rad is not None:
-            _positive("max_loop_tilt_rad", self.max_loop_tilt_rad)
+        for name in ("max_loop_tilt_rad", "fine_icp_voxel_m", "reverse_icp_rmse_max"):
+            value = getattr(self, name)
+            if value is not None:
+                _positive(name, value)
+        if self.color_sc_max_distance is not None:
+            if _nonnegative("color_sc_max_distance", self.color_sc_max_distance) > 1.0:
+                raise ValueError(
+                    f"color_sc_max_distance must lie in [0, 1], got {self.color_sc_max_distance!r}"
+                )
+        if self.hybrid_heading_gate_deg is not None:
+            gate = _positive("hybrid_heading_gate_deg", self.hybrid_heading_gate_deg)
+            if gate > 180.0:
+                raise ValueError(f"hybrid_heading_gate_deg must lie in (0, 180], got {self.hybrid_heading_gate_deg!r}")
+        if self.reverse_icp_fitness_min is not None:
+            fit = _positive("reverse_icp_fitness_min", self.reverse_icp_fitness_min)
+            if fit > 1.0:
+                raise ValueError(f"reverse_icp_fitness_min must lie in (0, 1], got {self.reverse_icp_fitness_min!r}")
         for name in ("zupt_sigma_m", "zupt_sigma_rad"):
             _inv_variance(name, getattr(self, name))
         for name in ("zupt_max_odom_xy_m", "zupt_max_median_dist_m", "zupt_inlier_dist_m", "zupt_max_measured_shift_m"):
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("zupt_min_fitness", self.zupt_min_fitness) <= 1.0:
             raise ValueError(f"zupt_min_fitness must lie in (0, 1], got {self.zupt_min_fitness!r}")
-        for name in ("graph_gravity_robust", "zupt_enabled", "zupt_skip_loop_search"):
+        for name in (
+            "graph_gravity_robust",
+            "zupt_enabled",
+            "zupt_skip_loop_search",
+            "use_visual_retrieval",
+            "use_visual_verification",
+            "color_sc_enabled",
+        ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}")
+
+
+def _visual_retrieval_from_dict(data: dict) -> VisualRetrievalConfig:
+    """Strict nested VisualRetrievalConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"visual_retrieval must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(VisualRetrievalConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown visual_retrieval keys: {unknown}")
+    return VisualRetrievalConfig(**data)
 
 
 def _scan_context_from_dict(data: dict) -> ScanContextConfig:
@@ -303,8 +366,38 @@ class SlamBackend:
         self.map = MapStore(config.map_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
         self.index = ScanContextIndex(config.scan_context)
+        self.visual_index = (
+            VisualIndex(config.visual_retrieval, seq_consistency=config.visual_seq_consistency)
+            if config.use_visual_retrieval
+            else None
+        )
+        self.color_index = (
+            ColorScanContextIndex(
+                config.scan_context,
+                min_color_bins=config.color_sc_min_bins,
+                color_weight=config.color_sc_weight,
+                max_color_distance=config.color_sc_max_distance,
+            )
+            if config.color_sc_enabled
+            else None
+        )
         self.admission = self._new_admission()
         self.loop_count = 0
+        self.visual_candidates_proposed = 0
+        self.visual_verified_count = 0
+        self.visual_fallback_count = 0
+        self.visual_disagreement_count = 0
+        self.visual_loops_accepted = 0
+        self.visual_only_loops_accepted = 0
+        self.color_sc_rescored = 0
+        self.color_sc_rejected = 0
+        self.hybrid_same_heading_visual_accepted = 0
+        self.hybrid_same_heading_visual_rejected = 0
+        self.hybrid_reverse_lidar_accepted = 0
+        self._last_match_visual = False
+        self._last_match_visual_only = False
+        self._current_visual_pair = None
+        self._current_color_desc = None
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._up_body: dict = {}
@@ -327,6 +420,11 @@ class SlamBackend:
         if prior_map is not None:
             for key, desc in prior_map.descriptors.items():
                 self.index.add(key, desc)
+                prior_kf = prior_map.keyframes[key]
+                if self.visual_index is not None:
+                    self.visual_index.add(prior_kf)
+                if self.color_index is not None:
+                    self.color_index.add_keyframe(prior_kf)
 
     @property
     def T_world_odom(self) -> np.ndarray | None:
@@ -361,6 +459,20 @@ class SlamBackend:
                 "travel_since_last_loop_m": travel_since_last_loop_m,
                 "last_loop_age_s": last_loop_age_s,
                 "zupt_active": self._zupt_anchor_kf is not None,
+                "visual_candidates_proposed": int(self.visual_candidates_proposed),
+                "visual_verified_count": int(self.visual_verified_count),
+                "visual_fallback_count": int(self.visual_fallback_count),
+                "visual_disagreement_count": int(self.visual_disagreement_count),
+                "visual_loops_accepted": int(self.visual_loops_accepted),
+                "visual_only_loops_accepted": int(self.visual_only_loops_accepted),
+                "visual_seq_rejected": int(
+                    0 if self.visual_index is None else self.visual_index.seq_rejected_count
+                ),
+                "color_sc_rescored": int(self.color_sc_rescored),
+                "color_sc_rejected": int(self.color_sc_rejected),
+                "hybrid_same_heading_visual_accepted": int(self.hybrid_same_heading_visual_accepted),
+                "hybrid_same_heading_visual_rejected": int(self.hybrid_same_heading_visual_rejected),
+                "hybrid_reverse_lidar_accepted": int(self.hybrid_reverse_lidar_accepted),
             }
         )
         return stats
@@ -389,11 +501,25 @@ class SlamBackend:
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
         zupt_mode, _ = self._add_node(keyframe)
-        loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
-        self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
-        self.index.add(keyframe.key, desc)
+        self._current_visual_pair = self.visual_index.extract(keyframe) if self.visual_index is not None else None
+        self._current_color_desc = self.color_index.compute(keyframe) if self.color_index is not None else None
+        try:
+            loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
+            self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
+            self.index.add(keyframe.key, desc)
+            if self.visual_index is not None:
+                self.visual_index.add(self.map.keyframes[keyframe.key], precomputed=self._current_visual_pair)
+            if self.color_index is not None:
+                self.color_index.add(keyframe.key, self._current_color_desc)
+        finally:
+            self._current_visual_pair = None
+            self._current_color_desc = None
         if loop_key is not None:
             self.loop_count += 1
+            if self._last_match_visual:
+                self.visual_loops_accepted += 1
+                if self._last_match_visual_only:
+                    self.visual_only_loops_accepted += 1
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
@@ -492,8 +618,9 @@ class SlamBackend:
         )
         if step_dxy > c.zupt_max_odom_xy_m or anchor_dxy > c.zupt_max_odom_xy_m:
             return None, None
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None, None
         delta_anchor = invert(anchor.T_odom_body) @ keyframe.T_odom_body
@@ -547,8 +674,9 @@ class SlamBackend:
         intermediate sparse frames before recovery succeeded).
         """
         c = self.config
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None
         T_anchor_prev = invert(self.graph.pose(anchor.key)) @ self.graph.pose(previous.key)
@@ -844,7 +972,23 @@ class SlamBackend:
     ):
         """Best admissible ICP-verified candidate as ``((key, IcpResult) | None, reject_reason, reject_kind)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        source_body = None
+        target_cache: dict = {}
+
+        def _get_source() -> np.ndarray:
+            nonlocal source_body
+            if source_body is None:
+                source_body = keyframe.points_body()
+            return source_body
+
+        def _get_target(key) -> np.ndarray:
+            if key not in target_cache:
+                target_cache[key] = submap(key)
+            return target_cache[key]
+
         best = None
+        best_visual = False
+        best_hybrid_mode: str | None = None
         last_reject = None
         last_reject_kind = None
         up_body = (
@@ -852,29 +996,243 @@ class SlamBackend:
             if (use_gravity_prior and self.config.icp_gravity_sigma_rad is not None)
             else None
         )
-        for key, dist, yaw in candidates[: self.config.icp_candidates]:
-            if dist > self.config.max_scan_context_distance:
-                break
-            T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
+
+        def _check_gates(key, result: IcpResult | None) -> IcpResult | None:
+            nonlocal last_reject, last_reject_kind
             if result is None:
-                continue
+                return None
             if apply_tilt_gate:
                 tilt_reject = self._tilt_rejection_reason(keyframe, result.T_target_source)
                 if tilt_reject is not None:
                     self._stats["loops_rejected_tilt"] += 1
                     last_reject = tilt_reject
                     last_reject_kind = "tilt"
-                    continue
+                    return None
             if apply_odom_gate:
                 odom_reject = self._odometry_inconsistency(key, keyframe, result.T_target_source)
                 if odom_reject is not None:
                     last_reject = odom_reject
                     last_reject_kind = "odom"
+                    return None
+            return result
+
+        # Fast path: visual, color-SC and hybrid switches all off -> identical to stabilized baseline.
+        if (
+            not self.config.use_visual_retrieval
+            and not self.config.use_visual_verification
+            and self.color_index is None
+        ):
+            for key, dist, yaw in candidates[: self.config.icp_candidates]:
+                if dist > self.config.max_scan_context_distance:
+                    break
+                T_init = store.poses[key] @ yaw_pose(yaw)
+                result = _check_gates(
+                    key,
+                    self._register(_get_source(), _get_target(key), T_init, source_up_body=up_body),
+                )
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+            self._last_match_visual = False
+            self._last_match_visual_only = False
+            if best is not None:
+                return best, None, None
+            return None, last_reject, last_reject_kind
+
+        eligible_sc = [
+            (key, dist, yaw) for key, dist, yaw in candidates if dist <= self.config.max_scan_context_distance
+        ]
+        if self.color_index is not None and eligible_sc:
+            query_cdesc = (
+                self._current_color_desc
+                if self._current_color_desc is not None
+                else self.color_index.compute(keyframe)
+            )
+            rescored, n_rescored, n_rejected = self.color_index.rescore(query_cdesc, eligible_sc)
+            self.color_sc_rescored += n_rescored
+            self.color_sc_rejected += n_rejected
+            sc_pool = [(k, d, y) for k, d, y, _ in rescored[: self.config.icp_candidates]]
+        else:
+            sc_pool = eligible_sc[: self.config.icp_candidates]
+
+        vr = self.config.visual_retrieval
+        query_vdesc = None
+        query_vfeat = None
+        if self._current_visual_pair is not None:
+            query_vdesc, query_vfeat = self._current_visual_pair
+        elif self.visual_index is not None:
+            query_vdesc, query_vfeat = self.visual_index.extract(keyframe)
+
+        mv_radius = self.config.visual_multiview_radius
+        store_keys = list(store.keyframes) if mv_radius > 0 else []
+        store_key_pos = {k: idx for idx, k in enumerate(store_keys)} if mv_radius > 0 else {}
+
+        def _window_keys(cand_key) -> list:
+            idx = store_key_pos.get(cand_key)
+            if idx is None:
+                return [cand_key]
+            epoch = cand_key[0] if isinstance(cand_key, tuple) else None
+            lo = max(0, idx - mv_radius)
+            hi = min(len(store_keys), idx + mv_radius + 1)
+            return [
+                k
+                for k in store_keys[lo:hi]
+                if (epoch is None or not isinstance(k, tuple) or k[0] == epoch)
+                and (exclude is None or not exclude(k))
+            ]
+
+        def _build_multiview_target_body(cand_key) -> np.ndarray | None:
+            wkeys = _window_keys(cand_key)
+            if len(wkeys) <= 1:
+                return None
+            T_cand_world = invert(store.poses[cand_key])
+            chunks: list[np.ndarray] = []
+            for k in wkeys:
+                pts_b = store.keyframes[k].points_body()
+                if len(pts_b) == 0:
                     continue
-            if best is None or result.rmse_m < best[1].rmse_m:
-                best = (key, result)
+                if k == cand_key:
+                    chunks.append(pts_b)
+                else:
+                    chunks.append(transform_points(T_cand_world @ store.poses[k], pts_b))
+            return np.vstack(chunks) if chunks else None
+
+        def _try_visual_candidate(key) -> tuple[object, IcpResult | None]:
+            target_key = key
+            if mv_radius > 0 and self.visual_index is not None:
+                target_key = self.visual_index.select_best_window_view(query_vdesc, _window_keys(key), key)
+            target_pts_body = _build_multiview_target_body(target_key) if mv_radius > 0 else None
+            target_vfeat = (
+                None
+                if (target_pts_body is not None or self.visual_index is None)
+                else self.visual_index.local_features.get(target_key)
+            )
+            visual = verify_visual(
+                keyframe,
+                store.keyframes[target_key],
+                feature_type=vr.feature_type,
+                max_time_delta_s=vr.max_time_delta_s,
+                inlier_m=vr.verify_inlier_m,
+                min_inliers=vr.verify_min_inliers,
+                ratio_threshold=vr.verify_ratio_threshold,
+                max_features=vr.max_features,
+                lidar_px_radius=vr.lidar_px_radius,
+                source_features=query_vfeat,
+                target_features=target_vfeat,
+                target_points_body=target_pts_body,
+            )
+            if visual.status != "verified":
+                return target_key, None
+            self.visual_verified_count += 1
+            T_init = store.poses[target_key] @ visual.T_target_source
+            result = self._register(_get_source(), _get_target(target_key), T_init, source_up_body=up_body)
+            if result is None:
+                return target_key, None
+            translation, rotation = pose_difference(T_init, result.T_target_source)
+            if (
+                translation > self.config.visual_agree_translation_m
+                or rotation > self.config.visual_agree_rotation_rad
+            ):
+                self.visual_disagreement_count += 1
+                return target_key, None
+            return target_key, _check_gates(target_key, result)
+
+        def _try_lidar_candidate(key, yaw: float, *, is_reverse_hybrid: bool = False) -> IcpResult | None:
+            T_init = store.poses[key] @ yaw_pose(yaw)
+            result = self._register(_get_source(), _get_target(key), T_init, source_up_body=up_body)
+            if result is None:
+                return None
+            if is_reverse_hybrid:
+                if (
+                    self.config.reverse_icp_fitness_min is not None
+                    and result.fitness < self.config.reverse_icp_fitness_min
+                ):
+                    return None
+                if (
+                    self.config.reverse_icp_rmse_max is not None
+                    and result.rmse_m > self.config.reverse_icp_rmse_max
+                ):
+                    return None
+            return _check_gates(key, result)
+
+        hybrid_gate = self.config.hybrid_heading_gate_deg
+        hybrid_active = hybrid_gate is not None and self.config.use_visual_retrieval
+        sc_pool_keys: set = set()
+        tried_visual_keys: set = set()
+        sc_had_match = False
+        for key, _dist, yaw in sc_pool:
+            sc_pool_keys.add(key)
+            if hybrid_active:
+                heading_deg = abs(float(np.degrees(wrap_angle(yaw))))
+                if heading_deg < hybrid_gate:
+                    tried_visual_keys.add(key)
+                    matched_key, result = _try_visual_candidate(key)
+                    if result is None:
+                        self.hybrid_same_heading_visual_rejected += 1
+                    elif best is None or result.rmse_m < best[1].rmse_m:
+                        best = (matched_key, result)
+                        best_visual = True
+                        best_hybrid_mode = "same_heading_visual"
+                else:
+                    result = _try_lidar_candidate(key, yaw, is_reverse_hybrid=True)
+                    if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                        best = (key, result)
+                        best_visual = False
+                        best_hybrid_mode = "reverse_lidar"
+                        sc_had_match = True
+            elif self.config.use_visual_verification:
+                tried_visual_keys.add(key)
+                matched_key, result = _try_visual_candidate(key)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (matched_key, result)
+                    best_visual = True
+            else:
+                result = _try_lidar_candidate(key, yaw)
+                if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
+                    best = (key, result)
+                    best_visual = False
+                    sc_had_match = True
+
+        if self.visual_index is not None:
+            same_epoch_only = self.prior is None and isinstance(keyframe.key, tuple)
+
+            def _visual_exclude(key) -> bool:
+                if exclude is not None and exclude(key):
+                    return True
+                if same_epoch_only and isinstance(key, tuple) and key[0] != keyframe.key[0]:
+                    return True
+                return False
+
+            visual_candidates = self.visual_index.query(
+                keyframe, exclude=_visual_exclude, precomputed_desc=query_vdesc
+            )
+            self.visual_candidates_proposed += len(visual_candidates)
+            for key, _distance in visual_candidates:
+                if key in tried_visual_keys:
+                    continue
+                tried_visual_keys.add(key)
+                matched_key, result = _try_visual_candidate(key)
+                if result is None:
+                    if (
+                        not self.config.use_visual_verification
+                        and not hybrid_active
+                        and key in sc_pool_keys
+                    ):
+                        self.visual_fallback_count += 1
+                    continue
+                if best is None or result.rmse_m < best[1].rmse_m:
+                    best = (matched_key, result)
+                    best_visual = True
+                    if hybrid_active:
+                        best_hybrid_mode = "same_heading_visual"
+
+        self._last_match_visual = best is not None and best_visual
+        self._last_match_visual_only = self._last_match_visual and not sc_had_match
         if best is not None:
+            if hybrid_active:
+                if best_hybrid_mode == "same_heading_visual":
+                    self.hybrid_same_heading_visual_accepted += 1
+                elif best_hybrid_mode == "reverse_lidar":
+                    self.hybrid_reverse_lidar_accepted += 1
             return best, None, None
         return None, last_reject, last_reject_kind
 
@@ -903,13 +1261,14 @@ class SlamBackend:
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
         )
+        fine_voxel = c.icp_voxel_m if c.fine_icp_voxel_m is None else c.fine_icp_voxel_m
         fine = icp_point_to_plane(
             source_body,
             target_world,
             coarse.T_target_source,
             max_correspondence_m=c.fine_correspondence_m,
             iterations=c.icp_iterations,
-            voxel_m=c.icp_voxel_m,
+            voxel_m=fine_voxel,
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
         )
