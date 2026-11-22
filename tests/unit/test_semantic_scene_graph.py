@@ -15,8 +15,10 @@ from embodied_navigation.localization_mapping.semantic_mapping import (
     LayeredMap,
     Observation,
     PointMask,
+    build_scene_graph_from_map_dir,
     build_scene_graph_from_map_store,
     estimate_keyframe_clearance_m,
+    load_rgb_index_report,
     sync_backend_loop_update,
 )
 
@@ -214,7 +216,8 @@ class KeyframeSceneGraphTests(unittest.TestCase):
             set(kept.anchor_keyframe_ids),
             {"1:0", "1:1", "1:2", "1:10", "1:11", "1:12"},
         )
-        self.assertEqual(len(kept.representative_rgb_paths), 6)
+        self.assertEqual(len(kept.representative_rgb_paths), 4)
+        self.assertEqual(len(sg.keyframe_rgb_paths), 6)
         self.assertEqual(obj.room_id, "f0_room_01")
         np.testing.assert_allclose(obj.world_center_xyz, [1.1, 0.2, 0.4], atol=1e-6)
 
@@ -270,7 +273,9 @@ class KeyframeSceneGraphTests(unittest.TestCase):
         door_pts = _box_points(4.0, 0.5)
         self.assertGreater(estimate_keyframe_clearance_m(wide_pts), 2.0)
         self.assertLess(estimate_keyframe_clearance_m(door_pts), 0.7)
-        self.assertEqual(estimate_keyframe_clearance_m(np.empty((0, 3))), 5.0)
+        self.assertIsNone(estimate_keyframe_clearance_m(np.empty((0, 3))))
+        self.assertIsNone(estimate_keyframe_clearance_m(np.full((4, 3), np.nan)))
+        self.assertIsNone(estimate_keyframe_clearance_m(np.array([[1.0, 0.0, 5.0]])))
 
         store = MapStore(voxel_m=0.05)
         layered = LayeredMap(map_id="building")
@@ -394,6 +399,418 @@ class KeyframeSceneGraphTests(unittest.TestCase):
             self.assertEqual(cli_summary["counts"]["floors"], 2)
             self.assertEqual(cli_summary["counts"]["rooms"], 3)
             self.assertTrue(out_sg.is_file())
+
+    def test_continuous_ramp_and_drift_tail_do_not_create_spurious_floors(self):
+        sg = KeyframeSceneGraph()
+        idx = 0
+        for i in range(10):
+            sg.add_keyframe(f"1:{idx}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+            idx += 1
+        for k in range(1, 20):
+            z = 0.2 * k
+            sg.add_keyframe(f"1:{idx}", _pose(10.0 + float(k), 0.0, z), clearance_m=1.2)
+            idx += 1
+        for i in range(10):
+            sg.add_keyframe(f"1:{idx}", _pose(30.0 + float(i), 0.0, 4.0), clearance_m=2.0)
+            idx += 1
+
+        floors = sg.segment_floors()
+        self.assertEqual(sorted(floors.keys()), ["f0", "f1"])
+        self.assertLess(abs(floors["f0"].z_mean_m), 0.2)
+        self.assertLess(abs(floors["f1"].z_mean_m - 4.0), 0.2)
+        self.assertEqual(len(sg.stairs), 1)
+
+        # Simulate gradual Z drift tail + stationary spin-in-place keyframes at the end.
+        sg_drift = KeyframeSceneGraph()
+        seq = 0
+        for i in range(40):
+            sg_drift.add_keyframe(f"1:{seq}", _pose(float(i) * 0.5, 0.0, 0.0), clearance_m=2.0)
+            seq += 1
+        for i in range(6):
+            sg_drift.add_keyframe(f"1:{seq}", _pose(20.0 + i * 0.6, 0.0, 0.55 * (i + 1)), clearance_m=1.2)
+            seq += 1
+        for i in range(40):
+            sg_drift.add_keyframe(f"1:{seq}", _pose(24.0 + i * 0.5, 0.0, 3.3), clearance_m=2.0)
+            seq += 1
+        # Monotonic drift (0.04 dz/ds) followed by 25 stationary spin-in-place frames at z=5.8
+        for i in range(60):
+            sg_drift.add_keyframe(
+                f"1:{seq}", _pose(44.0 + i * 1.0, 0.0, 3.3 + 0.04 * i), clearance_m=2.0
+            )
+            seq += 1
+        for i in range(25):
+            sg_drift.add_keyframe(
+                f"1:{seq}", _pose(104.0, 0.0, 5.7, yaw_rad=0.1 * i), clearance_m=2.0
+            )
+            seq += 1
+
+        drift_floors = sg_drift.segment_floors()
+        self.assertEqual(sorted(drift_floors.keys()), ["f0", "f1"])
+        self.assertEqual(len(sg_drift.stairs), 1)
+
+    def test_floor_segmentation_invariant_to_global_z_shift(self):
+        for z_shift in (0.0, 0.10, -5.3):
+            sg = KeyframeSceneGraph()
+            for i in range(5):
+                sg.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0 + z_shift), clearance_m=2.0)
+            for i in range(5):
+                sg.add_keyframe(f"1:{10 + i}", _pose(float(i), 2.0, 1.82 + z_shift), clearance_m=2.0)
+            floors = sg.segment_floors()
+            self.assertEqual(sorted(floors.keys()), ["f0", "f1"], f"failed at z_shift={z_shift}")
+            self.assertEqual(len(floors["f0"].keyframe_ids), 5)
+            self.assertEqual(len(floors["f1"].keyframe_ids), 5)
+
+    def test_separate_epochs_and_time_gaps_never_create_stairs(self):
+        sg = KeyframeSceneGraph()
+        for i in range(3):
+            sg.add_keyframe(
+                f"1:{i + 1}",
+                _pose(float(i), 0.0, 0.0),
+                clearance_m=2.0,
+                stamp_ns=(i + 1) * 1_000_000_000,
+                epoch=1,
+            )
+        for i in range(3):
+            sg.add_keyframe(
+                f"2:{i + 1}",
+                _pose(float(i), 0.0, 3.0),
+                clearance_m=2.0,
+                stamp_ns=(i + 1) * 1_000_000_000,
+                epoch=2,
+            )
+        floors = sg.segment_floors()
+        self.assertEqual(sorted(floors.keys()), ["f0", "f1"])
+        self.assertEqual(sg.stairs, [])
+
+        # Same epoch with large time gap should also avoid creating a stair edge
+        sg_gap = KeyframeSceneGraph()
+        for i in range(3):
+            sg_gap.add_keyframe(
+                f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0, stamp_ns=i * 1_000_000_000
+            )
+        for i in range(3):
+            sg_gap.add_keyframe(
+                f"1:{10 + i}",
+                _pose(float(i), 0.0, 3.0),
+                clearance_m=2.0,
+                stamp_ns=100_000_000_000 + i * 1_000_000_000,
+            )
+        sg_gap.segment_floors()
+        self.assertEqual(len(sg_gap.floors), 2)
+        self.assertEqual(sg_gap.stairs, [])
+
+    def test_doorway_anchors_persist_and_reproject_on_global_shift(self):
+        sg = KeyframeSceneGraph()
+        specs = [(-3.0, 2.0), (-2.0, 2.0), (0.0, 0.5), (2.0, 2.0), (3.0, 2.0)]
+        for i, (x, clr) in enumerate(specs):
+            sg.add_keyframe(f"1:{i}", _pose(x, 0.0, 0.0), clearance_m=clr)
+        sg.segment_floors()
+        sg.partition_rooms()
+        self.assertEqual(len(sg.doorways), 1)
+        self.assertEqual(sg.doorways[0].bottleneck_anchor_ids, ["1:2"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = Path(tmpdir) / "sg.json"
+            sg.save(p)
+            loaded = KeyframeSceneGraph.load(p)
+
+        self.assertEqual(loaded.doorways[0].bottleneck_anchor_ids, ["1:2"])
+        shifted = {
+            f"1:{i}": _pose(x + 10.0, 0.0, 0.0) for i, (x, _) in enumerate(specs)
+        }
+        loaded.reproject_from_poses(shifted)
+        self.assertEqual(len(loaded.doorways), 1)
+        self.assertAlmostEqual(loaded.doorways[0].gateway_xyz[0], 10.0, places=6)
+
+    def test_reproject_recomputes_floors_splits_rooms_assigns_new_kfs_and_is_idempotent(self):
+        # 1) Z correction [0,0,0,3,3,3] -> [0,0,0,0,0,0] collapses floors and removes stair
+        sg = KeyframeSceneGraph()
+        for i in range(3):
+            sg.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+        for i in range(3):
+            sg.add_keyframe(f"1:{3 + i}", _pose(10.0 + float(i), 0.0, 3.0), clearance_m=2.0)
+        sg.segment_floors()
+        sg.partition_rooms()
+        sg.rename_room("f1_room_01", "upper_lab")
+        self.assertEqual(len(sg.floors), 2)
+        self.assertEqual(len(sg.stairs), 1)
+
+        sg.reproject_from_poses({f"1:{3 + i}": _pose(10.0 + float(i), 0.0, 0.0) for i in range(3)})
+        self.assertEqual(len(sg.floors), 1)
+        self.assertEqual(len(sg.stairs), 0)
+        self.assertEqual(len(sg.rooms), 2)
+        aliases = {r.alias for r in sg.rooms.values()}
+        self.assertIn("upper_lab", aliases)
+
+        # 2) Moving 2 frames of a room 20 m away splits the room and preserves primary alias
+        sg_split = KeyframeSceneGraph()
+        for i in range(4):
+            sg_split.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+        sg_split.segment_floors()
+        sg_split.partition_rooms()
+        sg_split.rename_room("f0_room_01", "main_hall")
+        sg_split.reproject_from_poses({"1:2": _pose(20.0, 0.0, 0.0), "1:3": _pose(21.0, 0.0, 0.0)})
+        self.assertEqual(len(sg_split.rooms), 2)
+        self.assertEqual(sg_split.rooms["f0_room_01"].alias, "main_hall")
+
+        # 3) Passing new keyframes assigns them to floor and room
+        sg_split.add_keyframe("1:4", _pose(1.5, 0.5, 0.0), clearance_m=2.0)
+        sg_split.reproject_from_poses({})
+        self.assertIn("1:4", sg_split.floors["f0"].keyframe_ids)
+        self.assertIn("1:4", sg_split.rooms["f0_room_01"].anchor_keyframe_ids)
+
+        # 4) Adjacent doorway-separated rooms do not merge on empty or identical reprojection
+        sg_adj = KeyframeSceneGraph()
+        for i, (x, clr) in enumerate([(-1.2, 2.0), (-0.6, 2.0), (0.0, 0.5), (0.6, 2.0), (1.2, 2.0)]):
+            sg_adj.add_keyframe(f"1:{i}", _pose(x, 0.0, 0.0), clearance_m=clr)
+        sg_adj.segment_floors()
+        sg_adj.partition_rooms()
+        self.assertEqual(len(sg_adj.rooms), 2)
+        self.assertEqual(len(sg_adj.doorways), 1)
+        noop = sg_adj.reproject_from_poses({})
+        self.assertEqual(noop["merged_count"], 0)
+        self.assertEqual(len(sg_adj.rooms), 2)
+        self.assertEqual(len(sg_adj.doorways), 1)
+        same = sg_adj.reproject_from_poses({"1:0": _pose(-1.2, 0.0, 0.0)})
+        self.assertEqual(same["merged_count"], 0)
+        self.assertEqual(len(sg_adj.doorways), 1)
+
+    def test_corridor_doorways_only_connect_adjacent_rooms_abc(self):
+        sg = KeyframeSceneGraph()
+        # Room A (x=0..2), corridor (x=3..5), Room B (x=6..8), corridor (x=9..11), Room C (x=12..14)
+        coords = [
+            (0.0, 2.0), (1.0, 2.0), (2.0, 2.0),
+            (3.0, 0.5), (4.0, 0.5), (5.0, 0.5),
+            (6.0, 2.0), (7.0, 2.0), (8.0, 2.0),
+            (9.0, 0.5), (10.0, 0.5), (11.0, 0.5),
+            (12.0, 2.0), (13.0, 2.0), (14.0, 2.0),
+        ]
+        for i, (x, clr) in enumerate(coords):
+            sg.add_keyframe(f"1:{i}", _pose(x, 0.0, 0.0), clearance_m=clr)
+        sg.segment_floors()
+        sg.partition_rooms(doorway_clearance_m=0.85, link_radius_m=2.5, min_room_keyframes=2)
+        self.assertEqual(sorted(sg.rooms.keys()), ["f0_room_01", "f0_room_02", "f0_room_03"])
+        pairs = {(d.room_a, d.room_b) for d in sg.doorways}
+        self.assertEqual(pairs, {("f0_room_01", "f0_room_02"), ("f0_room_02", "f0_room_03")})
+        self.assertNotIn(("f0_room_01", "f0_room_03"), pairs)
+
+    def test_parallel_corridors_separated_by_wall_remain_separate_rooms(self):
+        # 1) Scalar clearance case: 2.2 m apart, each 1.1 m clearance, separate epochs/branches
+        sg = KeyframeSceneGraph()
+        for i in range(5):
+            sg.add_keyframe(f"1:{i}", _pose(float(i), -1.1, 0.0), clearance_m=1.1, epoch=1)
+        for i in range(5):
+            sg.add_keyframe(f"2:{i}", _pose(float(i), 1.1, 0.0), clearance_m=1.1, epoch=2)
+        sg.segment_floors()
+        rooms = sg.partition_rooms(doorway_clearance_m=0.85, link_radius_m=2.5, min_room_keyframes=2)
+        self.assertEqual(len(rooms), 2)
+
+        # 2) Point-cloud case via MapStore with actual corridor wall at y=0
+        corridor_pts = _box_points(4.0, 1.1, n_per_side=24)
+        store = MapStore(voxel_m=0.05)
+        for ep, y in ((1, -1.1), (2, 1.1)):
+            for seq in range(5):
+                T = _pose(float(seq), y, 0.0)
+                kf = Keyframe((ep, seq), (ep * 10 + seq) * 1_000_000_000, T, np.eye(4), corridor_pts)
+                store.add(kf, T, np.zeros(4))
+        sg_cloud = build_scene_graph_from_map_store(store)
+        self.assertEqual(len(sg_cloud.rooms), 2)
+
+    def test_unknown_clearance_does_not_bridge_rooms(self):
+        sg = KeyframeSceneGraph()
+        for i in range(3):
+            sg.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+        # Missing scan at x=3.5 -> clearance unknown (None)
+        sg.add_keyframe("1:3", _pose(3.5, 0.0, 0.0), clearance_m=None)
+        for i in range(3):
+            sg.add_keyframe(f"1:{4 + i}", _pose(5.0 + float(i), 0.0, 0.0), clearance_m=2.0)
+        sg.segment_floors()
+        rooms = sg.partition_rooms(doorway_clearance_m=0.85, link_radius_m=2.5, min_room_keyframes=2)
+        self.assertEqual(len(rooms), 2)
+
+    def test_atomic_sync_revision_monotonicity_anchor_mapping_and_extrinsics(self):
+        sg = KeyframeSceneGraph()
+        for i in range(3):
+            sg.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+        sg.segment_floors()
+        sg.partition_rooms()
+
+        layered = LayeredMap(map_id="ext_test")
+        T_kf_sensor = _pose(0.2, -0.1, 0.3, yaw_rad=np.pi / 2)
+        T_kf0 = _pose(1.0, 0.0, 0.0)
+        T_sensor_init = T_kf0 @ T_kf_sensor
+        obs = Observation(
+            epoch=1,
+            sequence=1,
+            source_ns=1_000_000_000,
+            pose_source_ns=1_000_000_000,
+            points_sensor=np.array([[1.0, 0.0, 0.0]], dtype=np.float64),
+            T_map_sensor=T_sensor_init,
+            anchor_id="rgbd:1",
+            frame_id="camera",
+            calibration_id="cal:v1",
+        )
+        layered.integrate(
+            obs,
+            PointMask(
+                1, 1, 1_000_000_000, 1_000_000_000, "camera", "cal:v1",
+                np.array([STATIC], dtype=np.uint8),
+                {"kind": "geometric", "producer": "fixture"},
+            ),
+        )
+
+        # Sync 1 (default revision=None -> 1)
+        poses_1 = {"1:1": _pose(2.0, 0.0, 0.0)}
+        res1 = sync_backend_loop_update(
+            sg,
+            poses_1,
+            layered_map=layered,
+            anchor_to_keyframe_map={"rgbd:1": (1, 1)},
+            T_keyframe_sensor=T_kf_sensor,
+        )
+        self.assertEqual(res1["revision"], 1)
+        self.assertEqual(res1["synced_anchors"], 1)
+
+        # Sync 2 (default revision=None -> auto-increments to 2)
+        poses_2 = {"1:1": _pose(3.0, 0.0, 0.0)}
+        res2 = sync_backend_loop_update(sg, poses_2, layered_map=layered)
+        self.assertEqual(res2["revision"], 2)
+        self.assertEqual(res2["synced_anchors"], 1)
+        expected_pt = (poses_2["1:1"] @ T_kf_sensor @ np.array([1.0, 0.0, 0.0, 1.0]))[:3]
+        np.testing.assert_allclose(layered.static_points()[0], expected_pt, atol=1e-6)
+
+        # Idempotent redelivery at identical revision=2 with identical pose
+        res_dup = sync_backend_loop_update(sg, poses_2, layered_map=layered, revision=2)
+        self.assertEqual(res_dup["synced_anchors"], 0)
+
+        # Stale revision=1 must fail atomically BEFORE touching sg or layered
+        poses_3 = {"1:1": _pose(99.0, 0.0, 0.0)}
+        with self.assertRaises(ValueError):
+            sync_backend_loop_update(sg, poses_3, layered_map=layered, revision=1)
+        self.assertAlmostEqual(sg.keyframe_poses["1:1"][0, 3], 3.0, places=6)
+        self.assertEqual(layered.anchors["rgbd:1"][1], 2)
+
+    def test_streaming_map_dir_subdirectories_and_rgb_index_resilience(self):
+        wide_pts = _box_points(2.5, 2.5)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            map_dir = tmp / "map_sub"
+            (map_dir / "keyframes").mkdir(parents=True)
+            rows = []
+            for seq in range(4):
+                T = _pose(float(seq), 0.0, 0.0)
+                rel_name = f"keyframes/kf_1_{seq}.npz"
+                np.savez(map_dir / rel_name, points_lidar=wide_pts, descriptor=np.zeros(4))
+                rows.append(
+                    {
+                        "key": [1, seq],
+                        "stamp_ns": (seq + 1) * 1_000_000_000,
+                        "T_odom_body": T.tolist(),
+                        "T_world_body": T.tolist(),
+                        "T_body_lidar": np.eye(4).tolist(),
+                        "file": rel_name,
+                    }
+                )
+            (map_dir / "map.json").write_text(
+                json.dumps({"schema": "embodied_navigation_map/v1", "voxel_m": 0.1, "keyframes": rows})
+            )
+
+            # MapStore.load and streaming build_scene_graph_from_map_dir both support subdirs
+            loaded_store = MapStore.load(map_dir)
+            self.assertEqual(len(loaded_store.keyframes), 4)
+
+            # Create archived RGB directory with producer fields + corrupt lines + NaN timestamp
+            rgb_dir = tmp / "archived_frames"
+            rgb_dir.mkdir()
+            for seq in range(4):
+                (rgb_dir / f"rgb_{seq:06d}.png").write_bytes(b"png")
+            jsonl = rgb_dir / "index.jsonl"
+            jsonl.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"source_time_s": 1.0, "path": f"/old/machine/rgb_000000.png"}),
+                        "{corrupt json",
+                        json.dumps({"source_time_s": "NaN", "path": "/old/machine/rgb_000001.png"}),
+                        json.dumps({"stamp_s": 2.0, "path": f"/old/machine/rgb_000001.png"}),
+                        json.dumps({"source_time_s": 3.0, "path": "/old/machine/missing.png"}),
+                        json.dumps({"source_time_s": 4.0, "path": f"/old/machine/rgb_000003.png"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            report = load_rgb_index_report(jsonl)
+            self.assertEqual(report.skipped_count, 3)
+            self.assertEqual([e["line"] for e in report.skipped_lines], [2, 3, 5])
+            self.assertEqual(report.loaded_count, 3)
+
+            sg = build_scene_graph_from_map_dir(map_dir, rgb_index=report.index)
+            self.assertEqual(len(sg.rooms), 1)
+            self.assertEqual(len(sg.rooms["f0_room_01"].representative_rgb_paths), 3)
+
+            # Reject path traversal outside map_dir
+            rows[0]["file"] = "../escape.npz"
+            (map_dir / "map.json").write_text(
+                json.dumps({"schema": "embodied_navigation_map/v1", "voxel_m": 0.1, "keyframes": rows})
+            )
+            with self.assertRaises(ValueError):
+                MapStore.load(map_dir)
+
+    def test_validation_integrity_and_spatial_query_filtering(self):
+        sg = KeyframeSceneGraph()
+        for i in range(4):
+            sg.add_keyframe(f"1:{i}", _pose(float(i), 0.0, 0.0), clearance_m=2.0)
+        sg.add_keyframe("1:4", _pose(4.0, 0.0, 0.0), clearance_m=0.5)
+        for i in range(4):
+            sg.add_keyframe(f"1:{5 + i}", _pose(5.0 + float(i), 0.0, 0.0), clearance_m=2.0)
+        sg.add_keyframe("1:9", _pose(9.0, 0.0, 1.5), clearance_m=1.0)
+        for i in range(4):
+            sg.add_keyframe(f"1:{10 + i}", _pose(10.0 + float(i), 0.0, 3.0), clearance_m=2.0)
+        sg.segment_floors()
+        sg.partition_rooms()
+
+        # Non-rigid scaling matrix must be rejected
+        scaled = np.eye(4, dtype=np.float64)
+        scaled[0, 0] = 2.0
+        with self.assertRaises(ValueError):
+            sg.add_keyframe("1:99", scaled)
+
+        # Dangling room_id must be rejected by add_object
+        with self.assertRaises(ValueError):
+            sg.add_object("chair", "1:0", [0.0, 0.0, 0.0], room_id="missing_room")
+
+        # Dangling object anchor in snapshot must be rejected by from_dict
+        bad_dict = sg.to_dict()
+        bad_dict["objects"].append(
+            {
+                "object_id": "obj_bad",
+                "label": "lamp",
+                "anchor_keyframe_id": "missing_kf",
+                "local_center_xyz": [0.0, 0.0, 0.0],
+                "local_extent_xyz": [0.1, 0.1, 0.1],
+                "world_center_xyz": [0.0, 0.0, 0.0],
+                "confidence": 0.9,
+                "producer": "test",
+                "room_id": None,
+            }
+        )
+        with self.assertRaises(ValueError):
+            KeyframeSceneGraph.from_dict(bad_dict)
+
+        # Far spatial query returns empty rooms, doorways, stairs, and objects
+        far = sg.query(near_xyz=[1000.0, 0.0, 0.0], radius_m=1.0)
+        self.assertEqual(far["rooms"], [])
+        self.assertEqual(far["doorways"], [])
+        self.assertEqual(far["stairs"], [])
+        self.assertEqual(far["objects"], [])
+
+        # Local spatial query finds doorway or stair near its geometry
+        near_door = sg.query(near_xyz=[4.0, 0.0, 0.0], radius_m=0.5)
+        self.assertEqual(len(near_door["doorways"]), 1)
+        self.assertEqual(len(near_door["stairs"]), 0)
+        near_stair = sg.query(near_xyz=[9.0, 0.0, 1.5], radius_m=0.5)
+        self.assertEqual(len(near_stair["stairs"]), 1)
+        self.assertEqual(len(near_stair["doorways"]), 0)
 
 
 if __name__ == "__main__":
