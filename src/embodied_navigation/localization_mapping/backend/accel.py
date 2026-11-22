@@ -11,10 +11,14 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import math
 import os
 from pathlib import Path
+import platform
+import re
 import shutil
 import subprocess
+import tempfile
 import threading
 
 import numpy as np
@@ -26,6 +30,7 @@ _LIB: ctypes.CDLL | None = None
 
 _DOUBLE_PTR = ctypes.POINTER(ctypes.c_double)
 _INT_PTR = ctypes.POINTER(ctypes.c_int)
+_MAX_CPP_COUNT = 2_000_000_000
 
 
 def _cache_dir() -> Path:
@@ -48,16 +53,23 @@ def _compile_and_load() -> ctypes.CDLL | None:
     if cxx is None or eigen_inc is None:
         return None
     digest = hashlib.sha256(_CPP_SOURCE.read_bytes()).hexdigest()[:16]
+    arch = re.sub(r"[^A-Za-z0-9_.-]", "_", platform.machine() or "unknown")
     out_dir = _cache_dir()
-    so_path = out_dir / f"libslam_backend_accel_{digest}.so"
+    so_path = out_dir / f"libslam_backend_accel_{arch}_{digest}.so"
     if not so_path.is_file():
+        tmp_path: Path | None = None
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
-            tmp_path = out_dir / f"libslam_backend_accel_{digest}.{os.getpid()}.tmp.so"
+            with tempfile.NamedTemporaryFile(
+                dir=out_dir,
+                prefix=f"libslam_backend_accel_{arch}_{digest}.",
+                suffix=".tmp.so",
+                delete=False,
+            ) as fh:
+                tmp_path = Path(fh.name)
             cmd = [
                 cxx,
                 "-O3",
-                "-march=native",
                 "-std=c++17",
                 "-shared",
                 "-fPIC",
@@ -69,11 +81,13 @@ def _compile_and_load() -> ctypes.CDLL | None:
             ]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if proc.returncode != 0:
-                tmp_path.unlink(missing_ok=True)
                 return None
             tmp_path.replace(so_path)
         except (OSError, subprocess.SubprocessError):
             return None
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
     try:
         lib = ctypes.CDLL(str(so_path))
     except OSError:
@@ -119,21 +133,57 @@ def get_accel_lib() -> ctypes.CDLL | None:
     return _LIB
 
 
+def _validate_points_array(points: np.ndarray, name: str) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"{name} must have shape (N, 3), got {pts.shape}")
+    if len(pts) > _MAX_CPP_COUNT:
+        raise ValueError(f"{name} exceeds maximum count {_MAX_CPP_COUNT}: {len(pts)}")
+    if pts.size > 0 and not np.isfinite(pts).all():
+        raise ValueError(f"{name} must contain only finite coordinates")
+    return np.ascontiguousarray(pts, dtype=np.float64)
+
+
+def _validate_matrix_array(arr: np.ndarray, shape: tuple[int, ...], name: str) -> np.ndarray:
+    mat = np.asarray(arr, dtype=np.float64)
+    if mat.shape != shape:
+        raise ValueError(f"{name} must have shape {shape}, got {mat.shape}")
+    if mat.size > 0 and not np.isfinite(mat).all():
+        raise ValueError(f"{name} must contain only finite values")
+    return np.ascontiguousarray(mat, dtype=np.float64)
+
+
+def _validate_node_index(idx, n_nodes: int, name: str) -> int:
+    if isinstance(idx, bool) or not isinstance(idx, (int, np.integer)):
+        raise ValueError(f"{name} must be an integer index, got {idx!r}")
+    val = int(idx)
+    if val < 0 or val >= n_nodes:
+        raise ValueError(f"{name} index {val} out of range [0, {n_nodes})")
+    return val
+
+
 def cpp_voxel_downsample(points: np.ndarray, voxel_m: float) -> np.ndarray | None:
+    if isinstance(voxel_m, bool):
+        raise ValueError(f"voxel_m must be a finite positive float, got {voxel_m!r}")
+    voxel = float(voxel_m)
+    if not math.isfinite(voxel) or voxel <= 0.0:
+        raise ValueError(f"voxel_m must be finite and > 0, got {voxel_m!r}")
+    pts = _validate_points_array(points, "points")
+    n = len(pts)
     lib = get_accel_lib()
     if lib is None:
         return None
-    pts = np.ascontiguousarray(points, dtype=np.float64)
-    n = len(pts)
     if n == 0:
         return np.empty((0, 3), dtype=np.float64)
     out = np.empty((n, 3), dtype=np.float64)
     m = lib.cpp_voxel_downsample(
         pts.ctypes.data_as(_DOUBLE_PTR),
         n,
-        float(voxel_m),
+        voxel,
         out.ctypes.data_as(_DOUBLE_PTR),
     )
+    if m < 0 or m > n:
+        raise ValueError(f"cpp_voxel_downsample failed (returned count {m})")
     return out[:m].copy()
 
 
@@ -150,19 +200,42 @@ def cpp_icp_point_to_plane(
     gravity_ref_point_sigma_m: float,
     return_hessian: bool = False,
 ) -> tuple[np.ndarray, float, float, bool, np.ndarray | None] | None:
+    src = _validate_points_array(source, "source")
+    tgt = _validate_points_array(target, "target")
+    T0 = _validate_matrix_array(T_init, (4, 4), "T_init")
+    max_corr = float(max_correspondence_m)
+    vox = float(voxel_m)
+    if not math.isfinite(max_corr) or max_corr <= 0.0:
+        raise ValueError(f"max_correspondence_m must be finite and > 0, got {max_correspondence_m!r}")
+    if not math.isfinite(vox) or vox < 0.0:
+        raise ValueError(f"voxel_m must be finite and >= 0, got {voxel_m!r}")
+    if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or int(iterations) < 0:
+        raise ValueError(f"iterations must be a non-negative integer, got {iterations!r}")
+    has_grav = 1 if (source_up_body is not None and gravity_sigma_rad is not None) else 0
+    if has_grav:
+        up_arr = _validate_matrix_array(source_up_body, (3,), "source_up_body")
+        grav_sig = float(gravity_sigma_rad)
+        grav_ref = float(gravity_ref_point_sigma_m)
+        if not math.isfinite(grav_sig) or grav_sig <= 0.0:
+            raise ValueError(f"gravity_sigma_rad must be finite and > 0, got {gravity_sigma_rad!r}")
+        if not math.isfinite(grav_ref) or grav_ref < 0.0:
+            raise ValueError(
+                f"gravity_ref_point_sigma_m must be finite and >= 0, got {gravity_ref_point_sigma_m!r}"
+            )
+    else:
+        up_arr = np.zeros(3, dtype=np.float64)
+        grav_sig = 0.0
+        grav_ref = float(gravity_ref_point_sigma_m)
+        if not math.isfinite(grav_ref):
+            raise ValueError(f"gravity_ref_point_sigma_m must be finite, got {gravity_ref_point_sigma_m!r}")
+
     lib = get_accel_lib()
     if lib is None:
         return None
-    src = np.ascontiguousarray(source, dtype=np.float64).reshape(-1, 3)
-    tgt = np.ascontiguousarray(target, dtype=np.float64).reshape(-1, 3)
-    T0 = np.ascontiguousarray(T_init, dtype=np.float64).reshape(4, 4)
     T_out = np.empty((4, 4), dtype=np.float64)
     fitness = ctypes.c_double(0.0)
     rmse = ctypes.c_double(float("inf"))
     converged = ctypes.c_int(0)
-    has_grav = 1 if (source_up_body is not None and gravity_sigma_rad is not None) else 0
-    up_arr = np.ascontiguousarray(source_up_body, dtype=np.float64).reshape(3) if has_grav else np.zeros(3, dtype=np.float64)
-    grav_sig = float(gravity_sigma_rad) if has_grav else 0.0
     hess = np.empty((6, 6), dtype=np.float64) if return_hessian else None
     hess_ptr = hess.ctypes.data_as(_DOUBLE_PTR) if hess is not None else ctypes.cast(0, _DOUBLE_PTR)
 
@@ -170,8 +243,8 @@ def cpp_icp_point_to_plane(
         src.ctypes.data_as(_DOUBLE_PTR), len(src),
         tgt.ctypes.data_as(_DOUBLE_PTR), len(tgt),
         T0.ctypes.data_as(_DOUBLE_PTR),
-        float(max_correspondence_m), int(iterations), float(voxel_m),
-        has_grav, up_arr.ctypes.data_as(_DOUBLE_PTR), grav_sig, float(gravity_ref_point_sigma_m),
+        max_corr, int(iterations), vox,
+        has_grav, up_arr.ctypes.data_as(_DOUBLE_PTR), grav_sig, grav_ref,
         T_out.ctypes.data_as(_DOUBLE_PTR),
         ctypes.byref(fitness), ctypes.byref(rmse), ctypes.byref(converged),
         hess_ptr,
@@ -188,46 +261,89 @@ def cpp_optimize_pose_graph(
     cauchy_scale: float,
     iterations: int,
 ) -> tuple[list[np.ndarray], dict] | None:
-    lib = get_accel_lib()
-    if lib is None:
-        return None
     n_nodes = len(poses)
-    if n_nodes == 0:
-        return [], {"converged": True, "iterations": 0, "error_before": 0.0, "error_after": 0.0}
-    poses_arr = np.ascontiguousarray(np.stack(poses, axis=0), dtype=np.float64)
+    if n_nodes > _MAX_CPP_COUNT:
+        raise ValueError(f"poses exceeds maximum count {_MAX_CPP_COUNT}: {n_nodes}")
+    c_scale = float(cauchy_scale)
+    if not math.isfinite(c_scale) or c_scale <= 0.0:
+        raise ValueError(f"cauchy_scale must be finite and > 0, got {cauchy_scale!r}")
+    if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or int(iterations) < 0:
+        raise ValueError(f"iterations must be a non-negative integer, got {iterations!r}")
+    validated_poses = [_validate_matrix_array(p, (4, 4), f"poses[{i}]") for i, p in enumerate(poses)]
 
     n_edges = len(edges)
+    if n_edges > _MAX_CPP_COUNT:
+        raise ValueError(f"edges exceeds maximum count {_MAX_CPP_COUNT}: {n_edges}")
     if n_edges > 0:
-        ea = np.ascontiguousarray([e[0] for e in edges], dtype=np.int32)
-        eb = np.ascontiguousarray([e[1] for e in edges], dtype=np.int32)
-        eZ = np.ascontiguousarray(np.stack([e[2] for e in edges], axis=0), dtype=np.float64)
-        eI = np.ascontiguousarray(np.stack([e[3] for e in edges], axis=0), dtype=np.float64)
-        eR = np.ascontiguousarray([1 if e[4] else 0 for e in edges], dtype=np.int32)
+        ea_list, eb_list, eZ_list, eI_list, eR_list = [], [], [], [], []
+        for idx, (a, b, Z_inv, info, robust) in enumerate(edges):
+            ea_list.append(_validate_node_index(a, n_nodes, f"edges[{idx}].a"))
+            eb_list.append(_validate_node_index(b, n_nodes, f"edges[{idx}].b"))
+            eZ_list.append(_validate_matrix_array(Z_inv, (4, 4), f"edges[{idx}].Z_inv"))
+            eI_list.append(_validate_matrix_array(info, (6, 6), f"edges[{idx}].info"))
+            eR_list.append(1 if robust else 0)
+        ea = np.ascontiguousarray(ea_list, dtype=np.int32)
+        eb = np.ascontiguousarray(eb_list, dtype=np.int32)
+        eZ = np.ascontiguousarray(np.stack(eZ_list, axis=0), dtype=np.float64)
+        eI = np.ascontiguousarray(np.stack(eI_list, axis=0), dtype=np.float64)
+        eR = np.ascontiguousarray(eR_list, dtype=np.int32)
     else:
         ea = eb = eR = np.zeros(1, dtype=np.int32)
         eZ = np.zeros((1, 4, 4), dtype=np.float64)
         eI = np.zeros((1, 6, 6), dtype=np.float64)
 
     n_grav = len(gravity_priors)
+    if n_grav > _MAX_CPP_COUNT:
+        raise ValueError(f"gravity_priors exceeds maximum count {_MAX_CPP_COUNT}: {n_grav}")
     if n_grav > 0:
-        gn = np.ascontiguousarray([g[0] for g in gravity_priors], dtype=np.int32)
-        gb = np.ascontiguousarray(np.stack([g[1] for g in gravity_priors], axis=0), dtype=np.float64)
-        gw = np.ascontiguousarray([g[2] for g in gravity_priors], dtype=np.float64)
-        gr = np.ascontiguousarray([1 if g[3] else 0 for g in gravity_priors], dtype=np.int32)
+        gn_list, gb_list, gw_list, gr_list = [], [], [], []
+        for idx, (ni, g_body, weight, robust) in enumerate(gravity_priors):
+            gn_list.append(_validate_node_index(ni, n_nodes, f"gravity_priors[{idx}].node"))
+            gb_list.append(_validate_matrix_array(g_body, (3,), f"gravity_priors[{idx}].g_body"))
+            w = float(weight)
+            if not math.isfinite(w) or w < 0.0:
+                raise ValueError(f"gravity_priors[{idx}].weight must be finite and >= 0, got {weight!r}")
+            gw_list.append(w)
+            gr_list.append(1 if robust else 0)
+        gn = np.ascontiguousarray(gn_list, dtype=np.int32)
+        gb = np.ascontiguousarray(np.stack(gb_list, axis=0), dtype=np.float64)
+        gw = np.ascontiguousarray(gw_list, dtype=np.float64)
+        gr = np.ascontiguousarray(gr_list, dtype=np.int32)
     else:
         gn = gr = np.zeros(1, dtype=np.int32)
         gb = np.zeros((1, 3), dtype=np.float64)
         gw = np.zeros(1, dtype=np.float64)
 
     n_zp = len(z_priors)
+    if n_zp > _MAX_CPP_COUNT:
+        raise ValueError(f"z_priors exceeds maximum count {_MAX_CPP_COUNT}: {n_zp}")
     if n_zp > 0:
-        zn = np.ascontiguousarray([z[0] for z in z_priors], dtype=np.int32)
-        zt = np.ascontiguousarray([z[1] for z in z_priors], dtype=np.float64)
-        zw = np.ascontiguousarray([z[2] for z in z_priors], dtype=np.float64)
-        zr = np.ascontiguousarray([1 if z[3] else 0 for z in z_priors], dtype=np.int32)
+        zn_list, zt_list, zw_list, zr_list = [], [], [], []
+        for idx, (ni, target_z, weight, robust) in enumerate(z_priors):
+            zn_list.append(_validate_node_index(ni, n_nodes, f"z_priors[{idx}].node"))
+            tz = float(target_z)
+            w = float(weight)
+            if not math.isfinite(tz):
+                raise ValueError(f"z_priors[{idx}].target_z must be finite, got {target_z!r}")
+            if not math.isfinite(w) or w < 0.0:
+                raise ValueError(f"z_priors[{idx}].weight must be finite and >= 0, got {weight!r}")
+            zt_list.append(tz)
+            zw_list.append(w)
+            zr_list.append(1 if robust else 0)
+        zn = np.ascontiguousarray(zn_list, dtype=np.int32)
+        zt = np.ascontiguousarray(zt_list, dtype=np.float64)
+        zw = np.ascontiguousarray(zw_list, dtype=np.float64)
+        zr = np.ascontiguousarray(zr_list, dtype=np.int32)
     else:
         zn = zr = np.zeros(1, dtype=np.int32)
         zt = zw = np.zeros(1, dtype=np.float64)
+
+    lib = get_accel_lib()
+    if lib is None:
+        return None
+    if n_nodes == 0:
+        return [], {"converged": True, "iterations": 0, "error_before": 0.0, "error_after": 0.0}
+    poses_arr = np.ascontiguousarray(np.stack(validated_poses, axis=0), dtype=np.float64)
 
     out_conv = ctypes.c_int(0)
     out_iter = ctypes.c_int(0)
@@ -243,7 +359,7 @@ def cpp_optimize_pose_graph(
         gw.ctypes.data_as(_DOUBLE_PTR), gr.ctypes.data_as(_INT_PTR), n_grav,
         zn.ctypes.data_as(_INT_PTR), zt.ctypes.data_as(_DOUBLE_PTR),
         zw.ctypes.data_as(_DOUBLE_PTR), zr.ctypes.data_as(_INT_PTR), n_zp,
-        float(cauchy_scale), int(iterations),
+        c_scale, int(iterations),
         ctypes.byref(out_conv), ctypes.byref(out_iter),
         ctypes.byref(out_before), ctypes.byref(out_after),
     )

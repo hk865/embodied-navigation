@@ -222,6 +222,92 @@ class SoftSurfaceGateTests(unittest.TestCase):
                     self.assertGreater(stats["measured_query_submaps"], 0)
                     self.assertGreater(stats["measured_target_submaps"], 0)
 
+    def test_query_and_target_submaps_have_disjoint_source_keys(self) -> None:
+        """Even with exclude_recent=1 and min_loop_gap_s=0.0, query and target submaps never share a key."""
+        room = _room_cloud()
+        cfg = BackendConfig(
+            use_measured_submaps=True,
+            measured_submap=SubmapConfig(
+                submap_window=2,
+                anchor_mode="candidate",
+                max_frames=5,
+                max_translation_m=5.0,
+                max_gap_s=10.0,
+            ),
+            min_loop_travel_m=0.0,
+            min_loop_spacing_m=0.0,
+            min_loop_gap_s=0.0,
+            exclude_recent=1,
+            min_fitness=0.5,
+            max_rmse_m=0.15,
+        )
+        backend = SlamBackend(cfg)
+        poses = [
+            _yaw_pose(x=0.0),
+            _yaw_pose(x=0.4),
+            _yaw_pose(x=0.8),
+            _yaw_pose(x=0.05),
+        ]
+        for idx, T in enumerate(poses):
+            ev = backend.ingest(
+                Keyframe((1, idx), idx * 1_000_000_000, T, np.eye(4), transform_points(np.linalg.inv(T), room))
+            )
+            self.assertNotIn("error", ev)
+        self.assertTrue(backend._last_loop_query_keys)
+        self.assertTrue(backend._last_loop_target_keys)
+        self.assertTrue(
+            set(backend._last_loop_query_keys).isdisjoint(backend._last_loop_target_keys),
+            f"overlap: query={backend._last_loop_query_keys}, target={backend._last_loop_target_keys}",
+        )
+
+    def test_evaluation_separates_surface_and_degenerate_rejections_from_odom(self) -> None:
+        from scipy.spatial.transform import Rotation
+
+        from embodied_navigation.localization_mapping.backend.evaluation import (
+            ReplayRecord,
+            TruthTrajectory,
+            evaluate_replay,
+        )
+
+        n = 6
+        stamps = np.arange(n, dtype=np.float64)
+        poses = np.repeat(np.eye(4)[None, :, :], n, axis=0)
+        poses[:, 0, 3] = stamps
+        record = ReplayRecord(
+            stamps_s=stamps,
+            keys=[(0, i) for i in range(n)],
+            frontend_poses=poses,
+            online_adopted_poses=poses,
+            online_graph_poses=poses,
+            final_poses=poses,
+            snapshot_kf_indices=np.array([n - 1], dtype=np.int64),
+            snapshot_is_loop=np.array([False], dtype=bool),
+            snapshot_pos=poses[:, :3, 3][None, :, :].astype(np.float32),
+            snapshot_quat_xyzw=np.zeros((1, n, 4), dtype=np.float32),
+            step_wall_s=np.full(n, 0.025),
+            loop_events=[
+                {"kf_idx": 1, "loop": False, "loop_rejected": "odom", "loop_rejected_kind": "odom"},
+                {"kf_idx": 2, "loop": False, "loop_rejected": "surface", "loop_rejected_kind": "surface"},
+                {"kf_idx": 3, "loop": False, "loop_rejected": "degen", "loop_rejected_kind": "degenerate"},
+                {"kf_idx": 4, "loop": False, "loop_rejected": "tilt", "loop_rejected_kind": "tilt"},
+            ],
+            errors=0,
+            missing_graph_nodes=0,
+            total_wall_s=0.1,
+        )
+        record.snapshot_quat_xyzw[:, :, 3] = 1.0
+        truth = TruthTrajectory(
+            stamps_s=stamps,
+            positions=poses[:, :3, 3],
+            rotations=Rotation.from_matrix(poses[:, :3, :3]),
+        )
+        summary, _ = evaluate_replay(record, truth, init_window_s=2.0)
+        rt = summary["runtime"]
+        self.assertEqual(rt["loops_rejected_odom"], 1)
+        self.assertEqual(rt["loops_rejected_tilt"], 1)
+        self.assertEqual(rt["loops_rejected_surface"], 1)
+        self.assertEqual(rt["loops_rejected_degenerate"], 1)
+
 
 class DegeneracyZuptAndPresetsTests(unittest.TestCase):
     def test_degenerate_corridor_hessian_rejected_when_enabled(self) -> None:

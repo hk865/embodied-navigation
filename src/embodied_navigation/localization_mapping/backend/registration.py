@@ -95,7 +95,7 @@ def icp_point_to_plane(
     T_c[:3, 3] -= center
     tree = cKDTree(target_c)
     normals = _normals(target_c, tree)
-    last_geom_h = np.zeros((6, 6), dtype=np.float64)
+    last_body_h = np.zeros((6, 6), dtype=np.float64)
     for _ in range(iterations):
         moved = transform_points(T_c, source)
         points, residual, plane = _correspondences(moved, target_c, normals, tree, max_correspondence_m)
@@ -107,11 +107,14 @@ def icp_point_to_plane(
                 0.0,
                 float("inf"),
                 False,
-                hessian=(last_geom_h.copy() if return_hessian else None),
+                hessian=(last_body_h.copy() if return_hessian else None),
             )
         jacobian = np.hstack([plane, np.cross(points, plane)])
         geom_h = jacobian.T @ jacobian
-        last_geom_h = geom_h
+        if return_hessian:
+            p_shifted = points - T_c[:3, 3]
+            jac_body = np.hstack([plane, np.cross(p_shifted, plane)])
+            last_body_h = jac_body.T @ jac_body
         hessian = geom_h
         rhs = jacobian.T @ residual
         if up_body is not None and gravity_sigma_rad is not None:
@@ -135,7 +138,7 @@ def icp_point_to_plane(
                 0.0,
                 float("inf"),
                 False,
-                hessian=(last_geom_h.copy() if return_hessian else None),
+                hessian=(last_body_h.copy() if return_hessian else None),
             )
         step = np.linalg.solve(hessian, -rhs)
         T_c = se3_exp(step) @ T_c
@@ -149,7 +152,7 @@ def icp_point_to_plane(
                 max_correspondence_m,
                 True,
                 return_hessian=return_hessian,
-                fallback_hessian=last_geom_h,
+                fallback_hessian=last_body_h,
             )
             T_out = res.T_target_source.copy()
             T_out[:3, 3] += center
@@ -163,7 +166,7 @@ def icp_point_to_plane(
         max_correspondence_m,
         False,
         return_hessian=return_hessian,
-        fallback_hessian=last_geom_h,
+        fallback_hessian=last_body_h,
     )
     T_out = res.T_target_source.copy()
     T_out[:3, 3] += center
@@ -207,7 +210,8 @@ def _score(
     hess = None
     if return_hessian:
         if len(points) > 0:
-            jacobian = np.hstack([plane, np.cross(points, plane)])
+            p_shifted = points - T[:3, 3]
+            jacobian = np.hstack([plane, np.cross(p_shifted, plane)])
             hess = jacobian.T @ jacobian
         elif fallback_hessian is not None:
             hess = fallback_hessian.copy()

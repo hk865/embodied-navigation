@@ -69,7 +69,7 @@ def _camera_calibration() -> tuple[np.ndarray, np.ndarray]:
     return K, T_bc
 
 
-class SlamV3CombinedTests(unittest.TestCase):
+class SlamCombinedBackendTests(unittest.TestCase):
     def test_combined_presets_load_strictly_and_expose_expected_fields(self) -> None:
         lidar_cfg = BackendConfig.from_json(
             REPO_ROOT / "configs" / "localization_mapping" / "slam_v3_combined_lidar.json"

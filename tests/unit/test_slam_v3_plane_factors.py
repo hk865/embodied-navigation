@@ -74,9 +74,9 @@ class WideFloorPlaneTests(unittest.TestCase):
         m_b = detect_floor_plane((pts_world - np.array([0.0, 0.0, 0.01])) @ R_b, R_b)  # body rose 1 cm
         self.assertIsNotNone(m_a)
         self.assertIsNotNone(m_b)
-        # Odometry has +6 cm fake vertical drift along world Z
+        # Odometry has +3 cm fake vertical drift along world Z (within 0.04 m overlap gate)
         T_a = np.eye(4); T_a[:3, :3] = R_a
-        T_b_drifted = np.eye(4); T_b_drifted[:3, :3] = R_b; T_b_drifted[:3, 3] = [1.0, 0.0, 0.07]
+        T_b_drifted = np.eye(4); T_b_drifted[:3, :3] = R_b; T_b_drifted[:3, 3] = [1.0, 0.0, 0.04]
         delta_drifted = np.linalg.inv(T_a) @ T_b_drifted
         delta_clean, applied = project_coplanar_odom_delta(delta_drifted, m_a, m_b)
         self.assertTrue(applied)
@@ -87,8 +87,34 @@ class WideFloorPlaneTests(unittest.TestCase):
         _, applied_stair = project_coplanar_odom_delta(np.linalg.inv(T_a) @ T_b_stair, m_a, m_b)
         self.assertFalse(applied_stair)
 
+    def test_detect_floor_plane_rejects_45deg_rotated_narrow_stair_tread(self):
+        rng = np.random.default_rng(15)
+        # 5.0 m x 0.2 m narrow tread (world X/Y span ~3.68 m at 45 deg, but PCA short span is 0.2 m)
+        u = rng.uniform(1.2, 6.2, 400)
+        v = rng.uniform(-0.10, 0.10, 400)
+        theta = math.radians(45.0)
+        c, s = math.cos(theta), math.sin(theta)
+        pts = np.column_stack([c * u - s * v, s * u + c * v, np.full(400, -0.34)])
+        self.assertIsNone(detect_floor_plane(pts, np.eye(3)))
 
-class SlamBackendV3PlaneAndXicpTests(unittest.TestCase):
+    def test_project_coplanar_odom_delta_rejects_8cm_parallel_step_between_platforms(self):
+        pts_a = _world_floor_cloud(20, floor_z=-0.34)
+        pts_b = _world_floor_cloud(21, floor_z=-0.34)
+        m_a = detect_floor_plane(pts_a, np.eye(3))
+        m_b = detect_floor_plane(pts_b, np.eye(3))
+        self.assertIsNotNone(m_a)
+        self.assertIsNotNone(m_b)
+        self.assertGreater(len(m_b.inlier_sample_body), 0)
+        self.assertLessEqual(len(m_b.inlier_sample_body), 48)
+        # Robot stepped onto an 8 cm higher flat platform (body rose 8 cm -> height_below_body_m identical)
+        delta_step = np.eye(4, dtype=np.float64)
+        delta_step[:3, 3] = [1.0, 0.0, 0.08]
+        out, applied = project_coplanar_odom_delta(delta_step, m_a, m_b, max_step_dz_m=0.12)
+        self.assertFalse(applied)
+        np.testing.assert_allclose(out, delta_step, atol=1e-12)
+
+
+class SlamBackendPlaneAndXicpTests(unittest.TestCase):
     def test_coplanar_leveling_eliminates_open_loop_z_drift_and_startup_pitch(self):
         cfg = BackendConfig(
             floor_plane_enabled=True,
@@ -149,6 +175,28 @@ class SlamBackendV3PlaneAndXicpTests(unittest.TestCase):
             BackendConfig.from_dict({"unknown_v3_key": True})
         with self.assertRaises(ValueError):
             BackendConfig.from_dict({"floor_normal_graph_sigma_rad": -0.01})
+
+    def test_zupt_measured_exit_skips_coplanar_leveling(self):
+        cfg = BackendConfig(
+            zupt_enabled=True,
+            zupt_full_stop_rot_rad=0.0,
+            floor_plane_enabled=True,
+        )
+        backend = SlamBackend(cfg)
+        pts_world = _world_floor_cloud(31, floor_z=-0.34)
+        T0 = np.eye(4)
+        T1 = np.eye(4)
+        # Frame 0 -> Frame 1: stationary ZUPT pivot/stop
+        backend.ingest(Keyframe((0, 0), 0, T0, np.eye(4), pts_world))
+        ev1 = backend.ingest(Keyframe((0, 1), 1_000_000_000, T1, np.eye(4), pts_world))
+        self.assertEqual(ev1.get("zupt"), "pivot")
+        # Frame 2: genuine exit (0.30 m step forward) -> parent_key is anchor (0, 0) != previous (0, 1)
+        T2 = np.eye(4)
+        T2[:3, 3] = [0.30, 0.0, 0.0]
+        pts2 = transform_points(np.linalg.inv(T2), pts_world)
+        ev2 = backend.ingest(Keyframe((0, 2), 2_000_000_000, T2, np.eye(4), pts2))
+        self.assertNotIn("zupt", ev2)
+        self.assertEqual(backend.observability_stats()["floor_coplanar_edges"], 0)
 
 
 if __name__ == "__main__":

@@ -34,8 +34,16 @@ class VisualObservation:
 
     def __post_init__(self) -> None:
         # 外部 ROS 消息或磁盘文件传入的数组必须先校验合法性，防止非法内参/外参污染后续投影。
-        if self.gray.ndim != 2 or not np.isfinite(self.gray).all():
+        gray = np.asarray(self.gray)
+        if gray.ndim != 2 or not np.isfinite(gray).all():
             raise ValueError("视觉图像必须为有限值的二维已矫正灰度图")
+        # 统一在观测入口将 [0, 1] 浮点灰度归一化到 [0, 255]，保证 Color-SC、patch7x7、对比度门与 AKAZE/ORB 量纲一致。
+        if np.issubdtype(gray.dtype, np.floating) and gray.size > 0:
+            g_min = float(gray.min())
+            g_max = float(gray.max())
+            if g_min >= 0.0 and g_max <= 1.0 + 1e-6:
+                gray = gray.astype(np.float64) * 255.0
+        object.__setattr__(self, "gray", gray)
         if self.rgb is not None:
             if (
                 self.rgb.ndim != 3
@@ -186,12 +194,7 @@ def extract_visual_features(
         return _extract_patch7x7(keyframe, limit=min(max_features, 400), points_body=points_body)
 
     observation = keyframe.visual
-    gray_src = (
-        observation.gray * 255.0
-        if observation.gray.size > 0 and float(observation.gray.max()) <= 1.0 + 1e-6
-        else observation.gray
-    )
-    gray_u8 = np.clip(np.rint(gray_src), 0, 255).astype(np.uint8)
+    gray_u8 = np.clip(np.rint(observation.gray), 0, 255).astype(np.uint8)
     detector = _create_cv_detector(feature_type, max_features)
     keypoints, desc = detector.detectAndCompute(gray_u8, None)
     is_binary = feature_type in _BINARY_FEATURES

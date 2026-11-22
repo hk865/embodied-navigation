@@ -89,7 +89,7 @@ def _asymmetric_room_points(seed: int = 11) -> np.ndarray:
     return np.vstack([front_wall, back_wall, left_wall, right_wall, floor, pillar])
 
 
-class V3HybridColorVisualTests(unittest.TestCase):
+class HybridColorVisualBackendTests(unittest.TestCase):
     def test_color_scan_context_distinguishes_rgb_and_handles_non_overlapping_fov(self) -> None:
         """ColorScanContext 应区分几何完全一致但 RGB 不同的场景，且视野不重叠时返回 None。"""
         K, T_bc = _camera_extrinsics()
@@ -478,13 +478,71 @@ class V3HybridColorVisualTests(unittest.TestCase):
             {"visual_multiview_radius": -1},
             {"visual_seq_consistency": 0},
             {"hybrid_heading_gate_deg": 0.0},
+            {"hybrid_heading_gate_deg": 65.0},
             {"hybrid_heading_gate_deg": 181.0},
+            {"reverse_icp_fitness_min": 0.6},
             {"reverse_icp_fitness_min": 1.2},
+            {"reverse_icp_rmse_max": 0.1},
             {"reverse_icp_rmse_max": 0.0},
+            {"use_visual_retrieval": True, "hybrid_heading_gate_deg": 0.0},
+            {"use_visual_retrieval": True, "hybrid_heading_gate_deg": 181.0},
+            {"use_visual_retrieval": True, "reverse_icp_fitness_min": 1.2},
+            {"use_visual_retrieval": True, "reverse_icp_rmse_max": 0.0},
             {"fine_icp_voxel_m": -0.05},
         ):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 BackendConfig.from_dict(bad)
+
+        with self.assertRaises(ValueError):
+            VisualRetrievalConfig(verify_min_inliers=2)
+        with self.assertRaises(ValueError):
+            VisualRetrievalConfig(verify_min_inliers=10, max_features=8)
+
+    def test_grayscale_01_normalization_and_color_sc_stale_stamp_and_badzip(self) -> None:
+        K, T_bc = _camera_extrinsics()
+        pts = _asymmetric_room_points(seed=17)
+        gray_255 = _textured_image(seed=19)
+        gray_01 = gray_255 / 255.0
+        obs_255 = VisualObservation(gray=gray_255, K=K, T_body_camera=T_bc, stamp_ns=1_000_000_000)
+        obs_01 = VisualObservation(gray=gray_01, K=K, T_body_camera=T_bc, stamp_ns=1_000_000_000)
+        np.testing.assert_allclose(obs_01.gray, obs_255.gray, atol=1e-9)
+
+        sc_cfg = ScanContextConfig(rings=20, sectors=60, max_range_m=20.0)
+        cidx = ColorScanContextIndex(sc_cfg, max_time_delta_s=0.05)
+        kf_fresh = Keyframe((0, 0), 1_000_000_000, np.eye(4), np.eye(4), pts, obs_01)
+        kf_stale = Keyframe(
+            (0, 1),
+            1_000_000_000,
+            np.eye(4),
+            np.eye(4),
+            pts,
+            VisualObservation(gray=gray_01, K=K, T_body_camera=T_bc, stamp_ns=1_200_000_000),
+        )
+        self.assertIsNotNone(cidx.compute(kf_fresh))
+        self.assertIsNone(cidx.compute(kf_stale))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kf_dir = Path(tmp) / "kf_0_0"
+            kf_dir.mkdir()
+            (kf_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "livo_keyframe/v1",
+                        "epoch": 0,
+                        "sequence": 0,
+                        "stamp_ns": 100,
+                        "T_odom_body": np.eye(4).tolist(),
+                        "T_body_lidar": np.eye(4).tolist(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (kf_dir / "points_lidar.pcd").write_text("VERSION .7\nFIELDS x y z\nDATA ascii\n1 0 0\n", encoding="utf-8")
+            # Truncated ZIP header triggers zipfile.BadZipFile inside np.load
+            (kf_dir / "visual.npz").write_bytes(b"PK\x03\x04truncated_corrupt_zip")
+            with self.assertRaises(ValueError) as ctx:
+                read_keyframe(kf_dir, load_visual=True)
+            self.assertIn(str(kf_dir), str(ctx.exception))
 
 
 if __name__ == "__main__":

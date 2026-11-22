@@ -350,20 +350,32 @@ struct VoxelAccum {
     int count = 0;
 };
 
-std::vector<Vec3> voxel_downsample_vec(const double* pts, int n, double voxel_m) {
-    if (n <= 0 || voxel_m <= 0.0) return {};
-    const double inv = 1.0 / voxel_m;
+inline bool safe_voxel_coord(double x, double voxel_m, int64_t& out) {
+    if (!std::isfinite(x)) return false;
+    const double q = std::floor(x / voxel_m);
+    if (!std::isfinite(q) || std::abs(q) >= 1e15) return false;
+    out = static_cast<int64_t>(q);
+    return true;
+}
+
+bool voxel_downsample_vec(const double* pts, int n, double voxel_m, std::vector<Vec3>& out) {
+    out.clear();
+    if (n < 0 || !std::isfinite(voxel_m) || voxel_m <= 0.0) return false;
+    if (n == 0) return true;
+    if (pts == nullptr) return false;
     std::unordered_map<VoxelKey, VoxelAccum, VoxelKeyHash> grid;
     grid.reserve(static_cast<size_t>(n / 2 + 16));
     for (int i = 0; i < n; ++i) {
         const double x = pts[3 * i + 0];
         const double y = pts[3 * i + 1];
         const double z = pts[3 * i + 2];
-        const VoxelKey key{
-            static_cast<int64_t>(std::floor(x * inv)),
-            static_cast<int64_t>(std::floor(y * inv)),
-            static_cast<int64_t>(std::floor(z * inv)),
-        };
+        int64_t kx = 0, ky = 0, kz = 0;
+        if (!safe_voxel_coord(x, voxel_m, kx) ||
+            !safe_voxel_coord(y, voxel_m, ky) ||
+            !safe_voxel_coord(z, voxel_m, kz)) {
+            return false;
+        }
+        const VoxelKey key{kx, ky, kz};
         auto& acc = grid[key];
         acc.sx += x;
         acc.sy += y;
@@ -376,13 +388,12 @@ std::vector<Vec3> voxel_downsample_vec(const double* pts, int n, double voxel_m)
     for (const auto& kv : grid) items.push_back(kv);
     std::sort(items.begin(), items.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
-    std::vector<Vec3> out;
     out.reserve(items.size());
     for (const auto& kv : items) {
         const double inv_c = 1.0 / static_cast<double>(kv.second.count);
         out.emplace_back(kv.second.sx * inv_c, kv.second.sy * inv_c, kv.second.sz * inv_c);
     }
-    return out;
+    return true;
 }
 
 void compute_normals(const std::vector<Vec3>& pts, const FlatKDTree3D& tree, std::vector<Vec3>& normals) {
@@ -414,14 +425,20 @@ extern "C" {
 // 1. Voxel downsample: returns number of output points written to out_pts
 // ---------------------------------------------------------------------------
 int cpp_voxel_downsample(const double* pts, int n, double voxel_m, double* out_pts) {
-    auto res = voxel_downsample_vec(pts, n, voxel_m);
-    const int m = static_cast<int>(res.size());
-    for (int i = 0; i < m; ++i) {
-        out_pts[3 * i + 0] = res[i].x();
-        out_pts[3 * i + 1] = res[i].y();
-        out_pts[3 * i + 2] = res[i].z();
+    try {
+        std::vector<Vec3> res;
+        if (!voxel_downsample_vec(pts, n, voxel_m, res)) return -1;
+        const int m = static_cast<int>(res.size());
+        if (m > 0 && out_pts == nullptr) return -1;
+        for (int i = 0; i < m; ++i) {
+            out_pts[3 * i + 0] = res[i].x();
+            out_pts[3 * i + 1] = res[i].y();
+            out_pts[3 * i + 2] = res[i].z();
+        }
+        return m;
+    } catch (...) {
+        return -1;
     }
-    return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +461,7 @@ void cpp_icp_point_to_plane(
     int* converged_out,
     double* hessian_out  // optional 36 doubles (nullable)
 ) {
+    if (!T_init_ptr || !T_out_ptr || !fitness_out || !rmse_out || !converged_out) return;
     Mat4 T_init = load_mat4_rm(T_init_ptr);
     store_mat4_rm(T_init, T_out_ptr);
     *fitness_out = 0.0;
@@ -453,18 +471,36 @@ void cpp_icp_point_to_plane(
         Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> hout(hessian_out);
         hout.setZero();
     }
-
-    std::vector<Vec3> source = (voxel_m > 0.0) ? voxel_downsample_vec(src_ptr, n_src, voxel_m)
-                                               : std::vector<Vec3>();
-    if (voxel_m <= 0.0) {
-        source.reserve(n_src);
-        for (int i = 0; i < n_src; ++i) source.emplace_back(src_ptr[3 * i], src_ptr[3 * i + 1], src_ptr[3 * i + 2]);
+    if (n_src < 0 || n_tgt < 0 || iterations < 0 ||
+        !std::isfinite(max_correspondence_m) || max_correspondence_m <= 0.0 ||
+        !std::isfinite(voxel_m) || voxel_m < 0.0 ||
+        !T_init.allFinite()) {
+        return;
     }
-    std::vector<Vec3> target = (voxel_m > 0.0) ? voxel_downsample_vec(tgt_ptr, n_tgt, voxel_m)
-                                               : std::vector<Vec3>();
-    if (voxel_m <= 0.0) {
+
+    std::vector<Vec3> source;
+    if (voxel_m > 0.0) {
+        if (!voxel_downsample_vec(src_ptr, n_src, voxel_m, source)) return;
+    } else if (n_src > 0) {
+        if (!src_ptr) return;
+        source.reserve(n_src);
+        for (int i = 0; i < n_src; ++i) {
+            const Vec3 p(src_ptr[3 * i], src_ptr[3 * i + 1], src_ptr[3 * i + 2]);
+            if (!p.allFinite()) return;
+            source.push_back(p);
+        }
+    }
+    std::vector<Vec3> target;
+    if (voxel_m > 0.0) {
+        if (!voxel_downsample_vec(tgt_ptr, n_tgt, voxel_m, target)) return;
+    } else if (n_tgt > 0) {
+        if (!tgt_ptr) return;
         target.reserve(n_tgt);
-        for (int i = 0; i < n_tgt; ++i) target.emplace_back(tgt_ptr[3 * i], tgt_ptr[3 * i + 1], tgt_ptr[3 * i + 2]);
+        for (int i = 0; i < n_tgt; ++i) {
+            const Vec3 p(tgt_ptr[3 * i], tgt_ptr[3 * i + 1], tgt_ptr[3 * i + 2]);
+            if (!p.allFinite()) return;
+            target.push_back(p);
+        }
     }
 
     if (static_cast<int>(source.size()) < kMinPoints || static_cast<int>(target.size()) < kMinPoints) {
@@ -473,8 +509,11 @@ void cpp_icp_point_to_plane(
 
     bool use_gravity = false;
     Vec3 up_body = Vec3::Zero();
-    if (has_gravity && source_up_body_ptr != nullptr && gravity_sigma_rad > 0.0) {
+    if (has_gravity && source_up_body_ptr != nullptr &&
+        std::isfinite(gravity_sigma_rad) && gravity_sigma_rad > 0.0 &&
+        std::isfinite(gravity_ref_point_sigma_m)) {
         Vec3 v(source_up_body_ptr[0], source_up_body_ptr[1], source_up_body_ptr[2]);
+        if (!v.allFinite()) return;
         const double nrm = v.norm();
         if (nrm > 1e-6) {
             up_body = v / nrm;
@@ -497,13 +536,14 @@ void cpp_icp_point_to_plane(
     compute_normals(target_c, tree, normals);
 
     const double max_d2 = max_correspondence_m * max_correspondence_m;
-    Mat6 last_geom_H = Mat6::Zero();
+    Mat6 last_body_H = Mat6::Zero();
     bool converged = false;
 
     for (int iter = 0; iter < iterations; ++iter) {
         const Mat3 R = T_c.block<3, 3>(0, 0);
         const Vec3 t = T_c.block<3, 1>(0, 3);
         Mat6 H = Mat6::Zero();
+        Mat6 body_H = Mat6::Zero();
         Vec6 rhs = Vec6::Zero();
         int inliers = 0;
         double sum_p2 = 0.0;
@@ -520,6 +560,12 @@ void cpp_icp_point_to_plane(
             J.tail<3>() = p.cross(n);
             H.noalias() += J * J.transpose();
             rhs.noalias() += J * res;
+            if (hessian_out) {
+                Vec6 J_body;
+                J_body.head<3>() = n;
+                J_body.tail<3>() = (p - t).cross(n);
+                body_H.noalias() += J_body * J_body.transpose();
+            }
             sum_p2 += p.squaredNorm();
             inliers += 1;
         }
@@ -528,10 +574,16 @@ void cpp_icp_point_to_plane(
             Mat4 T_out = T_c;
             T_out.block<3, 1>(0, 3) += center;
             store_mat4_rm(T_out, T_out_ptr);
+            if (hessian_out) {
+                Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> hout(hessian_out);
+                hout = last_body_H;
+            }
             return;
         }
 
-        last_geom_H = H;
+        if (hessian_out) {
+            last_body_H = body_H;
+        }
         if (use_gravity) {
             const Vec3 u = R * up_body;
             Eigen::Matrix<double, 3, 6> J_g = Eigen::Matrix<double, 3, 6>::Zero();
@@ -554,6 +606,10 @@ void cpp_icp_point_to_plane(
             Mat4 T_out = T_c;
             T_out.block<3, 1>(0, 3) += center;
             store_mat4_rm(T_out, T_out_ptr);
+            if (hessian_out) {
+                Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> hout(hessian_out);
+                hout = last_body_H;
+            }
             return;
         }
 
@@ -583,7 +639,7 @@ void cpp_icp_point_to_plane(
         if (hessian_out) {
             Vec6 J;
             J.head<3>() = n;
-            J.tail<3>() = p.cross(n);
+            J.tail<3>() = (p - t).cross(n);
             final_H.noalias() += J * J.transpose();
         }
     }
@@ -597,7 +653,7 @@ void cpp_icp_point_to_plane(
     *converged_out = converged ? 1 : 0;
     if (hessian_out) {
         Eigen::Map<Eigen::Matrix<double, 6, 6, Eigen::RowMajor>> hout(hessian_out);
-        hout = (inliers > 0) ? final_H : last_geom_H;
+        hout = (inliers > 0) ? final_H : last_body_H;
     }
 }
 
@@ -681,7 +737,8 @@ void cpp_optimize_pose_graph(
     Eigen::VectorXd grad(size);
     std::vector<Mat4> trial(n_nodes);
 
-    for (done = 1; done <= max_iterations; ++done) {
+    for (int iter = 1; iter <= max_iterations; ++iter) {
+        done = iter;
         triplets.clear();
         grad.setZero();
 
@@ -765,11 +822,12 @@ void cpp_optimize_pose_graph(
         Eigen::SparseMatrix<double> H(size, size);
         H.setFromTriplets(triplets.begin(), triplets.end());
 
-        // Apply LM diagonal damping: H_damped = H + damping * diag(H)
+        // Apply LM diagonal damping: H_damped = H + damping * diag(H), with floor when d == 0
         Eigen::SparseMatrix<double> H_damped = H;
         for (int i = 0; i < size; ++i) {
             const double d = H.coeff(i, i);
-            H_damped.coeffRef(i, i) += damping * d;
+            const double diag_scale = (d > 0.0) ? d : 1e-6;
+            H_damped.coeffRef(i, i) += damping * diag_scale;
         }
         H_damped.makeCompressed();
 

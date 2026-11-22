@@ -86,7 +86,9 @@ class BackendNode(Node):
         self.create_subscription(
             Odometry, args.odometry_topic, self.on_odometry, 50, callback_group=MutuallyExclusiveCallbackGroup()
         )
-        self.create_timer(args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup())
+        self._poll_timer = self.create_timer(
+            args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup()
+        )
         cfg = backend.config
         config_label = "defaults" if args.config is None else str(args.config)
         self.get_logger().info(
@@ -190,11 +192,18 @@ def main(argv=None) -> int:
         while not stop.is_set():
             executor.spin_once(timeout_sec=0.1)
     finally:
-        # Drain any final ready keyframes flushed by the frontend before saving.
+        timer = getattr(node, "_poll_timer", None)
+        if timer is not None:
+            if hasattr(timer, "cancel"):
+                timer.cancel()
+            if hasattr(node, "destroy_timer"):
+                node.destroy_timer(timer)
+        executor.shutdown()
+        # Drain any final ready keyframes flushed by the frontend only after
+        # the executor has stopped so no poll callback can race on the spool.
         if node.spool.is_dir():
             for directory in ready_directories(node.spool):
                 node.ingest(directory)
-        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
         if args.save_map is not None:

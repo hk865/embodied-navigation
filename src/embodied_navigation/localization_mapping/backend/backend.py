@@ -116,7 +116,7 @@ class BackendConfig:
     # Wide-span coplanar floor leveling, LiDAR floor-normal gravity, fine-voxel ICP, and saturated X-ICP.
     floor_plane_enabled: bool = False
     floor_plane_max_tilt_deg: float = 14.0
-    floor_plane_max_step_dz_m: float = 0.12
+    floor_plane_max_step_dz_m: float = 0.06
     floor_normal_gravity_enabled: bool = False
     floor_normal_graph_sigma_rad: float | None = None
     fine_icp_voxel_m: float | None = None
@@ -161,6 +161,11 @@ class BackendConfig:
             )
         if self.use_surface_verification and not self.gravity_aligned:
             raise ValueError("use_surface_verification requires gravity_aligned=True")
+        if not self.use_visual_retrieval:
+            if self.hybrid_heading_gate_deg is not None:
+                raise ValueError("hybrid_heading_gate_deg requires use_visual_retrieval=True")
+            if self.reverse_icp_fitness_min is not None or self.reverse_icp_rmse_max is not None:
+                raise ValueError("reverse_icp_fitness_min/reverse_icp_rmse_max require use_visual_retrieval=True")
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -285,6 +290,13 @@ class BackendConfig:
                 raise ValueError(
                     f"reverse_icp_fitness_min must lie in (0, 1], got {self.reverse_icp_fitness_min!r}"
                 )
+        if not isinstance(getattr(self, "use_visual_retrieval", False), bool):
+            raise ValueError(f"use_visual_retrieval must be a bool, got {self.use_visual_retrieval!r}")
+        if not self.use_visual_retrieval:
+            if self.hybrid_heading_gate_deg is not None:
+                raise ValueError("hybrid_heading_gate_deg requires use_visual_retrieval=True")
+            if self.reverse_icp_fitness_min is not None or self.reverse_icp_rmse_max is not None:
+                raise ValueError("reverse_icp_fitness_min/reverse_icp_rmse_max require use_visual_retrieval=True")
         if self.min_translation_observability is not None:
             obs = _positive("min_translation_observability", self.min_translation_observability)
             if obs > 1.0:
@@ -467,6 +479,7 @@ class SlamBackend:
                 min_color_bins=config.color_sc_min_bins,
                 color_weight=config.color_sc_weight,
                 max_color_distance=config.color_sc_max_distance,
+                max_time_delta_s=config.visual_retrieval.max_time_delta_s,
             )
             if config.color_sc_enabled
             else None
@@ -488,6 +501,9 @@ class SlamBackend:
         self._last_match_visual_only = False
         self._current_visual_pair = None
         self._current_color_desc = None
+        self._last_loop_query_keys: tuple = ()
+        self._last_loop_target_keys: tuple = ()
+        self._candidate_target_keys: dict = {}
         self.measured_query_submaps = 0
         self.measured_target_submaps = 0
         self.measured_query_frames_total = 0
@@ -891,7 +907,7 @@ class SlamBackend:
                             self._zupt_recovery_anchor = None
                         else:
                             self._zupt_recovery_anchor = recovery_anchor
-                if c.floor_plane_enabled and floor_meas is not None:
+                if c.floor_plane_enabled and floor_meas is not None and parent_key == previous.key:
                     parent_floor = self._floor_measurements.get(parent_key)
                     if parent_floor is not None:
                         delta_use, leveled = project_coplanar_odom_delta(
@@ -995,12 +1011,13 @@ class SlamBackend:
             or keyframe.stamp_ns - old.stamp_ns < gap_ns
             or (c.min_loop_travel_m > 0.0 and (curr_path - self._path_m.get(key, curr_path)) < c.min_loop_travel_m)
         }
+        self._candidate_target_keys = {}
         match, rejected, rejected_kind = self._search_with_rejection(
             self.map,
             keyframe,
             desc,
             lambda key: key in excluded,
-            lambda key: self._loop_submap(key, excluded),
+            lambda key, exclude_keys=None: self._loop_submap(key, excluded, exclude_keys=exclude_keys),
             apply_tilt_gate=True,
             apply_degeneracy_gate=True,
             apply_odom_gate=True,
@@ -1010,12 +1027,14 @@ class SlamBackend:
         if match is None:
             return None, rejected, rejected_kind
         key, result = match
+        self._last_loop_target_keys = tuple(self._candidate_target_keys.get(key, ()))
         T_world_new = result.T_target_source
         if c.use_measured_submaps and c.measured_submap.anchor_mode == "candidate":
             anchor = key
         else:
+            anchor_ex = excluded | set(self._last_loop_query_keys)
             anchor = min(
-                self._loop_window(key, excluded),
+                self._loop_window(key, anchor_ex),
                 key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
             )
         loop = c.loop_information()
@@ -1042,8 +1061,9 @@ class SlamBackend:
         n = self.config.loop_submap_neighbors
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
-    def _loop_submap(self, key, excluded: set) -> np.ndarray:
+    def _loop_submap(self, key, excluded: set, *, exclude_keys: set | None = None) -> np.ndarray:
         """World cloud of the candidate's ``_loop_window`` or bounded measured submap."""
+        effective_excluded = excluded if not exclude_keys else (excluded | exclude_keys)
         if self.config.use_measured_submaps and self.config.measured_submap.use_history_submap:
             anchor = self.map.keyframes[key]
             measured = build_submap(
@@ -1051,12 +1071,15 @@ class SlamBackend:
                 anchor,
                 self.config.measured_submap,
                 excluded=excluded,
+                exclude_keys=exclude_keys,
                 track_sources=False,
             )
+            self._candidate_target_keys[key] = tuple(measured.source_keys)
             self.measured_target_submaps += 1
             self.measured_target_frames_total += len(measured.source_keys)
             return transform_points(self.map.poses[key], measured.points_body)
-        window = set(self._loop_window(key, excluded))
+        window = set(self._loop_window(key, effective_excluded))
+        self._candidate_target_keys[key] = tuple(k for k in self.map.keyframes if k in window)
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
 
@@ -1097,7 +1120,7 @@ class SlamBackend:
         result = self._register(keyframe.points_body(), target, T_init)
         return None if result is None else result.T_target_source
 
-    def _prior_submap(self, key) -> np.ndarray:
+    def _prior_submap(self, key, *, exclude_keys: set | None = None) -> np.ndarray:
         return self.prior.submap(self.prior.poses[key][:3, 3], self.config.submap_radius_m)
 
     def _count_failure(self, failed: bool) -> None:
@@ -1120,12 +1143,23 @@ class SlamBackend:
         norm = float(np.linalg.norm(vec))
         return (vec / norm) if norm > 1e-6 else np.array([0.0, 0.0, 1.0], dtype=np.float64)
 
-    def _tilt_rejection_reason(self, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
+    def _tilt_rejection_reason(
+        self,
+        keyframe: Keyframe,
+        T_world_body: np.ndarray,
+        *,
+        up_body: np.ndarray | None = None,
+    ) -> str | None:
         limit = self.config.max_loop_tilt_rad
         if limit is None:
             return None
-        up_body = self._verified_up_body(keyframe)
-        u_world = T_world_body[:3, :3] @ up_body
+        if up_body is not None:
+            vec = np.asarray(up_body, dtype=np.float64).reshape(3)
+            norm = float(np.linalg.norm(vec))
+            resolved_up = (vec / norm) if norm > 1e-6 else self._verified_up_body(keyframe)
+        else:
+            resolved_up = self._verified_up_body(keyframe)
+        u_world = T_world_body[:3, :3] @ resolved_up
         tilt_rad = float(np.arctan2(np.hypot(u_world[0], u_world[1]), u_world[2]))
         if tilt_rad > limit:
             return f"gravity tilt {np.degrees(tilt_rad):.2f} deg exceeds {np.degrees(limit):.2f} deg"
@@ -1184,10 +1218,13 @@ class SlamBackend:
         """Best admissible ICP-verified candidate as ``((key, IcpResult) | None, reject_reason, reject_kind)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         source_body = None
+        query_source_keys: set = {keyframe.key}
+        self._last_loop_query_keys = (keyframe.key,)
+        self._last_loop_target_keys = ()
         target_cache: dict = {}
 
         def _get_source() -> np.ndarray:
-            nonlocal source_body
+            nonlocal source_body, query_source_keys
             if source_body is None:
                 if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
                     measured = build_submap(
@@ -1197,19 +1234,25 @@ class SlamBackend:
                         track_sources=False,
                     )
                     source_body = measured.points_body
+                    query_source_keys = set(measured.source_keys)
+                    self._last_loop_query_keys = tuple(measured.source_keys)
                     self.measured_query_submaps += 1
                     self.measured_query_frames_total += len(measured.source_keys)
                 else:
                     source_body = keyframe.points_body()
+                    query_source_keys = {keyframe.key}
+                    self._last_loop_query_keys = (keyframe.key,)
             return source_body
 
         def _get_target(key) -> np.ndarray:
+            _get_source()
             if key not in target_cache:
-                target_cache[key] = submap(key)
+                target_cache[key] = submap(key, exclude_keys=query_source_keys)
             return target_cache[key]
 
         best = None
         best_visual = False
+        best_from_sc = False
         best_hybrid_mode: str | None = None
         last_reject = None
         last_reject_kind = None
@@ -1225,7 +1268,9 @@ class SlamBackend:
             if result is None:
                 return None
             if apply_tilt_gate:
-                tilt_reject = self._tilt_rejection_reason(keyframe, result.T_target_source)
+                tilt_reject = self._tilt_rejection_reason(
+                    keyframe, result.T_target_source, up_body=up_body
+                )
                 if tilt_reject is not None:
                     self._stats["loops_rejected_tilt"] += 1
                     last_reject = tilt_reject
@@ -1272,12 +1317,15 @@ class SlamBackend:
             for key, dist, yaw in candidates[: self.config.icp_candidates]:
                 if dist > self.config.max_scan_context_distance:
                     break
+                src_cloud = _get_source()
+                if key in query_source_keys:
+                    continue
                 T_init = store.poses[key] @ yaw_pose(yaw)
                 target = _get_target(key)
                 result = _check_gates(
                     key,
                     self._register(
-                        _get_source(),
+                        src_cloud,
                         target,
                         T_init,
                         source_up_body=up_body,
@@ -1320,6 +1368,13 @@ class SlamBackend:
         mv_radius = self.config.visual_multiview_radius
         store_keys = list(store.keyframes) if mv_radius > 0 else []
         store_key_pos = {k: idx for idx, k in enumerate(store_keys)} if mv_radius > 0 else {}
+        hybrid_gate = self.config.hybrid_heading_gate_deg
+        hybrid_active = hybrid_gate is not None and self.config.use_visual_retrieval
+        reverse_sc_keys: set = set()
+
+        def _final_heading_deg(target_key, T_world_query: np.ndarray) -> float:
+            T_rel = invert(store.poses[target_key]) @ T_world_query
+            return abs(float(np.degrees(wrap_angle(np.arctan2(T_rel[1, 0], T_rel[0, 0])))))
 
         def _window_keys(cand_key) -> list:
             idx = store_key_pos.get(cand_key)
@@ -1333,6 +1388,8 @@ class SlamBackend:
                 for k in store_keys[lo:hi]
                 if (epoch is None or not isinstance(k, tuple) or k[0] == epoch)
                 and (exclude is None or not exclude(k))
+                and k not in query_source_keys
+                and (not hybrid_active or k not in reverse_sc_keys)
             ]
 
         def _build_multiview_target_body(cand_key) -> np.ndarray | None:
@@ -1352,9 +1409,17 @@ class SlamBackend:
             return np.vstack(chunks) if chunks else None
 
         def _try_visual_candidate(key) -> tuple[object, IcpResult | None]:
+            src_cloud = _get_source()
+            if key in query_source_keys:
+                return key, None
             target_key = key
             if mv_radius > 0 and self.visual_index is not None:
-                target_key = self.visual_index.select_best_window_view(query_vdesc, _window_keys(key), key)
+                wkeys = _window_keys(key)
+                if not wkeys:
+                    return key, None
+                target_key = self.visual_index.select_best_window_view(query_vdesc, wkeys, key)
+            if target_key in query_source_keys or (hybrid_active and target_key in reverse_sc_keys):
+                return target_key, None
             target_pts_body = _build_multiview_target_body(target_key) if mv_radius > 0 else None
             target_vfeat = (
                 None
@@ -1381,7 +1446,7 @@ class SlamBackend:
             T_init = store.poses[target_key] @ visual.T_target_source
             target = _get_target(target_key)
             result = self._register(
-                _get_source(),
+                src_cloud,
                 target,
                 T_init,
                 source_up_body=up_body,
@@ -1398,36 +1463,41 @@ class SlamBackend:
                 return target_key, None
             return target_key, _check_gates(target_key, result, target)
 
-        def _try_lidar_candidate(key, yaw: float, *, is_reverse_hybrid: bool = False) -> IcpResult | None:
+        def _try_lidar_candidate(
+            key, yaw: float, *, is_reverse_hybrid: bool = False
+        ) -> tuple[IcpResult | None, bool]:
+            src_cloud = _get_source()
+            if key in query_source_keys:
+                return None, False
             T_init = store.poses[key] @ yaw_pose(yaw)
             target = _get_target(key)
             result = self._register(
-                _get_source(),
+                src_cloud,
                 target,
                 T_init,
                 source_up_body=up_body,
                 return_hessian=return_hessian,
             )
             if result is None:
-                return None
-            if is_reverse_hybrid:
+                return None, False
+            final_deg = _final_heading_deg(key, result.T_target_source) if hybrid_active else 0.0
+            is_rev_final = bool(is_reverse_hybrid or (hybrid_active and final_deg >= hybrid_gate))
+            if is_rev_final:
                 if (
                     self.config.reverse_icp_fitness_min is not None
                     and result.fitness < self.config.reverse_icp_fitness_min
                 ):
-                    return None
+                    return None, True
                 if (
                     self.config.reverse_icp_rmse_max is not None
                     and result.rmse_m > self.config.reverse_icp_rmse_max
                 ):
-                    return None
-            return _check_gates(key, result, target)
+                    return None, True
+            checked = _check_gates(key, result, target)
+            return checked, bool(hybrid_active and final_deg >= hybrid_gate)
 
-        hybrid_gate = self.config.hybrid_heading_gate_deg
-        hybrid_active = hybrid_gate is not None and self.config.use_visual_retrieval
         sc_pool_keys: set = set()
         tried_visual_keys: set = set()
-        sc_had_match = False
         for key, _dist, yaw in sc_pool:
             sc_pool_keys.add(key)
             if hybrid_active:
@@ -1438,30 +1508,38 @@ class SlamBackend:
                     matched_key, result = _try_visual_candidate(key)
                     if result is None:
                         self.hybrid_same_heading_visual_rejected += 1
-                    elif best is None or result.rmse_m < best[1].rmse_m:
-                        best = (matched_key, result)
-                        best_visual = True
-                        best_hybrid_mode = "same_heading_visual"
+                    else:
+                        final_deg = _final_heading_deg(matched_key, result.T_target_source)
+                        if matched_key in reverse_sc_keys or final_deg >= hybrid_gate:
+                            self.hybrid_same_heading_visual_rejected += 1
+                        elif best is None or result.rmse_m < best[1].rmse_m:
+                            best = (matched_key, result)
+                            best_visual = True
+                            best_from_sc = True
+                            best_hybrid_mode = "same_heading_visual"
                 else:
                     is_rev = heading_deg >= hybrid_gate
-                    result = _try_lidar_candidate(key, yaw, is_reverse_hybrid=is_rev)
+                    if is_rev:
+                        reverse_sc_keys.add(key)
+                    result, is_rev_final = _try_lidar_candidate(key, yaw, is_reverse_hybrid=is_rev)
                     if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                         best = (key, result)
                         best_visual = False
-                        best_hybrid_mode = "reverse_lidar" if is_rev else None
-                        sc_had_match = True
+                        best_from_sc = True
+                        best_hybrid_mode = "reverse_lidar" if is_rev_final else None
             elif self.config.use_visual_verification:
                 tried_visual_keys.add(key)
                 matched_key, result = _try_visual_candidate(key)
                 if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                     best = (matched_key, result)
                     best_visual = True
+                    best_from_sc = True
             else:
-                result = _try_lidar_candidate(key, yaw)
+                result, _ = _try_lidar_candidate(key, yaw)
                 if result is not None and (best is None or result.rmse_m < best[1].rmse_m):
                     best = (key, result)
                     best_visual = False
-                    sc_had_match = True
+                    best_from_sc = True
 
         if self.visual_index is not None:
             same_epoch_only = self.prior is None and isinstance(keyframe.key, tuple)
@@ -1471,6 +1549,8 @@ class SlamBackend:
                     return True
                 if same_epoch_only and isinstance(key, tuple) and key[0] != keyframe.key[0]:
                     return True
+                if hybrid_active and key in reverse_sc_keys:
+                    return True
                 return False
 
             visual_candidates = self.visual_index.query(
@@ -1478,7 +1558,7 @@ class SlamBackend:
             )
             self.visual_candidates_proposed += len(visual_candidates)
             for key, _distance in visual_candidates:
-                if key in tried_visual_keys:
+                if key in tried_visual_keys or (hybrid_active and key in reverse_sc_keys):
                     continue
                 tried_visual_keys.add(key)
                 matched_key, result = _try_visual_candidate(key)
@@ -1490,14 +1570,24 @@ class SlamBackend:
                     ):
                         self.visual_fallback_count += 1
                     continue
-                if best is None or result.rmse_m < best[1].rmse_m:
+                if hybrid_active:
+                    final_deg = _final_heading_deg(matched_key, result.T_target_source)
+                    if matched_key in reverse_sc_keys or final_deg >= hybrid_gate:
+                        self.hybrid_same_heading_visual_rejected += 1
+                        continue
+                if (
+                    best is None
+                    or result.rmse_m < best[1].rmse_m
+                    or (not best_visual and result.rmse_m <= best[1].rmse_m + 1e-9)
+                ):
                     best = (matched_key, result)
                     best_visual = True
+                    best_from_sc = key in sc_pool_keys
                     if hybrid_active:
                         best_hybrid_mode = "same_heading_visual"
 
         self._last_match_visual = best is not None and best_visual
-        self._last_match_visual_only = self._last_match_visual and not sc_had_match
+        self._last_match_visual_only = self._last_match_visual and not best_from_sc
         if best is not None:
             if hybrid_active:
                 if best_hybrid_mode == "same_heading_visual":

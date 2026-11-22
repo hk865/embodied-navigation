@@ -930,7 +930,15 @@ def evaluate_replay(
         1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") == "tilt"
     )
     loops_rejected_odom = sum(
-        1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") != "tilt"
+        1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") == "odom"
+    )
+    loops_rejected_surface = sum(
+        1 for e in record.loop_events if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") == "surface"
+    )
+    loops_rejected_degenerate = sum(
+        1
+        for e in record.loop_events
+        if e.get("loop_rejected") is not None and e.get("loop_rejected_kind") == "degenerate"
     )
     summary = {
         "runtime": {
@@ -938,6 +946,8 @@ def evaluate_replay(
             "loops_accepted": int(loops_accepted),
             "loops_rejected_odom": int(loops_rejected_odom),
             "loops_rejected_tilt": int(loops_rejected_tilt),
+            "loops_rejected_surface": int(loops_rejected_surface),
+            "loops_rejected_degenerate": int(loops_rejected_degenerate),
             "errors": int(record.errors),
             "missing_graph_nodes": int(record.missing_graph_nodes),
             "total_wall_s": float(record.total_wall_s),

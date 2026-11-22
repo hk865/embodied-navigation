@@ -201,12 +201,16 @@ class PoseGraph:
                 self.poses, summary = fast
                 return summary
         before = cost = self._cost(self.poses)
+        if len(self.poses) <= 1 or iterations <= 0:
+            return {"converged": True, "iterations": 0, "error_before": before, "error_after": cost}
         damping = 1e-4
         converged = False
         done = 0
         for done in range(1, iterations + 1):
             H, g = self._normal_equations(self.poses)
-            step = spsolve((H + damping * sparse.diags(H.diagonal())).tocsc(), -g)
+            diag = H.diagonal().copy()
+            diag[diag <= 0.0] = 1e-6
+            step = spsolve((H + damping * sparse.diags(diag)).tocsc(), -g)
             trial = self._retract(step)
             trial_cost = self._cost(trial)
             if trial_cost < cost:

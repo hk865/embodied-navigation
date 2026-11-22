@@ -14,3 +14,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "embodied_navigation.planning.exploration" = ["os1_calibration.json"]
+"embodied_navigation.localization_mapping.backend" = ["_cpp/*.cpp"]

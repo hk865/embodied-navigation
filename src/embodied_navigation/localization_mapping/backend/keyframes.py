@@ -18,6 +18,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+import zipfile
 
 import numpy as np
 
@@ -95,18 +96,19 @@ def read_keyframe(path: Path, *, load_visual: bool = False) -> Keyframe:
     if load_visual and (path / "visual.npz").is_file():
         # 仅当显式启用视觉读取时才解码可选旁文件，并对图像尺寸和时间戳标量做边界防护。
         try:
-            with np.load(path / "visual.npz", allow_pickle=False) as data:
-                gray = data["gray"]
-                if gray.ndim != 2 or max(gray.shape) > MAX_VISUAL_IMAGE_DIM:
-                    raise ValueError(f"灰度图尺寸非法或超过上限 {MAX_VISUAL_IMAGE_DIM}: {gray.shape}")
-                rgb = data["rgb"] if "rgb" in data.files else None
-                if rgb is not None and (rgb.ndim != 3 or max(rgb.shape[:2]) > MAX_VISUAL_IMAGE_DIM):
-                    raise ValueError(f"RGB 图尺寸非法或超过上限 {MAX_VISUAL_IMAGE_DIM}: {rgb.shape}")
-                stamp_arr = np.asarray(data["stamp_ns"])
-                if stamp_arr.ndim != 0 or not np.issubdtype(stamp_arr.dtype, np.integer):
-                    raise ValueError(f"stamp_ns 必须为整型标量，当前 dtype={stamp_arr.dtype}, shape={stamp_arr.shape}")
-                visual = VisualObservation(gray, data["K"], data["T_body_camera"], int(stamp_arr.item()), rgb=rgb)
-        except (KeyError, OSError, TypeError, ValueError) as error:
+            with (path / "visual.npz").open("rb") as fh:
+                with np.load(fh, allow_pickle=False) as data:
+                    gray = data["gray"]
+                    if gray.ndim != 2 or max(gray.shape) > MAX_VISUAL_IMAGE_DIM:
+                        raise ValueError(f"灰度图尺寸非法或超过上限 {MAX_VISUAL_IMAGE_DIM}: {gray.shape}")
+                    rgb = data["rgb"] if "rgb" in data.files else None
+                    if rgb is not None and (rgb.ndim != 3 or max(rgb.shape[:2]) > MAX_VISUAL_IMAGE_DIM):
+                        raise ValueError(f"RGB 图尺寸非法或超过上限 {MAX_VISUAL_IMAGE_DIM}: {rgb.shape}")
+                    stamp_arr = np.asarray(data["stamp_ns"])
+                    if stamp_arr.ndim != 0 or not np.issubdtype(stamp_arr.dtype, np.integer):
+                        raise ValueError(f"stamp_ns 必须为整型标量，当前 dtype={stamp_arr.dtype}, shape={stamp_arr.shape}")
+                    visual = VisualObservation(gray, data["K"], data["T_body_camera"], int(stamp_arr.item()), rgb=rgb)
+        except (KeyError, OSError, TypeError, ValueError, zipfile.BadZipFile, EOFError) as error:
             raise ValueError(f"{path}: 视觉观测 visual.npz 非法: {error}") from error
     return Keyframe(
         key=key,

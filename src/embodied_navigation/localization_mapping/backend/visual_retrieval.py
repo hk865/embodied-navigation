@@ -79,6 +79,11 @@ class VisualRetrievalConfig:
         _positive("visual_retrieval.lidar_px_radius", self.lidar_px_radius)
         _positive("visual_retrieval.verify_inlier_m", self.verify_inlier_m)
         _count("visual_retrieval.verify_min_inliers", self.verify_min_inliers)
+        if self.verify_min_inliers < 3 or self.verify_min_inliers > self.max_features:
+            raise ValueError(
+                f"visual_retrieval.verify_min_inliers 必须满足 3 <= verify_min_inliers <= max_features ({self.max_features})，"
+                f"当前收到 {self.verify_min_inliers!r}"
+            )
         ratio = _positive("visual_retrieval.verify_ratio_threshold", self.verify_ratio_threshold)
         if ratio >= 1.0:
             raise ValueError(

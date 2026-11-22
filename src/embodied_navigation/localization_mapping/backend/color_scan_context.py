@@ -153,15 +153,19 @@ class ColorScanContextIndex:
         min_color_bins: int = 12,
         color_weight: float = 0.25,
         max_color_distance: float | None = None,
+        max_time_delta_s: float = 0.05,
     ) -> None:
         self.config = config
         self.min_color_bins = min_color_bins
         self.color_weight = float(color_weight)
         self.max_color_distance = max_color_distance
+        self.max_time_delta_ns = int(round(float(max_time_delta_s) * 1e9))
         self.descriptors: dict[object, ColorScanContextDescriptor] = {}
 
     def compute(self, keyframe) -> ColorScanContextDescriptor | None:
         if keyframe.visual is None:
+            return None
+        if abs(int(keyframe.visual.stamp_ns) - int(keyframe.stamp_ns)) > self.max_time_delta_ns:
             return None
         return color_descriptor(keyframe.points_body(), keyframe.visual, self.config)
 

@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 import numpy as np
 
-from embodied_navigation.localization_mapping.backend.accel import get_accel_lib
+from embodied_navigation.localization_mapping.backend.accel import (
+    cpp_icp_point_to_plane,
+    cpp_optimize_pose_graph,
+    cpp_voxel_downsample,
+    get_accel_lib,
+)
 from embodied_navigation.localization_mapping.backend.keyframes import transform_points, voxel_downsample
 from embodied_navigation.localization_mapping.backend.pose_graph import PoseGraph, se3_exp
 from embodied_navigation.localization_mapping.backend.registration import icp_point_to_plane
@@ -96,6 +101,141 @@ class CppAccelEquivalenceTests(unittest.TestCase):
         self.assertAlmostEqual(s_cpp["error_after"], s_py["error_after"], places=6)
         for i in range(20):
             np.testing.assert_allclose(g_cpp.pose(i), g_py.pose(i), atol=1e-6)
+
+    def test_voxel_boundary_059_060_matches_python_exactly(self):
+        pts = np.array(
+            [
+                [0.59, 0.59, 0.59],
+                [0.60, 0.60, 0.60],
+                [-0.59, -0.59, -0.59],
+                [-0.60, -0.60, -0.60],
+                [0.599999999999, 0.2, -0.2],
+            ],
+            dtype=np.float64,
+        )
+        py = voxel_downsample(pts, 0.2, use_cpp=False)
+        cpp = voxel_downsample(pts, 0.2, use_cpp=True)
+        self.assertEqual(py.shape, cpp.shape)
+        np.testing.assert_allclose(cpp, py, atol=1e-15, rtol=0.0)
+
+    def test_accel_rejects_bad_shapes_nonfinite_and_bad_indices(self):
+        with self.assertRaises(ValueError):
+            cpp_voxel_downsample(np.zeros((4, 2), dtype=np.float64), 0.2)
+        with self.assertRaises(ValueError):
+            cpp_voxel_downsample(np.array([[0.0, np.nan, 0.0]], dtype=np.float64), 0.2)
+        with self.assertRaises(ValueError):
+            cpp_voxel_downsample(np.zeros((1, 3), dtype=np.float64), 0.0)
+        with self.assertRaises(ValueError):
+            cpp_voxel_downsample(np.zeros((1, 3), dtype=np.float64), float("nan"))
+
+        good_pts = np.zeros((10, 3), dtype=np.float64)
+        with self.assertRaises(ValueError):
+            cpp_icp_point_to_plane(
+                np.zeros((10, 2), dtype=np.float64),
+                good_pts,
+                np.eye(4),
+                max_correspondence_m=1.0,
+                iterations=5,
+                voxel_m=0.2,
+                source_up_body=None,
+                gravity_sigma_rad=None,
+                gravity_ref_point_sigma_m=0.05,
+            )
+        with self.assertRaises(ValueError):
+            cpp_icp_point_to_plane(
+                good_pts,
+                good_pts,
+                np.full((4, 4), np.inf),
+                max_correspondence_m=1.0,
+                iterations=5,
+                voxel_m=0.2,
+                source_up_body=None,
+                gravity_sigma_rad=None,
+                gravity_ref_point_sigma_m=0.05,
+            )
+        with self.assertRaises(ValueError):
+            cpp_icp_point_to_plane(
+                good_pts,
+                good_pts,
+                np.eye(4),
+                max_correspondence_m=1.0,
+                iterations=5,
+                voxel_m=0.2,
+                source_up_body=np.array([0.0, np.nan, 1.0]),
+                gravity_sigma_rad=0.05,
+                gravity_ref_point_sigma_m=0.05,
+            )
+
+        with self.assertRaises(ValueError):
+            cpp_optimize_pose_graph(
+                [np.eye(3)],
+                [],
+                [],
+                [],
+                cauchy_scale=1.0,
+                iterations=5,
+            )
+        with self.assertRaises(ValueError):
+            cpp_optimize_pose_graph(
+                [np.eye(4), np.eye(4)],
+                [(0, 5, np.eye(4), np.eye(6), False)],
+                [],
+                [],
+                cauchy_scale=1.0,
+                iterations=5,
+            )
+        with self.assertRaises(ValueError):
+            cpp_optimize_pose_graph(
+                [np.eye(4), np.eye(4)],
+                [(0, 1, np.eye(4), np.full((6, 6), np.nan), False)],
+                [],
+                [],
+                cauchy_scale=1.0,
+                iterations=5,
+            )
+
+    def test_icp_body_origin_hessian_matches_python_under_rotation_and_translation(self):
+        # Place target far from world origin so centroid != body origin and lever arm is large.
+        target_origin = _make_room_cloud(23)
+        T_true_origin = se3_exp(np.array([0.35, -0.25, 0.12, 0.05, -0.04, 0.65]))
+        source = transform_points(np.linalg.inv(T_true_origin), target_origin)
+        T_init_origin = se3_exp(np.array([0.15, -0.10, 0.05, 0.01, -0.01, 0.55]))
+
+        T_shift = np.eye(4, dtype=np.float64)
+        T_shift[:3, 3] = [25.0, -14.0, 6.0]
+        target = target_origin + T_shift[:3, 3]
+        T_init = T_shift @ T_init_origin
+
+        r_py = icp_point_to_plane(
+            source, target, T_init, max_correspondence_m=1.2, iterations=30, voxel_m=0.2,
+            return_hessian=True, use_cpp=False,
+        )
+        r_cpp = icp_point_to_plane(
+            source, target, T_init, max_correspondence_m=1.2, iterations=30, voxel_m=0.2,
+            return_hessian=True, use_cpp=True,
+        )
+        self.assertTrue(r_py.converged and r_cpp.converged)
+        self.assertIsNotNone(r_py.hessian)
+        self.assertIsNotNone(r_cpp.hessian)
+        np.testing.assert_allclose(r_cpp.T_target_source, r_py.T_target_source, atol=1e-5)
+        np.testing.assert_allclose(r_cpp.hessian, r_py.hessian, rtol=1e-3, atol=1e-3)
+
+        # Body-origin Hessian must be invariant to shifting the world origin / target centroid.
+        r_origin = icp_point_to_plane(
+            source, target_origin, T_init_origin, max_correspondence_m=1.2, iterations=30, voxel_m=0.2,
+            return_hessian=True, use_cpp=True,
+        )
+        np.testing.assert_allclose(r_cpp.hessian, r_origin.hessian, rtol=1e-4, atol=1e-3)
+
+    def test_pose_graph_iteration_cap_and_zero_diag_damping(self):
+        g = PoseGraph(cauchy_scale=1.0)
+        g.add_node(0, np.eye(4))
+        g.add_node(1, se3_exp(np.array([1.0, 0.0, 0.5, 0.0, 0.0, 0.2])))
+        # Isolated node 1 with only a Z prior (XY + rotation diagonal == 0.0) must not blow up or exceed max_iterations.
+        g.add_z_prior(1, target_z_m=0.0, sigma_m=0.05, robust=False)
+        summary = g.optimize(iterations=3, use_cpp=True)
+        self.assertLessEqual(summary["iterations"], 3)
+        self.assertTrue(np.isfinite(g.pose(1)).all())
 
 
 if __name__ == "__main__":

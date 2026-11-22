@@ -83,6 +83,7 @@ def build_submap(
     config: SubmapConfig | None = None,
     *,
     excluded: set | None = None,
+    exclude_keys: set | tuple | list | None = None,
     track_sources: bool = True,
 ) -> MeasuredSubmap:
     """围绕锚点帧连续累积局部实测点云，遇到排除断点或任一运动/时间预算超限即截断。
@@ -91,6 +92,9 @@ def build_submap(
     以限制单段轨迹漂移；体素内取质心保证重复观测不会重复加权。
     """
     c = config or SubmapConfig()
+    effective_excluded = set(excluded) if excluded is not None else set()
+    if exclude_keys is not None:
+        effective_excluded.update(exclude_keys)
     frames = list(keyframes)
     index = next(i for i, frame in enumerate(frames) if frame.key == anchor.key)
     anchor_epoch = _epoch_of(anchor.key)
@@ -110,7 +114,7 @@ def build_submap(
         previous = anchor
         taken = 0
         for frame in candidates:
-            if excluded is not None and frame.key in excluded:
+            if frame.key in effective_excluded:
                 # 遇到排除帧必须立刻截断，严禁跨过断点将前后两段拼接进同一子图。
                 break
             gap = ((frame.stamp_ns - previous.stamp_ns) if forward else (previous.stamp_ns - frame.stamp_ns)) * 1e-9
