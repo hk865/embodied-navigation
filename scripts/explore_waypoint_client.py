@@ -100,6 +100,7 @@ ACTION_FAILURE_STATUS = {
     "waypoint_expired": "expired",
     "action_expired": "expired",
     "action_cancelled": "cancelled",
+    "action_preempted": "preempted",
 }
 # Receipts that concern the whole run rather than one sequence number: the
 # tracker writes "terminal" (latched failure, no seq) and "hold" (blocked tick,
@@ -177,6 +178,19 @@ def build_request(
         "run_id": run_id,
     }
     extra = {} if extra is None else dict(extra)
+    if "action_epoch" in extra and extra["action_epoch"] is not None:
+        epoch = extra["action_epoch"]
+        if type(epoch) is not int or epoch < 0:
+            raise ValueError("action_epoch must be a non-negative integer")
+        payload["action_epoch"] = epoch
+    if "preempt" in extra:
+        preempt = extra["preempt"]
+        if type(preempt) is not bool:
+            raise ValueError("preempt must be boolean")
+        if preempt:
+            if action not in ("goto", "waypoint", "yaw", "maneuver"):
+                raise ValueError("preempt is only supported for goto, waypoint, yaw and maneuver")
+            payload["preempt"] = True
     if action in ("goto", "waypoint", "yaw", "maneuver"):
         if pose_source in FORBIDDEN_POSE_SOURCES:
             raise ValueError(
@@ -184,7 +198,11 @@ def build_request(
             )
     if action == "yaw":
         from embodied_navigation.navigation.yaw_action import yaw_request_parameters
-        payload.update(yaw_request_parameters(extra))
+        payload.update(
+            yaw_request_parameters(
+                extra, max_yaw_rate_rps=extra.get("max_yaw_rate_rps")
+            )
+        )
         payload["pose_source"] = pose_source
         payload["map_frame_note"] = "live estimator map frame; operator-selected"
         return payload
@@ -479,6 +497,7 @@ def summarize_observation(observation):
             "last_failure": waypoints.get("last_failure"),
             "last_result": waypoints.get("last_result"),
             "terminal_reason": waypoints.get("terminal_reason"),
+            "action_epoch": waypoints.get("action_epoch"),
         },
         "last_command": observation.get("command", {}).get("last_request"),
         "link": link,
@@ -642,6 +661,17 @@ def _wait_for_submitted(args, payload):
     return action_exit_code(result)
 
 
+def _with_preempt_and_epoch(args, extra, *, allow_preempt=True):
+    """Attach optional preempt and action_epoch CLI fields to request extra."""
+    merged = dict(extra)
+    if allow_preempt and getattr(args, "preempt", False):
+        merged["preempt"] = True
+    epoch = getattr(args, "action_epoch", None)
+    if epoch is not None:
+        merged["action_epoch"] = epoch
+    return merged
+
+
 def _cmd_goto(args):
     """Submit one waypoint for the local follower."""
     mailbox = mailbox_for(args.run_dir, args.mailbox)
@@ -649,7 +679,9 @@ def _cmd_goto(args):
         mailbox,
         action="goto",
         goal=[args.x, args.y, args.z],
-        extra={"reverse": getattr(args, "reverse", False)},
+        extra=_with_preempt_and_epoch(
+            args, {"reverse": getattr(args, "reverse", False)}
+        ),
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
@@ -663,7 +695,13 @@ def _cmd_simple(action):
 
     def handler(args):
         mailbox = mailbox_for(args.run_dir, args.mailbox)
-        payload = submit(mailbox, action=action, run_id=args.run_id)
+        extra = _with_preempt_and_epoch(args, {}, allow_preempt=False)
+        payload = submit(
+            mailbox,
+            action=action,
+            run_id=args.run_id,
+            extra=extra or None,
+        )
         print(json.dumps(payload, sort_keys=True))
         return 0
 
@@ -686,15 +724,18 @@ def _cmd_observe(args):
 def _cmd_yaw(args):
     """Submit an independent relative turn or absolute measured-map heading."""
     mailbox = mailbox_for(args.run_dir, args.mailbox)
+    base_extra = (
+        {"delta_yaw_rad": math.radians(args.delta_deg)}
+        if args.delta_deg is not None
+        else {"target_yaw_rad": math.radians(args.target_deg), "frame_id": args.frame_id}
+    )
     payload = submit(
         mailbox,
         action="yaw",
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
-        extra=({"delta_yaw_rad": math.radians(args.delta_deg)}
-               if args.delta_deg is not None else
-               {"target_yaw_rad": math.radians(args.target_deg), "frame_id": args.frame_id}),
+        extra=_with_preempt_and_epoch(args, base_extra),
     )
     print(json.dumps(payload, sort_keys=True))
     return _wait_for_submitted(args, payload)
@@ -709,12 +750,15 @@ def _cmd_maneuver(args):
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
-        extra={
-            "body_forward_mps": args.forward,
-            "body_lateral_mps": args.lateral,
-            "yaw_rate_rps": args.yaw_rate,
-            "duration_s": args.duration,
-        },
+        extra=_with_preempt_and_epoch(
+            args,
+            {
+                "body_forward_mps": args.forward,
+                "body_lateral_mps": args.lateral,
+                "yaw_rate_rps": args.yaw_rate,
+                "duration_s": args.duration,
+            },
+        ),
     )
     print(json.dumps(payload, sort_keys=True))
     return _wait_for_submitted(args, payload)
@@ -2172,6 +2216,8 @@ def build_parser():
     goto.add_argument("--reverse", action="store_true", help="native_route only: follow the segment backwards while facing away from its bearing")
     goto.add_argument("--ttl", type=float, default=30.0)
     goto.add_argument("--pose-source", default="lio_estimate")
+    goto.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    goto.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(goto)
     goto.set_defaults(handler=_cmd_goto)
 
@@ -2184,6 +2230,8 @@ def build_parser():
     yaw.add_argument("--frame-id", help="Required map frame for --target-deg")
     yaw.add_argument("--ttl", type=float, default=30.0)
     yaw.add_argument("--pose-source", default="lio_estimate")
+    yaw.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    yaw.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(yaw)
     yaw.set_defaults(handler=_cmd_yaw)
 
@@ -2196,6 +2244,8 @@ def build_parser():
     maneuver.add_argument("--duration", type=float, required=True)
     maneuver.add_argument("--ttl", type=float, default=15.0)
     maneuver.add_argument("--pose-source", default="lio_estimate")
+    maneuver.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    maneuver.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(maneuver)
     maneuver.set_defaults(handler=_cmd_maneuver)
 
@@ -2214,6 +2264,7 @@ def build_parser():
         simple = subparsers.add_parser(
             action, help=action + " the current waypoints", parents=[common]
         )
+        simple.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
         simple.set_defaults(handler=_cmd_simple(action))
 
     observe = subparsers.add_parser(
