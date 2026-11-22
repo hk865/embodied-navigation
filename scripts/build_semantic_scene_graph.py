@@ -23,7 +23,14 @@ def _load_rgb_index(jsonl_path: Path) -> dict[int, str]:
         if not line:
             continue
         row = json.loads(line)
-        stamp_ns = int(row["stamp_ns"])
+        if "stamp_ns" in row and row["stamp_ns"] is not None:
+            stamp_ns = int(row["stamp_ns"])
+        elif "source_time_s" in row and row["source_time_s"] is not None:
+            stamp_ns = int(round(float(row["source_time_s"]) * 1e9))
+        elif "stamp_s" in row and row["stamp_s"] is not None:
+            stamp_ns = int(round(float(row["stamp_s"]) * 1e9))
+        else:
+            continue
         rgb_path = row.get("rgb_path") or row.get("path") or row.get("image_path")
         if rgb_path:
             index[stamp_ns] = str(rgb_path)
