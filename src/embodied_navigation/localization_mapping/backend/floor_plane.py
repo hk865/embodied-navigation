@@ -2,10 +2,10 @@
 
 Detects flat ground planes directly from body-frame LiDAR returns within a
 near-field annulus and maintains a causal list of floor slabs anchored to their
-first confirmed keyframes. Slow odometry Z drift on a flat floor never splits a
-slab; a new slab is created (or an existing one rejoined) only after a sustained
-vertical climb across non-level frames followed by consecutive flat-floor
-confirmations.
+first confirmed keyframes. Slow odometry Z drift on a flat floor (low vertical
+slope |dz|/dxy) never splits a slab; a new slab is created (or an existing one
+rejoined) only after sustained steep stair climbing (accumulated across any
+intermediate mid-stair landings) followed by confirmed flat-floor travel.
 """
 
 from __future__ import annotations
@@ -71,12 +71,7 @@ def detect_floor_plane(
     min_normal_z: float = 0.985,
     max_mad_m: float = 0.025,
 ) -> FloorPlaneMeasurement | None:
-    """Detect a flat horizontal ground plane under the robot in body coordinates.
-
-    Returns ``None`` when the body is tilted beyond ``max_body_tilt_deg`` (e.g.
-    climbing stairs), when fewer than ``min_points`` ground-band inliers remain,
-    or when the fitted plane is non-horizontal / noisy.
-    """
+    """Detect a flat horizontal ground plane under the robot in body coordinates."""
     R = np.asarray(R_odom_body, dtype=np.float64)
     if R.shape == (4, 4):
         R = R[:3, :3]
@@ -129,8 +124,6 @@ def detect_floor_plane(
     if not np.isfinite(mad_m) or mad_m > max_mad_m:
         return None
 
-    # In n . p + d_plane = 0 with n[2] > 0 and floor at z_body = -0.34 m,
-    # d_plane = -(n . mean) = +0.34 m is the height of the body above the floor.
     height_below_body_m = float(d_plane)
     if not np.isfinite(height_below_body_m) or height_below_body_m <= 0.0:
         return None
@@ -144,26 +137,38 @@ def detect_floor_plane(
 
 
 class FloorSlabTracker:
-    """Causally tracks horizontal floor slabs online without splitting drifted flat floors."""
+    """Causally tracks horizontal floor slabs using slope-integrated stair climb detection.
+
+    Key physical invariant:
+    - Slow odometry Z drift on a flat floor has tiny local vertical slope (|dz|/dxy < 0.08).
+    - Climbing or descending stairs has steep local slope (|dz|/dxy >= 0.16, stairs ~0.55)
+      and/or non-level body frames, accumulating |climb_accum_z| >= stair_climb_min_m
+      across both flights without falsely resetting on a small mid-stair landing.
+    """
 
     def __init__(
         self,
         *,
-        stair_climb_min_m: float = 1.5,
+        stair_climb_min_m: float = 1.2,
         slab_rejoin_tol_m: float = 1.2,
         level_confirm_frames: int = 3,
+        steep_slope_min: float = 0.16,
+        landing_reset_travel_m: float = 3.5,
     ):
         self.stair_climb_min_m = float(stair_climb_min_m)
         self.slab_rejoin_tol_m = float(slab_rejoin_tol_m)
         self.level_confirm_frames = int(level_confirm_frames)
+        self.steep_slope_min = float(steep_slope_min)
+        self.landing_reset_travel_m = float(landing_reset_travel_m)
         self.slabs: dict[int, FloorSlab] = {}
         self.active_slab_id: int | None = None
-        self.non_level_streak: int = 0
-        self.climb_start_z: float | None = None
-        self.level_streak: int = 0
-        self._was_on_stairs: bool = False
-        self._last_level_odom_z: float | None = None
         self._fallback_anchor_pose_z: dict[int, float] = {}
+
+        self._prev_odom_xyz: np.ndarray | None = None
+        self.climb_accum_z: float = 0.0
+        self.in_stair_transition: bool = False
+        self.level_streak: int = 0
+        self.level_travel_since_steep_m: float = 0.0
 
     def slab_elevation(
         self,
@@ -199,64 +204,84 @@ class FloorSlabTracker:
         *,
         odom_z: float,
         pose_z: float,
+        odom_xy: tuple[float, float] | None = None,
+        zupt_active: bool = False,
         pose_z_lookup: Callable[[Any], float] | None = None,
     ) -> tuple[int, float] | None:
         """Update slab state for ``key`` and return ``(slab_id, target_body_z)`` when constrained."""
-        odom_z = float(odom_z)
-        pose_z = float(pose_z)
-        if meas is None:
+        ox = 0.0 if odom_xy is None else float(odom_xy[0])
+        oy = 0.0 if odom_xy is None else float(odom_xy[1])
+        oz = float(odom_z)
+        pz = float(pose_z)
+        cur_odom = np.array([ox, oy, oz], dtype=np.float64)
+
+        dxy = 0.0
+        dz = 0.0
+        is_steep = False
+        if self._prev_odom_xyz is not None:
+            dz = oz - float(self._prev_odom_xyz[2])
+            if odom_xy is not None:
+                dxy = float(math.hypot(ox - self._prev_odom_xyz[0], oy - self._prev_odom_xyz[1]))
+                slope = abs(dz) / max(dxy, 0.25)
+                if (slope >= self.steep_slope_min and abs(dz) >= 0.04) or (meas is None and abs(dz) >= 0.04):
+                    is_steep = True
+            else:
+                if abs(dz) >= 0.12 or (meas is None and abs(dz) >= 0.04):
+                    is_steep = True
+        self._prev_odom_xyz = cur_odom
+
+        if is_steep or meas is None:
+            if is_steep:
+                self.climb_accum_z += dz
+                self.level_travel_since_steep_m = 0.0
+                if abs(self.climb_accum_z) >= 0.35:
+                    self.in_stair_transition = True
             self.level_streak = 0
-            if self.active_slab_id is not None:
-                if self.non_level_streak == 0 and self.climb_start_z is None:
-                    self.climb_start_z = (
-                        self._last_level_odom_z if self._last_level_odom_z is not None else odom_z
-                    )
-                self.non_level_streak += 1
-                if (
-                    self.climb_start_z is not None
-                    and abs(odom_z - self.climb_start_z) >= self.stair_climb_min_m
-                ):
-                    self._was_on_stairs = True
             return None
 
-        self._last_level_odom_z = odom_z
+        # Valid horizontal flat floor observed
         self.level_streak += 1
-        if (
-            self.non_level_streak > 0
-            and self.climb_start_z is not None
-            and abs(odom_z - self.climb_start_z) >= self.stair_climb_min_m
-        ):
-            self._was_on_stairs = True
+        self.level_travel_since_steep_m += dxy
 
         if self.active_slab_id is None:
-            self._create_slab(key, meas.height_below_body_m, pose_z)
-            self.non_level_streak = 0
-            self.climb_start_z = None
-            self._was_on_stairs = False
+            self._create_slab(key, meas.height_below_body_m, pz)
+            self.climb_accum_z = 0.0
+            self.in_stair_transition = False
             return None
 
-        if self._was_on_stairs:
-            if self.level_streak < self.level_confirm_frames:
-                return None
-            est_floor_z = pose_z - meas.height_below_body_m
-            best_slab_id: int | None = None
-            best_diff = self.slab_rejoin_tol_m
-            for sid in self.slabs:
-                diff = abs(est_floor_z - self.slab_elevation(sid, pose_z_lookup))
-                if diff <= best_diff:
-                    best_diff = diff
-                    best_slab_id = sid
-            self._was_on_stairs = False
-            self.climb_start_z = None
-            self.non_level_streak = 0
-            if best_slab_id is not None:
-                self.active_slab_id = best_slab_id
+        if self.in_stair_transition:
+            # While climbing/on a mid-stair landing, NEVER emit z_priors tied to the old floor!
+            if abs(self.climb_accum_z) >= self.stair_climb_min_m and self.level_streak >= self.level_confirm_frames:
+                est_floor_z = pz - meas.height_below_body_m
+                best_slab_id: int | None = None
+                best_diff = self.slab_rejoin_tol_m
+                for sid in self.slabs:
+                    diff = abs(est_floor_z - self.slab_elevation(sid, pose_z_lookup))
+                    if diff <= best_diff:
+                        best_diff = diff
+                        best_slab_id = sid
+                self.climb_accum_z = 0.0
+                self.in_stair_transition = False
+                self.level_travel_since_steep_m = 0.0
+                if best_slab_id is not None:
+                    self.active_slab_id = best_slab_id
+                else:
+                    self._create_slab(key, meas.height_below_body_m, pz)
+                    return None
+            elif (
+                abs(self.climb_accum_z) < 0.8
+                and self.level_travel_since_steep_m >= self.landing_reset_travel_m
+                and self.level_streak >= self.level_confirm_frames
+            ):
+                # Minor bump / threshold, not a real staircase; resume active slab cleanly
+                self.climb_accum_z = 0.0
+                self.in_stair_transition = False
             else:
-                self._create_slab(key, meas.height_below_body_m, pose_z)
+                # Still on stairs or mid-landing: wait before constraining Z
                 return None
-        elif self.level_streak >= self.level_confirm_frames:
-            self.non_level_streak = 0
-            self.climb_start_z = None
+
+        if zupt_active:
+            return None
 
         slab = self.slabs[self.active_slab_id]
         if key == slab.anchor_key:

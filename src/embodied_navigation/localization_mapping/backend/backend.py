@@ -459,7 +459,13 @@ class SlamBackend:
         self.index.add(keyframe.key, desc)
         if loop_key is not None:
             self.loop_count += 1
-        if loop_key is not None or z_prior_added:
+        if loop_key is not None or (
+            z_prior_added
+            and (
+                self._stats["floor_z_priors_added"] % 10 == 0
+                or abs(float(self.graph.pose(keyframe.key)[2, 3]) - self.graph.z_priors[-1][1]) > 0.025
+            )
+        ):
             self._optimize_graph_with_slab_refresh()
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
@@ -749,6 +755,8 @@ class SlamBackend:
                     floor_meas,
                     odom_z=float(keyframe.T_odom_body[2, 3]),
                     pose_z=float(self.graph.pose(keyframe.key)[2, 3]),
+                    odom_xy=(float(keyframe.T_odom_body[0, 3]), float(keyframe.T_odom_body[1, 3])),
+                    zupt_active=(zupt_mode is not None),
                     pose_z_lookup=lambda k: float(self.graph.pose(k)[2, 3]),
                 )
                 self._stats["floor_slabs_discovered"] = len(self._slab_tracker.slabs)
