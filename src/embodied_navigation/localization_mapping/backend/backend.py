@@ -35,6 +35,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .correction import CorrectionAdmission
+from .floor_plane import FloorSlabTracker, detect_floor_plane
 from .keyframes import Keyframe, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
@@ -106,6 +107,17 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Floor-plane / multi-floor slab priors, fine-voxel ICP, and X-ICP loop information.
+    floor_plane_enabled: bool = False
+    floor_plane_sigma_m: float = 0.05
+    floor_plane_max_tilt_deg: float = 6.0
+    floor_plane_stair_climb_min_m: float = 1.5
+    floor_plane_slab_rejoin_tol_m: float = 1.2
+    floor_normal_gravity_enabled: bool = False
+    fine_icp_voxel_m: float | None = None
+    xicp_enabled: bool = False
+    xicp_min_scale: float = 0.15
+    xicp_cond_floor: float = 1e-3
 
     def __post_init__(self) -> None:
         self.odometry_information()
@@ -208,9 +220,27 @@ class BackendConfig:
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("zupt_min_fitness", self.zupt_min_fitness) <= 1.0:
             raise ValueError(f"zupt_min_fitness must lie in (0, 1], got {self.zupt_min_fitness!r}")
-        for name in ("graph_gravity_robust", "zupt_enabled", "zupt_skip_loop_search"):
+        for name in (
+            "graph_gravity_robust",
+            "zupt_enabled",
+            "zupt_skip_loop_search",
+            "floor_plane_enabled",
+            "floor_normal_gravity_enabled",
+            "xicp_enabled",
+        ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}")
+        _inv_variance("floor_plane_sigma_m", self.floor_plane_sigma_m)
+        if not 0.0 < _positive("floor_plane_max_tilt_deg", self.floor_plane_max_tilt_deg) < 90.0:
+            raise ValueError(
+                f"floor_plane_max_tilt_deg must lie in (0, 90), got {self.floor_plane_max_tilt_deg!r}"
+            )
+        for name in ("floor_plane_stair_climb_min_m", "floor_plane_slab_rejoin_tol_m", "xicp_cond_floor"):
+            _positive(name, getattr(self, name))
+        if self.fine_icp_voxel_m is not None:
+            _positive("fine_icp_voxel_m", self.fine_icp_voxel_m)
+        if not 0.0 < _positive("xicp_min_scale", self.xicp_min_scale) <= 1.0:
+            raise ValueError(f"xicp_min_scale must lie in (0, 1], got {self.xicp_min_scale!r}")
 
 
 def _scan_context_from_dict(data: dict) -> ScanContextConfig:
@@ -296,11 +326,36 @@ def yaw_pose(yaw: float) -> np.ndarray:
     return T
 
 
+def _block_sqrt_confidence(
+    block_world: np.ndarray,
+    R_world_body: np.ndarray,
+    min_scale: float,
+    cond_floor: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Square-root directional confidence 3x3 matrix in body frame from a world Hessian block."""
+    block_body = R_world_body.T @ block_world @ R_world_body
+    block_body = 0.5 * (block_body + block_body.T)
+    lam, vecs = np.linalg.eigh(block_body)
+    lam = np.maximum(lam, 0.0)
+    lam_max = float(lam[-1])
+    if lam_max <= cond_floor:
+        scales = np.full(3, min_scale, dtype=np.float64)
+    else:
+        scales = np.clip(lam / max(lam_max, 1e-12), min_scale, 1.0)
+    sqrt_block = (vecs * np.sqrt(scales)) @ vecs.T
+    return 0.5 * (sqrt_block + sqrt_block.T), scales
+
+
 class SlamBackend:
     def __init__(self, config: BackendConfig, *, prior_map: MapStore | None = None):
         self.config = config
         self.prior = prior_map
-        self.map = MapStore(config.map_voxel_m)
+        store_voxel_m = (
+            config.map_voxel_m
+            if config.fine_icp_voxel_m is None
+            else min(config.map_voxel_m, config.fine_icp_voxel_m)
+        )
+        self.map = MapStore(store_voxel_m)
         self.graph = PoseGraph(cauchy_scale=config.cauchy_scale)
         self.index = ScanContextIndex(config.scan_context)
         self.admission = self._new_admission()
@@ -308,6 +363,12 @@ class SlamBackend:
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
         self._up_body: dict = {}
+        self._floor_normal_body: dict = {}
+        self._slab_tracker = FloorSlabTracker(
+            stair_climb_min_m=config.floor_plane_stair_climb_min_m,
+            slab_rejoin_tol_m=config.floor_plane_slab_rejoin_tol_m,
+        )
+        self._floor_z_prior_refs: list[tuple[int, int, float]] = []
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
         self._path_m: dict = {}  # key -> cumulative odom path length
@@ -319,6 +380,10 @@ class SlamBackend:
             "loops_rejected_tilt": 0,
             "zupt_full_stop_count": 0,
             "zupt_pivot_count": 0,
+            "floor_planes_detected": 0,
+            "floor_slabs_discovered": 0,
+            "floor_z_priors_added": 0,
+            "xicp_degenerate_loops": 0,
         }
         self._correction: np.ndarray | None = None
         self._tracking = False
@@ -388,13 +453,14 @@ class SlamBackend:
     # Mapping mode -------------------------------------------------------
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
-        zupt_mode, _ = self._add_node(keyframe)
+        zupt_mode, _, z_prior_added = self._add_node(keyframe)
         loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
         self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
         self.index.add(keyframe.key, desc)
         if loop_key is not None:
             self.loop_count += 1
-            self.graph.optimize(self.config.optimize_iterations)
+        if loop_key is not None or z_prior_added:
+            self._optimize_graph_with_slab_refresh()
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
             self._correction = np.eye(4)
@@ -492,8 +558,9 @@ class SlamBackend:
         )
         if step_dxy > c.zupt_max_odom_xy_m or anchor_dxy > c.zupt_max_odom_xy_m:
             return None, None
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None, None
         delta_anchor = invert(anchor.T_odom_body) @ keyframe.T_odom_body
@@ -547,8 +614,9 @@ class SlamBackend:
         intermediate sparse frames before recovery succeeded).
         """
         c = self.config
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None
         T_anchor_prev = invert(self.graph.pose(anchor.key)) @ self.graph.pose(previous.key)
@@ -662,9 +730,72 @@ class SlamBackend:
                 c.graph_gravity_sigma_rad,
                 robust=c.graph_gravity_robust,
             )
+        z_prior_added = False
+        if c.floor_plane_enabled or c.floor_normal_gravity_enabled:
+            floor_meas = detect_floor_plane(
+                keyframe.points_body(),
+                keyframe.T_odom_body[:3, :3],
+                max_body_tilt_deg=c.floor_plane_max_tilt_deg,
+            )
+            if floor_meas is not None:
+                self._stats["floor_planes_detected"] += 1
+                if c.floor_normal_gravity_enabled:
+                    self._floor_normal_body[keyframe.key] = floor_meas.normal_body
+            if c.floor_plane_enabled:
+                self._slab_tracker.stair_climb_min_m = c.floor_plane_stair_climb_min_m
+                self._slab_tracker.slab_rejoin_tol_m = c.floor_plane_slab_rejoin_tol_m
+                slab_prior = self._slab_tracker.update(
+                    keyframe.key,
+                    floor_meas,
+                    odom_z=float(keyframe.T_odom_body[2, 3]),
+                    pose_z=float(self.graph.pose(keyframe.key)[2, 3]),
+                    pose_z_lookup=lambda k: float(self.graph.pose(k)[2, 3]),
+                )
+                self._stats["floor_slabs_discovered"] = len(self._slab_tracker.slabs)
+                if slab_prior is not None and floor_meas is not None:
+                    slab_id, target_body_z = slab_prior
+                    z_idx = len(self.graph.z_priors)
+                    self.graph.add_z_prior(
+                        keyframe.key,
+                        target_body_z,
+                        sigma_m=c.floor_plane_sigma_m,
+                        robust=True,
+                    )
+                    self._floor_z_prior_refs.append((z_idx, slab_id, floor_meas.height_below_body_m))
+                    self._stats["floor_z_priors_added"] += 1
+                    z_prior_added = True
         self._previous = keyframe
         self._up_body[keyframe.key] = up_body
-        return zupt_mode, delta_use
+        return zupt_mode, delta_use, z_prior_added
+
+    def _refresh_floor_z_priors(self) -> None:
+        """Refresh existing floor Z-prior targets from current slab anchor poses."""
+        if not self._floor_z_prior_refs:
+            return
+        pose_z_lookup = lambda k: float(self.graph.pose(k)[2, 3])
+        for z_idx, slab_id, height_below_body_m in self._floor_z_prior_refs:
+            node_idx, _, weight, robust = self.graph.z_priors[z_idx]
+            target_z = self._slab_tracker.slab_elevation(slab_id, pose_z_lookup) + height_below_body_m
+            self.graph.z_priors[z_idx] = (node_idx, float(target_z), weight, robust)
+
+    def _optimize_graph_with_slab_refresh(self) -> None:
+        """Optimize pose graph while keeping slab Z-priors aligned to moving slab anchors."""
+        if not self._floor_z_prior_refs or not self._slab_tracker.slabs:
+            self.graph.optimize(self.config.optimize_iterations)
+            return
+        anchor_z_before = {
+            sid: float(self.graph.pose(slab.anchor_key)[2, 3])
+            for sid, slab in self._slab_tracker.slabs.items()
+        }
+        self._refresh_floor_z_priors()
+        self.graph.optimize(self.config.optimize_iterations)
+        moved = any(
+            abs(float(self.graph.pose(slab.anchor_key)[2, 3]) - anchor_z_before[sid]) > 1e-4
+            for sid, slab in self._slab_tracker.slabs.items()
+        )
+        if moved:
+            self._refresh_floor_z_priors()
+            self.graph.optimize(self.config.optimize_iterations)
 
     def _odometry_inconsistency(self, key, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
         """Reason why a loop match disagrees with the graph estimate, or None.
@@ -726,6 +857,7 @@ class SlamBackend:
             apply_tilt_gate=True,
             apply_odom_gate=True,
             use_gravity_prior=True,
+            return_hessian=c.xicp_enabled,
         )
         if match is None:
             return None, rejected, rejected_kind
@@ -736,6 +868,12 @@ class SlamBackend:
             key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
         )
         loop = c.loop_information()
+        if c.xicp_enabled:
+            loop, is_degenerate = self._modulate_loop_information(
+                loop, result.hessian, T_world_new[:3, :3]
+            )
+            if is_degenerate:
+                self._stats["xicp_degenerate_loops"] += 1
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
         self._last_loop_path_m = curr_path
         self._last_loop_stamp_ns = keyframe.stamp_ns
@@ -830,6 +968,29 @@ class SlamBackend:
             return f"gravity tilt {np.degrees(tilt_rad):.2f} deg exceeds {np.degrees(limit):.2f} deg"
         return None
 
+    def _modulate_loop_information(
+        self,
+        I_base: np.ndarray,
+        hessian: np.ndarray | None,
+        R_world_body: np.ndarray,
+    ) -> tuple[np.ndarray, bool]:
+        """Symmetrically attenuate degenerate ICP axes in the loop edge's 6x6 information matrix."""
+        if hessian is None or hessian.shape != (6, 6) or not np.isfinite(hessian).all():
+            return I_base, False
+        c = self.config
+        st_half, s_t = _block_sqrt_confidence(
+            hessian[:3, :3], R_world_body, c.xicp_min_scale, c.xicp_cond_floor
+        )
+        sr_half, _ = _block_sqrt_confidence(
+            hessian[3:, 3:], R_world_body, c.xicp_min_scale, c.xicp_cond_floor
+        )
+        s_half = np.zeros((6, 6), dtype=np.float64)
+        s_half[:3, :3] = st_half
+        s_half[3:, 3:] = sr_half
+        I_eff = s_half @ I_base @ s_half
+        I_eff = 0.5 * (I_eff + I_eff.T)
+        return I_eff, bool(np.min(s_t) < 0.35)
+
     def _search_with_rejection(
         self,
         store: MapStore,
@@ -841,22 +1002,29 @@ class SlamBackend:
         apply_tilt_gate: bool = False,
         apply_odom_gate: bool = False,
         use_gravity_prior: bool = False,
+        return_hessian: bool = False,
     ):
         """Best admissible ICP-verified candidate as ``((key, IcpResult) | None, reject_reason, reject_kind)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
         best = None
         last_reject = None
         last_reject_kind = None
-        up_body = (
-            self._verified_up_body(keyframe)
-            if (use_gravity_prior and self.config.icp_gravity_sigma_rad is not None)
-            else None
-        )
+        up_body = None
+        if use_gravity_prior and self.config.icp_gravity_sigma_rad is not None:
+            if self.config.floor_normal_gravity_enabled and keyframe.key in self._floor_normal_body:
+                up_body = self._floor_normal_body[keyframe.key]
+            else:
+                up_body = self._verified_up_body(keyframe)
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
+            if return_hessian:
+                result = self._register(
+                    keyframe.points_body(), submap(key), T_init, source_up_body=up_body, return_hessian=True
+                )
+            else:
+                result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
             if result is None:
                 continue
             if apply_tilt_gate:
@@ -889,7 +1057,13 @@ class SlamBackend:
         return best
 
     def _register(
-        self, source_body, target_world, T_init, *, source_up_body: np.ndarray | None = None
+        self,
+        source_body,
+        target_world,
+        T_init,
+        *,
+        source_up_body: np.ndarray | None = None,
+        return_hessian: bool = False,
     ) -> IcpResult | None:
         """Coarse-then-fine ICP; the fine result must pass fitness and RMSE gates."""
         c = self.config
@@ -903,15 +1077,17 @@ class SlamBackend:
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
         )
+        fine_voxel_m = c.icp_voxel_m if c.fine_icp_voxel_m is None else c.fine_icp_voxel_m
         fine = icp_point_to_plane(
             source_body,
             target_world,
             coarse.T_target_source,
             max_correspondence_m=c.fine_correspondence_m,
             iterations=c.icp_iterations,
-            voxel_m=c.icp_voxel_m,
+            voxel_m=fine_voxel_m,
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
+            return_hessian=return_hessian,
         )
         if fine.converged and fine.fitness >= c.min_fitness and fine.rmse_m <= c.max_rmse_m:
             return fine
