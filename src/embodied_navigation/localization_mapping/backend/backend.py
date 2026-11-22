@@ -35,7 +35,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .correction import CorrectionAdmission
-from .floor_plane import FloorSlabTracker, detect_floor_plane
+from .floor_plane import FloorPlaneMeasurement, detect_floor_plane, project_coplanar_odom_delta
 from .keyframes import Keyframe, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
@@ -107,13 +107,12 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
-    # Floor-plane / multi-floor slab priors, fine-voxel ICP, and X-ICP loop information.
+    # Wide-span coplanar floor leveling, LiDAR floor-normal gravity, fine-voxel ICP, and X-ICP.
     floor_plane_enabled: bool = False
-    floor_plane_sigma_m: float = 0.05
-    floor_plane_max_tilt_deg: float = 6.0
-    floor_plane_stair_climb_min_m: float = 1.5
-    floor_plane_slab_rejoin_tol_m: float = 1.2
+    floor_plane_max_tilt_deg: float = 14.0
+    floor_plane_max_step_dz_m: float = 0.12
     floor_normal_gravity_enabled: bool = False
+    floor_normal_graph_sigma_rad: float | None = None
     fine_icp_voxel_m: float | None = None
     xicp_enabled: bool = False
     xicp_min_scale: float = 0.15
@@ -230,13 +229,14 @@ class BackendConfig:
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}")
-        _inv_variance("floor_plane_sigma_m", self.floor_plane_sigma_m)
         if not 0.0 < _positive("floor_plane_max_tilt_deg", self.floor_plane_max_tilt_deg) < 90.0:
             raise ValueError(
                 f"floor_plane_max_tilt_deg must lie in (0, 90), got {self.floor_plane_max_tilt_deg!r}"
             )
-        for name in ("floor_plane_stair_climb_min_m", "floor_plane_slab_rejoin_tol_m", "xicp_cond_floor"):
+        for name in ("floor_plane_max_step_dz_m", "xicp_cond_floor"):
             _positive(name, getattr(self, name))
+        if self.floor_normal_graph_sigma_rad is not None:
+            _inv_variance("floor_normal_graph_sigma_rad", self.floor_normal_graph_sigma_rad)
         if self.fine_icp_voxel_m is not None:
             _positive("fine_icp_voxel_m", self.fine_icp_voxel_m)
         if not 0.0 < _positive("xicp_min_scale", self.xicp_min_scale) <= 1.0:
@@ -364,11 +364,7 @@ class SlamBackend:
         self._previous: Keyframe | None = None
         self._up_body: dict = {}
         self._floor_normal_body: dict = {}
-        self._slab_tracker = FloorSlabTracker(
-            stair_climb_min_m=config.floor_plane_stair_climb_min_m,
-            slab_rejoin_tol_m=config.floor_plane_slab_rejoin_tol_m,
-        )
-        self._floor_z_prior_refs: list[tuple[int, int, float]] = []
+        self._floor_measurements: dict[object, FloorPlaneMeasurement] = {}
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
         self._path_m: dict = {}  # key -> cumulative odom path length
@@ -381,8 +377,8 @@ class SlamBackend:
             "zupt_full_stop_count": 0,
             "zupt_pivot_count": 0,
             "floor_planes_detected": 0,
-            "floor_slabs_discovered": 0,
-            "floor_z_priors_added": 0,
+            "floor_coplanar_edges": 0,
+            "floor_gravity_priors_added": 0,
             "xicp_degenerate_loops": 0,
         }
         self._correction: np.ndarray | None = None
@@ -453,20 +449,13 @@ class SlamBackend:
     # Mapping mode -------------------------------------------------------
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
-        zupt_mode, _, z_prior_added = self._add_node(keyframe)
+        zupt_mode, _ = self._add_node(keyframe)
         loop_key, rejected, rejected_kind = self._find_loop(keyframe, desc, is_zupt=zupt_mode is not None)
         self.map.add(keyframe, self.graph.pose(keyframe.key), desc)
         self.index.add(keyframe.key, desc)
         if loop_key is not None:
             self.loop_count += 1
-        if loop_key is not None or (
-            z_prior_added
-            and (
-                self._stats["floor_z_priors_added"] % 10 == 0
-                or abs(float(self.graph.pose(keyframe.key)[2, 3]) - self.graph.z_priors[-1][1]) > 0.025
-            )
-        ):
-            self._optimize_graph_with_slab_refresh()
+            self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
         if self._correction is None:
             self._correction = np.eye(4)
@@ -652,16 +641,56 @@ class SlamBackend:
         T_measured[:3, 3] = shift
         return T_measured
 
+    @staticmethod
+    def _level_initial_pose(T_odom_body: np.ndarray, floor_normal_body: np.ndarray) -> np.ndarray:
+        """Apply minimal Roll/Pitch rotation so ``R_world_0 @ floor_normal_body == +e_z``."""
+        R0 = T_odom_body[:3, :3]
+        u = R0 @ floor_normal_body
+        e_z = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        axis = np.cross(u, e_z)
+        sin_a = float(np.linalg.norm(axis))
+        cos_a = float(np.clip(u @ e_z, -1.0, 1.0))
+        if sin_a <= 1e-9:
+            return T_odom_body.copy()
+        ax = axis / sin_a
+        angle = float(np.arctan2(sin_a, cos_a))
+        K = np.array([[0.0, -ax[2], ax[1]], [ax[2], 0.0, -ax[0]], [-ax[1], ax[0], 0.0]], dtype=np.float64)
+        R_lvl = np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
+        out = np.array(T_odom_body, dtype=np.float64, copy=True)
+        out[:3, :3] = project_so3(R_lvl @ R0)
+        return out
+
     def _add_node(self, keyframe: Keyframe) -> tuple[str | None, np.ndarray]:
         """Node at the previous optimised pose composed with the odometry (or ZUPT) delta."""
         c = self.config
         previous = self._previous
         zupt_mode: str | None = None
         delta_use = np.eye(4, dtype=np.float64)
+        floor_meas: FloorPlaneMeasurement | None = None
+        if c.floor_plane_enabled or c.floor_normal_gravity_enabled or c.floor_normal_graph_sigma_rad is not None:
+            floor_meas = detect_floor_plane(
+                keyframe.points_body(),
+                keyframe.T_odom_body[:3, :3],
+                max_body_tilt_deg=c.floor_plane_max_tilt_deg,
+            )
+            if floor_meas is not None:
+                self._stats["floor_planes_detected"] += 1
+                self._floor_measurements[keyframe.key] = floor_meas
+                if c.floor_normal_gravity_enabled:
+                    self._floor_normal_body[keyframe.key] = floor_meas.normal_body
         if previous is None:
-            self.graph.add_node(keyframe.key, keyframe.T_odom_body)
+            init_pose = (
+                self._level_initial_pose(keyframe.T_odom_body, floor_meas.normal_body)
+                if (c.floor_plane_enabled and floor_meas is not None)
+                else keyframe.T_odom_body
+            )
+            self.graph.add_node(keyframe.key, init_pose)
             self._path_m[keyframe.key] = 0.0
-            up_body = keyframe.T_odom_body[2, :3].copy()
+            up_body = (
+                floor_meas.normal_body.copy()
+                if (c.floor_plane_enabled and floor_meas is not None)
+                else keyframe.T_odom_body[2, :3].copy()
+            )
         else:
             delta = invert(previous.T_odom_body) @ keyframe.T_odom_body
             zupt_mode, pivot_rot = self._detect_zupt(previous, keyframe, delta)
@@ -688,9 +717,6 @@ class SlamBackend:
                 odometry = c.odometry_information()
                 step_dist = float(np.linalg.norm(delta[:3, 3]))
                 exited_zupt = self._zupt_anchor_kf is not None
-                # Exiting a ZUPT streak (or retrying after a sparse exit frame): recover
-                # point-cloud-supported motion since the streak anchor so genuine slow
-                # motion after a drifted stop is not lost.
                 recovery_anchor = self._zupt_anchor_kf if self._zupt_anchor_kf is not None else self._zupt_recovery_anchor
                 if recovery_anchor is not None:
                     T_anchor_prev = invert(self.graph.pose(recovery_anchor.key)) @ self.graph.pose(previous.key)
@@ -706,6 +732,17 @@ class SlamBackend:
                             self._zupt_recovery_anchor = None
                         else:
                             self._zupt_recovery_anchor = recovery_anchor
+                if c.floor_plane_enabled and floor_meas is not None:
+                    parent_floor = self._floor_measurements.get(parent_key)
+                    if parent_floor is not None:
+                        delta_use, leveled = project_coplanar_odom_delta(
+                            delta_use,
+                            parent_floor,
+                            floor_meas,
+                            max_step_dz_m=c.floor_plane_max_step_dz_m,
+                        )
+                        if leveled:
+                            self._stats["floor_coplanar_edges"] += 1
             if zupt_mode is not None:
                 self._zupt_recovery_anchor = None
                 if self._zupt_anchor_kf is None:
@@ -736,74 +773,17 @@ class SlamBackend:
                 c.graph_gravity_sigma_rad,
                 robust=c.graph_gravity_robust,
             )
-        z_prior_added = False
-        if c.floor_plane_enabled or c.floor_normal_gravity_enabled:
-            floor_meas = detect_floor_plane(
-                keyframe.points_body(),
-                keyframe.T_odom_body[:3, :3],
-                max_body_tilt_deg=c.floor_plane_max_tilt_deg,
+        if c.floor_normal_graph_sigma_rad is not None and floor_meas is not None:
+            self.graph.add_gravity_prior(
+                keyframe.key,
+                floor_meas.normal_body,
+                c.floor_normal_graph_sigma_rad,
+                robust=True,
             )
-            if floor_meas is not None:
-                self._stats["floor_planes_detected"] += 1
-                if c.floor_normal_gravity_enabled:
-                    self._floor_normal_body[keyframe.key] = floor_meas.normal_body
-            if c.floor_plane_enabled:
-                self._slab_tracker.stair_climb_min_m = c.floor_plane_stair_climb_min_m
-                self._slab_tracker.slab_rejoin_tol_m = c.floor_plane_slab_rejoin_tol_m
-                slab_prior = self._slab_tracker.update(
-                    keyframe.key,
-                    floor_meas,
-                    odom_z=float(keyframe.T_odom_body[2, 3]),
-                    pose_z=float(self.graph.pose(keyframe.key)[2, 3]),
-                    odom_xy=(float(keyframe.T_odom_body[0, 3]), float(keyframe.T_odom_body[1, 3])),
-                    zupt_active=(zupt_mode is not None),
-                    pose_z_lookup=lambda k: float(self.graph.pose(k)[2, 3]),
-                )
-                self._stats["floor_slabs_discovered"] = len(self._slab_tracker.slabs)
-                if slab_prior is not None and floor_meas is not None:
-                    slab_id, target_body_z = slab_prior
-                    z_idx = len(self.graph.z_priors)
-                    self.graph.add_z_prior(
-                        keyframe.key,
-                        target_body_z,
-                        sigma_m=c.floor_plane_sigma_m,
-                        robust=True,
-                    )
-                    self._floor_z_prior_refs.append((z_idx, slab_id, floor_meas.height_below_body_m))
-                    self._stats["floor_z_priors_added"] += 1
-                    z_prior_added = True
+            self._stats["floor_gravity_priors_added"] += 1
         self._previous = keyframe
         self._up_body[keyframe.key] = up_body
-        return zupt_mode, delta_use, z_prior_added
-
-    def _refresh_floor_z_priors(self) -> None:
-        """Refresh existing floor Z-prior targets from current slab anchor poses."""
-        if not self._floor_z_prior_refs:
-            return
-        pose_z_lookup = lambda k: float(self.graph.pose(k)[2, 3])
-        for z_idx, slab_id, height_below_body_m in self._floor_z_prior_refs:
-            node_idx, _, weight, robust = self.graph.z_priors[z_idx]
-            target_z = self._slab_tracker.slab_elevation(slab_id, pose_z_lookup) + height_below_body_m
-            self.graph.z_priors[z_idx] = (node_idx, float(target_z), weight, robust)
-
-    def _optimize_graph_with_slab_refresh(self) -> None:
-        """Optimize pose graph while keeping slab Z-priors aligned to moving slab anchors."""
-        if not self._floor_z_prior_refs or not self._slab_tracker.slabs:
-            self.graph.optimize(self.config.optimize_iterations)
-            return
-        anchor_z_before = {
-            sid: float(self.graph.pose(slab.anchor_key)[2, 3])
-            for sid, slab in self._slab_tracker.slabs.items()
-        }
-        self._refresh_floor_z_priors()
-        self.graph.optimize(self.config.optimize_iterations)
-        moved = any(
-            abs(float(self.graph.pose(slab.anchor_key)[2, 3]) - anchor_z_before[sid]) > 1e-4
-            for sid, slab in self._slab_tracker.slabs.items()
-        )
-        if moved:
-            self._refresh_floor_z_priors()
-            self.graph.optimize(self.config.optimize_iterations)
+        return zupt_mode, delta_use
 
     def _odometry_inconsistency(self, key, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
         """Reason why a loop match disagrees with the graph estimate, or None.
