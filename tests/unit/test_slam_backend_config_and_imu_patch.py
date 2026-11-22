@@ -359,8 +359,10 @@ class ImuBiasCovariancePatchTests(unittest.TestCase):
         )
 
         self.assertIn("0011-imu-bias-covariance-params.patch", FAST_LIVO2_BUILD_PATCHES)
+        self.assertIn("0012-lidar-merge-capacity.patch", FAST_LIVO2_BUILD_PATCHES)
         vendor_cpp = REPO_ROOT / "third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp"
         self.assertNotIn("imu.b_gyr_cov", vendor_cpp.read_text(encoding="utf-8"))
+        self.assertNotIn("meas.pcl_proc_cur->size() >= 262144", vendor_cpp.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory() as td:
             build_root = Path(td) / "fast_livo2_stage"
             staged = stage_fast_livo2_source(REPO_ROOT / "third_party/fast_livo2", build_root)
@@ -368,6 +370,7 @@ class ImuBiasCovariancePatchTests(unittest.TestCase):
             staged_h = (staged / "fast_livo2_core/include/fast_livo2_core/core/LIVMapper.h").read_text(encoding="utf-8")
             self.assertIn("imu.b_gyr_cov", staged_cpp)
             self.assertIn("imu.b_acc_cov", staged_cpp)
+            self.assertIn("meas.pcl_proc_cur->size() >= 262144", staged_cpp)
             self.assertIn("b_gyr_cov", staged_h)
             receipt = json.loads((build_root / "source_stage.json").read_text(encoding="utf-8"))
             self.assertEqual(receipt["status"], "complete")

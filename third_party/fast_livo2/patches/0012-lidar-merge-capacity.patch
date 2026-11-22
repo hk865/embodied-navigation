@@ -1,0 +1,28 @@
+--- a/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
++++ b/third_party/fast_livo2/fast_livo2_core/src/LIVMapper.cpp
+@@ -1975,9 +1975,9 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
+                     img_capture_time + instantaneous_time_tolerance)
+                     break;
+                 const auto &paired = lid_raw_data_buffer.front();
+                 if (paired.cloud->size() > 65536 ||
+                     meas.pcl_proc_cur->size() + meas.pcl_proc_next->size() + paired.cloud->size() >
+-                        131072)
++                        524288)
+                     throw std::runtime_error("LiDAR merge capacity");
+                 auto pcl(paired.cloud->points);
+                 double frame_header_time(lid_header_time_buffer.front());
+@@ -1996,12 +1996,12 @@ bool LIVMapper::sync_packages(LidarMeasureGroup &meas) {
+                                 ? img_capture_time
+                                 : frame_header_time;
+                         pt.curvature += (point_frame_time - meas.last_lio_update_time) * 1000.0f;
+-                        if (meas.pcl_proc_cur->size() >= 65536)
++                        if (meas.pcl_proc_cur->size() >= 262144)
+                             throw std::runtime_error("LiDAR current point capacity");
+                         meas.pcl_proc_cur->points.push_back(pt);
+                     } else {
+                         pt.curvature += (frame_header_time - m.lio_time) * 1000.0f;
+-                        if (meas.pcl_proc_next->size() >= 65536)
++                        if (meas.pcl_proc_next->size() >= 262144)
+                             throw std::runtime_error("LiDAR next point capacity");
+                         meas.pcl_proc_next->points.push_back(pt);
+                     }

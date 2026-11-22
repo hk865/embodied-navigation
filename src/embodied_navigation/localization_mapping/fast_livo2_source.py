@@ -14,6 +14,7 @@ from embodied_navigation.project import project_root
 # on the vendored tree. Subsequent logic patches stay in patches/ and apply at build time.
 FAST_LIVO2_BUILD_PATCHES = (
     "0011-imu-bias-covariance-params.patch",
+    "0012-lidar-merge-capacity.patch",
 )
 
 
