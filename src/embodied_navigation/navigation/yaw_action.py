@@ -84,8 +84,21 @@ def yaw_config(profile):
     )
     if not 0.1 <= yaw_dwell <= 5.0:
         raise ValueError("interactive_yaw_dwell_sim_s must be within [0.1, 5.0]")
+    raw_max_rate = profile.get("interactive_yaw_max_rate_rps")
+    raw_alias_rate = profile.get("yaw_max_rate_rad_s")
+    if raw_max_rate is not None and raw_alias_rate is not None:
+        r1 = finite_number(raw_max_rate, "interactive_yaw_max_rate_rps")
+        r2 = finite_number(raw_alias_rate, "yaw_max_rate_rad_s")
+        if abs(r1 - r2) > 1e-12:
+            raise ValueError(
+                "interactive_yaw_max_rate_rps and yaw_max_rate_rad_s disagree"
+            )
     yaw_max_rate = finite_number(
-        profile.get("interactive_yaw_max_rate_rps", LOCAL_ACTION_BOUNDS["yaw_rate_rps"]),
+        raw_max_rate
+        if raw_max_rate is not None
+        else raw_alias_rate
+        if raw_alias_rate is not None
+        else LOCAL_ACTION_BOUNDS["yaw_rate_rps"],
         "interactive_yaw_max_rate_rps",
     )
     if not 0.0 < yaw_max_rate <= 0.80:
@@ -197,19 +210,6 @@ def resolve_yaw_target(action, yaw):
     return action["target_yaw_rad"]
 
 
-def _read_measured_gyro_z(ctx):
-    """Return finite measured body IMU z-rate when valid, else 0.0."""
-    if ctx is None or ctx.get("imu_valid") is False:
-        return 0.0
-    raw = ctx.get("measured_yaw_rate_rps")
-    if raw is None:
-        raw = ctx.get("imu_yaw_rate")
-    if raw is None or isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        return 0.0
-    val = float(raw)
-    return val if math.isfinite(val) else 0.0
-
-
 def _read_sim_time(ctx):
     """Return finite simulation timestamp from context if available."""
     if ctx is None:
@@ -221,67 +221,159 @@ def _read_sim_time(ctx):
     return val if math.isfinite(val) else None
 
 
-def _compute_yaw_rate(action, config, context, error, control_band_met, limit):
-    """Compute bounded PD + anti-windup I + optional slew-limited yaw rate."""
+def _imu_freshness(config, context, *, now_wall, future_tolerance_s, require_stamps=True):
+    """Check IMU validity and source/arrival freshness independently of settle speed."""
+    if context is None or context.get("imu_valid") is False:
+        return None, None, None, False
+    rate_measured = context.get("imu_yaw_rate", context.get("measured_yaw_rate_rps"))
+    if (
+        rate_measured is None
+        or isinstance(rate_measured, bool)
+        or not isinstance(rate_measured, (int, float))
+        or not math.isfinite(rate_measured)
+    ):
+        return None, None, None, False
+    rate = float(rate_measured)
+    has_src = "imu_source_stamp_s" in context
+    has_arr = "imu_arrival_wall_s" in context
+    if not require_stamps and not has_src and not has_arr:
+        return rate, None, None, True
+
+    sim_s = _read_sim_time(context)
+    raw_src = context.get("imu_source_stamp_s")
+    raw_arr = context.get("imu_arrival_wall_s")
+    if (
+        sim_s is None
+        or raw_src is None
+        or isinstance(raw_src, bool)
+        or not isinstance(raw_src, (int, float))
+        or not math.isfinite(raw_src)
+        or raw_arr is None
+        or isinstance(raw_arr, bool)
+        or not isinstance(raw_arr, (int, float))
+        or not math.isfinite(raw_arr)
+        or now_wall is None
+        or isinstance(now_wall, bool)
+        or not isinstance(now_wall, (int, float))
+        or not math.isfinite(now_wall)
+    ):
+        return rate, None, None, False
+
+    gyro_age = sim_s - float(raw_src)
+    gyro_wall_age = float(now_wall) - float(raw_arr)
+    fresh = (
+        -future_tolerance_s <= gyro_age <= config["imu_max_sim_age_s"]
+        and 0.0 <= gyro_wall_age <= config["imu_max_wall_age_s"]
+    )
+    return rate, gyro_age, gyro_wall_age, fresh
+
+
+def _read_fresh_measured_gyro_z(config, context, *, now_wall, future_tolerance_s):
+    """Return fresh finite measured body IMU z-rate, or 0.0 when missing/stale."""
+    rate, _, _, fresh = _imu_freshness(
+        config,
+        context,
+        now_wall=now_wall,
+        future_tolerance_s=future_tolerance_s,
+        require_stamps=False,
+    )
+    return rate if fresh and rate is not None else 0.0
+
+
+def _compute_yaw_rate(
+    action, config, context, error, control_band_met, limit, *, now_wall, future_tolerance_s
+):
+    """Compute bounded PD + conditional anti-windup I + strict slew/braking yaw rate."""
     kp = float(config.get("yaw_kp", LOCAL_ACTION_BOUNDS["yaw_gain"]))
     kd = float(config.get("yaw_kd", 0.0))
     ki = float(config.get("yaw_ki", 0.0))
     integral_band = float(config.get("yaw_integral_band_rad", 0.18))
-    max_accel = config.get("yaw_max_accel_rps2", None)
+    control_tol = float(config.get("yaw_control_tolerance_rad", 0.0))
+    raw_max_accel = config.get("yaw_max_accel_rps2", None)
+    max_accel = float(raw_max_accel) if (raw_max_accel is not None and raw_max_accel > 0.0) else None
     track_state = ki > 0.0 or max_accel is not None or "_control_state" in action
     sim_s = _read_sim_time(context) if track_state else None
+    state = action.setdefault("_control_state", {}) if track_state else None
+
+    prev_sim_s = state.get("prev_sim_s") if state is not None else None
+    if sim_s is not None and prev_sim_s is not None and sim_s > prev_sim_s:
+        raw_dt = sim_s - prev_sim_s
+        dt_slew = min(0.25, raw_dt)
+        dt_int = min(0.25, raw_dt)
+    elif sim_s is not None and prev_sim_s is None:
+        # First call establishes the time anchor with nominal 50 Hz initial step.
+        dt_slew = 0.02
+        dt_int = 0.0
+    else:
+        dt_slew = 0.0
+        dt_int = 0.0
+
+    def _slew_limit(target_wz):
+        if max_accel is None or state is None:
+            return target_wz
+        prev_wz = float(state.get("prev_wz", 0.0))
+        max_delta = max_accel * dt_slew
+        slewed = max(prev_wz - max_delta, min(prev_wz + max_delta, target_wz))
+        return max(-limit, min(limit, slewed))
+
+    def _apply_bounds(raw_u):
+        bounded = max(-limit, min(limit, raw_u))
+        if max_accel is not None:
+            brake_dist = max(0.0, abs(error) - control_tol)
+            v_brake = math.sqrt(2.0 * max_accel * brake_dist)
+            if abs(bounded) > v_brake:
+                bounded = math.copysign(v_brake, bounded)
+        return _slew_limit(bounded)
+
     if control_band_met:
-        if track_state:
-            state = action.setdefault("_control_state", {})
+        cmd_wz = _slew_limit(0.0) if max_accel is not None else 0.0
+        if abs(cmd_wz) <= 1e-12:
+            cmd_wz = 0.0
+        if state is not None:
             state["integral"] = 0.0
             state["prev_error"] = error
-            state["prev_wz"] = 0.0
-            if sim_s is not None:
+            state["prev_wz"] = cmd_wz
+            if sim_s is not None and (prev_sim_s is None or sim_s > prev_sim_s):
                 state["prev_sim_s"] = sim_s
-        return 0.0
-    gyro_z = _read_measured_gyro_z(context) if kd > 0.0 else 0.0
-    d_term = -kd * gyro_z
-    i_term = 0.0
-    integral = 0.0
-    state = action.setdefault("_control_state", {}) if track_state else None
-    if ki > 0.0 and state is not None:
-        integral = float(state.get("integral", 0.0))
-        prev_error = state.get("prev_error")
-        prev_sim_s = state.get("prev_sim_s")
-        dt = (
-            max(0.005, min(0.25, sim_s - prev_sim_s))
-            if (sim_s is not None and prev_sim_s is not None and sim_s > prev_sim_s)
-            else 0.0
+        return cmd_wz
+
+    gyro_z = (
+        _read_fresh_measured_gyro_z(
+            config, context, now_wall=now_wall, future_tolerance_s=future_tolerance_s
         )
+        if kd > 0.0
+        else 0.0
+    )
+    d_term = -kd * gyro_z
+    integral = 0.0
+    if ki > 0.0 and state is not None:
+        prev_integral = float(state.get("integral", 0.0))
+        prev_error = state.get("prev_error")
         if abs(error) > integral_band:
             integral = 0.0
         elif prev_error is not None and (
             (error > 0.0 and prev_error < 0.0) or (error < 0.0 and prev_error > 0.0)
         ):
             integral = 0.0
-        elif dt > 0.0:
-            integral += error * dt
+        elif dt_int > 0.0:
             max_integral = 0.08 / ki
-            integral = max(-max_integral, min(max_integral, integral))
-        i_term = ki * integral
-    cmd_wz = max(-limit, min(limit, kp * error + i_term + d_term))
-    if max_accel is not None and max_accel > 0.0 and state is not None:
-        prev_sim_s = state.get("prev_sim_s")
-        prev_wz = float(state.get("prev_wz", 0.0))
-        if prev_sim_s is None:
-            dt_slew = 0.02
-        elif sim_s is not None and sim_s > prev_sim_s:
-            dt_slew = max(0.005, min(0.25, sim_s - prev_sim_s))
+            cand_integral = max(
+                -max_integral, min(max_integral, prev_integral + error * dt_int)
+            )
+            raw_cand = kp * error + ki * cand_integral + d_term
+            final_cand = _apply_bounds(raw_cand)
+            upper_sat = (raw_cand > final_cand + 1e-12) and (error > 0.0)
+            lower_sat = (raw_cand < final_cand - 1e-12) and (error < 0.0)
+            integral = prev_integral if (upper_sat or lower_sat) else cand_integral
         else:
-            dt_slew = 0.0
-        max_delta = float(max_accel) * dt_slew
-        cmd_wz = max(prev_wz - max_delta, min(prev_wz + max_delta, cmd_wz))
-        cmd_wz = max(-limit, min(limit, cmd_wz))
+            integral = prev_integral
+    i_term = ki * integral
+    cmd_wz = _apply_bounds(kp * error + i_term + d_term)
     if state is not None:
         state["integral"] = integral
         state["prev_error"] = error
         state["prev_wz"] = cmd_wz
-        if sim_s is not None:
+        if sim_s is not None and (prev_sim_s is None or sim_s > prev_sim_s):
             state["prev_sim_s"] = sim_s
     return cmd_wz
 
@@ -338,29 +430,15 @@ def yaw_action_step(action, config, context, window, *, yaw, now_wall,
             and ctx.get("wall_age") is not None
             and 0.0 <= ctx["wall_age"] <= config["max_wall_age_s"]
         )
-        rate_measured = (
-            None
-            if ctx is None
-            else ctx.get("imu_yaw_rate", ctx.get("measured_yaw_rate_rps"))
+        rate_measured, gyro_age, gyro_wall_age, imu_fresh = _imu_freshness(
+            config,
+            ctx,
+            now_wall=now_wall,
+            future_tolerance_s=future_tolerance_s,
+            require_stamps=True,
         )
-        gyro_age = None
-        gyro_wall_age = None
-        if ctx is not None and ctx.get("imu_source_stamp_s") is not None:
-            gyro_age = ctx["sim"] - float(ctx["imu_source_stamp_s"])
-        if ctx is not None and ctx.get("imu_arrival_wall_s") is not None:
-            gyro_wall_age = now_wall - float(ctx["imu_arrival_wall_s"])
-        gyro_ok = (
-            ctx is not None
-            and ctx.get("imu_valid") is not False
-            and rate_measured is not None
-            and math.isfinite(rate_measured)
-            and abs(rate_measured) <= settle
-            and gyro_age is not None
-            and -future_tolerance_s
-            <= gyro_age
-            <= config["imu_max_sim_age_s"]
-            and gyro_wall_age is not None
-            and 0.0 <= gyro_wall_age <= config["imu_max_wall_age_s"]
+        gyro_ok = bool(
+            imu_fresh and rate_measured is not None and abs(rate_measured) <= settle
         )
         valid = pose_ok and gyro_ok and abs(error) <= completion_tol
         record = window
@@ -413,7 +491,14 @@ def yaw_action_step(action, config, context, window, *, yaw, now_wall,
                 # Same deadband as the real command path: inside the control
                 # band the released command is exactly zero, never a PD+I value.
                 correction = _compute_yaw_rate(
-                    action, config, context, error, control_band_met, limit
+                    action,
+                    config,
+                    context,
+                    error,
+                    control_band_met,
+                    limit,
+                    now_wall=now_wall,
+                    future_tolerance_s=future_tolerance_s,
                 )
                 record.update(
                     completion_mode="dwell",
@@ -445,5 +530,14 @@ def yaw_action_step(action, config, context, window, *, yaw, now_wall,
                 )
                 completion = record
                 return [0.0, 0.0, 0.0], window, completion
-    cmd_wz = _compute_yaw_rate(action, config, context, error, control_band_met, limit)
+    cmd_wz = _compute_yaw_rate(
+        action,
+        config,
+        context,
+        error,
+        control_band_met,
+        limit,
+        now_wall=now_wall,
+        future_tolerance_s=future_tolerance_s,
+    )
     return [0.0, 0.0, cmd_wz], window, completion

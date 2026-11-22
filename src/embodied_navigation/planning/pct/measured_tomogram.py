@@ -15,6 +15,7 @@ from pathlib import Path
 import struct
 import subprocess
 import tempfile
+import time
 
 import numpy as np
 
@@ -350,10 +351,13 @@ class MeasuredPctPlanner:
             vertical_delta_m=vert,
         )
 
-    def plan(self, start_body_xyz, goal_body_xyz):
+    def plan(self, start_body_xyz, goal_body_xyz, *, cancel_event=None):
         """Return {found, body_path_xyz, reason, provenance}; never return a partial route."""
         start, goal = _xyz([start_body_xyz, goal_body_xyz], 'endpoints')
         result = dict(found=False, body_path_xyz=[], reason=None, provenance=dict(self.provenance))
+        if cancel_event is not None and cancel_event.is_set():
+            result['reason'] = 'cancelled'
+            return result
         if self.cost is None:
             result['reason'] = 'no_measured_support'
             return result
@@ -365,6 +369,9 @@ class MeasuredPctPlanner:
         if first is None:
             first, footprint_snap = self._footprint_start_node(start)
         result['provenance']['start_footprint_snap'] = footprint_snap
+        if cancel_event is not None and cancel_event.is_set():
+            result['reason'] = 'cancelled'
+            return result
         if first is None and self.blind_radius > 0:
             cost, heights, model = self._start_surface_model(start)
             result['provenance']['start_surface_model'] = model
@@ -384,18 +391,47 @@ class MeasuredPctPlanner:
                     stream.write(np.asarray(values, dtype='<f8').tobytes(order='C'))
             (work/'query.txt').write_text(' '.join(map(str, first+last)))
             try:
-                done = subprocess.run([str(binary), str(work/'map.bin'), str(work/'query.txt'),
-                                       str(work/'path.json')], capture_output=True, text=True, timeout=self.timeout)
-            except (OSError, subprocess.TimeoutExpired) as exc:
+                proc = subprocess.Popen(
+                    [str(binary), str(work/'map.bin'), str(work/'query.txt'), str(work/'path.json')],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except OSError as exc:
                 raise MeasuredPctError('native PCT execution failed: ' + str(exc)) from exc
-            if done.returncode not in (0, 4):
-                raise MeasuredPctError('native PCT returned ' + str(done.returncode) + ': ' + done.stderr[-2000:])
+            deadline = time.monotonic() + self.timeout
+            returncode = None
+            stdout_data = ''
+            stderr_data = ''
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=0.2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=0.5)
+                    result['reason'] = 'cancelled'
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    proc.kill()
+                    proc.wait(timeout=0.5)
+                    raise MeasuredPctError('native PCT execution failed: timed out')
+                try:
+                    stdout_data, stderr_data = proc.communicate(timeout=min(0.02, remaining))
+                    returncode = proc.returncode
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if returncode not in (0, 4):
+                raise MeasuredPctError('native PCT returned ' + str(returncode) + ': ' + stderr_data[-2000:])
             try:
                 native = json.loads((work/'path.json').read_text())
             except (OSError, ValueError) as exc:
                 raise MeasuredPctError('native PCT result unreadable') from exc
         result['provenance']['native_binary'] = str(binary)
-        if done.returncode == 4 or not native.get('found'):
+        if returncode == 4 or not native.get('found'):
             result['reason'] = 'native_no_path'
             return result
         cells = [[first[0], first[2], first[1]]] + native['cells_layer_row_col']

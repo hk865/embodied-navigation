@@ -22,6 +22,22 @@ def resolve_limits(experiment):
     return target_speed, physical_speed_guard
 
 
+def resolve_yaw_limit(experiment):
+    """Resolve the configured independent-yaw rate ceiling from frozen experiment config."""
+    from embodied_navigation.navigation.yaw_action import LOCAL_ACTION_BOUNDS, yaw_config
+
+    default_rate = float(LOCAL_ACTION_BOUNDS["yaw_rate_rps"])
+    if not isinstance(experiment, dict):
+        return default_rate
+    yaw_section = experiment.get("yaw_action")
+    if isinstance(yaw_section, dict) and yaw_section.get("yaw_rate_rps") is not None:
+        rate = float(yaw_section["yaw_rate_rps"])
+        if not 0.0 < rate <= 0.80:
+            raise ValueError("yaw_action.yaw_rate_rps must be within (0, 0.80]")
+        return rate
+    return float(yaw_config(experiment)["yaw_rate_rps"])
+
+
 def create_route_controller(
     experiment,
     *,
@@ -66,11 +82,14 @@ def annotate_policy_receipt(
 ):
     """Record the unchanged speed_test/policy receipts before walking."""
     is_truth = experiment.get("slam_pose_source") == "simulation_truth"
+    yaw_limit = resolve_yaw_limit(experiment)
     result["speed_test"] = {
         "target_mps": target_speed,
         "physical_speed_guard_mps": physical_speed_guard,
         "tilt_guard_rad": 0.5,
-        "yaw_command_limit_radps": 0.15,
+        "yaw_command_limit_radps": yaw_limit,
+        "route_yaw_command_limit_radps": 0.15,
+        "maneuver_yaw_command_limit_radps": 0.15,
         "stair_specific_speed_limit": None,
         "native_COM_velocity_PID": not robogauge,
         "command_slew": not robogauge,
@@ -140,6 +159,7 @@ class ControlLoop:
         self.latest_nav = latest_nav
         self.latest_odom = latest_odom
         self.startup_warmup = startup_warmup
+        self.yaw_limit_rps = resolve_yaw_limit(experiment)
         self.stand_gate_done = False
         self.policy_stand_gate_done = False
         self.odometry_hold_started = None
@@ -368,8 +388,17 @@ class ControlLoop:
                     source_terminal_reason = (
                         "route_arrived" if tracker.arrived else tracker.failure
                     )
+            active_yaw_limit = (
+                self.yaw_limit_rps
+                if (
+                    interactive_control
+                    and tracker is not None
+                    and getattr(tracker, "phase", None) == "yaw"
+                )
+                else 0.15
+            )
             assert np.isfinite(request).all() and np.all(
-                np.abs(request) <= [target_speed + 1e-6, 0.050001, 0.150001]
+                np.abs(request) <= [target_speed + 1e-6, 0.050001, active_yaw_limit + 1e-6]
             ), "Invalid navigation command"
             if (
                 (not warmup_active or tracker_ready)

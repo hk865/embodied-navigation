@@ -443,9 +443,6 @@ def main(argv=None):
             "body contact follows body_contact_report_only. "
             "These physics readbacks are not navigation inputs."
         )
-    if interactive_requested:
-        from embodied_navigation.navigation.yaw_action import yaw_config
-        profile["yaw_action"] = yaw_config(profile)
     if args.experiment is not None:
         exp_path = args.experiment.expanduser()
         if not exp_path.is_file():
@@ -471,6 +468,13 @@ def main(argv=None):
             )
         profile.update(experiment_overlay)
         profile["experiment_config_sha256"] = hashlib.sha256(raw_bytes).hexdigest()
+    if interactive_requested:
+        from embodied_navigation.navigation.yaw_action import yaw_config
+
+        try:
+            profile["yaw_action"] = yaw_config(profile)
+        except ValueError as error:
+            parser.error(f"Invalid yaw_action config: {error}")
     if args.check:
         print(
             json.dumps(
@@ -533,6 +537,9 @@ def main(argv=None):
         "src/embodied_navigation/planning/pct/measured_tomogram.py",
         "src/embodied_navigation/planning/exploration/route_information.py",
         "src/embodied_navigation/planning/exploration/waypoint_candidates.py",
+        "src/embodied_navigation/planning/exploration/waypoint_mailbox.py",
+        "src/embodied_navigation/planning/exploration/llm_agent_client.py",
+        "src/embodied_navigation/planning/exploration/sentinel_coordinator.py",
         "src/embodied_navigation/planning/exploration/os1_calibration.json",
         "scripts/prepare_dynanav_waypoint_candidates.py",
         "scripts/dynanav_exploration.py",

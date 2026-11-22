@@ -597,7 +597,8 @@ class FastSentinelClientAndRunnerTests(unittest.TestCase):
             self.assertFalse(ds_verdict.fallback)
 
             ds_req = state.requests[-1]
-            self.assertEqual(ds_req["model"], "deepseek-chat")
+            self.assertEqual(ds_req["model"], "deepseek-flash")
+            self.assertEqual(ds_req["thinking"], {"type": "disabled"})
             self.assertIsInstance(ds_req["messages"][1]["content"], str)
             self.assertLess(len(ds_req["messages"][0]["content"]) + len(ds_req["messages"][1]["content"]), 1400)
             self.assertEqual(state.headers[-1]["authorization"], "Bearer ds-key")
