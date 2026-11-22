@@ -35,11 +35,13 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .correction import CorrectionAdmission
-from .keyframes import Keyframe, voxel_downsample
+from .keyframes import Keyframe, transform_points, voxel_downsample
 from .map_store import MapStore
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
+from .submaps import SubmapConfig, build_submap
+from .surfaces import SurfaceConfig, compare_surfaces, model_surfaces
 
 
 @dataclass
@@ -106,10 +108,28 @@ class BackendConfig:
     zupt_sigma_m: float = 0.015
     zupt_sigma_rad: float = 0.005
     zupt_skip_loop_search: bool = True
+    # Bounded measured multi-frame submap options (disabled by default).
+    use_measured_submaps: bool = False
+    measured_submap: SubmapConfig = field(default_factory=SubmapConfig)
+    # Surface coverage gate options (disabled by default).
+    use_surface_verification: bool = False
+    gravity_aligned: bool = False
+    surface: SurfaceConfig = field(default_factory=SurfaceConfig)
+    # X-ICP translation degeneracy check and fine ICP voxel override (disabled by default).
+    min_translation_observability: float | None = None
+    fine_icp_voxel_m: float | None = None
 
     def __post_init__(self) -> None:
         self.odometry_information()
         self.loop_information()
+        if not isinstance(self.measured_submap, SubmapConfig):
+            raise ValueError(
+                f"measured_submap must be a SubmapConfig, got {type(self.measured_submap).__name__}"
+            )
+        if not isinstance(self.surface, SurfaceConfig):
+            raise ValueError(f"surface must be a SurfaceConfig, got {type(self.surface).__name__}")
+        if self.use_surface_verification and not self.gravity_aligned:
+            raise ValueError("use_surface_verification requires gravity_aligned=True")
 
     def odometry_information(self) -> np.ndarray:
         """6x6 information of one odometry edge; isotropic unless overridden."""
@@ -135,6 +155,10 @@ class BackendConfig:
         values = dict(data)
         if "scan_context" in values:
             values["scan_context"] = _scan_context_from_dict(values["scan_context"])
+        if "measured_submap" in values:
+            values["measured_submap"] = _submap_from_dict(values["measured_submap"])
+        if "surface" in values:
+            values["surface"] = _surface_from_dict(values["surface"])
         config = cls(**values)
         config._validate()
         return config
@@ -208,9 +232,24 @@ class BackendConfig:
             _positive(name, getattr(self, name))
         if not 0.0 < _positive("zupt_min_fitness", self.zupt_min_fitness) <= 1.0:
             raise ValueError(f"zupt_min_fitness must lie in (0, 1], got {self.zupt_min_fitness!r}")
-        for name in ("graph_gravity_robust", "zupt_enabled", "zupt_skip_loop_search"):
+        for name in (
+            "graph_gravity_robust",
+            "zupt_enabled",
+            "zupt_skip_loop_search",
+            "use_measured_submaps",
+            "use_surface_verification",
+            "gravity_aligned",
+        ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}")
+        if self.min_translation_observability is not None:
+            obs = _positive("min_translation_observability", self.min_translation_observability)
+            if obs > 1.0:
+                raise ValueError(
+                    f"min_translation_observability must lie in (0, 1], got {self.min_translation_observability!r}"
+                )
+        if self.fine_icp_voxel_m is not None:
+            _positive("fine_icp_voxel_m", self.fine_icp_voxel_m)
 
 
 def _scan_context_from_dict(data: dict) -> ScanContextConfig:
@@ -225,6 +264,26 @@ def _scan_context_from_dict(data: dict) -> ScanContextConfig:
     _count("scan_context.sectors", config.sectors)
     _positive("scan_context.max_range_m", config.max_range_m)
     return config
+
+
+def _submap_from_dict(data: dict) -> SubmapConfig:
+    """Strict nested SubmapConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"measured_submap must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(SubmapConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown measured_submap keys: {unknown}")
+    return SubmapConfig(**data)
+
+
+def _surface_from_dict(data: dict) -> SurfaceConfig:
+    """Strict nested SurfaceConfig; unknown keys and invalid bounds are rejected."""
+    if not isinstance(data, dict):
+        raise ValueError(f"surface must be a mapping, got {type(data).__name__}")
+    unknown = sorted(set(data) - {option.name for option in fields(SurfaceConfig)}, key=str)
+    if unknown:
+        raise ValueError(f"unknown surface keys: {unknown}")
+    return SurfaceConfig(**data)
 
 
 def _positive(name: str, value) -> float:
@@ -307,6 +366,14 @@ class SlamBackend:
         self.loop_count = 0
         self.last_error: str | None = None
         self._previous: Keyframe | None = None
+        self._source_frames: list[Keyframe] = []
+        self.measured_query_submaps = 0
+        self.measured_target_submaps = 0
+        self.measured_query_frames_total = 0
+        self.measured_target_frames_total = 0
+        self.surface_checks = 0
+        self.surface_accepted = 0
+        self.surface_rejected_by_reason: dict[str, int] = {}
         self._up_body: dict = {}
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
@@ -317,6 +384,7 @@ class SlamBackend:
             "loops_skipped_spacing": 0,
             "loops_skipped_zupt": 0,
             "loops_rejected_tilt": 0,
+            "loops_rejected_degenerate": 0,
             "zupt_full_stop_count": 0,
             "zupt_pivot_count": 0,
         }
@@ -361,6 +429,13 @@ class SlamBackend:
                 "travel_since_last_loop_m": travel_since_last_loop_m,
                 "last_loop_age_s": last_loop_age_s,
                 "zupt_active": self._zupt_anchor_kf is not None,
+                "measured_query_submaps": int(self.measured_query_submaps),
+                "measured_query_frames_total": int(self.measured_query_frames_total),
+                "measured_target_submaps": int(self.measured_target_submaps),
+                "measured_target_frames_total": int(self.measured_target_frames_total),
+                "surface_checks": int(self.surface_checks),
+                "surface_accepted": int(self.surface_accepted),
+                "surface_rejected_by_reason": dict(self.surface_rejected_by_reason),
             }
         )
         return stats
@@ -379,6 +454,13 @@ class SlamBackend:
                 event.update(self._map_step(keyframe, desc))
             else:
                 event.update(self._relocalize_step(keyframe, desc))
+            if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                sub_cfg = self.config.measured_submap
+                keep_history = max(sub_cfg.max_frames - 1, sub_cfg.submap_window or 0)
+                if keep_history > 0:
+                    self._source_frames.append(keyframe)
+                    if len(self._source_frames) > keep_history:
+                        self._source_frames = self._source_frames[-keep_history:]
         except Exception as error:  # one bad keyframe must not stop the backend
             self.last_error = f"{type(error).__name__}: {error}"
             event["error"] = self.last_error
@@ -492,8 +574,9 @@ class SlamBackend:
         )
         if step_dxy > c.zupt_max_odom_xy_m or anchor_dxy > c.zupt_max_odom_xy_m:
             return None, None
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None, None
         delta_anchor = invert(anchor.T_odom_body) @ keyframe.T_odom_body
@@ -547,8 +630,9 @@ class SlamBackend:
         intermediate sparse frames before recovery succeeded).
         """
         c = self.config
-        anchor_pts = voxel_downsample(anchor.points_body(), c.map_voxel_m)
-        curr_pts = voxel_downsample(keyframe.points_body(), c.map_voxel_m)
+        zupt_voxel_m = max(c.map_voxel_m, 0.2)
+        anchor_pts = voxel_downsample(anchor.points_body(), zupt_voxel_m)
+        curr_pts = voxel_downsample(keyframe.points_body(), zupt_voxel_m)
         if len(anchor_pts) < 50 or len(curr_pts) < 50:
             return None
         T_anchor_prev = invert(self.graph.pose(anchor.key)) @ self.graph.pose(previous.key)
@@ -724,6 +808,7 @@ class SlamBackend:
             lambda key: key in excluded,
             lambda key: self._loop_submap(key, excluded),
             apply_tilt_gate=True,
+            apply_degeneracy_gate=True,
             apply_odom_gate=True,
             use_gravity_prior=True,
         )
@@ -731,10 +816,13 @@ class SlamBackend:
             return None, rejected, rejected_kind
         key, result = match
         T_world_new = result.T_target_source
-        anchor = min(
-            self._loop_window(key, excluded),
-            key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
-        )
+        if self.config.use_measured_submaps and self.config.measured_submap.anchor_mode == "candidate":
+            anchor = key
+        else:
+            anchor = min(
+                self._loop_window(key, excluded),
+                key=lambda k: np.linalg.norm(self.map.poses[k][:3, 3] - T_world_new[:3, 3]),
+            )
         loop = c.loop_information()
         self.graph.add_edge(anchor, keyframe.key, invert(self.graph.pose(anchor)) @ T_world_new, loop, robust=True)
         self._last_loop_path_m = curr_path
@@ -754,7 +842,19 @@ class SlamBackend:
         return [k for k in keys[max(0, i - n) : i + n + 1] if k not in excluded]
 
     def _loop_submap(self, key, excluded: set) -> np.ndarray:
-        """World cloud of the candidate's ``_loop_window`` (the ICP target of a loop check)."""
+        """World cloud of the candidate's ``_loop_window`` or bounded measured submap."""
+        if self.config.use_measured_submaps and self.config.measured_submap.use_history_submap:
+            anchor = self.map.keyframes[key]
+            measured = build_submap(
+                self.map.keyframes.values(),
+                anchor,
+                self.config.measured_submap,
+                excluded=excluded,
+                track_sources=False,
+            )
+            self.measured_target_submaps += 1
+            self.measured_target_frames_total += len(measured.source_keys)
+            return transform_points(self.map.poses[key], measured.points_body)
         window = set(self._loop_window(key, excluded))
         others = [k for k in self.map.keyframes if k not in window]
         return self.map.submap(self.map.poses[key][:3, 3], self.config.submap_radius_m, exclude_keys=others)
@@ -830,6 +930,19 @@ class SlamBackend:
             return f"gravity tilt {np.degrees(tilt_rad):.2f} deg exceeds {np.degrees(limit):.2f} deg"
         return None
 
+    def _degeneracy_rejection_reason(self, result: IcpResult) -> str | None:
+        limit = self.config.min_translation_observability
+        if limit is None or result.hessian is None:
+            return None
+        H_t = 0.5 * (result.hessian[:3, :3] + result.hessian[:3, :3].T)
+        eigvals = np.linalg.eigvalsh(H_t)
+        lam_max = float(eigvals[-1])
+        lam_min = max(0.0, float(eigvals[0]))
+        ratio = (lam_min / lam_max) if lam_max > 0.0 else 0.0
+        if ratio < limit:
+            return f"translation observability {ratio:.4f} below {limit:.4f}"
+        return None
+
     def _search_with_rejection(
         self,
         store: MapStore,
@@ -839,11 +952,13 @@ class SlamBackend:
         submap,
         *,
         apply_tilt_gate: bool = False,
+        apply_degeneracy_gate: bool = False,
         apply_odom_gate: bool = False,
         use_gravity_prior: bool = False,
     ):
         """Best admissible ICP-verified candidate as ``((key, IcpResult) | None, reject_reason, reject_kind)``."""
         candidates = self.index.query(desc, exclude=exclude, candidates=self.config.scan_context_prefilter)
+        source_body = None
         best = None
         last_reject = None
         last_reject_kind = None
@@ -855,8 +970,22 @@ class SlamBackend:
         for key, dist, yaw in candidates[: self.config.icp_candidates]:
             if dist > self.config.max_scan_context_distance:
                 break
+            if source_body is None:
+                if self.config.use_measured_submaps and self.config.measured_submap.use_query_submap:
+                    measured = build_submap(
+                        [*self._source_frames, keyframe],
+                        keyframe,
+                        self.config.measured_submap,
+                        track_sources=False,
+                    )
+                    source_body = measured.points_body
+                    self.measured_query_submaps += 1
+                    self.measured_query_frames_total += len(measured.source_keys)
+                else:
+                    source_body = keyframe.points_body()
             T_init = store.poses[key] @ yaw_pose(yaw)
-            result = self._register(keyframe.points_body(), submap(key), T_init, source_up_body=up_body)
+            target = submap(key)
+            result = self._register(source_body, target, T_init, source_up_body=up_body)
             if result is None:
                 continue
             if apply_tilt_gate:
@@ -866,11 +995,35 @@ class SlamBackend:
                     last_reject = tilt_reject
                     last_reject_kind = "tilt"
                     continue
+            if apply_degeneracy_gate:
+                degen_reject = self._degeneracy_rejection_reason(result)
+                if degen_reject is not None:
+                    self._stats["loops_rejected_degenerate"] += 1
+                    last_reject = degen_reject
+                    last_reject_kind = "degenerate"
+                    continue
             if apply_odom_gate:
                 odom_reject = self._odometry_inconsistency(key, keyframe, result.T_target_source)
                 if odom_reject is not None:
                     last_reject = odom_reject
                     last_reject_kind = "odom"
+                    continue
+            if self.config.use_surface_verification:
+                self.surface_checks += 1
+                aligned_source = transform_points(result.T_target_source, source_body)
+                check = compare_surfaces(
+                    model_surfaces(aligned_source, config=self.config.surface),
+                    model_surfaces(target, config=self.config.surface),
+                    self.config.surface,
+                )
+                if check.accepted:
+                    self.surface_accepted += 1
+                else:
+                    self.surface_rejected_by_reason[check.reason] = (
+                        self.surface_rejected_by_reason.get(check.reason, 0) + 1
+                    )
+                    last_reject = f"surface {check.reason}"
+                    last_reject_kind = "surface"
                     continue
             if best is None or result.rmse_m < best[1].rmse_m:
                 best = (key, result)
@@ -903,15 +1056,17 @@ class SlamBackend:
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
         )
+        fine_voxel_m = c.icp_voxel_m if c.fine_icp_voxel_m is None else c.fine_icp_voxel_m
         fine = icp_point_to_plane(
             source_body,
             target_world,
             coarse.T_target_source,
             max_correspondence_m=c.fine_correspondence_m,
             iterations=c.icp_iterations,
-            voxel_m=c.icp_voxel_m,
+            voxel_m=fine_voxel_m,
             source_up_body=source_up_body,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
+            return_hessian=(c.min_translation_observability is not None),
         )
         if fine.converged and fine.fitness >= c.min_fitness and fine.rmse_m <= c.max_rmse_m:
             return fine
