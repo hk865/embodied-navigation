@@ -81,7 +81,8 @@ def icp_point_to_plane(
     target = voxel_downsample(target, voxel_m, use_cpp=False)
     T = np.array(T_init, dtype=np.float64)
     if len(source) < MIN_POINTS or len(target) < MIN_POINTS:
-        return IcpResult(T, 0.0, float("inf"), False)
+        empty_h = np.zeros((6, 6), dtype=np.float64) if return_hessian else None
+        return IcpResult(T, 0.0, float("inf"), False, hessian=empty_h)
     up_body = None
     if source_up_body is not None and gravity_sigma_rad is not None:
         vec = np.asarray(source_up_body, dtype=np.float64).reshape(3)
@@ -94,15 +95,24 @@ def icp_point_to_plane(
     T_c[:3, 3] -= center
     tree = cKDTree(target_c)
     normals = _normals(target_c, tree)
+    last_geom_h = np.zeros((6, 6), dtype=np.float64)
     for _ in range(iterations):
         moved = transform_points(T_c, source)
         points, residual, plane = _correspondences(moved, target_c, normals, tree, max_correspondence_m)
         if len(points) < MIN_POINTS:
             T_out = T_c.copy()
             T_out[:3, 3] += center
-            return IcpResult(T_out, 0.0, float("inf"), False)
+            return IcpResult(
+                T_out,
+                0.0,
+                float("inf"),
+                False,
+                hessian=(last_geom_h.copy() if return_hessian else None),
+            )
         jacobian = np.hstack([plane, np.cross(points, plane)])
-        hessian = jacobian.T @ jacobian
+        geom_h = jacobian.T @ jacobian
+        last_geom_h = geom_h
+        hessian = geom_h
         rhs = jacobian.T @ residual
         if up_body is not None and gravity_sigma_rad is not None:
             u = T_c[:3, :3] @ up_body
@@ -120,18 +130,44 @@ def icp_point_to_plane(
         if eigen[0] <= 1e-9 * eigen[-1]:
             T_out = T_c.copy()
             T_out[:3, 3] += center
-            return IcpResult(T_out, 0.0, float("inf"), False)
+            return IcpResult(
+                T_out,
+                0.0,
+                float("inf"),
+                False,
+                hessian=(last_geom_h.copy() if return_hessian else None),
+            )
         step = np.linalg.solve(hessian, -rhs)
         T_c = se3_exp(step) @ T_c
         if np.linalg.norm(step[:3]) < 1e-3 and np.linalg.norm(step[3:]) < 1e-4:
-            res = _score(T_c, source, target_c, normals, tree, max_correspondence_m, True)
+            res = _score(
+                T_c,
+                source,
+                target_c,
+                normals,
+                tree,
+                max_correspondence_m,
+                True,
+                return_hessian=return_hessian,
+                fallback_hessian=last_geom_h,
+            )
             T_out = res.T_target_source.copy()
             T_out[:3, 3] += center
-            return IcpResult(T_out, res.fitness, res.rmse_m, res.converged)
-    res = _score(T_c, source, target_c, normals, tree, max_correspondence_m, False)
+            return IcpResult(T_out, res.fitness, res.rmse_m, res.converged, hessian=res.hessian)
+    res = _score(
+        T_c,
+        source,
+        target_c,
+        normals,
+        tree,
+        max_correspondence_m,
+        False,
+        return_hessian=return_hessian,
+        fallback_hessian=last_geom_h,
+    )
     T_out = res.T_target_source.copy()
     T_out[:3, 3] += center
-    return IcpResult(T_out, res.fitness, res.rmse_m, res.converged)
+    return IcpResult(T_out, res.fitness, res.rmse_m, res.converged, hessian=res.hessian)
 
 
 def _normals(points: np.ndarray, tree: cKDTree) -> np.ndarray:
@@ -153,8 +189,28 @@ def _correspondences(moved, target, normals, tree, max_distance):
     return points, residual, plane
 
 
-def _score(T, source, target, normals, tree, max_distance, converged) -> IcpResult:
-    points, residual, _ = _correspondences(transform_points(T, source), target, normals, tree, max_distance)
+def _score(
+    T,
+    source,
+    target,
+    normals,
+    tree,
+    max_distance,
+    converged,
+    *,
+    return_hessian: bool = False,
+    fallback_hessian: np.ndarray | None = None,
+) -> IcpResult:
+    points, residual, plane = _correspondences(transform_points(T, source), target, normals, tree, max_distance)
     fitness = len(points) / len(source)
     rmse = float(np.sqrt(np.mean(residual**2))) if len(points) else float("inf")
-    return IcpResult(T, fitness, rmse, converged)
+    hess = None
+    if return_hessian:
+        if len(points) > 0:
+            jacobian = np.hstack([plane, np.cross(points, plane)])
+            hess = jacobian.T @ jacobian
+        elif fallback_hessian is not None:
+            hess = fallback_hessian.copy()
+        else:
+            hess = np.zeros((6, 6), dtype=np.float64)
+    return IcpResult(T, fitness, rmse, converged, hessian=hess)

@@ -122,7 +122,9 @@ class BackendNode(Node):
         if directory.parent != self.spool:
             raise RuntimeError(f"refusing to remove {directory} outside {self.spool}")
         try:
-            keyframe = read_keyframe(directory)
+            cfg = self.backend.config
+            load_visual = cfg.use_visual_retrieval or cfg.use_visual_verification or cfg.color_sc_enabled
+            keyframe = read_keyframe(directory, load_visual=load_visual)
         except ValueError as error:
             self.backend.last_error = str(error)
             self._quarantine(directory)
