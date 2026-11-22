@@ -85,6 +85,15 @@ class BackendNode(Node):
             Odometry, args.odometry_topic, self.on_odometry, 50, callback_group=MutuallyExclusiveCallbackGroup()
         )
         self.create_timer(args.poll_s, self.poll, callback_group=MutuallyExclusiveCallbackGroup())
+        cfg = backend.config
+        config_label = "defaults" if args.config is None else str(args.config)
+        self.get_logger().info(
+            f"SLAM backend initialized: config={config_label} "
+            f"zupt={cfg.zupt_enabled} icp_gravity_sigma_rad={cfg.icp_gravity_sigma_rad} "
+            f"graph_gravity_sigma_rad={cfg.graph_gravity_sigma_rad} "
+            f"min_loop_travel_m={cfg.min_loop_travel_m} min_loop_spacing_m={cfg.min_loop_spacing_m} "
+            f"loop_max_jump_translation_m={cfg.loop_max_jump_translation_m}"
+        )
 
     def on_odometry(self, message: Odometry) -> None:
         C = self.backend.T_world_odom
@@ -133,8 +142,10 @@ class BackendNode(Node):
             "loops": self.backend.loop_count,
             "keyframes": len(self.backend.map.keyframes),
             "last_error": self.backend.last_error,
+            "config_path": None if self.args.config is None else str(self.args.config),
+            "stats": self.backend.observability_stats(),
         }
-        self.status_pub.publish(String(data=json.dumps(status)))
+        self.status_pub.publish(String(data=json.dumps(status, allow_nan=False)))
 
 
 def main(argv=None) -> int:

@@ -1,6 +1,6 @@
 # Native exploration interface and executable SOP
 
-Use the actual checkout selected for the task (currently `/home/hyh001/projects/1.Project/embodied-navigation`), preserving unrelated work. The bundled scripts have no run directory, ROS domain or waypoint coordinates baked in. All examples below use explicit variables supplied from the current session; do not substitute a past run or route.
+Use the actual checkout selected for the task (`${PROJECT_ROOT}`), preserving unrelated work. The bundled scripts have no run directory, ROS domain or waypoint coordinates baked in. All examples below use explicit variables supplied from the current session; do not substitute a past run or route.
 
 ## Set the generation once
 
@@ -63,6 +63,10 @@ The current map contract:
 - `operator_grid/*json` and referenced NPZ: `ix,iy,code`, cell centre `(index+.5)*resolution_m`, code 0 free / 1 occupied; cells absent from this export are unknown in this grid. That grid definition does not label points omitted from a plot or absent sensor returns. Height charts can span stair/platform heights and are not floor counts. Use active/current context, retaining older same-generation charts as labelled history.
 - Display `map` is a generic label; `odometry_map_frame` names the actual estimator frame. Do not invent a coordinate transform because these labels differ. LIO clouds arrive in their map frame under the source contract.
 - `capture/interactive_waypoint_control.jsonl` records native commands and measured-input receipts. `capture/policy_frames.jsonl` includes simulator-native state; do not feed the whole file into target choice.
+- `/dynanav/backend/status` (`std_msgs/String` JSON) and `$RUN/configuration/slam_backend_config.json`: frozen SLAM backend config (defaults to `configs/localization_mapping/slam_backend_stabilized.json`; override via `--backend-config`) and live read-only status (`adopted`, `loops`, `keyframes`, `config_path`, `stats.{travel_m,travel_since_last_loop_m,last_loop_age_s,zupt_active,zupt_full_stop_count,zupt_pivot_count}`).
+- Direct bounded actions via `scripts/explore_waypoint_client.py`:
+  - Panoramic multi-view `scan` (in-place slow `yaw` sweep with ZUPT `pivot` anchoring and brief settle): `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir "$RUN/capture" --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --timeout-per-step 30`.
+  - Direct recovery `maneuver` (bypasses PCT/SCAN and rotation-space checks when wedged against a door leaf/corner; run `cancel` first): `PYTHONPATH=src python3 scripts/explore_waypoint_client.py maneuver --run-dir "$RUN/capture" --pose-source <active_pose_source> --forward -0.35 --yaw-rate 0.15 --duration 1.5 --wait`. Verify `maneuver_accepted` and `maneuver_complete` receipts and fresh RGB/cloud before resuming `goto`.
 
 Record a meaningful remaining gap or decision with current evidence references:
 

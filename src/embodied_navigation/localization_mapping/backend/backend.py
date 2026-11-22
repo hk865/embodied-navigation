@@ -333,7 +333,25 @@ class SlamBackend:
         return self._correction
 
     def observability_stats(self) -> dict:
-        return dict(self._stats)
+        stats = dict(self._stats)
+        travel_m = 0.0 if self._previous is None else float(self._path_m.get(self._previous.key, 0.0))
+        if self._last_loop_path_m is None:
+            travel_since_last_loop_m = travel_m
+        else:
+            travel_since_last_loop_m = max(0.0, float(travel_m - self._last_loop_path_m))
+        if self._previous is None or self._last_loop_stamp_ns is None:
+            last_loop_age_s = None
+        else:
+            last_loop_age_s = max(0.0, float((self._previous.stamp_ns - self._last_loop_stamp_ns) * 1e-9))
+        stats.update(
+            {
+                "travel_m": travel_m,
+                "travel_since_last_loop_m": travel_since_last_loop_m,
+                "last_loop_age_s": last_loop_age_s,
+                "zupt_active": self._zupt_anchor_kf is not None,
+            }
+        )
+        return stats
 
     def save_map(self, directory: Path) -> None:
         self.map.save(directory)

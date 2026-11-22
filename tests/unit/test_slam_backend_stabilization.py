@@ -813,6 +813,61 @@ class SlamBackendStabilizationTests(unittest.TestCase):
         self.assertAlmostEqual(stab.icp_gravity_sigma_rad, 0.02)
         self.assertAlmostEqual(stab.min_loop_travel_m, 5.0)
 
+    def test_observability_stats_tracks_travel_loop_age_and_zupt_active(self) -> None:
+        room = _room_cloud(79)
+        cfg = BackendConfig(
+            exclude_recent=0,
+            min_loop_gap_s=0.0,
+            min_loop_travel_m=0.0,
+            min_loop_spacing_m=0.0,
+            zupt_enabled=True,
+            zupt_skip_loop_search=True,
+        )
+        backend = SlamBackend(cfg)
+        s0 = backend.observability_stats()
+        self.assertEqual(s0["travel_m"], 0.0)
+        self.assertEqual(s0["travel_since_last_loop_m"], 0.0)
+        self.assertIsNone(s0["last_loop_age_s"])
+        self.assertFalse(s0["zupt_active"])
+
+        # Frame 0 at origin
+        backend.ingest(Keyframe((1, 0), 10_000_000_000, np.eye(4), np.eye(4), room))
+        # Frame 1 stationary -> triggers ZUPT full_stop
+        ev1 = backend.ingest(Keyframe((1, 1), 11_000_000_000, _make_pose([0.0, 0.0, 0.02]), np.eye(4), room))
+        self.assertEqual(ev1.get("zupt"), "full_stop")
+        s1 = backend.observability_stats()
+        self.assertTrue(s1["zupt_active"])
+        self.assertEqual(s1["travel_m"], 0.0)
+        self.assertEqual(s1["travel_since_last_loop_m"], 0.0)
+        self.assertIsNone(s1["last_loop_age_s"])
+
+        # Frame 2 walks +0.25 m -> exits ZUPT and closes loop against frame 0/1
+        T2 = _make_pose([0.25, 0.0, 0.0])
+        pts2 = (room - T2[:3, 3]) @ T2[:3, :3]
+        ev2 = backend.ingest(Keyframe((1, 2), 12_500_000_000, T2, np.eye(4), pts2))
+        self.assertTrue(ev2["loop"], ev2)
+        s2 = backend.observability_stats()
+        self.assertFalse(s2["zupt_active"])
+        self.assertGreater(s2["travel_m"], 0.2)
+        self.assertAlmostEqual(s2["travel_since_last_loop_m"], 0.0, places=6)
+        self.assertAlmostEqual(s2["last_loop_age_s"], 0.0, places=6)
+
+        # Frame 3 walks further (+1.5 m) with loop spacing blocking a new loop -> travel_since_last_loop_m and age grow
+        backend.config = BackendConfig(
+            exclude_recent=0,
+            min_loop_gap_s=0.0,
+            min_loop_travel_m=0.0,
+            min_loop_spacing_m=10.0,
+            zupt_enabled=True,
+        )
+        T3 = _make_pose([1.75, 0.0, 0.0])
+        pts3 = (room - T3[:3, 3]) @ T3[:3, :3]
+        ev3 = backend.ingest(Keyframe((1, 3), 15_000_000_000, T3, np.eye(4), pts3))
+        self.assertFalse(ev3["loop"])
+        s3 = backend.observability_stats()
+        self.assertAlmostEqual(s3["travel_since_last_loop_m"], 1.5, delta=0.05)
+        self.assertAlmostEqual(s3["last_loop_age_s"], 2.5, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

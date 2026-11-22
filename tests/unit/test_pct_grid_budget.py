@@ -143,6 +143,38 @@ class LauncherBudgetTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
                 self.assertEqual(commands, [])
 
+    def test_launcher_freezes_default_and_explicit_backend_config(self):
+        with tempfile.TemporaryDirectory(prefix='backend-cfg-default-') as directory:
+            done, commands = launch_without_external_processes(directory, [])
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            backend_cmds = [
+                argv for argv in commands
+                if len(argv) >= 2 and argv[0] == '-m' and argv[1] == 'embodied_navigation.localization_mapping.backend.node'
+            ]
+            self.assertEqual(len(backend_cmds), 1, commands)
+            cfg_idx = backend_cmds[0].index('--config')
+            frozen_cfg = Path(backend_cmds[0][cfg_idx + 1])
+            self.assertEqual(frozen_cfg.name, 'slam_backend_config.json')
+            self.assertTrue(frozen_cfg.is_file(), frozen_cfg)
+            data = json.loads(frozen_cfg.read_text(encoding='utf-8'))
+            self.assertTrue(data['zupt_enabled'])
+            self.assertAlmostEqual(data['icp_gravity_sigma_rad'], 0.02)
+
+        with tempfile.TemporaryDirectory(prefix='backend-cfg-custom-') as directory:
+            custom = Path(directory) / 'custom_backend.json'
+            custom.write_text(json.dumps({'zupt_enabled': False, 'min_loop_travel_m': 9.0}), encoding='utf-8')
+            done, commands = launch_without_external_processes(directory, ['--backend-config', str(custom)])
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            backend_cmds = [
+                argv for argv in commands
+                if len(argv) >= 2 and argv[0] == '-m' and argv[1] == 'embodied_navigation.localization_mapping.backend.node'
+            ]
+            self.assertEqual(len(backend_cmds), 1, commands)
+            frozen_cfg = Path(backend_cmds[0][backend_cmds[0].index('--config') + 1])
+            data = json.loads(frozen_cfg.read_text(encoding='utf-8'))
+            self.assertFalse(data['zupt_enabled'])
+            self.assertAlmostEqual(data['min_loop_travel_m'], 9.0)
+
 
 if __name__ == '__main__':
     unittest.main()

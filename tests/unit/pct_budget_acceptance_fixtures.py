@@ -109,6 +109,12 @@ def launch_without_external_processes(directory, extra_cli):
     config.mkdir(parents=True)
     for name in ('fastlivo_livo.yaml', 'camera_rgbd.yaml', 'fastlivo_rtx_os1_32.yaml'):
         shutil.copyfile(REPO / 'configs/simulation/dynanav' / name, config / name)
+    backend_cfg_dir = root / 'configs/localization_mapping'
+    backend_cfg_dir.mkdir(parents=True)
+    shutil.copyfile(
+        REPO / 'configs/localization_mapping/slam_backend_stabilized.json',
+        backend_cfg_dir / 'slam_backend_stabilized.json',
+    )
     launcher = (REPO / 'scripts/run_dynanav_native_exploration.sh').read_text()
     for old in ('/tmp/embodied-navigation-isaac-exclusive.lock',
                 '/tmp/embodied-navigation-native-exploration-current'):

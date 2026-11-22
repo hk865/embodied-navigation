@@ -6,9 +6,13 @@ description: Autonomously explore a static Isaac DynaNav scene using current RGB
 # Explore DynaNav from live sensors
 
 Current project update: the launcher now defaults to measured PCT global + native SCAN
-local planning and continuous curve following. See the repository's
-`docs/dynanav-pct-scan.md` and `docs/dynanav-waypoint-utility.md`. The read-only
-`python3 scripts/dynanav_exploration.py candidates --help` prepares DSH candidates;
+local planning, continuous curve following, and the frozen Phase 4 stabilized SLAM backend
+preset (`configs/localization_mapping/slam_backend_stabilized.json`, copied into
+`$RUN/configuration/slam_backend_config.json`; override via `--backend-config`). Live backend
+observability is published on `/dynanav/backend/status` (`adopted`, `loops`, `keyframes`,
+`config_path`, `stats.{travel_m,travel_since_last_loop_m,last_loop_age_s,zupt_active}`).
+See the repository's `docs/dynanav-pct-scan.md` and `docs/dynanav-waypoint-utility.md`. The
+read-only `python3 scripts/dynanav_exploration.py candidates --help` prepares DSH candidates;
 DSH still selects and explicitly sends goto. It never dispatches or adds goto gates.
 Native RouteTracker-specific descriptions below apply to explicit
 `NAVIGATION_BACKEND=native_route`; sensor, source and receipt rules still apply.
@@ -40,14 +44,30 @@ Express each target in the current estimator map frame. For a deliberate body-re
 
 Send normal exploration decisions with `scripts/explore_waypoint_client.py goto --pose-source <active_pose_source>`. Use `cancel` to abort a stalled or undesired active leg, and `stop` to terminate the run cleanly.
 
+### Active sensing, ZUPT pause hygiene & multi-view 360° `scan`
+
+- **ZUPT-friendly pauses during thinking**:
+  - When pausing to inspect RGB, 3D clouds, or operator maps between waypoints, keep the robot idle (do not send tiny micro-nudges). The stabilized SLAM backend runs geometric zero-velocity anchoring (ZUPT `full_stop` / `pivot`), locking translation cleanly while stationary so thinking pauses do not accumulate vertical drift.
+  - Avoid parking `< 0.6 m` nose-first facing a blank, textureless wall for `> 15 s`; stop in a position with open 3D wall/floor geometry and visible visual texture whenever practical.
+- **Stop-and-spin panoramic `scan` for multi-view visual coverage & loop closure**:
+  - At key topological anchors — entering a new open room center, arriving at a multi-way junction or stair landing, or when `/dynanav/backend/status` reports `stats.travel_since_last_loop_m > 15.0` — stop cleanly and run an in-place slow 360° scan (`<= 0.15 rad/s` per step, triggering ZUPT `pivot` so translation stays anchored while capturing sharp multi-heading RGB + LiDAR keyframes):
+    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir <capture> --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --timeout-per-step 30`
+    (or `--steps 4 --step-deg 90 --settle-s 0.8 --timeout-per-step 35` when a coarser 4-view sweep suffices).
+  - Inspect the resulting `sim_frames` / `interactive/scan/observation_*.json` before picking the next branch. Do not run `scan` inside a narrow doorway or `< 0.6 m` from an obstacle where rotation-space clearance would block `yaw`; step into open space first (or use `maneuver` to clear the doorway).
+- **Closed-loop room sweeps**:
+  - When exploring a large room or hallway loop, prefer closing a physical loop back through a previously observed doorway/junction rather than purely dead-reckoning open spurs, so the SLAM backend closes geometric/visual loops and bounds global drift.
+
 ### Anti-trapping & direct recovery (`maneuver`, bypasses PCT/SCAN)
 
 - **Avoid narrow-door / low-ceiling traps proactively**:
   - When entering or exiting a hinged door, place intermediate waypoints on the **doorway centerline** (at least 1.0 m before and 1.0 m past the threshold) rather than hugging the door leaf hinge or cutting sharply behind an open door panel.
   - Never drive into wedges where overhead clearance narrows (e.g., under-stair sloped ceilings); exit such corridors along the reverse centerline in short legs.
 - **Direct recovery when wedged against a door leaf or tight corner**:
-  - If `goto` stalls or `yaw` is blocked by rotation-space occupancy, first run `explore_waypoint_client.py cancel --run-dir <capture>`, then invoke the native **direct body-velocity recovery** action `maneuver` (bypasses PCT/SCAN planning and rotation-space checks; bounded to `|forward| <= speed`, `|lateral| <= 0.05 m/s`, `|yaw_rate| <= 0.15 rad/s`, `duration in [0.1, 2.0] s`; mild contact with door panels is tolerated by `body_contact_report_only` in simulation):
-    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py maneuver --run-dir <capture> --pose-source <active_pose_source> --forward -0.35 --yaw-rate 0.15 --duration 1.5 --wait`
+  - If `goto` stalls or `yaw` is blocked by rotation-space occupancy, follow `cancel -> maneuver -> observe -> resume goto`:
+    1. Clear any active goal first: `PYTHONPATH=src python3 scripts/explore_waypoint_client.py cancel --run-dir <capture>`.
+    2. Invoke the native **direct body-velocity recovery** action `maneuver` (bypasses PCT/SCAN planning and rotation-space checks; bounded to `|forward| <= speed`, `|lateral| <= 0.05 m/s`, `|yaw_rate| <= 0.15 rad/s`, `duration in [0.1, 2.0] s`; mild contact with door panels is tolerated by `body_contact_report_only` in simulation):
+       `PYTHONPATH=src python3 scripts/explore_waypoint_client.py maneuver --run-dir <capture> --pose-source <active_pose_source> --forward -0.35 --yaw-rate 0.15 --duration 1.5 --wait`
+    3. Verify `maneuver_accepted` and `maneuver_complete` in receipts, then run `observe` and check front RGB/cloud before chaining another pulse.
   - Chain 1–3 short `maneuver` pulses (e.g. straight reverse `-0.35`, then reverse+yaw `-0.25 / ±0.15`) until `observe` + RGB confirm clear separation from the door leaf/corner, then resume normal `goto` exploration. Do not abandon a multi-floor run solely because a door-leaf corner blocks in-place `yaw`.
 
 Record request sequence, acceptance, measured progress/command and the closing receipt. **A request file or client exit 0 is not an executed/reached goal.** Native `stop_accepted` and `cancel_accepted` must match the mailbox run id and sequence. Stop ack starts terminal parking; verify parking, capture exit and owned-process cleanup separately. Cancel ack clears active/queued work and permits another decision.

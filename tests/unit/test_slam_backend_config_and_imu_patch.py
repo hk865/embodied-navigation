@@ -262,6 +262,63 @@ class BackendNodeConfigOptionTests(unittest.TestCase):
         args = self.node.parse_args(self._args("--config", "backend.json"))
         self.assertEqual(args.config, Path("backend.json"))
 
+    def test_backend_node_publishes_stats_and_logs_config(self):
+        published = []
+        logged = []
+
+        class _Pub:
+            def publish(self, msg):
+                published.append(msg)
+
+        class _Logger:
+            def info(self, text):
+                logged.append(text)
+
+            def warning(self, text):
+                logged.append(f"WARN:{text}")
+
+        class _String:
+            def __init__(self, data=""):
+                self.data = data
+
+        class _FakeNode:
+            def __init__(self, name):
+                self._name = name
+
+            def create_publisher(self, msg_type, topic, qos):
+                return _Pub()
+
+            def create_subscription(self, *a, **kw):
+                return None
+
+            def create_timer(self, *a, **kw):
+                return None
+
+            def get_logger(self):
+                return _Logger()
+
+        stubs = _stub_ros_modules()
+        stubs["rclpy.node"].Node = _FakeNode
+        stubs["std_msgs.msg"].String = _String
+        stubs["tf2_ros"].TransformBroadcaster = lambda node: None
+        with mock.patch.dict(sys.modules, stubs):
+            sys.modules.pop(NODE_MODULE, None)
+            node_mod = importlib.import_module(NODE_MODULE)
+            args = node_mod.parse_args(self._args("--config", "frozen_backend.json"))
+            backend = SlamBackend(BackendConfig.from_json(REPO_ROOT / "configs/localization_mapping/slam_backend_stabilized.json"))
+            node = node_mod.BackendNode(args, backend)
+            node.publish_status()
+
+        self.assertTrue(any("frozen_backend.json" in entry and "zupt=True" in entry for entry in logged))
+        self.assertEqual(len(published), 1)
+        payload = json.loads(published[0].data)
+        self.assertEqual(payload["config_path"], "frozen_backend.json")
+        self.assertIn("stats", payload)
+        self.assertEqual(payload["stats"]["travel_m"], 0.0)
+        self.assertEqual(payload["stats"]["travel_since_last_loop_m"], 0.0)
+        self.assertIsNone(payload["stats"]["last_loop_age_s"])
+        self.assertFalse(payload["stats"]["zupt_active"])
+
 
 class ImuBiasCovariancePatchTests(unittest.TestCase):
     def test_patch_file_exists(self):
