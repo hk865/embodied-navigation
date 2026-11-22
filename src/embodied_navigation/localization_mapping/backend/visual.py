@@ -186,7 +186,12 @@ def extract_visual_features(
         return _extract_patch7x7(keyframe, limit=min(max_features, 400), points_body=points_body)
 
     observation = keyframe.visual
-    gray_u8 = np.clip(np.rint(observation.gray), 0, 255).astype(np.uint8)
+    gray_src = (
+        observation.gray * 255.0
+        if observation.gray.size > 0 and float(observation.gray.max()) <= 1.0 + 1e-6
+        else observation.gray
+    )
+    gray_u8 = np.clip(np.rint(gray_src), 0, 255).astype(np.uint8)
     detector = _create_cv_detector(feature_type, max_features)
     keypoints, desc = detector.detectAndCompute(gray_u8, None)
     is_binary = feature_type in _BINARY_FEATURES
