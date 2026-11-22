@@ -152,6 +152,7 @@ class LauncherBudgetTests(unittest.TestCase):
                 if len(argv) >= 2 and argv[0] == '-m' and argv[1] == 'embodied_navigation.localization_mapping.backend.node'
             ]
             self.assertEqual(len(backend_cmds), 1, commands)
+            self.assertEqual(backend_cmds[0][backend_cmds[0].index('--odom-frame') + 1], 'dynanav_lio_map')
             cfg_idx = backend_cmds[0].index('--config')
             frozen_cfg = Path(backend_cmds[0][cfg_idx + 1])
             self.assertEqual(frozen_cfg.name, 'slam_backend_config.json')

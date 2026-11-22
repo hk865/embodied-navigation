@@ -204,14 +204,34 @@ cleanup() {
         fi
     fi
     capture_group SIGTERM 2>/dev/null || true
+    # Terminate non-backend sidecars (including FAST-LIVO2 observer) first so the
+    # observer can flush final keyframes before the SLAM backend drains and saves.
     for pid in "${PIDS[@]}"; do
+        [[ -n "$BACKEND" && "$pid" == "$BACKEND" ]] && continue
         owned_child_running "$pid" && kill -TERM "$pid" 2>/dev/null || true
     done
     deadline=$((SECONDS + 10))
-    while ((SECONDS < deadline)) && [[ -n "$(jobs -pr)" ]]; do sleep .2; done
+    while ((SECONDS < deadline)); do
+        other_alive=false
+        for pid in "${PIDS[@]}"; do
+            [[ -n "$BACKEND" && "$pid" == "$BACKEND" ]] && continue
+            if owned_child_running "$pid"; then other_alive=true; break; fi
+        done
+        $other_alive || break
+        sleep .2
+    done
     capture_group SIGKILL 2>/dev/null || true
     for pid in "${PIDS[@]}"; do
+        [[ -n "$BACKEND" && "$pid" == "$BACKEND" ]] && continue
         owned_child_running "$pid" && kill -KILL "$pid" 2>/dev/null || true
+    done
+    if [[ -n "$BACKEND" ]] && owned_child_running "$BACKEND"; then
+        kill -TERM "$BACKEND" 2>/dev/null || true
+        deadline=$((SECONDS + 20))
+        while ((SECONDS < deadline)) && owned_child_running "$BACKEND"; do sleep .2; done
+        owned_child_running "$BACKEND" && kill -KILL "$BACKEND" 2>/dev/null || true
+    fi
+    for pid in "${PIDS[@]}"; do
         child_status=0
         wait "$pid" 2>/dev/null || child_status=$?
         if [[ "$pid" == "$CAP" && ! -f "$RUN/capture_exit.txt" ]]; then
@@ -296,10 +316,10 @@ if $RUN_SLAM; then
     done
     [[ -f "$RUN/observer/ready.json" ]] || { echo "Estimator startup timed out"; exit 6; }
     # Point-cloud SLAM backend: loop closure / prior-map relocalization, publishes
-    # map->camera_init and /dynanav/backend/corrected_odometry. PRIOR_MAP is an optional saved map directory.
+    # map->dynanav_lio_map and /dynanav/backend/corrected_odometry. PRIOR_MAP is an optional saved map directory.
     BACKEND_ARGS=(--spool "$RUN/observer/native_keyframes" --namespace /dynanav/backend
-        --odometry-topic /dynanav/rtx_livo/post_vio_odometry --save-map "$RUN/map"
-        --config "$RUN/configuration/slam_backend_config.json")
+        --odometry-topic /dynanav/rtx_livo/post_vio_odometry --odom-frame dynanav_lio_map
+        --save-map "$RUN/map" --config "$RUN/configuration/slam_backend_config.json")
     if [[ -n "${PRIOR_MAP:-}" ]]; then
         BACKEND_ARGS+=(--prior-map "$PRIOR_MAP")
     fi

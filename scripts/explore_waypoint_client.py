@@ -729,6 +729,7 @@ def _cmd_scan(args):
         raise ValueError("step_deg must be nonzero and within [-180, 180]")
     snapshots = Path(mailbox) / "scan"
     snapshots.mkdir(parents=True, exist_ok=True)
+    scan_dir = None
     results = []
     exit_code = EXIT_OK
     for index in range(args.steps):
@@ -742,10 +743,18 @@ def _cmd_scan(args):
             run_id=args.run_id,
             extra={"delta_yaw_rad": math.radians(args.step_deg)},
         )
+        if scan_dir is None:
+            scan_dir = snapshots / ("seq_%04d" % payload["seq"])
+            scan_dir.mkdir(parents=True, exist_ok=True)
         outcome = wait_for_action(mailbox, payload["seq"], args.timeout_per_step)
         observation = read_observation(mailbox)
+        snapshot_path = None
         if observation:
+            step_file = scan_dir / ("observation_%02d.json" % index)
+            atomic_write_json(step_file, observation)
             atomic_write_json(snapshots / ("observation_%02d.json" % index), observation)
+            snapshot_path = str(step_file)
+        step_frames = latest_sim_frame(mailbox.parent)
         terminal = (observation or {}).get("waypoints", {}).get("terminal_reason")
         results.append(
             {
@@ -757,6 +766,8 @@ def _cmd_scan(args):
                 "reason": outcome.get("reason"),
                 "yaw_error_rad": outcome.get("yaw_error_rad"),
                 "terminal_reason": terminal,
+                "snapshot": snapshot_path,
+                "sim_frame": None if step_frames is None else step_frames.get("latest"),
             }
         )
         if not outcome.get("success"):
@@ -776,6 +787,7 @@ def _cmd_scan(args):
                 "exit_code": exit_code,
                 "steps": results,
                 "snapshots": str(snapshots),
+                "scan_dir": None if scan_dir is None else str(scan_dir),
                 "sim_frames": latest_sim_frame(mailbox.parent),
             },
             indent=2,

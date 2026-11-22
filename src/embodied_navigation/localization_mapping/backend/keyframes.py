@@ -66,15 +66,30 @@ def read_spool(directory: Path) -> list[Keyframe]:
 def read_keyframe(path: Path) -> Keyframe:
     """Decode one ``kf_<epoch>_<sequence>`` directory; ValueError names the path."""
     path = Path(path)
-    row = json.loads((path / "metadata.json").read_text())
+    try:
+        row = json.loads((path / "metadata.json").read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"{path}: invalid metadata.json ({error})") from error
+    if not isinstance(row, dict):
+        raise ValueError(f"{path}: metadata.json root must be a JSON object")
     if row.get("schema") != SCHEMA:
         raise ValueError(f"{path}: schema is not {SCHEMA}")
+    try:
+        key = (int(row["epoch"]), int(row["sequence"]))
+        stamp_ns = int(row["stamp_ns"])
+        T_odom_body = _matrix(row["T_odom_body"], path)
+        T_body_lidar = _matrix(row["T_body_lidar"], path)
+        points_lidar = _read_ascii_pcd(path / "points_lidar.pcd")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        if isinstance(error, ValueError) and str(error).startswith(f"{path}:"):
+            raise
+        raise ValueError(f"{path}: malformed keyframe ({error})") from error
     return Keyframe(
-        key=(int(row["epoch"]), int(row["sequence"])),
-        stamp_ns=int(row["stamp_ns"]),
-        T_odom_body=_matrix(row["T_odom_body"], path),
-        T_body_lidar=_matrix(row["T_body_lidar"], path),
-        points_lidar=_read_ascii_pcd(path / "points_lidar.pcd"),
+        key=key,
+        stamp_ns=stamp_ns,
+        T_odom_body=T_odom_body,
+        T_body_lidar=T_body_lidar,
+        points_lidar=points_lidar,
     )
 
 

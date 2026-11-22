@@ -77,6 +77,7 @@ class BackendNode(Node):
         self.args = args
         self.backend = backend
         self.spool = args.spool.resolve()
+        self._last_odom_header = None  # (frame_id, stamp) from incoming odometry
         namespace = args.namespace.rstrip("/")
         self.odometry_pub = self.create_publisher(Odometry, f"{namespace}/corrected_odometry", 10)
         self.status_pub = self.create_publisher(String, f"{namespace}/status", 10)
@@ -96,16 +97,24 @@ class BackendNode(Node):
         )
 
     def on_odometry(self, message: Odometry) -> None:
+        in_frame = message.header.frame_id or self.args.odom_frame
+        self._last_odom_header = (in_frame, message.header.stamp)
         C = self.backend.T_world_odom
         write_pose(message.pose.pose, (np.eye(4) if C is None else C) @ pose_matrix(message.pose.pose))
         message.header.frame_id = self.args.world_frame
         self.odometry_pub.publish(message)
 
     def poll(self) -> None:
-        for directory in ready_directories(self.spool):
-            self.ingest(directory)
+        if self.spool.is_dir():
+            for directory in ready_directories(self.spool):
+                self.ingest(directory)
         self.publish_tf()
         self.publish_status()
+
+    def _quarantine(self, directory: Path) -> None:
+        target = directory.with_name("rejected_" + directory.name)
+        if not target.exists():
+            directory.rename(target)
 
     def ingest(self, directory: Path) -> None:
         directory = directory.resolve()
@@ -115,21 +124,24 @@ class BackendNode(Node):
             keyframe = read_keyframe(directory)
         except ValueError as error:
             self.backend.last_error = str(error)
-            directory.rename(directory.with_name("rejected_" + directory.name))
+            self._quarantine(directory)
             return
         event = self.backend.ingest(keyframe)
         if "error" in event:
             self.get_logger().warning(event["error"])
+            self._quarantine(directory)
+            return
         shutil.rmtree(directory)
 
     def publish_tf(self) -> None:
         C = self.backend.T_world_odom
         if C is None:
             return
+        odom_header = self._last_odom_header
         message = TransformStamped()
-        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.stamp = odom_header[1] if odom_header is not None else self.get_clock().now().to_msg()
         message.header.frame_id = self.args.world_frame
-        message.child_frame_id = self.args.odom_frame
+        message.child_frame_id = odom_header[0] if odom_header is not None else self.args.odom_frame
         t = message.transform
         t.translation.x, t.translation.y, t.translation.z = (float(v) for v in C[:3, 3])
         x, y, z, w = Rotation.from_matrix(C[:3, :3]).as_quat()
@@ -164,6 +176,10 @@ def main(argv=None) -> int:
         while not stop.is_set():
             executor.spin_once(timeout_sec=0.1)
     finally:
+        # Drain any final ready keyframes flushed by the frontend before saving.
+        if node.spool.is_dir():
+            for directory in ready_directories(node.spool):
+                node.ingest(directory)
         executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()

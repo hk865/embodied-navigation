@@ -334,15 +334,27 @@ class SlamBackend:
 
     def observability_stats(self) -> dict:
         stats = dict(self._stats)
-        travel_m = 0.0 if self._previous is None else float(self._path_m.get(self._previous.key, 0.0))
-        if self._last_loop_path_m is None:
-            travel_since_last_loop_m = travel_m
-        else:
-            travel_since_last_loop_m = max(0.0, float(travel_m - self._last_loop_path_m))
-        if self._previous is None or self._last_loop_stamp_ns is None:
+        if self.prior is not None:
+            travel_m = None
+            travel_since_last_loop_m = None
             last_loop_age_s = None
         else:
-            last_loop_age_s = max(0.0, float((self._previous.stamp_ns - self._last_loop_stamp_ns) * 1e-9))
+            raw_travel = 0.0 if self._previous is None else float(self._path_m.get(self._previous.key, 0.0))
+            travel_m = raw_travel if np.isfinite(raw_travel) else None
+            if travel_m is None:
+                travel_since_last_loop_m = None
+            elif self._last_loop_path_m is None:
+                travel_since_last_loop_m = travel_m
+            else:
+                delta_travel = float(travel_m - self._last_loop_path_m)
+                travel_since_last_loop_m = max(0.0, delta_travel) if np.isfinite(delta_travel) else None
+            if self._previous is None or self._last_loop_stamp_ns is None:
+                last_loop_age_s = None
+            elif self._previous.stamp_ns < self._last_loop_stamp_ns:
+                last_loop_age_s = None
+            else:
+                age = float((self._previous.stamp_ns - self._last_loop_stamp_ns) * 1e-9)
+                last_loop_age_s = age if np.isfinite(age) else None
         stats.update(
             {
                 "travel_m": travel_m,

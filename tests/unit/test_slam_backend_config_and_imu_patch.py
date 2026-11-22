@@ -319,6 +319,25 @@ class BackendNodeConfigOptionTests(unittest.TestCase):
         self.assertIsNone(payload["stats"]["last_loop_age_s"])
         self.assertFalse(payload["stats"]["zupt_active"])
 
+    def test_malformed_keyframe_metadata_raises_value_error(self):
+        from embodied_navigation.localization_mapping.backend.keyframes import read_keyframe
+
+        with tempfile.TemporaryDirectory() as td:
+            kf_dir = Path(td) / "kf_1_0"
+            kf_dir.mkdir()
+            (kf_dir / "points_lidar.pcd").write_text("DATA ascii\n0 0 0\n", encoding="utf-8")
+            # JSON root is a list instead of dict
+            (kf_dir / "metadata.json").write_text("[]", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_keyframe(kf_dir)
+            # Missing required stamp_ns field
+            (kf_dir / "metadata.json").write_text(
+                json.dumps({"schema": "dynanav.fast_livo2.keyframe.v1", "epoch": 1, "sequence": 0}),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                read_keyframe(kf_dir)
+
 
 class ImuBiasCovariancePatchTests(unittest.TestCase):
     def test_patch_file_exists(self):

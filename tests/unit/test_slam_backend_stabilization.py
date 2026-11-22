@@ -868,6 +868,28 @@ class SlamBackendStabilizationTests(unittest.TestCase):
         self.assertAlmostEqual(s3["travel_since_last_loop_m"], 1.5, delta=0.05)
         self.assertAlmostEqual(s3["last_loop_age_s"], 2.5, places=6)
 
+        # Backward stamp after loop must report last_loop_age_s=None instead of 0.0
+        T4 = _make_pose([2.4, 0.0, 0.0])
+        pts4 = (room - T4[:3, 3]) @ T4[:3, :3]
+        backend.ingest(Keyframe((1, 4), 10_000_000_000, T4, np.eye(4), pts4))
+        s4 = backend.observability_stats()
+        self.assertIsNone(s4["last_loop_age_s"])
+
+        # Non-finite path length must sanitize to None so strict JSON serialization never crashes
+        backend._path_m[(1, 4)] = float("inf")
+        s_inf = backend.observability_stats()
+        self.assertIsNone(s_inf["travel_m"])
+        self.assertIsNone(s_inf["travel_since_last_loop_m"])
+
+        # Prior-map mode reports None for mapping-only travel metrics
+        prior_store = MapStore(0.2)
+        prior_store.add(Keyframe((1, 0), 0, np.eye(4), np.eye(4), room), np.eye(4), descriptor(room, cfg.scan_context))
+        reloc_backend = SlamBackend(cfg, prior_map=prior_store)
+        s_prior = reloc_backend.observability_stats()
+        self.assertIsNone(s_prior["travel_m"])
+        self.assertIsNone(s_prior["travel_since_last_loop_m"])
+        self.assertIsNone(s_prior["last_loop_age_s"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,13 +47,14 @@ Send normal exploration decisions with `scripts/explore_waypoint_client.py goto 
 ### Active sensing, ZUPT pause hygiene & multi-view 360° `scan`
 
 - **ZUPT-friendly pauses during thinking**:
-  - When pausing to inspect RGB, 3D clouds, or operator maps between waypoints, keep the robot idle (do not send tiny micro-nudges). The stabilized SLAM backend runs geometric zero-velocity anchoring (ZUPT `full_stop` / `pivot`), locking translation cleanly while stationary so thinking pauses do not accumulate vertical drift.
+  - When pausing to inspect RGB, 3D clouds, or operator maps between waypoints, keep the robot idle (do not send tiny micro-nudges). Under the default `slam_backend_stabilized.json` preset (`zupt_enabled=true`, `zupt_full_stop_rot_rad=0.0`, `zupt_skip_loop_search=true`), the SLAM backend applies geometric `pivot` zero-translation anchoring whenever LiDAR geometry supports zero translation (`stats.zupt_active` / `stats.zupt_pivot_count`), bounding backend map drift during pauses. Note that default control still navigates on raw `livo_post_vio` (unless `--backend-pose` is explicitly enabled), so avoid unnecessarily long idle waits.
   - Avoid parking `< 0.6 m` nose-first facing a blank, textureless wall for `> 15 s`; stop in a position with open 3D wall/floor geometry and visible visual texture whenever practical.
 - **Stop-and-spin panoramic `scan` for multi-view visual coverage & loop closure**:
-  - At key topological anchors — entering a new open room center, arriving at a multi-way junction or stair landing, or when `/dynanav/backend/status` reports `stats.travel_since_last_loop_m > 15.0` — stop cleanly and run an in-place slow 360° scan (`<= 0.15 rad/s` per step, triggering ZUPT `pivot` so translation stays anchored while capturing sharp multi-heading RGB + LiDAR keyframes):
-    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir <capture> --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --timeout-per-step 30`
-    (or `--steps 4 --step-deg 90 --settle-s 0.8 --timeout-per-step 35` when a coarser 4-view sweep suffices).
-  - Inspect the resulting `sim_frames` / `interactive/scan/observation_*.json` before picking the next branch. Do not run `scan` inside a narrow doorway or `< 0.6 m` from an obstacle where rotation-space clearance would block `yaw`; step into open space first (or use `maneuver` to clear the doorway).
+  - At key topological anchors — entering a new open room center, arriving at a multi-way junction or stair landing, or when `/dynanav/backend/status` reports `stats.travel_since_last_loop_m > 15.0` — stop cleanly and run an in-place slow 360° scan (`<= 0.15 rad/s` per step; requires the default PCT/SCAN worker for rotation-space clearance; pass matching wall-clock `--ttl` and `--timeout-per-step` for slow simulation RTF):
+    `PYTHONPATH=src python3 scripts/explore_waypoint_client.py scan --run-dir <capture> --pose-source <active_pose_source> --steps 6 --step-deg 60 --settle-s 0.8 --ttl 45 --timeout-per-step 45`
+    (or `--steps 4 --step-deg 90 --settle-s 0.8 --ttl 45 --timeout-per-step 45` when a coarser 4-view sweep suffices).
+  - Because `zupt_skip_loop_search=true` suppresses loop queries during stationary `pivot` frames, a panoramic `scan` primarily enriches multi-heading RGB + LiDAR keyframes and visual evidence; loop closure itself fires once the robot resumes moving into previously visited space. Each `scan` writes non-overwriting per-step snapshots under `interactive/scan/seq_<first_seq>/`.
+  - Inspect the resulting `sim_frames` / `scan_dir` snapshots before picking the next branch. Do not run `scan` inside a narrow doorway or `< 0.6 m` from an obstacle where rotation-space clearance would block `yaw`; step into open space first (or use `maneuver` to clear the doorway).
 - **Closed-loop room sweeps**:
   - When exploring a large room or hallway loop, prefer closing a physical loop back through a previously observed doorway/junction rather than purely dead-reckoning open spurs, so the SLAM backend closes geometric/visual loops and bounds global drift.
 
@@ -64,7 +65,7 @@ Send normal exploration decisions with `scripts/explore_waypoint_client.py goto 
   - Never drive into wedges where overhead clearance narrows (e.g., under-stair sloped ceilings); exit such corridors along the reverse centerline in short legs.
 - **Direct recovery when wedged against a door leaf or tight corner**:
   - If `goto` stalls or `yaw` is blocked by rotation-space occupancy, follow `cancel -> maneuver -> observe -> resume goto`:
-    1. Clear any active goal first: `PYTHONPATH=src python3 scripts/explore_waypoint_client.py cancel --run-dir <capture>`.
+    1. Clear any active goal first: `PYTHONPATH=src python3 scripts/explore_waypoint_client.py cancel --run-dir <capture>` and verify `cancel_accepted` (pause ~0.5 s or check `observe` so the single-slot mailbox is processed before submitting the next request).
     2. Invoke the native **direct body-velocity recovery** action `maneuver` (bypasses PCT/SCAN planning and rotation-space checks; bounded to `|forward| <= speed`, `|lateral| <= 0.05 m/s`, `|yaw_rate| <= 0.15 rad/s`, `duration in [0.1, 2.0] s`; mild contact with door panels is tolerated by `body_contact_report_only` in simulation):
        `PYTHONPATH=src python3 scripts/explore_waypoint_client.py maneuver --run-dir <capture> --pose-source <active_pose_source> --forward -0.35 --yaw-rate 0.15 --duration 1.5 --wait`
     3. Verify `maneuver_accepted` and `maneuver_complete` in receipts, then run `observe` and check front RGB/cloud before chaining another pulse.
