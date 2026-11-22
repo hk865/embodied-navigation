@@ -2,7 +2,7 @@
 
 > 盘点日期：2026-11-22 · 集成基线 `main` `2144e5f`（= `origin/main`） · Phase 4 稳定化主分支 `exp/slam-backend-stabilization`（含 GPT-6.2-Astra 全量审计修复与 30/30 干净对照） · 实机前端/规划分支 `exp/startup-walk-imu-bias` `76138ba` · 活体文档，随阶段推进更新。
 
-本文件是项目唯一主线的开发计划入口。阅读顺序：根 [README.md](../../README.md) → 本文件 → [TASKS.md](TASKS.md) → [TEST_PLANS.md](TEST_PLANS.md)（各活跃分支测试与验收计划） → [Phase 4 后端评测报告](../../experiments/slam-backend-phase4/REPORT.md) & [各后端分支机制与公式手册](../design/slam-backend-branches-guide.md) → 架构决策记录（[ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)、[ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md)、[ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)）与 [ADR 深度调研蓝图](research/adr-0002-0003-0004-survey.md) → 各模块 `README.md`。协作与提交规则以 [AGENTS.md](../../AGENTS.md) 为准。
+本文件是项目唯一主线的开发计划入口。阅读顺序：根 [README.md](../../README.md) → 本文件 → [TASKS.md](TASKS.md) → [TEST_PLANS.md](TEST_PLANS.md)（各活跃分支测试与验收计划） → [Phase 4 后端评测报告](../../experiments/slam-backend-phase4/REPORT.md) & [各后端分支机制与公式手册](../design/slam-backend-branches-guide.md) → 架构决策记录（[ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)、[ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md)、[ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)）、[ADR 深度调研蓝图](research/adr-0002-0003-0004-survey.md) 与 [四大方向入门精讲与总施工图](research/four-directions-roadmap-and-blueprint.md) → 各模块 `README.md`。协作与提交规则以 [AGENTS.md](../../AGENTS.md) 为准。
 
 ## 1. 唯一主线与七层架构边界
 
