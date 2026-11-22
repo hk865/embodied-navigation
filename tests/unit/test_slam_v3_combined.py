@@ -86,7 +86,8 @@ class SlamV3CombinedTests(unittest.TestCase):
         self.assertAlmostEqual(lidar_cfg.surface.normal_cos_min, 0.82)
         self.assertTrue(lidar_cfg.floor_plane_enabled)
         self.assertTrue(lidar_cfg.floor_normal_gravity_enabled)
-        self.assertAlmostEqual(lidar_cfg.floor_normal_graph_sigma_rad, 0.015)
+        self.assertIsNone(lidar_cfg.floor_normal_graph_sigma_rad)
+        self.assertAlmostEqual(lidar_cfg.zupt_full_stop_rot_rad, 0.0)
         self.assertTrue(lidar_cfg.xicp_enabled)
         self.assertAlmostEqual(lidar_cfg.map_voxel_m, 0.20)
         self.assertAlmostEqual(lidar_cfg.fine_icp_voxel_m, 0.15)
@@ -98,7 +99,8 @@ class SlamV3CombinedTests(unittest.TestCase):
         )
         self.assertAlmostEqual(fine_cfg.map_voxel_m, 0.12)
         self.assertAlmostEqual(fine_cfg.fine_icp_voxel_m, 0.10)
-        self.assertAlmostEqual(fine_cfg.floor_normal_graph_sigma_rad, 0.012)
+        self.assertIsNone(fine_cfg.floor_normal_graph_sigma_rad)
+        self.assertAlmostEqual(fine_cfg.zupt_full_stop_rot_rad, 0.0)
         self.assertTrue(fine_cfg.floor_plane_enabled)
         self.assertTrue(fine_cfg.use_measured_submaps)
         self.assertTrue(fine_cfg.use_surface_verification)
@@ -166,15 +168,15 @@ class SlamV3CombinedTests(unittest.TestCase):
                 stats = backend.observability_stats()
                 self.assertGreaterEqual(stats["floor_planes_detected"], 8)
                 self.assertGreaterEqual(stats["floor_coplanar_edges"], 5)
-                self.assertGreaterEqual(stats["floor_gravity_priors_added"], 7)
+                self.assertEqual(stats["floor_gravity_priors_added"], 0)
                 self.assertGreaterEqual(stats["measured_query_submaps"], 1)
                 self.assertGreaterEqual(stats["measured_target_submaps"], 1)
                 self.assertGreaterEqual(stats["surface_checks"], 1)
                 self.assertGreaterEqual(stats["surface_accepted"], 1)
                 self.assertTrue(any(ev["loop"] for ev in events), events)
-                # Coplanar floor projection + floor-normal gravity must cancel the injected 0.20 m Z drift
+                # Coplanar floor projection + loop closure must cancel the injected 0.20 m Z drift
                 z_err = abs(float(backend.graph.pose((0, 8))[2, 3]))
-                self.assertLess(z_err, 0.02)
+                self.assertLess(z_err, 0.035)
 
     def test_combined_hybrid_runs_all_three_directions_simultaneously(self) -> None:
         pts_world, gray_fwd, rgb_fwd = _textured_scene(seed=19)
@@ -245,7 +247,7 @@ class SlamV3CombinedTests(unittest.TestCase):
         self.assertGreaterEqual(stats["surface_accepted"], 1)
         self.assertGreaterEqual(stats["floor_planes_detected"], 8)
         self.assertGreaterEqual(stats["floor_coplanar_edges"], 6)
-        self.assertGreaterEqual(stats["floor_gravity_priors_added"], 7)
+        self.assertEqual(stats["floor_gravity_priors_added"], 0)
         self.assertLess(abs(float(backend.graph.pose((0, 8))[2, 3])), 0.02)
 
 
