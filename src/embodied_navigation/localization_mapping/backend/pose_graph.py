@@ -146,6 +146,7 @@ class PoseGraph:
         self.poses: list[np.ndarray] = []
         self.edges: list[tuple[int, int, np.ndarray, np.ndarray, bool]] = []
         self.gravity_priors: list[tuple[int, np.ndarray, float, bool]] = []
+        self.z_priors: list[tuple[int, float, float, bool]] = []
 
     def add_node(self, key, T_world_body: np.ndarray) -> None:
         if key in self.index:
@@ -170,11 +171,35 @@ class PoseGraph:
             raise ValueError(f"sigma_rad must be finite and positive, got {sigma_rad!r}")
         self.gravity_priors.append((self.index[key], vec / norm, 1.0 / (sigma_rad * sigma_rad), robust))
 
+    def add_z_prior(self, key, target_z_m: float, sigma_m: float, *, robust: bool = True) -> None:
+        """Softly constrain node's world-frame Z coordinate toward a shared floor slab elevation."""
+        target = float(target_z_m)
+        sig = float(sigma_m)
+        if not np.isfinite(target):
+            raise ValueError(f"target_z_m must be finite, got {target_z_m!r}")
+        if not np.isfinite(sig) or sig <= 0.0:
+            raise ValueError(f"sigma_m must be finite and positive, got {sigma_m!r}")
+        self.z_priors.append((self.index[key], target, 1.0 / (sig * sig), robust))
+
     def pose(self, key) -> np.ndarray:
         return self.poses[self.index[key]].copy()
 
-    def optimize(self, iterations: int = 20) -> dict:
+    def optimize(self, iterations: int = 20, *, use_cpp: bool = True) -> dict:
         """LM iterations; returns robust costs before/after and convergence."""
+        if use_cpp:
+            from .accel import cpp_optimize_pose_graph
+
+            fast = cpp_optimize_pose_graph(
+                self.poses,
+                self.edges,
+                self.gravity_priors,
+                self.z_priors,
+                cauchy_scale=self.cauchy_scale,
+                iterations=iterations,
+            )
+            if fast is not None:
+                self.poses, summary = fast
+                return summary
         before = cost = self._cost(self.poses)
         damping = 1e-4
         converged = False
@@ -215,6 +240,10 @@ class PoseGraph:
             u = poses[node_idx][:3, :3] @ g_body
             e_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
             s = weight * float(e_g @ e_g)
+            total += c2 * np.log1p(s / c2) if robust else s
+        for node_idx, target_z, weight, robust in self.z_priors:
+            e_z = float(poses[node_idx][2, 3]) - target_z
+            s = weight * (e_z * e_z)
             total += c2 * np.log1p(s / c2) if robust else s
         return float(total)
 
@@ -263,6 +292,20 @@ class PoseGraph:
             rows.append(br.ravel())
             cols.append(bc.ravel())
             values.append(H_rot.ravel())
+        for node_idx, target_z, weight, robust in self.z_priors:
+            if node_idx == 0:
+                continue
+            e_z = float(poses[node_idx][2, 3]) - target_z
+            s = weight * (e_z * e_z)
+            w_eff = (weight / (1.0 + s / c2)) if robust else weight
+            J_t = poses[node_idx][2, :3]
+            slot = 6 * (node_idx - 1)
+            g[slot : slot + 3] += (w_eff * e_z) * J_t
+            H_t = w_eff * np.outer(J_t, J_t)
+            br, bc = np.meshgrid(np.arange(slot, slot + 3), np.arange(slot, slot + 3), indexing="ij")
+            rows.append(br.ravel())
+            cols.append(bc.ravel())
+            values.append(H_t.ravel())
         H = sparse.coo_matrix(
             (np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(size, size)
         )

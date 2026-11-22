@@ -110,7 +110,7 @@ def _read_ascii_pcd(path: Path) -> np.ndarray:
     return points
 
 
-def voxel_downsample(points: np.ndarray, voxel_m: float) -> np.ndarray:
+def voxel_downsample(points: np.ndarray, voxel_m: float, *, use_cpp: bool = True) -> np.ndarray:
     """Replace the points of each ``voxel_m`` cube by their centroid.
 
     The grid is anchored at the frame origin, so the result is independent of
@@ -118,6 +118,12 @@ def voxel_downsample(points: np.ndarray, voxel_m: float) -> np.ndarray:
     """
     if len(points) == 0:
         return np.empty((0, 3))
+    if use_cpp:
+        from .accel import cpp_voxel_downsample
+
+        fast = cpp_voxel_downsample(points, voxel_m)
+        if fast is not None:
+            return fast
     cells = np.floor(points / voxel_m).astype(np.int64)
     _, inverse, counts = np.unique(cells, axis=0, return_inverse=True, return_counts=True)
     inverse = inverse.reshape(-1)

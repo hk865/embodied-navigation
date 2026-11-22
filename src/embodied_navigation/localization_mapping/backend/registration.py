@@ -27,6 +27,7 @@ class IcpResult:
     fitness: float  # inlier fraction of the downsampled source
     rmse_m: float  # point-to-plane RMS over inliers
     converged: bool
+    hessian: np.ndarray | None = None
 
 
 def icp_point_to_plane(
@@ -40,6 +41,8 @@ def icp_point_to_plane(
     source_up_body: np.ndarray | None = None,
     gravity_sigma_rad: float | None = None,
     gravity_ref_point_sigma_m: float = 0.05,
+    return_hessian: bool = False,
+    use_cpp: bool = True,
 ) -> IcpResult:
     """Refine ``T_init`` (an estimate of T_target_source).
 
@@ -56,8 +59,26 @@ def icp_point_to_plane(
     50 points after downsampling, too few correspondences remain, or the
     normal equations are singular.
     """
-    source = voxel_downsample(source, voxel_m)
-    target = voxel_downsample(target, voxel_m)
+    if use_cpp:
+        from .accel import cpp_icp_point_to_plane
+
+        fast = cpp_icp_point_to_plane(
+            source,
+            target,
+            T_init,
+            max_correspondence_m=max_correspondence_m,
+            iterations=iterations,
+            voxel_m=voxel_m,
+            source_up_body=source_up_body,
+            gravity_sigma_rad=gravity_sigma_rad,
+            gravity_ref_point_sigma_m=gravity_ref_point_sigma_m,
+            return_hessian=return_hessian,
+        )
+        if fast is not None:
+            T_out, fitness, rmse_m, converged, hess = fast
+            return IcpResult(T_out, fitness, rmse_m, converged, hessian=hess)
+    source = voxel_downsample(source, voxel_m, use_cpp=False)
+    target = voxel_downsample(target, voxel_m, use_cpp=False)
     T = np.array(T_init, dtype=np.float64)
     if len(source) < MIN_POINTS or len(target) < MIN_POINTS:
         return IcpResult(T, 0.0, float("inf"), False)
