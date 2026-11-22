@@ -2,7 +2,7 @@
 
 > **盘点日期**：2026-11-22  
 > **覆盖分支**：`main` 旧默认基线（`B0_default`）、`exp/slam-backend-stabilization`（`2b77a5d`）以及 3 个正交 v2 分支（`exp/slam-v2-measured-submaps@59c60a4`、`exp/slam-v2-surface-gate@0e98406`、`exp/slam-v2-visual-retrieval@2aeea82`）。  
-> **代码路径约定**：下文 `backend/` 均指 `src/embodied_navigation/localization_mapping/backend/`；完整 27 组干净对照（`dirty=False`、统一机身原点）见 [experiments/slam-backend-phase4/REPORT.md](../../experiments/slam-backend-phase4/REPORT.md)。
+> **代码路径约定**：下文 `backend/` 均指 `src/embodied_navigation/localization_mapping/backend/`；完整 30 组干净对照（`dirty=False`、统一机身原点）见 [experiments/slam-backend-phase4/REPORT.md](../../experiments/slam-backend-phase4/REPORT.md)。
 
 ---
 
@@ -140,18 +140,18 @@ flowchart LR
   5. **在线入口与存图**：`BackendNode.ingest` 按配置开启 `read_keyframe(..., load_visual=...)`，`MapStore.save/load` 可选持久化 `kf_*_visual.npz`。
 - **两种模式与干净实证**：
   - **`slam_v2_visual_akaze.json`（SC + 视觉并集）**：SC 候选不经视觉验真直接入图，D2 `0.0756 m`（`67` 边，含 `4` 条视觉边），但 D3 被未验真的低质量 SC 边拖累至 `0.2161 m`（`176` 边）。
-  - **`slam_v2_visual_akaze_only.json`（全量视觉验真，`use_visual_verification=true`）**：D3 仅用 **`77` 条高置信边**在 **`84.1 s`** 内达到 **Online `0.1022 m` / Final `0.0825 m` / Z `0.0561 m` / `IQR95 0.048 m`**；`nospacing` 变体 `109` 边、`103.8 s`、`0.0913 m`。
+  - **`slam_v2_visual_akaze_only.json`（全量视觉验真，`use_visual_verification=true`）**：D1 `0.0997 m`（`0` 边、`5.9 s`）；D3 仅用 **`77` 条高置信边**在 **`84.1 s`** 内达到 **Online `0.1022 m` / Final `0.0825 m` / Z `0.0561 m` / `IQR95 0.048 m`**（`nospacing` 变体 `109` 边、`103.8 s`、`0.0913 m`）；但在反向重访居多的 D2 上受限于前视单目视场角，仅召回 `11` 条边（`nospacing` `23` 条），虽全为正向边（`L2 -/+ = 0/1`），后半程开环漂移使终图停在 `0.1837 m`（`nospacing` `0.1348 m`）。
 
 ---
 
-## 5. 五方案横向对比与工程选用边界（全基于 27 组干净实证）
+## 5. 五方案横向对比与工程选用边界（全基于 30 组干净实证）
 
 | 方案（分支 / 预设） | D1 终图 | D2 在线 / 终图 | D3 在线 / 终图（耗时） | 适用条件与已知限制 |
 |---|---:|---:|---:|---|
 | `B0_default` (`BackendConfig()`) | `0.2206 m` (`8.48°`) | `0.2558 / 0.1858 m` | `0.2101 / 0.1442 m` (328 s) | 无节流/无 ZUPT/弱 Cauchy；D1 倾角失稳、D3 修订路程 `4.19 m` |
-| **`stabilized`** (`stabilized.json`) | **`0.0997 m`** | `0.0880` / **`0.0554 m`** | `0.2317 / 0.1882 m` (253 s) | **无相机/高噪声 IMU 通用底座**；D1/D2 终图最优，D3 单帧受限于楼梯段几何 |
+| **`stabilized`** (`stabilized.json`) | **`0.0997 m`** | `0.0880` / **`0.0554 m`** | `0.2317 / 0.1882 m` (253 s) | **全场景默认候选底座**；360° 召回、D1/D2 终图最优，D3 单帧受限于楼梯几何 |
 | **`v2_ms`** (`v2_measured_submaps.json`) | **`0.0997 m`** | `0.1329 / 0.1741 m` | **`0.1924 / 0.1268 m`** (246 s) | 低噪声 IMU 多层收益明显（`nospacing` `0.1126 m`）；高噪声 IMU 长帧间隔会涂抹 |
 | **`v2_sg_soft`** (`v2_surface_gate_soft.json`) | **`0.0997 m`** | `0.1002` / **`0.0608 m`** | `0.2253 / 0.1828 m` (343 s) | 压低 D2 倾角至 `0.28°`；严格版 `cov=0.6` 需 `<0.1 m` 原始点云避免过度拒检 |
-| **`v2_visual_akaze_only`** (`v2_visual_akaze_only.json`) | —（待补全） | —（待补全） | **`0.1022 / 0.0825 m` (84 s)** | **有已标定同步 RGB 场景 D3 最优**；暗光/无纹理退化、长跑图像内存淘汰策略待后续细化 |
+| **`v2_visual_akaze_only`** (`v2_visual_akaze_only.json`) | **`0.0997 m`** | `0.1876 / 0.1837 m` (`nospacing` `0.1348`) | **`0.1022 / 0.0825 m` (84 s)** | **同向重访多层 D3 最优**；反向重访受前视单目 FOV 限制召回不足（D2 仅 11 边） |
 
-> **下一步待验证假设（非已定论）**：在 D2 上补跑 `v2_visual_akaze_only` 完整对照、以及在独立新录制多层数据集上验证“视觉验真优先 + 弱纹理回退单帧/柔和表面门”的组合策略，并在 Isaac Sim / ROS 2 实时链路下验收发布延迟与先验地图重载。
+> **下一步待验证假设（非已定论）**：在独立新录制多层数据集上验证“视觉验真优先 + 反向大视角/弱纹理回退 360° 表面门或单帧 LiDAR”的互补策略，并在 Isaac Sim / ROS 2 实时链路下验收发布延迟与先验地图重载。
