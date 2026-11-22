@@ -331,8 +331,15 @@ def _block_sqrt_confidence(
     R_world_body: np.ndarray,
     min_scale: float,
     cond_floor: float,
+    saturation_ref: float = 50.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Square-root directional confidence 3x3 matrix in body frame from a world Hessian block."""
+    """Square-root directional confidence 3x3 matrix in body frame from a world Hessian block.
+
+    Axes with Fisher information >= ``saturation_ref`` are well-constrained and retain
+    full weight ``1.0`` (preventing dominant floor/ceiling Z counts from falsely attenuating
+    well-observed indoor wall XY axes). Only genuinely degenerate axes below ``saturation_ref``
+    are attenuated down to ``min_scale``.
+    """
     block_body = R_world_body.T @ block_world @ R_world_body
     block_body = 0.5 * (block_body + block_body.T)
     lam, vecs = np.linalg.eigh(block_body)
@@ -341,7 +348,8 @@ def _block_sqrt_confidence(
     if lam_max <= cond_floor:
         scales = np.full(3, min_scale, dtype=np.float64)
     else:
-        scales = np.clip(lam / max(lam_max, 1e-12), min_scale, 1.0)
+        denom = min(lam_max, saturation_ref)
+        scales = np.clip(lam / max(denom, 1e-12), min_scale, 1.0)
     sqrt_block = (vecs * np.sqrt(scales)) @ vecs.T
     return 0.5 * (sqrt_block + sqrt_block.T), scales
 
