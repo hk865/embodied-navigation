@@ -72,10 +72,10 @@ def detect_floor_plane(
 ) -> FloorPlaneMeasurement | None:
     """Detect a wide, flat horizontal floor slab under the robot in body coordinates.
 
-    Uses ``R_odom_body`` only to select candidate ground points in an approximate
-    gravity-levelled frame (tolerant of Go2's natural ~6-8 deg pitch), then fits
-    the exact plane directly in ``body`` coordinates so the resulting normal and
-    height are independent of IMU/odometry tilt bias.
+    Uses ``R_odom_body`` (or the backend's gravity-stabilized attitude hint) to
+    seed the dominant ground plane in a deterministic near-mid range height
+    histogram, then expands and refines inliers across the full ``[min_radius_m,
+    max_radius_m]`` body-frame cloud without cropping by a narrow tilted slab.
     """
     R = np.asarray(R_odom_body, dtype=np.float64)
     if R.shape == (4, 4):
@@ -96,45 +96,72 @@ def detect_floor_plane(
 
     p_lvl = pts @ R.T
     r_xy = np.hypot(p_lvl[:, 0], p_lvl[:, 1])
-    idx = np.flatnonzero(
+    min_h = max(0.0, -float(max_z_level_m))
+    max_h = max(min_h + 1e-3, -float(min_z_level_m))
+    cos_world_lim = math.cos(math.radians(max_plane_world_tilt_deg))
+
+    # Deterministic near-mid seed (r <= 5 m minimizes any residual tilt leverage)
+    seed_pool = np.flatnonzero(
         (r_xy >= min_radius_m)
-        & (r_xy <= max_radius_m)
-        & (p_lvl[:, 2] >= min_z_level_m)
-        & (p_lvl[:, 2] <= max_z_level_m)
+        & (r_xy <= min(max_radius_m, 5.0))
+        & (p_lvl[:, 2] >= min_z_level_m - 0.15)
+        & (p_lvl[:, 2] <= max_z_level_m + 0.10)
     )
-    if len(idx) < min_points:
+    if len(seed_pool) < max(30, min_points // 2):
+        seed_pool = np.flatnonzero(
+            (r_xy >= min_radius_m)
+            & (r_xy <= max_radius_m)
+            & (p_lvl[:, 2] >= min_z_level_m)
+            & (p_lvl[:, 2] <= max_z_level_m)
+        )
+    if len(seed_pool) < max(30, min_points // 2):
         return None
 
-    z_lvl = p_lvl[idx, 2]
-    bins = np.floor(z_lvl / 0.04).astype(np.int64)
+    z_seed = p_lvl[seed_pool, 2]
+    bins = np.floor(z_seed / 0.04).astype(np.int64)
     uniq, counts = np.unique(bins, return_counts=True)
     z_mode = (float(uniq[int(np.argmax(counts))]) + 0.5) * 0.04
-    seed_mask = np.abs(z_lvl - z_mode) <= 0.08
-    if int(np.sum(seed_mask)) < max(30, min_points // 2):
+    seed_mask = np.abs(z_seed - z_mode) <= 0.08
+    if int(np.sum(seed_mask)) < max(25, min_points // 3):
         return None
 
-    band_b = pts[idx]
-    fit1 = _fit_plane_pca(band_b[seed_mask])
+    fit1 = _fit_plane_pca(pts[seed_pool[seed_mask]])
     if fit1 is None:
         return None
-    n1, d1 = fit1
+    normal, d_plane = fit1
 
-    inlier_mask = np.abs(band_b @ n1 + d1) <= 0.025
-    inliers_b = band_b[inlier_mask]
+    # Expand and refine over the full wide-tilt body cloud so far-field floor points
+    # are never chopped away when R_odom_body has slight pitch/roll bias.
+    cand_idx = np.flatnonzero(
+        (r_xy >= min_radius_m)
+        & (r_xy <= max_radius_m)
+        & (p_lvl[:, 2] >= min_z_level_m - 1.1)
+        & (p_lvl[:, 2] <= max_z_level_m + 0.75)
+    )
+    if len(cand_idx) < min_points:
+        return None
+    cand_b = pts[cand_idx]
+
+    inliers_b = cand_b
+    for _ in range(4):
+        inlier_mask = np.abs(cand_b @ normal + d_plane) <= 0.025
+        inliers_b = cand_b[inlier_mask]
+        if len(inliers_b) < min_points:
+            return None
+        fit = _fit_plane_pca(inliers_b)
+        if fit is None:
+            return None
+        normal, d_plane = fit
+
+    inlier_mask = np.abs(cand_b @ normal + d_plane) <= 0.025
+    inliers_b = cand_b[inlier_mask]
     if len(inliers_b) < min_points:
         return None
-    fit2 = _fit_plane_pca(inliers_b)
-    if fit2 is None:
-        return None
-    normal, d_plane = fit2
 
-    inlier_mask = np.abs(band_b @ normal + d_plane) <= 0.025
-    inliers_b = band_b[inlier_mask]
-    if len(inliers_b) < min_points:
+    if d_plane < min_h or d_plane > max_h:
         return None
-
     n_lvl = R @ normal
-    if float(n_lvl[2]) < math.cos(math.radians(max_plane_world_tilt_deg)):
+    if float(n_lvl[2]) < cos_world_lim:
         return None
 
     signed_residuals = inliers_b @ normal + d_plane

@@ -119,6 +119,8 @@ class BackendConfig:
     floor_plane_max_step_dz_m: float = 0.06
     floor_normal_gravity_enabled: bool = False
     floor_normal_graph_sigma_rad: float | None = None
+    floor_gravity_world_calibration: bool = False
+    gravity_optimize_every: int = 0
     fine_icp_voxel_m: float | None = None
     xicp_enabled: bool = False
     xicp_min_scale: float = 0.15
@@ -255,7 +257,7 @@ class BackendConfig:
             "color_sc_weight",
         ):
             _nonnegative(name, getattr(self, name))
-        for name in ("loop_submap_neighbors", "exclude_recent", "visual_multiview_radius"):
+        for name in ("loop_submap_neighbors", "exclude_recent", "visual_multiview_radius", "gravity_optimize_every"):
             _nonnegative_int(name, getattr(self, name))
         for name in (
             "icp_iterations",
@@ -340,6 +342,7 @@ class BackendConfig:
             "zupt_skip_loop_search",
             "floor_plane_enabled",
             "floor_normal_gravity_enabled",
+            "floor_gravity_world_calibration",
             "xicp_enabled",
             "odometry_robust",
             "odometry_icp_repair_enabled",
@@ -531,6 +534,9 @@ class SlamBackend:
         self._up_body: dict = {}
         self._floor_normal_body: dict = {}
         self._floor_measurements: dict[object, FloorPlaneMeasurement] = {}
+        self._gravity_world: np.ndarray = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        self._gravity_world_calibrated: bool = False
+        self._last_gravity_opt_count: int = 0
         self._prev_odom_check_pts: tuple[object, np.ndarray] | None = None
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
@@ -666,6 +672,7 @@ class SlamBackend:
         finally:
             self._current_visual_pair = None
             self._current_color_desc = None
+        optimized = False
         if loop_key is not None:
             self.loop_count += 1
             if self._last_match_visual:
@@ -674,14 +681,25 @@ class SlamBackend:
                     self.visual_only_loops_accepted += 1
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+            self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+            optimized = True
+        elif (
+            self.config.gravity_optimize_every > 0
+            and (self._stats["floor_gravity_priors_added"] - self._last_gravity_opt_count)
+            >= self.config.gravity_optimize_every
+        ):
+            self.graph.optimize(self.config.optimize_iterations)
+            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+            self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+            optimized = True
         if self._correction is None:
             self._correction = np.eye(4)
         C_graph = self.graph.pose(keyframe.key) @ invert(keyframe.T_odom_body)
-        if zupt_mode is not None and loop_key is None:
+        if zupt_mode is not None and not optimized:
             status = self._propose_anchored(C_graph, keyframe)
         else:
             status = self._propose(C_graph, keyframe)
-            if loop_key is not None and status == "pending":
+            if optimized and status == "pending":
                 self.admission.seed_anchored(C_graph, keyframe.T_odom_body, keyframe.stamp_ns)
         event = {"loop": loop_key is not None, "loop_key": loop_key, "adopted": status == "adopted"}
         if zupt_mode is not None:
@@ -971,10 +989,20 @@ class SlamBackend:
         zupt_mode: str | None = None
         delta_use = np.eye(4, dtype=np.float64)
         floor_meas: FloorPlaneMeasurement | None = None
-        if c.floor_plane_enabled or c.floor_normal_gravity_enabled or c.floor_normal_graph_sigma_rad is not None:
+        if (
+            c.floor_plane_enabled
+            or c.floor_normal_gravity_enabled
+            or c.floor_normal_graph_sigma_rad is not None
+            or c.floor_gravity_world_calibration
+        ):
+            if previous is None:
+                R_floor_hint = keyframe.T_odom_body[:3, :3]
+            else:
+                R_step = project_so3((invert(previous.T_odom_body) @ keyframe.T_odom_body)[:3, :3])
+                R_floor_hint = project_so3(self.graph.pose(previous.key)[:3, :3] @ R_step)
             floor_meas = detect_floor_plane(
                 keyframe.points_body(),
-                keyframe.T_odom_body[:3, :3],
+                R_floor_hint,
                 max_body_tilt_deg=c.floor_plane_max_tilt_deg,
             )
             if floor_meas is not None:
@@ -985,7 +1013,16 @@ class SlamBackend:
         if previous is None:
             self.graph.add_node(keyframe.key, keyframe.T_odom_body)
             self._path_m[keyframe.key] = 0.0
-            up_body = keyframe.T_odom_body[2, :3].copy()
+            if c.floor_gravity_world_calibration and floor_meas is not None:
+                g_w = project_so3(keyframe.T_odom_body[:3, :3]) @ floor_meas.normal_body
+                g_norm = float(np.linalg.norm(g_w))
+                if g_norm > 1e-6:
+                    self._gravity_world = g_w / g_norm
+                    self._gravity_world_calibrated = True
+                    self.graph.set_gravity_world(self._gravity_world)
+                up_body = floor_meas.normal_body.copy()
+            else:
+                up_body = keyframe.T_odom_body[2, :3].copy()
         else:
             delta = invert(previous.T_odom_body) @ keyframe.T_odom_body
             zupt_mode, pivot_rot = self._detect_zupt(previous, keyframe, delta)
@@ -1081,6 +1118,19 @@ class SlamBackend:
             up_norm = float(np.linalg.norm(up_body))
             if up_norm > 1e-9:
                 up_body = up_body / up_norm
+            if (
+                c.floor_gravity_world_calibration
+                and not self._gravity_world_calibrated
+                and self.loop_count == 0
+                and floor_meas is not None
+            ):
+                g_w = project_so3(new_pose[:3, :3]) @ floor_meas.normal_body
+                g_norm = float(np.linalg.norm(g_w))
+                if g_norm > 1e-6:
+                    self._gravity_world = g_w / g_norm
+                    self._gravity_world_calibrated = True
+                    self.graph.set_gravity_world(self._gravity_world)
+                    up_body = floor_meas.normal_body.copy()
         if c.graph_gravity_sigma_rad is not None:
             self.graph.add_gravity_prior(
                 keyframe.key,
@@ -1300,7 +1350,8 @@ class SlamBackend:
         else:
             resolved_up = self._verified_up_body(keyframe)
         u_world = T_world_body[:3, :3] @ resolved_up
-        tilt_rad = float(np.arctan2(np.hypot(u_world[0], u_world[1]), u_world[2]))
+        g_w = self._gravity_world
+        tilt_rad = float(np.arctan2(float(np.linalg.norm(np.cross(u_world, g_w))), float(u_world @ g_w)))
         if tilt_rad > limit:
             return f"gravity tilt {np.degrees(tilt_rad):.2f} deg exceeds {np.degrees(limit):.2f} deg"
         return None
@@ -1766,6 +1817,7 @@ class SlamBackend:
             iterations=c.icp_iterations,
             voxel_m=2 * c.icp_voxel_m,
             source_up_body=source_up_body,
+            target_up_world=self._gravity_world,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
         )
         fine_voxel_m = c.icp_voxel_m if c.fine_icp_voxel_m is None else c.fine_icp_voxel_m
@@ -1778,6 +1830,7 @@ class SlamBackend:
             iterations=c.icp_iterations,
             voxel_m=fine_voxel_m,
             source_up_body=source_up_body,
+            target_up_world=self._gravity_world,
             gravity_sigma_rad=c.icp_gravity_sigma_rad,
             return_hessian=need_hessian,
         )

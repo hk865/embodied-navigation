@@ -105,7 +105,7 @@ def _bind_signatures(lib: ctypes.CDLL) -> None:
         _DOUBLE_PTR, ctypes.c_int,
         _DOUBLE_PTR,
         ctypes.c_double, ctypes.c_int, ctypes.c_double,
-        ctypes.c_int, _DOUBLE_PTR, ctypes.c_double, ctypes.c_double,
+        ctypes.c_int, _DOUBLE_PTR, _DOUBLE_PTR, ctypes.c_double, ctypes.c_double,
         _DOUBLE_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, _DOUBLE_PTR,
     ]
     lib.cpp_icp_point_to_plane.restype = None
@@ -113,7 +113,7 @@ def _bind_signatures(lib: ctypes.CDLL) -> None:
     lib.cpp_optimize_pose_graph.argtypes = [
         _DOUBLE_PTR, ctypes.c_int,
         _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
-        _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
+        _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int, _DOUBLE_PTR,
         _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
         ctypes.c_double, ctypes.c_int,
         _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR,
@@ -198,6 +198,7 @@ def cpp_icp_point_to_plane(
     source_up_body: np.ndarray | None,
     gravity_sigma_rad: float | None,
     gravity_ref_point_sigma_m: float,
+    target_up_world: np.ndarray | None = None,
     return_hessian: bool = False,
 ) -> tuple[np.ndarray, float, float, bool, np.ndarray | None] | None:
     src = _validate_points_array(source, "source")
@@ -214,6 +215,11 @@ def cpp_icp_point_to_plane(
     has_grav = 1 if (source_up_body is not None and gravity_sigma_rad is not None) else 0
     if has_grav:
         up_arr = _validate_matrix_array(source_up_body, (3,), "source_up_body")
+        target_up_arr = (
+            _validate_matrix_array(target_up_world, (3,), "target_up_world")
+            if target_up_world is not None
+            else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        )
         grav_sig = float(gravity_sigma_rad)
         grav_ref = float(gravity_ref_point_sigma_m)
         if not math.isfinite(grav_sig) or grav_sig <= 0.0:
@@ -224,6 +230,7 @@ def cpp_icp_point_to_plane(
             )
     else:
         up_arr = np.zeros(3, dtype=np.float64)
+        target_up_arr = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         grav_sig = 0.0
         grav_ref = float(gravity_ref_point_sigma_m)
         if not math.isfinite(grav_ref):
@@ -244,7 +251,7 @@ def cpp_icp_point_to_plane(
         tgt.ctypes.data_as(_DOUBLE_PTR), len(tgt),
         T0.ctypes.data_as(_DOUBLE_PTR),
         max_corr, int(iterations), vox,
-        has_grav, up_arr.ctypes.data_as(_DOUBLE_PTR), grav_sig, grav_ref,
+        has_grav, up_arr.ctypes.data_as(_DOUBLE_PTR), target_up_arr.ctypes.data_as(_DOUBLE_PTR), grav_sig, grav_ref,
         T_out.ctypes.data_as(_DOUBLE_PTR),
         ctypes.byref(fitness), ctypes.byref(rmse), ctypes.byref(converged),
         hess_ptr,
@@ -260,6 +267,7 @@ def cpp_optimize_pose_graph(
     *,
     cauchy_scale: float,
     iterations: int,
+    gravity_world: np.ndarray | None = None,
 ) -> tuple[list[np.ndarray], dict] | None:
     n_nodes = len(poses)
     if n_nodes > _MAX_CPP_COUNT:
@@ -350,6 +358,11 @@ def cpp_optimize_pose_graph(
     out_before = ctypes.c_double(0.0)
     out_after = ctypes.c_double(0.0)
 
+    gw_vec = (
+        _validate_matrix_array(gravity_world, (3,), "gravity_world")
+        if gravity_world is not None
+        else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    )
     lib.cpp_optimize_pose_graph(
         poses_arr.ctypes.data_as(_DOUBLE_PTR), n_nodes,
         ea.ctypes.data_as(_INT_PTR), eb.ctypes.data_as(_INT_PTR),
@@ -357,6 +370,7 @@ def cpp_optimize_pose_graph(
         eR.ctypes.data_as(_INT_PTR), n_edges,
         gn.ctypes.data_as(_INT_PTR), gb.ctypes.data_as(_DOUBLE_PTR),
         gw.ctypes.data_as(_DOUBLE_PTR), gr.ctypes.data_as(_INT_PTR), n_grav,
+        gw_vec.ctypes.data_as(_DOUBLE_PTR),
         zn.ctypes.data_as(_INT_PTR), zt.ctypes.data_as(_DOUBLE_PTR),
         zw.ctypes.data_as(_DOUBLE_PTR), zr.ctypes.data_as(_INT_PTR), n_zp,
         c_scale, int(iterations),

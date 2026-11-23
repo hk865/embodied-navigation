@@ -198,6 +198,97 @@ class SlamBackendPlaneAndXicpTests(unittest.TestCase):
         self.assertNotIn("zupt", ev2)
         self.assertEqual(backend.observability_stats()["floor_coplanar_edges"], 0)
 
+    def test_gravity_world_calibration_and_periodic_open_loop_leveling(self):
+        # Simulate a tilted initial odom frame (3 deg pitch bias at kf_0) plus open-loop pitch drift
+        # on a flat horizontal floor with zero loop closures.
+        pts_world = _world_floor_cloud(42, floor_z=-0.34, span=9.0)
+        R_err0 = _rot_y(3.0)
+        cfg = BackendConfig(
+            zupt_enabled=False,
+            floor_plane_enabled=True,
+            floor_normal_gravity_enabled=True,
+            floor_gravity_world_calibration=True,
+            floor_normal_graph_sigma_rad=0.015,
+            gravity_optimize_every=5,
+        )
+        backend = SlamBackend(cfg)
+        for i in range(12):
+            T_true = np.eye(4)
+            T_true[:3, 3] = [0.8 * i, 0.0, 0.0]
+            # Odom starts tilted 3 deg AND drifts an extra +0.3 deg/step in pitch
+            R_odom = R_err0 @ _rot_y(0.3 * i)
+            T_odom = np.eye(4)
+            T_odom[:3, :3] = R_odom
+            T_odom[:3, 3] = R_err0 @ np.array([0.8 * i, 0.0, 0.0])
+            pts_body = transform_points(np.linalg.inv(T_true), pts_world)
+            ev = backend.ingest(Keyframe((0, i), i * 1_000_000_000, T_odom, np.eye(4), pts_body))
+            self.assertNotIn("error", ev)
+
+        # Compare against the exact same config with gravity_optimize_every=0 (no open-loop optimize)
+        cfg_no_opt = BackendConfig(
+            zupt_enabled=False,
+            floor_plane_enabled=True,
+            floor_normal_gravity_enabled=True,
+            floor_gravity_world_calibration=True,
+            floor_normal_graph_sigma_rad=0.015,
+            gravity_optimize_every=0,
+        )
+        backend_no_opt = SlamBackend(cfg_no_opt)
+        for i in range(12):
+            T_true = np.eye(4)
+            T_true[:3, 3] = [0.8 * i, 0.0, 0.0]
+            R_odom = R_err0 @ _rot_y(0.3 * i)
+            T_odom = np.eye(4)
+            T_odom[:3, :3] = R_odom
+            T_odom[:3, 3] = R_err0 @ np.array([0.8 * i, 0.0, 0.0])
+            pts_body = transform_points(np.linalg.inv(T_true), pts_world)
+            backend_no_opt.ingest(Keyframe((0, i), i * 1_000_000_000, T_odom, np.eye(4), pts_body))
+
+        # g_world should match R_err0 @ e_z to < 0.05 deg
+        g_expected = R_err0 @ np.array([0.0, 0.0, 1.0])
+        ang_g = math.degrees(math.acos(np.clip(float(backend.graph.gravity_world @ g_expected), -1.0, 1.0)))
+        self.assertLess(ang_g, 0.05)
+        # Periodic gravity optimization reduces open-loop tilt vs unoptimized open-loop trajectory
+        R_opt = backend.graph.pose((0, 9))[:3, :3]
+        R_raw = backend_no_opt.graph.pose((0, 9))[:3, :3]
+        ang_opt = math.degrees(math.acos(np.clip(float((R_opt @ np.array([0.0, 0.0, 1.0])) @ g_expected), -1.0, 1.0)))
+        ang_raw = math.degrees(math.acos(np.clip(float((R_raw @ np.array([0.0, 0.0, 1.0])) @ g_expected), -1.0, 1.0)))
+        self.assertGreater(ang_raw, 2.5)
+        self.assertLess(ang_opt, ang_raw * 0.65)
+
+    def test_cpp_and_python_non_ez_gravity_world_parity(self):
+        from embodied_navigation.localization_mapping.backend.pose_graph import PoseGraph
+        from embodied_navigation.localization_mapping.backend.backend import information
+
+        g_w = _rot_y(4.0) @ np.array([0.0, 0.0, 1.0])
+        # 1. PoseGraph C++ vs Python parity with tilted gravity_world
+        def _run_graph(use_cpp: bool) -> np.ndarray:
+            g = PoseGraph(cauchy_scale=3.0)
+            g.set_gravity_world(g_w)
+            g.add_node(0, np.eye(4))
+            T1 = np.eye(4); T1[:3, :3] = _rot_y(1.0); T1[:3, 3] = [1.0, 0.0, 0.0]
+            g.add_node(1, T1)
+            g.add_edge(0, 1, T1, information(0.2, 0.05), robust=False)
+            g.add_gravity_prior(1, np.array([0.0, 0.0, 1.0]), 0.01, robust=True)
+            g.optimize(iterations=20, use_cpp=use_cpp)
+            return g.pose(1)
+
+        np.testing.assert_allclose(_run_graph(True), _run_graph(False), atol=1e-6)
+
+        # 2. ICP C++ vs Python parity with non-e_z target_up_world
+        tgt = _world_floor_cloud(55)
+        T_init = se3_exp(np.array([0.1, -0.05, 0.02, 0.0, 0.05, 0.0]))
+        r_py = icp_point_to_plane(
+            tgt, tgt, T_init, voxel_m=0.2, source_up_body=np.array([0.0, 0.0, 1.0]),
+            target_up_world=g_w, gravity_sigma_rad=0.02, use_cpp=False,
+        )
+        r_cpp = icp_point_to_plane(
+            tgt, tgt, T_init, voxel_m=0.2, source_up_body=np.array([0.0, 0.0, 1.0]),
+            target_up_world=g_w, gravity_sigma_rad=0.02, use_cpp=True,
+        )
+        np.testing.assert_allclose(r_cpp.T_target_source, r_py.T_target_source, atol=1e-5)
+
+
 
 if __name__ == "__main__":
     unittest.main()

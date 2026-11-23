@@ -146,7 +146,15 @@ class PoseGraph:
         self.poses: list[np.ndarray] = []
         self.edges: list[tuple[int, int, np.ndarray, np.ndarray, bool]] = []
         self.gravity_priors: list[tuple[int, np.ndarray, float, bool]] = []
+        self.gravity_world: np.ndarray = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self.z_priors: list[tuple[int, float, float, bool]] = []
+
+    def set_gravity_world(self, up_world: np.ndarray) -> None:
+        vec = np.asarray(up_world, dtype=np.float64).reshape(3)
+        norm = float(np.linalg.norm(vec))
+        if norm <= 1e-6 or not np.isfinite(norm):
+            raise ValueError("up_world must be a finite non-zero 3-vector")
+        self.gravity_world = vec / norm
 
     def add_node(self, key, T_world_body: np.ndarray) -> None:
         if key in self.index:
@@ -196,6 +204,7 @@ class PoseGraph:
                 self.z_priors,
                 cauchy_scale=self.cauchy_scale,
                 iterations=iterations,
+                gravity_world=self.gravity_world,
             )
             if fast is not None:
                 self.poses, summary = fast
@@ -242,7 +251,7 @@ class PoseGraph:
             total += c2 * np.log1p(s / c2) if edge[4] else s
         for node_idx, g_body, weight, robust in self.gravity_priors:
             u = poses[node_idx][:3, :3] @ g_body
-            e_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            e_g = u - self.gravity_world
             s = weight * float(e_g @ e_g)
             total += c2 * np.log1p(s / c2) if robust else s
         for node_idx, target_z, weight, robust in self.z_priors:
@@ -284,7 +293,7 @@ class PoseGraph:
                 continue
             R = poses[node_idx][:3, :3]
             u = R @ g_body
-            e_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            e_g = u - self.gravity_world
             s = weight * float(e_g @ e_g)
             w_eff = (weight / (1.0 + s / c2)) if robust else weight
             # Right perturbation: R exp(phi^) g_b ≈ R (g_b - [g_b]_x phi)

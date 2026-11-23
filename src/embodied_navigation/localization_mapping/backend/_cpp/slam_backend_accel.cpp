@@ -453,6 +453,7 @@ void cpp_icp_point_to_plane(
     double voxel_m,
     int has_gravity,
     const double* source_up_body_ptr,
+    const double* target_up_world_ptr,
     double gravity_sigma_rad,
     double gravity_ref_point_sigma_m,
     double* T_out_ptr,
@@ -509,6 +510,7 @@ void cpp_icp_point_to_plane(
 
     bool use_gravity = false;
     Vec3 up_body = Vec3::Zero();
+    Vec3 up_world_target(0.0, 0.0, 1.0);
     if (has_gravity && source_up_body_ptr != nullptr &&
         std::isfinite(gravity_sigma_rad) && gravity_sigma_rad > 0.0 &&
         std::isfinite(gravity_ref_point_sigma_m)) {
@@ -518,6 +520,14 @@ void cpp_icp_point_to_plane(
         if (nrm > 1e-6) {
             up_body = v / nrm;
             use_gravity = true;
+            if (target_up_world_ptr != nullptr) {
+                Vec3 tw(target_up_world_ptr[0], target_up_world_ptr[1], target_up_world_ptr[2]);
+                if (!tw.allFinite()) return;
+                const double tnrm = tw.norm();
+                if (tnrm > 1e-6) {
+                    up_world_target = tw / tnrm;
+                }
+            }
         }
     }
 
@@ -588,7 +598,7 @@ void cpp_icp_point_to_plane(
             const Vec3 u = R * up_body;
             Eigen::Matrix<double, 3, 6> J_g = Eigen::Matrix<double, 3, 6>::Zero();
             J_g.block<3, 3>(0, 3) = -hat3(u);
-            const Vec3 r_g(u.x(), u.y(), u.z() - 1.0);
+            const Vec3 r_g = u - up_world_target;
             const double w_g = (gravity_ref_point_sigma_m / gravity_sigma_rad)
                              * (gravity_ref_point_sigma_m / gravity_sigma_rad);
             H.noalias() += w_g * (J_g.transpose() * J_g);
@@ -667,6 +677,7 @@ void cpp_optimize_pose_graph(
     const int* edge_robust, int n_edges,
     const int* grav_node, const double* grav_body,
     const double* grav_weight, const int* grav_robust, int n_grav,
+    const double* grav_world_ptr,
     const int* z_node, const double* z_target,
     const double* z_weight, const int* z_robust, int n_z_priors,
     double cauchy_scale,
@@ -676,6 +687,14 @@ void cpp_optimize_pose_graph(
     double* out_error_before,
     double* out_error_after
 ) {
+    Vec3 g_world(0.0, 0.0, 1.0);
+    if (grav_world_ptr != nullptr) {
+        Vec3 gw(grav_world_ptr[0], grav_world_ptr[1], grav_world_ptr[2]);
+        double gwn = gw.norm();
+        if (std::isfinite(gwn) && gwn > 1e-6) {
+            g_world = gw / gwn;
+        }
+    }
     std::vector<Mat4> poses(n_nodes);
     for (int i = 0; i < n_nodes; ++i) {
         poses[i] = load_mat4_rm(poses_ptr + 16 * i);
@@ -703,7 +722,7 @@ void cpp_optimize_pose_graph(
             const int ni = grav_node[g];
             const Vec3 gb(grav_body[3 * g], grav_body[3 * g + 1], grav_body[3 * g + 2]);
             const Vec3 u = cur[ni].block<3, 3>(0, 0) * gb;
-            const Vec3 eg(u.x(), u.y(), u.z() - 1.0);
+            const Vec3 eg = u - g_world;
             const double s = grav_weight[g] * eg.squaredNorm();
             total += grav_robust[g] ? (c2 * std::log1p(s / c2)) : s;
         }
@@ -783,7 +802,7 @@ void cpp_optimize_pose_graph(
             const Mat3 R = poses[ni].block<3, 3>(0, 0);
             const Vec3 gb(grav_body[3 * g], grav_body[3 * g + 1], grav_body[3 * g + 2]);
             const Vec3 u = R * gb;
-            const Vec3 eg(u.x(), u.y(), u.z() - 1.0);
+            const Vec3 eg = u - g_world;
             const double s = grav_weight[g] * eg.squaredNorm();
             const double w_eff = grav_robust[g] ? (grav_weight[g] / (1.0 + s / c2)) : grav_weight[g];
             const Mat3 J_rot = -(R * hat3(gb));

@@ -39,6 +39,7 @@ def icp_point_to_plane(
     iterations: int = 30,
     voxel_m: float = 0.2,
     source_up_body: np.ndarray | None = None,
+    target_up_world: np.ndarray | None = None,
     gravity_sigma_rad: float | None = None,
     gravity_ref_point_sigma_m: float = 0.05,
     return_hessian: bool = False,
@@ -70,6 +71,7 @@ def icp_point_to_plane(
             iterations=iterations,
             voxel_m=voxel_m,
             source_up_body=source_up_body,
+            target_up_world=target_up_world,
             gravity_sigma_rad=gravity_sigma_rad,
             gravity_ref_point_sigma_m=gravity_ref_point_sigma_m,
             return_hessian=return_hessian,
@@ -84,11 +86,17 @@ def icp_point_to_plane(
         empty_h = np.zeros((6, 6), dtype=np.float64) if return_hessian else None
         return IcpResult(T, 0.0, float("inf"), False, hessian=empty_h)
     up_body = None
+    up_world_target = np.array([0.0, 0.0, 1.0], dtype=np.float64)
     if source_up_body is not None and gravity_sigma_rad is not None:
         vec = np.asarray(source_up_body, dtype=np.float64).reshape(3)
         norm = float(np.linalg.norm(vec))
         if norm > 1e-6:
             up_body = vec / norm
+            if target_up_world is not None:
+                tw = np.asarray(target_up_world, dtype=np.float64).reshape(3)
+                tnorm = float(np.linalg.norm(tw))
+                if tnorm > 1e-6:
+                    up_world_target = tw / tnorm
     center = target.mean(axis=0)
     target_c = target - center
     T_c = T.copy()
@@ -122,7 +130,7 @@ def icp_point_to_plane(
             # Left perturbation: u(exp(delta) T) ≈ u + phi x u = u - [u]_x phi.
             J_g = np.zeros((3, 6), dtype=np.float64)
             J_g[:, 3:] = -hat(u)
-            r_g = np.array([u[0], u[1], u[2] - 1.0], dtype=np.float64)
+            r_g = u - up_world_target
             w_g = (gravity_ref_point_sigma_m / gravity_sigma_rad) ** 2
             hessian = hessian + w_g * (J_g.T @ J_g)
             rhs = rhs + w_g * (J_g.T @ r_g)
