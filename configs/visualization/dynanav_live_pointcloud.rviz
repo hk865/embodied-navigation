@@ -16,7 +16,28 @@ Visualization Manager:
       Plane Cell Count: 60
       Reference Frame: <Fixed Frame>
     - Class: rviz_default_plugins/PointCloud2
-      Name: Accumulated 3D RGB Cloud (LIVO2)
+      Name: Backend Global Map (Deduplicated)
+      Enabled: true
+      Topic:
+        Value: /dynanav/backend/global_map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds: true
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.045
+      Size (Pixels): 3
+      Alpha: 0.9
+      Decay Time: 0
+      Selectable: false
+      Queue Size: 2
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Live 3D RGB Scan (LIVO2)
       Enabled: true
       Topic:
         Value: /dynanav/rtx_livo/cloud_registered
@@ -31,11 +52,11 @@ Visualization Manager:
       Size (m): 0.035
       Size (Pixels): 3
       Alpha: 1.0
-      Decay Time: 3600
+      Decay Time: 1.0
       Selectable: false
-      Queue Size: 20
+      Queue Size: 10
     - Class: rviz_default_plugins/PointCloud2
-      Name: Accumulated 3D Geometry Cloud (Z Color, 360°)
+      Name: Live 3D Geometry Scan (Z Color, 360°)
       Enabled: false
       Topic:
         Value: /dynanav/rtx_livo/cloud_registered_full
@@ -54,9 +75,9 @@ Visualization Manager:
       Size (m): 0.03
       Size (Pixels): 3
       Alpha: 0.95
-      Decay Time: 3600
+      Decay Time: 0.5
       Selectable: false
-      Queue Size: 20
+      Queue Size: 10
     - Class: rviz_default_plugins/PointCloud2
       Name: Current Scan Highlight
       Enabled: true
@@ -101,7 +122,7 @@ Visualization Manager:
         Shaft Radius: 0.025
     - Class: rviz_default_plugins/Odometry
       Name: Backend Corrected Trajectory
-      Enabled: false
+      Enabled: true
       Topic:
         Value: /dynanav/backend/corrected_odometry
         Depth: 10
