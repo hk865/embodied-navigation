@@ -123,6 +123,12 @@ class BackendConfig:
     xicp_enabled: bool = False
     xicp_min_scale: float = 0.15
     xicp_cond_floor: float = 1e-3
+    # Robust moving odometry edges and pure-geometric scan-to-scan ICP odometry repair.
+    odometry_robust: bool = False
+    odometry_icp_repair_enabled: bool = False
+    odometry_icp_repair_max_median_m: float = 0.20
+    odometry_icp_repair_min_fitness: float = 0.55
+    odometry_icp_repair_max_rmse_m: float = 0.12
     # Bounded measured multi-frame submaps, surface coverage gate, and translation degeneracy gate.
     use_measured_submaps: bool = False
     measured_submap: SubmapConfig = field(default_factory=SubmapConfig)
@@ -312,8 +318,14 @@ class BackendConfig:
             "zupt_max_measured_shift_m",
             "floor_plane_max_step_dz_m",
             "xicp_cond_floor",
+            "odometry_icp_repair_max_median_m",
+            "odometry_icp_repair_max_rmse_m",
         ):
             _positive(name, getattr(self, name))
+        if not 0.0 < _positive("odometry_icp_repair_min_fitness", self.odometry_icp_repair_min_fitness) <= 1.0:
+            raise ValueError(
+                f"odometry_icp_repair_min_fitness must lie in (0, 1], got {self.odometry_icp_repair_min_fitness!r}"
+            )
         if not 0.0 < _positive("zupt_min_fitness", self.zupt_min_fitness) <= 1.0:
             raise ValueError(f"zupt_min_fitness must lie in (0, 1], got {self.zupt_min_fitness!r}")
         if not 0.0 < _positive("floor_plane_max_tilt_deg", self.floor_plane_max_tilt_deg) < 90.0:
@@ -329,6 +341,8 @@ class BackendConfig:
             "floor_plane_enabled",
             "floor_normal_gravity_enabled",
             "xicp_enabled",
+            "odometry_robust",
+            "odometry_icp_repair_enabled",
             "use_measured_submaps",
             "use_surface_verification",
             "gravity_aligned",
@@ -517,6 +531,7 @@ class SlamBackend:
         self._up_body: dict = {}
         self._floor_normal_body: dict = {}
         self._floor_measurements: dict[object, FloorPlaneMeasurement] = {}
+        self._prev_odom_check_pts: tuple[object, np.ndarray] | None = None
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
         self._path_m: dict = {}  # key -> cumulative odom path length
@@ -533,6 +548,8 @@ class SlamBackend:
             "floor_coplanar_edges": 0,
             "floor_gravity_priors_added": 0,
             "xicp_degenerate_loops": 0,
+            "odometry_icp_checked": 0,
+            "odometry_icp_repaired": 0,
         }
         self._correction: np.ndarray | None = None
         self._tracking = False
@@ -841,6 +858,112 @@ class SlamBackend:
         T_measured[:3, 3] = shift
         return T_measured
 
+    def _repair_odometry_delta(
+        self,
+        previous: Keyframe,
+        keyframe: Keyframe,
+        delta_use: np.ndarray,
+        prev_floor: FloorPlaneMeasurement | None,
+        cur_floor: FloorPlaneMeasurement | None,
+    ) -> tuple[np.ndarray, bool]:
+        """Pure-geometric scan-to-scan consistency check and point-to-plane ICP repair.
+
+        When measured LiDAR geometry disagrees with the frontend odometry step
+        (either overall scan-to-scan median distance exceeds threshold or both
+        frames measure wide floor slabs whose height disagrees with ``delta_use``),
+        runs point-to-plane ICP from both ``delta_use`` and a zero-vertical-jump
+        seed and adopts the result only when it strictly and materially improves
+        full-scan alignment without introducing rotational jump.
+        """
+        c = self.config
+        check_voxel = max(c.map_voxel_m, 0.25)
+        if self._prev_odom_check_pts is not None and self._prev_odom_check_pts[0] == previous.key:
+            prev_pts = self._prev_odom_check_pts[1]
+        else:
+            prev_pts = voxel_downsample(previous.points_body(), check_voxel)
+        curr_pts = voxel_downsample(keyframe.points_body(), check_voxel)
+        self._prev_odom_check_pts = (keyframe.key, curr_pts)
+        if len(prev_pts) < 50 or len(curr_pts) < 50:
+            return delta_use, False
+
+        tree = cKDTree(prev_pts)
+        d_odom, _ = tree.query(transform_points(delta_use, curr_pts))
+        med_odom = float(np.median(d_odom))
+
+        floor_disagreement = False
+        if prev_floor is not None and cur_floor is not None:
+            dz_odom = float(prev_floor.normal_body @ delta_use[:3, 3])
+            dz_floor = float(cur_floor.height_below_body_m - prev_floor.height_below_body_m)
+            floor_disagreement = abs(dz_odom - dz_floor) > c.floor_plane_max_step_dz_m
+
+        if med_odom <= c.odometry_icp_repair_max_median_m and not floor_disagreement:
+            return delta_use, False
+
+        self._stats["odometry_icp_checked"] += 1
+        icp_voxel = c.fine_icp_voxel_m if c.fine_icp_voxel_m is not None else c.icp_voxel_m
+        iters = min(c.icp_iterations, 20)
+        p_prev_full = previous.points_body()
+        p_curr_full = keyframe.points_body()
+
+        init_level = np.array(delta_use, dtype=np.float64, copy=True)
+        if prev_floor is not None and cur_floor is not None:
+            n_a = prev_floor.normal_body
+            dz_odom = float(n_a @ init_level[:3, 3])
+            dz_floor = float(cur_floor.height_below_body_m - prev_floor.height_below_body_m)
+            init_level[:3, 3] = init_level[:3, 3] + (dz_floor - dz_odom) * n_a
+        else:
+            init_level[2, 3] = 0.0
+
+        candidates = [
+            icp_point_to_plane(
+                p_curr_full,
+                p_prev_full,
+                init_level,
+                voxel_m=icp_voxel,
+                max_correspondence_m=0.8,
+                iterations=iters,
+            ),
+            icp_point_to_plane(
+                p_curr_full,
+                p_prev_full,
+                delta_use,
+                voxel_m=icp_voxel,
+                max_correspondence_m=0.8,
+                iterations=iters,
+            ),
+        ]
+        valid = [
+            r
+            for r in candidates
+            if r.converged
+            and r.fitness >= c.odometry_icp_repair_min_fitness
+            and r.rmse_m <= c.odometry_icp_repair_max_rmse_m
+            and rotation_angle(delta_use[:3, :3], r.T_target_source[:3, :3]) <= 0.15
+        ]
+        if not valid:
+            return delta_use, False
+
+        # Preserve short-horizon IMU/odometry rotation R (avoids 1-2 deg single-scan
+        # pitch/roll jitter) and adopt ICP translation only when it materially fixes
+        # a genuine >= 5 cm translation slip in the 3D scan-to-scan alignment.
+        best_T = None
+        best_med = med_odom
+        for r in valid:
+            T_cand = np.array(delta_use, dtype=np.float64, copy=True)
+            T_cand[:3, 3] = r.T_target_source[:3, 3]
+            if float(np.linalg.norm(T_cand[:3, 3] - delta_use[:3, 3])) < 0.05:
+                continue
+            d_cand, _ = tree.query(transform_points(T_cand, curr_pts))
+            med_cand = float(np.median(d_cand))
+            if med_cand < best_med:
+                best_med = med_cand
+                best_T = T_cand
+
+        if best_T is None or best_med + 0.04 >= med_odom:
+            return delta_use, False
+        self._stats["odometry_icp_repaired"] += 1
+        return best_T, True
+
     def _add_node(self, keyframe: Keyframe) -> tuple[str | None, np.ndarray]:
         """Node at the previous optimised pose composed with the odometry (or ZUPT) delta."""
         c = self.config
@@ -907,6 +1030,17 @@ class SlamBackend:
                             self._zupt_recovery_anchor = None
                         else:
                             self._zupt_recovery_anchor = recovery_anchor
+                if c.odometry_icp_repair_enabled and parent_key == previous.key:
+                    parent_floor = self._floor_measurements.get(parent_key)
+                    delta_use, repaired = self._repair_odometry_delta(
+                        previous,
+                        keyframe,
+                        delta_use,
+                        parent_floor,
+                        floor_meas,
+                    )
+                    if repaired:
+                        step_dist = float(np.linalg.norm(delta_use[:3, 3]))
                 if c.floor_plane_enabled and floor_meas is not None and parent_key == previous.key:
                     parent_floor = self._floor_measurements.get(parent_key)
                     if parent_floor is not None:
@@ -926,7 +1060,13 @@ class SlamBackend:
                 self._zupt_anchor_kf = None
             new_pose = self.graph.pose(parent_key) @ delta_use
             self.graph.add_node(keyframe.key, new_pose)
-            self.graph.add_edge(parent_key, keyframe.key, delta_use, odometry)
+            self.graph.add_edge(
+                parent_key,
+                keyframe.key,
+                delta_use,
+                odometry,
+                robust=(c.odometry_robust and zupt_mode is None),
+            )
             if zupt_mode is not None:
                 path_step = 0.0
             elif parent_key == previous.key or exited_zupt:

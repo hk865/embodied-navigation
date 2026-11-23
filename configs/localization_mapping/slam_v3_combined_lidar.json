@@ -19,6 +19,8 @@
   "floor_plane_enabled": true,
   "floor_normal_gravity_enabled": true,
   "floor_normal_graph_sigma_rad": null,
+  "odometry_robust": true,
+  "odometry_icp_repair_enabled": true,
   "xicp_enabled": true,
   "min_translation_observability": 0.02,
   "use_measured_submaps": true,

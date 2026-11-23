@@ -250,6 +250,79 @@ class SlamCombinedBackendTests(unittest.TestCase):
         self.assertEqual(stats["floor_gravity_priors_added"], 0)
         self.assertLess(abs(float(backend.graph.pose((0, 8))[2, 3])), 0.02)
 
+    def test_odometry_icp_repair_fixes_frontend_z_slip_and_preserves_true_step(self):
+        pts_world, _, _ = _textured_scene(seed=77)
+        cfg = BackendConfig(
+            zupt_enabled=False,
+            floor_plane_enabled=True,
+            odometry_robust=True,
+            odometry_icp_repair_enabled=True,
+        )
+        backend = SlamBackend(cfg)
+        # Frame 0 -> 1: flat floor, frontend injects a -0.42 m vertical slip!
+        T0_true = _yaw_pose(0.0, (0.0, 0.0, 0.0))
+        T1_true = _yaw_pose(0.0, (0.8, 0.0, 0.0))
+        T1_odom = _yaw_pose(0.0, (0.8, 0.0, -0.42))
+        # Frame 1 -> 2: genuine +0.08 m step up (entire room moves -0.08 m in body frame)
+        T2_true = _yaw_pose(0.0, (1.6, 0.0, 0.08))
+        T2_odom = _yaw_pose(0.0, (1.6, 0.0, -0.34))  # delta_odom_z = +0.08 m (exact!)
+        for idx, (T_true, T_odom) in enumerate([(T0_true, T0_true), (T1_true, T1_odom), (T2_true, T2_odom)]):
+            pts_body = transform_points(invert(T_true), pts_world)
+            ev = backend.ingest(
+                Keyframe(
+                    key=(0, idx),
+                    stamp_ns=idx * 1_000_000_000,
+                    T_odom_body=T_odom,
+                    T_body_lidar=np.eye(4),
+                    points_lidar=pts_body,
+                )
+            )
+            self.assertNotIn("error", ev)
+
+        stats = backend.observability_stats()
+        self.assertEqual(stats["odometry_icp_repaired"], 1)
+        z1 = float(backend.graph.pose((0, 1))[2, 3])
+        z2 = float(backend.graph.pose((0, 2))[2, 3])
+        self.assertLess(abs(z1), 0.03)
+        self.assertAlmostEqual(z2, 0.08, delta=0.025)
+
+    def test_robust_odometry_reduces_vaulting_from_corrupted_edge_between_loops(self):
+        from embodied_navigation.localization_mapping.backend.pose_graph import PoseGraph
+        from embodied_navigation.localization_mapping.backend.backend import information
+
+        def _solve(robust_odom: bool) -> float:
+            g = PoseGraph(cauchy_scale=1.5)
+            odom_info = information(0.2, 0.02)
+            loop_info = information(0.05, 0.01)
+            # Nodes 0..3 stay near z=0, edge 1->2 has a corrupted -1.2 m Z glitch while
+            # loop 0->2 and 0->3 anchor the post-glitch nodes to z=0.
+            for i in range(4):
+                g.add_node(i, _yaw_pose(0.0, (float(i), 0.0, 0.0)))
+            g.add_edge(0, 1, _yaw_pose(0.0, (1.0, 0.0, 0.0)), odom_info, robust=robust_odom)
+            g.add_edge(1, 2, _yaw_pose(0.0, (1.0, 0.0, -1.20)), odom_info, robust=robust_odom)
+            g.add_edge(2, 3, _yaw_pose(0.0, (1.0, 0.0, 0.0)), odom_info, robust=robust_odom)
+            g.add_edge(0, 2, _yaw_pose(0.0, (2.0, 0.0, 0.0)), loop_info, robust=False)
+            g.add_edge(0, 3, _yaw_pose(0.0, (3.0, 0.0, 0.0)), loop_info, robust=False)
+            g.optimize(iterations=30, use_cpp=True)
+            return float(abs(g.pose(1)[2, 3]))
+
+        z_l2 = _solve(robust_odom=False)
+        z_rob = _solve(robust_odom=True)
+        self.assertGreater(z_l2, 0.45)
+        self.assertLess(z_rob, z_l2 * 0.35)
+
+    def test_odometry_repair_config_validation(self):
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"odometry_robust": "yes"})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"odometry_icp_repair_enabled": 1})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"odometry_icp_repair_max_median_m": 0.0})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"odometry_icp_repair_min_fitness": 1.5})
+        with self.assertRaises(ValueError):
+            BackendConfig.from_dict({"odometry_icp_repair_max_rmse_m": -0.1})
+
 
 if __name__ == "__main__":
     unittest.main()
