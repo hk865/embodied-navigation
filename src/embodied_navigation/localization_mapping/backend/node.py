@@ -207,6 +207,7 @@ def main(argv=None) -> int:
         node.destroy_node()
         rclpy.shutdown()
         if args.save_map is not None:
+            backend.finalize()
             backend.save_map(args.save_map)
     return 0
 

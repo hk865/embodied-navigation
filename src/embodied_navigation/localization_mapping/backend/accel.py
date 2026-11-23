@@ -120,6 +120,19 @@ def _bind_signatures(lib: ctypes.CDLL) -> None:
     ]
     lib.cpp_optimize_pose_graph.restype = None
 
+    lib.cpp_run_oriented_planar_ba.argtypes = [
+        _DOUBLE_PTR, ctypes.c_int, ctypes.c_int,
+        _DOUBLE_PTR, _INT_PTR,
+        _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
+        _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
+        _DOUBLE_PTR,
+        ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double,
+        ctypes.c_double, ctypes.c_double, ctypes.c_int,
+        ctypes.c_double, ctypes.c_double, ctypes.c_int, ctypes.c_int,
+        _INT_PTR, _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR,
+    ]
+    lib.cpp_run_oriented_planar_ba.restype = None
+
 
 def get_accel_lib() -> ctypes.CDLL | None:
     """Return the loaded C++ accelerator library, or ``None`` if unavailable."""
@@ -381,6 +394,163 @@ def cpp_optimize_pose_graph(
     return updated, {
         "converged": bool(out_conv.value),
         "iterations": int(out_iter.value),
+        "error_before": float(out_before.value),
+        "error_after": float(out_after.value),
+    }
+
+
+def cpp_run_oriented_planar_ba(
+    poses: list[np.ndarray],
+    points_body_list: list[np.ndarray],
+    edges: list[tuple[int, int, np.ndarray, np.ndarray, bool]],
+    gravity_priors: list[tuple[int, np.ndarray, float, bool]],
+    *,
+    n_fixed: int = 1,
+    gravity_world: np.ndarray | None = None,
+    ba_voxel_m: float = 1.0,
+    min_frame_pts: int = 8,
+    plane_ratio_max: float = 0.08,
+    plane_thickness_max_m: float = 0.08,
+    min_normal_cos: float = 0.85,
+    max_plane_offset_m: float = 0.15,
+    max_frames_per_cluster: int = 20,
+    plane_sigma_m: float = 0.03,
+    cauchy_scale: float = 10.0,
+    outer_rounds: int = 2,
+    inner_iterations: int = 8,
+) -> tuple[list[np.ndarray], dict] | None:
+    n_nodes = len(poses)
+    if n_nodes != len(points_body_list):
+        raise ValueError(
+            f"points_body_list length ({len(points_body_list)}) must match poses length ({n_nodes})"
+        )
+    if n_nodes > _MAX_CPP_COUNT:
+        raise ValueError(f"poses exceeds maximum count {_MAX_CPP_COUNT}: {n_nodes}")
+    for name, val in (
+        ("ba_voxel_m", ba_voxel_m),
+        ("plane_ratio_max", plane_ratio_max),
+        ("plane_thickness_max_m", plane_thickness_max_m),
+        ("max_plane_offset_m", max_plane_offset_m),
+        ("plane_sigma_m", plane_sigma_m),
+        ("cauchy_scale", cauchy_scale),
+    ):
+        if isinstance(val, bool) or not math.isfinite(float(val)) or float(val) <= 0.0:
+            raise ValueError(f"{name} must be finite and > 0, got {val!r}")
+    if isinstance(min_normal_cos, bool) or not math.isfinite(float(min_normal_cos)) or not (-1.0 < float(min_normal_cos) <= 1.0):
+        raise ValueError(f"min_normal_cos must lie in (-1, 1], got {min_normal_cos!r}")
+    for name, val, lo in (
+        ("n_fixed", n_fixed, 1),
+        ("min_frame_pts", min_frame_pts, 3),
+        ("max_frames_per_cluster", max_frames_per_cluster, 2),
+        ("outer_rounds", outer_rounds, 0),
+        ("inner_iterations", inner_iterations, 0),
+    ):
+        if isinstance(val, bool) or not isinstance(val, (int, np.integer)) or int(val) < lo:
+            raise ValueError(f"{name} must be an integer >= {lo}, got {val!r}")
+
+    validated_poses = [_validate_matrix_array(p, (4, 4), f"poses[{i}]") for i, p in enumerate(poses)]
+    validated_pts = [_validate_points_array(pts, f"points_body_list[{i}]") for i, pts in enumerate(points_body_list)]
+    total_pts = sum(len(pts) for pts in validated_pts)
+    if total_pts > _MAX_CPP_COUNT:
+        raise ValueError(f"total points exceeds maximum count {_MAX_CPP_COUNT}: {total_pts}")
+
+    n_edges = len(edges)
+    if n_edges > _MAX_CPP_COUNT:
+        raise ValueError(f"edges exceeds maximum count {_MAX_CPP_COUNT}: {n_edges}")
+    if n_edges > 0:
+        ea_list, eb_list, eZ_list, eI_list, eR_list = [], [], [], [], []
+        for idx, (a, b, Z_inv, info, robust) in enumerate(edges):
+            ea_list.append(_validate_node_index(a, n_nodes, f"edges[{idx}].a"))
+            eb_list.append(_validate_node_index(b, n_nodes, f"edges[{idx}].b"))
+            eZ_list.append(_validate_matrix_array(Z_inv, (4, 4), f"edges[{idx}].Z_inv"))
+            eI_list.append(_validate_matrix_array(info, (6, 6), f"edges[{idx}].info"))
+            eR_list.append(1 if robust else 0)
+        ea = np.ascontiguousarray(ea_list, dtype=np.int32)
+        eb = np.ascontiguousarray(eb_list, dtype=np.int32)
+        eZ = np.ascontiguousarray(np.stack(eZ_list, axis=0), dtype=np.float64)
+        eI = np.ascontiguousarray(np.stack(eI_list, axis=0), dtype=np.float64)
+        eR = np.ascontiguousarray(eR_list, dtype=np.int32)
+    else:
+        ea = eb = eR = np.zeros(1, dtype=np.int32)
+        eZ = np.zeros((1, 4, 4), dtype=np.float64)
+        eI = np.zeros((1, 6, 6), dtype=np.float64)
+
+    n_grav = len(gravity_priors)
+    if n_grav > _MAX_CPP_COUNT:
+        raise ValueError(f"gravity_priors exceeds maximum count {_MAX_CPP_COUNT}: {n_grav}")
+    if n_grav > 0:
+        gn_list, gb_list, gw_list, gr_list = [], [], [], []
+        for idx, (ni, g_body, weight, robust) in enumerate(gravity_priors):
+            gn_list.append(_validate_node_index(ni, n_nodes, f"gravity_priors[{idx}].node"))
+            gb_list.append(_validate_matrix_array(g_body, (3,), f"gravity_priors[{idx}].g_body"))
+            w = float(weight)
+            if not math.isfinite(w) or w < 0.0:
+                raise ValueError(f"gravity_priors[{idx}].weight must be finite and >= 0, got {weight!r}")
+            gw_list.append(w)
+            gr_list.append(1 if robust else 0)
+        gn = np.ascontiguousarray(gn_list, dtype=np.int32)
+        gb = np.ascontiguousarray(np.stack(gb_list, axis=0), dtype=np.float64)
+        gw = np.ascontiguousarray(gw_list, dtype=np.float64)
+        gr = np.ascontiguousarray(gr_list, dtype=np.int32)
+    else:
+        gn = gr = np.zeros(1, dtype=np.int32)
+        gb = np.zeros((1, 3), dtype=np.float64)
+        gw = np.zeros(1, dtype=np.float64)
+
+    gw_vec = (
+        _validate_matrix_array(gravity_world, (3,), "gravity_world")
+        if gravity_world is not None
+        else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    )
+
+    lib = get_accel_lib()
+    if lib is None:
+        return None
+    if n_nodes <= int(n_fixed):
+        return [p.copy() for p in validated_poses], {
+            "converged": True,
+            "clusters_used": 0,
+            "obs_used": 0,
+            "error_before": 0.0,
+            "error_after": 0.0,
+        }
+
+    poses_arr = np.ascontiguousarray(np.stack(validated_poses, axis=0), dtype=np.float64)
+    offsets = np.zeros(n_nodes + 1, dtype=np.int32)
+    for i, pts in enumerate(validated_pts):
+        offsets[i + 1] = offsets[i] + len(pts)
+    all_pts = (
+        np.ascontiguousarray(np.vstack([pts for pts in validated_pts if len(pts) > 0]), dtype=np.float64)
+        if total_pts > 0
+        else np.zeros((1, 3), dtype=np.float64)
+    )
+
+    out_conv = ctypes.c_int(0)
+    out_clusters = ctypes.c_int(0)
+    out_obs = ctypes.c_int(0)
+    out_before = ctypes.c_double(0.0)
+    out_after = ctypes.c_double(0.0)
+
+    lib.cpp_run_oriented_planar_ba(
+        poses_arr.ctypes.data_as(_DOUBLE_PTR), n_nodes, int(n_fixed),
+        all_pts.ctypes.data_as(_DOUBLE_PTR), offsets.ctypes.data_as(_INT_PTR),
+        ea.ctypes.data_as(_INT_PTR), eb.ctypes.data_as(_INT_PTR),
+        eZ.ctypes.data_as(_DOUBLE_PTR), eI.ctypes.data_as(_DOUBLE_PTR),
+        eR.ctypes.data_as(_INT_PTR), n_edges,
+        gn.ctypes.data_as(_INT_PTR), gb.ctypes.data_as(_DOUBLE_PTR),
+        gw.ctypes.data_as(_DOUBLE_PTR), gr.ctypes.data_as(_INT_PTR), n_grav,
+        gw_vec.ctypes.data_as(_DOUBLE_PTR),
+        float(ba_voxel_m), int(min_frame_pts), float(plane_ratio_max), float(plane_thickness_max_m),
+        float(min_normal_cos), float(max_plane_offset_m), int(max_frames_per_cluster),
+        float(plane_sigma_m), float(cauchy_scale), int(outer_rounds), int(inner_iterations),
+        ctypes.byref(out_conv), ctypes.byref(out_clusters), ctypes.byref(out_obs),
+        ctypes.byref(out_before), ctypes.byref(out_after),
+    )
+    updated = [poses_arr[i].copy() for i in range(n_nodes)]
+    return updated, {
+        "converged": bool(out_conv.value),
+        "clusters_used": int(out_clusters.value),
+        "obs_used": int(out_obs.value),
         "error_before": float(out_before.value),
         "error_after": float(out_after.value),
     }

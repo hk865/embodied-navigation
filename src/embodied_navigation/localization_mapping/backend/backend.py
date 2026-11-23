@@ -40,6 +40,7 @@ from .correction import CorrectionAdmission
 from .floor_plane import FloorPlaneMeasurement, detect_floor_plane, project_coplanar_odom_delta
 from .keyframes import Keyframe, transform_points, voxel_downsample
 from .map_store import MapStore
+from .planar_ba import PlanarBaResult, refine_poses_oriented_planar_ba, refine_window_oriented_planar_ba
 from .pose_graph import PoseGraph, invert, pose_difference, project_so3, rotation_angle
 from .registration import IcpResult, _correspondences, _normals, icp_point_to_plane
 from .scan_context import ScanContextConfig, ScanContextIndex, descriptor
@@ -153,6 +154,22 @@ class BackendConfig:
     hybrid_heading_gate_deg: float | None = None
     reverse_icp_fitness_min: float | None = None
     reverse_icp_rmse_max: float | None = None
+    # Oriented-normal 3D planar bundle adjustment (BALM2 point-cluster Schur complement).
+    planar_ba_enabled: bool = False
+    planar_ba_voxel_m: float = 1.0
+    planar_ba_min_frame_pts: int = 8
+    planar_ba_plane_ratio_max: float = 0.08
+    planar_ba_plane_thickness_max_m: float = 0.08
+    planar_ba_min_normal_cos: float = 0.85
+    planar_ba_max_offset_m: float = 0.15
+    planar_ba_max_frames_per_cluster: int = 20
+    planar_ba_sigma_m: float = 0.03
+    planar_ba_outer_rounds: int = 2
+    planar_ba_iterations: int = 8
+    planar_ba_window_size: int = 0
+    planar_ba_every: int = 0
+    planar_ba_global_every: int = 0
+    planar_ba_online_iterations: int = 6
 
     def __post_init__(self) -> None:
         self.odometry_information()
@@ -322,8 +339,34 @@ class BackendConfig:
             "xicp_cond_floor",
             "odometry_icp_repair_max_median_m",
             "odometry_icp_repair_max_rmse_m",
+            "planar_ba_voxel_m",
+            "planar_ba_plane_ratio_max",
+            "planar_ba_plane_thickness_max_m",
+            "planar_ba_max_offset_m",
+            "planar_ba_sigma_m",
         ):
             _positive(name, getattr(self, name))
+        if (
+            isinstance(self.planar_ba_min_normal_cos, bool)
+            or not isinstance(self.planar_ba_min_normal_cos, Real)
+            or not np.isfinite(self.planar_ba_min_normal_cos)
+            or not (-1.0 < float(self.planar_ba_min_normal_cos) <= 1.0)
+        ):
+            raise ValueError(
+                f"planar_ba_min_normal_cos must lie in (-1, 1], got {self.planar_ba_min_normal_cos!r}"
+            )
+        if _count("planar_ba_min_frame_pts", self.planar_ba_min_frame_pts) < 3:
+            raise ValueError(f"planar_ba_min_frame_pts must be >= 3, got {self.planar_ba_min_frame_pts!r}")
+        if _count("planar_ba_max_frames_per_cluster", self.planar_ba_max_frames_per_cluster) < 2:
+            raise ValueError(
+                f"planar_ba_max_frames_per_cluster must be >= 2, got {self.planar_ba_max_frames_per_cluster!r}"
+            )
+        for name in ("planar_ba_outer_rounds", "planar_ba_iterations", "planar_ba_online_iterations"):
+            _count(name, getattr(self, name))
+        for name in ("planar_ba_window_size", "planar_ba_every", "planar_ba_global_every"):
+            _nonnegative_int(name, getattr(self, name))
+        if self.planar_ba_window_size == 1:
+            raise ValueError("planar_ba_window_size must be 0 (disabled) or >= 2, got 1")
         if not 0.0 < _positive("odometry_icp_repair_min_fitness", self.odometry_icp_repair_min_fitness) <= 1.0:
             raise ValueError(
                 f"odometry_icp_repair_min_fitness must lie in (0, 1], got {self.odometry_icp_repair_min_fitness!r}"
@@ -352,6 +395,7 @@ class BackendConfig:
             "use_visual_retrieval",
             "use_visual_verification",
             "color_sc_enabled",
+            "planar_ba_enabled",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a bool, got {getattr(self, name)!r}")
@@ -537,6 +581,8 @@ class SlamBackend:
         self._gravity_world: np.ndarray = np.array([0.0, 0.0, 1.0], dtype=np.float64)
         self._gravity_world_calibrated: bool = False
         self._last_gravity_opt_count: int = 0
+        self._last_window_ba_nodes: int = 0
+        self._last_global_ba_nodes: int = 0
         self._prev_odom_check_pts: tuple[object, np.ndarray] | None = None
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
@@ -556,6 +602,12 @@ class SlamBackend:
             "xicp_degenerate_loops": 0,
             "odometry_icp_checked": 0,
             "odometry_icp_repaired": 0,
+            "planar_ba_runs": 0,
+            "planar_ba_window_runs": 0,
+            "planar_ba_global_runs": 0,
+            "planar_ba_clusters": 0,
+            "planar_ba_obs": 0,
+            "planar_ba_wall_s": 0.0,
         }
         self._correction: np.ndarray | None = None
         self._tracking = False
@@ -628,6 +680,106 @@ class SlamBackend:
         )
         return stats
 
+    def _graph_points_body_list(self) -> list[np.ndarray]:
+        return [
+            self.map.keyframes[key].points_body()
+            if key in self.map.keyframes
+            else np.empty((0, 3), dtype=np.float64)
+            for key in self.graph.keys
+        ]
+
+    def refine_planar_ba(
+        self,
+        *,
+        outer_rounds: int | None = None,
+        inner_iterations: int | None = None,
+        update_correction: bool = True,
+    ) -> PlanarBaResult:
+        """Run oriented-normal 3D planar BA on the full pose graph and update poses."""
+        c = self.config
+        result = refine_poses_oriented_planar_ba(
+            self.graph,
+            self._graph_points_body_list(),
+            voxel_m=c.planar_ba_voxel_m,
+            min_frame_pts=c.planar_ba_min_frame_pts,
+            plane_ratio_max=c.planar_ba_plane_ratio_max,
+            plane_thickness_max_m=c.planar_ba_plane_thickness_max_m,
+            min_normal_cos=c.planar_ba_min_normal_cos,
+            max_plane_offset_m=c.planar_ba_max_offset_m,
+            max_frames_per_cluster=c.planar_ba_max_frames_per_cluster,
+            plane_sigma_m=c.planar_ba_sigma_m,
+            cauchy_scale=c.cauchy_scale,
+            outer_rounds=c.planar_ba_outer_rounds if outer_rounds is None else int(outer_rounds),
+            inner_iterations=c.planar_ba_iterations if inner_iterations is None else int(inner_iterations),
+        )
+        self._stats["planar_ba_runs"] += 1
+        self._stats["planar_ba_global_runs"] += 1
+        self._stats["planar_ba_clusters"] = int(result.clusters_used)
+        self._stats["planar_ba_obs"] = int(result.obs_used)
+        self._stats["planar_ba_wall_s"] = float(self._stats["planar_ba_wall_s"]) + float(result.wall_s)
+        if result.used_cpp and result.clusters_used > 0 and len(result.poses) == len(self.graph.poses):
+            self.graph.poses = [p.copy() for p in result.poses]
+            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+            if update_correction and self._previous is not None and self._previous.key in self.graph.index:
+                T_world_body = self.graph.pose(self._previous.key)
+                self._correction = T_world_body @ invert(self._previous.T_odom_body)
+        return result
+
+    def refine_window_planar_ba(
+        self,
+        window_size: int | None = None,
+        *,
+        outer_rounds: int = 1,
+        inner_iterations: int | None = None,
+    ) -> PlanarBaResult:
+        """Run fast online sliding-window oriented planar BA on the newest keyframes."""
+        c = self.config
+        win = c.planar_ba_window_size if window_size is None else int(window_size)
+        updated_map, result = refine_window_oriented_planar_ba(
+            self.graph,
+            self._graph_points_body_list(),
+            win,
+            voxel_m=c.planar_ba_voxel_m,
+            min_frame_pts=c.planar_ba_min_frame_pts,
+            plane_ratio_max=c.planar_ba_plane_ratio_max,
+            plane_thickness_max_m=c.planar_ba_plane_thickness_max_m,
+            min_normal_cos=c.planar_ba_min_normal_cos,
+            max_plane_offset_m=c.planar_ba_max_offset_m,
+            max_frames_per_cluster=c.planar_ba_max_frames_per_cluster,
+            plane_sigma_m=c.planar_ba_sigma_m,
+            cauchy_scale=c.cauchy_scale,
+            outer_rounds=int(outer_rounds),
+            inner_iterations=c.planar_ba_online_iterations if inner_iterations is None else int(inner_iterations),
+        )
+        self._stats["planar_ba_runs"] += 1
+        self._stats["planar_ba_window_runs"] += 1
+        self._stats["planar_ba_clusters"] = int(result.clusters_used)
+        self._stats["planar_ba_obs"] = int(result.obs_used)
+        self._stats["planar_ba_wall_s"] = float(self._stats["planar_ba_wall_s"]) + float(result.wall_s)
+        if result.used_cpp and result.clusters_used > 0 and updated_map:
+            pose_updates = {}
+            for node_idx, pose in updated_map.items():
+                self.graph.poses[node_idx] = pose.copy()
+                pose_updates[self.graph.keys[node_idx]] = pose
+            self.map.update_poses(pose_updates)
+        return result
+
+    def finalize(self) -> dict:
+        """Run optional end-of-session refinement (oriented planar BA when enabled)."""
+        if self.prior is not None or not self.config.planar_ba_enabled or len(self.graph.keys) <= 1:
+            return {"ran": False}
+        result = self.refine_planar_ba()
+        return {
+            "ran": True,
+            "used_cpp": result.used_cpp,
+            "converged": result.converged,
+            "clusters_used": result.clusters_used,
+            "obs_used": result.obs_used,
+            "error_before": result.error_before,
+            "error_after": result.error_after,
+            "wall_s": result.wall_s,
+        }
+
     def save_map(self, directory: Path) -> None:
         self.map.save(directory)
 
@@ -692,6 +844,40 @@ class SlamBackend:
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
             self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
             optimized = True
+        if self.config.planar_ba_enabled and len(self.graph.keys) >= 4:
+            n_nodes = len(self.graph.keys)
+            c = self.config
+            run_global_ba = c.planar_ba_global_every > 0 and (
+                (n_nodes - self._last_global_ba_nodes) >= c.planar_ba_global_every
+                or (
+                    loop_key is not None
+                    and (n_nodes - self._last_global_ba_nodes) >= max(1, c.planar_ba_global_every // 2)
+                )
+            )
+            if run_global_ba:
+                ba_res = self.refine_planar_ba(
+                    outer_rounds=1,
+                    inner_iterations=c.planar_ba_online_iterations,
+                    update_correction=False,
+                )
+                self._last_global_ba_nodes = n_nodes
+                self._last_window_ba_nodes = n_nodes
+                if ba_res.used_cpp and ba_res.clusters_used > 0:
+                    optimized = True
+            elif (
+                c.planar_ba_every > 0
+                and c.planar_ba_window_size > 1
+                and zupt_mode is None
+                and (n_nodes - self._last_window_ba_nodes) >= c.planar_ba_every
+            ):
+                ba_res = self.refine_window_planar_ba(
+                    c.planar_ba_window_size,
+                    outer_rounds=1,
+                    inner_iterations=c.planar_ba_online_iterations,
+                )
+                self._last_window_ba_nodes = n_nodes
+                if ba_res.used_cpp and ba_res.clusters_used > 0:
+                    optimized = True
         if self._correction is None:
             self._correction = np.eye(4)
         C_graph = self.graph.pose(keyframe.key) @ invert(keyframe.T_odom_body)

@@ -330,6 +330,9 @@ def replay_backend(
         if on_progress is not None:
             on_progress(idx, n, event)
 
+    if hasattr(backend, "finalize") and callable(backend.finalize):
+        backend.finalize()
+
     total_wall = time.perf_counter() - t_total_0
     missing_nodes = sum(1 for k in keys if k not in backend.graph.index)
     final_poses = np.stack(
