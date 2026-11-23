@@ -34,6 +34,7 @@ LIVO_CONFIG="configs/simulation/dynanav/fastlivo_livo.yaml"
 BACKEND_CONFIG="configs/localization_mapping/slam_backend_stabilized.json"
 EXTRA_CAPTURE_ARGS=()
 EXTRA_PLANNER_ARGS=()
+HAS_LOCAL_MAP_RADIUS=false
 while (($#)); do
     case "$1" in
         --until-stopped) UNTIL_STOPPED=true; shift ;;
@@ -80,6 +81,9 @@ while (($#)); do
             shift 2 ;;
         --pct-max-grid-cells|--local-map-window-s|--local-map-radius-m|--local-recovery-window-s)
             (($# >= 2)) || { echo "Missing value for $1"; exit 2; }
+            if [[ "$1" == "--local-map-radius-m" ]]; then
+                HAS_LOCAL_MAP_RADIUS=true
+            fi
             EXTRA_PLANNER_ARGS+=("$1" "$2"); shift 2 ;;
         --overview-eye-base|--overview-focus-base)
             (($# >= 4)) || { echo "Missing XYZ values for $1"; exit 2; }
@@ -90,6 +94,9 @@ while (($#)); do
             RUN=$1; shift ;;
     esac
 done
+if ! $HAS_LOCAL_MAP_RADIUS; then
+    EXTRA_PLANNER_ARGS+=(--local-map-radius-m 25.0)
+fi
 RUN="${RUN:-$PROJECT_DATA_ROOT/embodied-navigation/runs/native-exploration/$(date -u +%Y%m%dT%H%M%SZ)}"
 CAL="${CAPTURE_CALIBRATION:-$PROJECT_DATA_ROOT/embodied-navigation/experiments/rtx_lidar_integration_20261110T213000Z/capture14/result.json}"
 SCENE="${SIMULATION_SCENE:-$PROJECT_DATA_ROOT/embodied-navigation/build_cache/offline_office_freeze_20261111T030623Z/office_deinstanced_flattened.usdc}"

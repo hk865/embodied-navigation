@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import signal
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +45,54 @@ from .keyframes import read_keyframe, ready_directories
 from .map_store import MapStore
 
 
+def _load_pointcloud_types():
+    try:
+        from sensor_msgs.msg import PointCloud2, PointField
+    except ImportError:
+        return None, None
+    return PointCloud2, PointField
+
+
+def _global_map_qos():
+    try:
+        from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+    except ImportError:
+        return 1
+    return QoSProfile(
+        depth=1,
+        history=HistoryPolicy.KEEP_LAST,
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    )
+
+
+def pack_pointcloud2_xyz(points: np.ndarray, *, frame_id: str, stamp, PointCloud2, PointField):
+    """Pack an (N, 3) float array into a compact XYZ float32 PointCloud2 message."""
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    if len(pts) > 0:
+        finite = np.all(np.isfinite(pts), axis=1)
+        if not np.all(finite):
+            pts = pts[finite]
+    pts = np.ascontiguousarray(pts, dtype="<f4")
+    float32_code = getattr(PointField, "FLOAT32", 7)
+    msg = PointCloud2()
+    msg.header.frame_id = frame_id
+    msg.header.stamp = stamp
+    msg.height = 1
+    msg.width = int(len(pts))
+    msg.fields = [
+        PointField(name="x", offset=0, datatype=float32_code, count=1),
+        PointField(name="y", offset=4, datatype=float32_code, count=1),
+        PointField(name="z", offset=8, datatype=float32_code, count=1),
+    ]
+    msg.is_bigendian = False
+    msg.point_step = 12
+    msg.row_step = 12 * int(len(pts))
+    msg.data = pts.tobytes()
+    msg.is_dense = True
+    return msg
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="D-path point-cloud SLAM backend node")
     parser.add_argument("--spool", type=Path, required=True)
@@ -55,7 +105,24 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--world-frame", default="map")
     parser.add_argument("--odom-frame", default="camera_init")
     parser.add_argument("--poll-s", type=float, default=0.2)
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--global-map-hz",
+        type=float,
+        default=0.5,
+        help="Rate limit (Hz) for publishing deduplicated <namespace>/global_map; 0 disables.",
+    )
+    parser.add_argument(
+        "--global-map-voxel-m",
+        type=float,
+        default=0.15,
+        help="Voxel deduplication size (m) for <namespace>/global_map.",
+    )
+    args = parser.parse_args(argv)
+    if not math.isfinite(args.global_map_hz) or args.global_map_hz < 0.0:
+        parser.error("--global-map-hz must be finite and >= 0")
+    if not math.isfinite(args.global_map_voxel_m) or args.global_map_voxel_m <= 0.0:
+        parser.error("--global-map-voxel-m must be finite and > 0")
+    return args
 
 
 def pose_matrix(pose) -> np.ndarray:
@@ -82,6 +149,16 @@ class BackendNode(Node):
         namespace = args.namespace.rstrip("/")
         self.odometry_pub = self.create_publisher(Odometry, f"{namespace}/corrected_odometry", 10)
         self.status_pub = self.create_publisher(String, f"{namespace}/status", 10)
+        self._pc2_type, self._pfield_type = _load_pointcloud_types()
+        global_map_hz = float(getattr(args, "global_map_hz", 0.5))
+        self.global_map_pub = (
+            self.create_publisher(self._pc2_type, f"{namespace}/global_map", _global_map_qos())
+            if global_map_hz > 0.0 and self._pc2_type is not None
+            else None
+        )
+        self._last_global_map_publish_s = -math.inf
+        self._last_global_map_state: tuple[int, int] | None = None
+        self._cached_global_map_pts: np.ndarray | None = None
         self.tf = TransformBroadcaster(self)
         self.create_subscription(
             Odometry, args.odometry_topic, self.on_odometry, 50, callback_group=MutuallyExclusiveCallbackGroup()
@@ -112,7 +189,43 @@ class BackendNode(Node):
             for directory in ready_directories(self.spool):
                 self.ingest(directory)
         self.publish_tf()
+        self.publish_global_map()
         self.publish_status()
+
+    def publish_global_map(self, *, force: bool = False) -> bool:
+        """Publish deduplicated world-frame global map at ``--global-map-hz`` or immediately after loop closure."""
+        if self.global_map_pub is None or self._pc2_type is None or self._pfield_type is None:
+            return False
+        n_kf = len(self.backend.map.keyframes)
+        if n_kf == 0:
+            return False
+        loops = int(self.backend.loop_count)
+        state = (n_kf, loops)
+        loop_increased = self._last_global_map_state is not None and loops > self._last_global_map_state[1]
+        now = time.monotonic()
+        hz = float(getattr(self.args, "global_map_hz", 0.5))
+        min_period_s = 0.0 if hz <= 0.0 else (1.0 / hz)
+        if not force and not loop_increased:
+            if state == self._last_global_map_state:
+                return False
+            if (now - self._last_global_map_publish_s) < min_period_s:
+                return False
+        if state != self._last_global_map_state or self._cached_global_map_pts is None:
+            voxel_m = float(getattr(self.args, "global_map_voxel_m", 0.15))
+            self._cached_global_map_pts = self.backend.map.global_map(voxel_m=voxel_m)
+        odom_header = self._last_odom_header
+        stamp = odom_header[1] if odom_header is not None else self.get_clock().now().to_msg()
+        msg = pack_pointcloud2_xyz(
+            self._cached_global_map_pts,
+            frame_id=self.args.world_frame,
+            stamp=stamp,
+            PointCloud2=self._pc2_type,
+            PointField=self._pfield_type,
+        )
+        self.global_map_pub.publish(msg)
+        self._last_global_map_publish_s = now
+        self._last_global_map_state = state
+        return True
 
     def _quarantine(self, directory: Path) -> None:
         target = directory.with_name("rejected_" + directory.name)

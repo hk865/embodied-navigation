@@ -65,8 +65,8 @@
       min_eigen_value: 0.005
       voxel_size: 0.5
     local_map:
-      half_map_size: 100
-      map_sliding_en: false
+      half_map_size: 60
+      map_sliding_en: true
       sliding_thresh: 8.0
     pcd_save:
       colmap_output_en: false
