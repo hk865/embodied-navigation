@@ -900,11 +900,10 @@ void cpp_optimize_pose_graph(
 }  // extern "C"
 
 // ---------------------------------------------------------------------------
-// 4. Oriented-Normal 3D Planar BA (BALM2 point-cluster Schur complement)
-//    jointly solved with PoseGraph edges + calibrated gravity priors.
-//    Every per-frame voxel patch normal is oriented toward its observing sensor
-//    (ray = mean_w - t_i, n_w . (-ray) > 0) so opposite sides of thin slabs
-//    (basement ceiling vs floor-2 floor) and thin interior walls NEVER merge.
+// 4. 法向定向 3D 平面 BA（BALM2 点簇充分统计量 + Matrix-Free 隐式 Schur 补 PCG）
+//    与位姿图边、校准重力先验及 Z 先验联合优化。
+//    每帧体素平面面片的法向均强制朝向观测传感器（ray = mean_w - t_i, n_w · (-ray) > 0），
+//    因此跨楼层薄楼板两面（地下室天花板与二楼地板）及薄隔墙两面绝不会错误合并。
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -920,6 +919,11 @@ struct FramePatchObs {
 struct OrientedCluster {
     Vec3 ref_mean;
     Vec3 ref_normal;
+    std::vector<FramePatchObs> obs;
+};
+
+struct ActiveCluster {
+    Vec3 origin_w;  // 体素局部原点，用于中心化二阶矩以消除大坐标相减精度损失
     std::vector<FramePatchObs> obs;
 };
 
@@ -941,13 +945,15 @@ extern "C" {
 
 void cpp_run_oriented_planar_ba(
     double* poses_ptr, int n_nodes, int n_fixed,
-    const double* all_pts_b, const int* pts_offsets,
+    const double* all_pts_b, int total_pts, const int* pts_offsets,
     const int* edge_a, const int* edge_b,
     const double* edge_Z_inv, const double* edge_info,
     const int* edge_robust, int n_edges,
     const int* grav_node, const double* grav_body,
     const double* grav_weight, const int* grav_robust, int n_grav,
     const double* grav_world_ptr,
+    const int* zp_node, const double* zp_target,
+    const double* zp_weight, const int* zp_robust, int n_zp,
     double ba_voxel_m,
     int min_frame_pts,
     double plane_ratio_max,
@@ -962,25 +968,43 @@ void cpp_run_oriented_planar_ba(
     int* out_converged,
     int* out_clusters_used,
     int* out_obs_used,
+    int* out_accepted_steps,
     double* out_error_before,
     double* out_error_after
 ) {
     if (!poses_ptr || !pts_offsets || !out_converged || !out_clusters_used ||
-        !out_obs_used || !out_error_before || !out_error_after) {
+        !out_obs_used || !out_accepted_steps || !out_error_before || !out_error_after) {
         return;
     }
     *out_converged = 0;
     *out_clusters_used = 0;
     *out_obs_used = 0;
+    *out_accepted_steps = 0;
     *out_error_before = 0.0;
     *out_error_after = 0.0;
 
-    if (n_fixed < 1) n_fixed = 1;
+    try {
+    if (n_nodes < 0 || n_fixed < 1 || n_fixed > n_nodes || total_pts < 0 ||
+        n_edges < 0 || n_grav < 0 || n_zp < 0) {
+        return;
+    }
+    // 校验前缀偏移表起点、单调性与总点数上限，防止非法 C ABI 越界访问
+    if (pts_offsets[0] != 0) return;
+    for (int i = 0; i < n_nodes; ++i) {
+        if (pts_offsets[i + 1] < pts_offsets[i] || pts_offsets[i + 1] > total_pts) {
+            return;
+        }
+    }
     if (n_nodes <= n_fixed || outer_rounds <= 0 || inner_iterations <= 0 ||
         !std::isfinite(ba_voxel_m) || ba_voxel_m <= 0.0 ||
         !std::isfinite(plane_sigma_m) || plane_sigma_m <= 0.0 ||
         !std::isfinite(cauchy_scale) || cauchy_scale <= 0.0) {
         *out_converged = 1;
+        return;
+    }
+    if ((n_edges > 0 && (!edge_a || !edge_b || !edge_Z_inv || !edge_info || !edge_robust)) ||
+        (n_grav > 0 && (!grav_node || !grav_body || !grav_weight || !grav_robust)) ||
+        (n_zp > 0 && (!zp_node || !zp_target || !zp_weight || !zp_robust))) {
         return;
     }
 
@@ -993,16 +1017,25 @@ void cpp_run_oriented_planar_ba(
         }
     }
 
-    std::vector<Mat4> poses(n_nodes);
+    std::vector<Mat4> poses(static_cast<size_t>(n_nodes));
     for (int i = 0; i < n_nodes; ++i) {
-        poses[i] = load_mat4_rm(poses_ptr + 16 * i);
+        poses[static_cast<size_t>(i)] = load_mat4_rm(poses_ptr + static_cast<size_t>(i) * 16);
     }
 
-    std::vector<Mat4> Z_invs(n_edges);
-    std::vector<Mat6> infos(n_edges);
+    std::vector<Mat4> Z_invs(static_cast<size_t>(n_edges));
+    std::vector<Mat6> infos(static_cast<size_t>(n_edges));
     for (int e = 0; e < n_edges; ++e) {
-        Z_invs[e] = load_mat4_rm(edge_Z_inv + 16 * e);
-        infos[e] = load_mat6_rm(edge_info + 36 * e);
+        const int a = edge_a[e];
+        const int b = edge_b[e];
+        if (a < 0 || a >= n_nodes || b < 0 || b >= n_nodes) return;
+        Z_invs[static_cast<size_t>(e)] = load_mat4_rm(edge_Z_inv + static_cast<size_t>(e) * 16);
+        infos[static_cast<size_t>(e)] = load_mat6_rm(edge_info + static_cast<size_t>(e) * 36);
+    }
+    for (int g = 0; g < n_grav; ++g) {
+        if (grav_node[g] < 0 || grav_node[g] >= n_nodes) return;
+    }
+    for (int z = 0; z < n_zp; ++z) {
+        if (zp_node[z] < 0 || zp_node[z] >= n_nodes) return;
     }
 
     const double c2 = cauchy_scale * cauchy_scale;
@@ -1014,8 +1047,9 @@ void cpp_run_oriented_planar_ba(
     bool overall_converged = false;
     double first_cost = 0.0;
     double last_cost = 0.0;
-    int last_clusters = 0;
-    int last_obs = 0;
+    int best_clusters = 0;
+    int best_obs = 0;
+    int total_accepted_steps = 0;
 
     using Triplet = Eigen::Triplet<double>;
     std::vector<Triplet> triplets;
@@ -1023,10 +1057,10 @@ void cpp_run_oriented_planar_ba(
     Eigen::VectorXd schur_diag_sub(size);
     std::vector<SchurTerm> schur_terms;
     std::vector<ClusterSchur> cluster_schurs;
-    std::vector<Mat4> trial(n_nodes);
+    std::vector<Mat4> trial(static_cast<size_t>(n_nodes));
 
     for (int round = 0; round < outer_rounds; ++round) {
-        // 1. Extract per-frame voxel patches with sensor-ray-oriented normals
+        // 1. 提取逐帧体素平面面片，并用观测射线对法向严格定向
         std::unordered_map<VoxelKey, std::vector<OrientedCluster>, VoxelKeyHash> voxel_clusters;
         voxel_clusters.reserve(static_cast<size_t>(n_nodes) * 32);
 
@@ -1039,15 +1073,15 @@ void cpp_run_oriented_planar_ba(
         for (int ni = 0; ni < n_nodes; ++ni) {
             const int p0 = pts_offsets[ni];
             const int p1 = pts_offsets[ni + 1];
-            if (p0 < 0 || p1 < p0 || p1 - p0 < eff_min_frame_pts) continue;
-            if (all_pts_b == nullptr) continue;
-            const Mat3 R = poses[ni].block<3, 3>(0, 0);
-            const Vec3 t = poses[ni].block<3, 1>(0, 3);
+            if (p1 - p0 < eff_min_frame_pts || all_pts_b == nullptr) continue;
+            const Mat3 R = poses[static_cast<size_t>(ni)].block<3, 3>(0, 0);
+            const Vec3 t = poses[static_cast<size_t>(ni)].block<3, 1>(0, 3);
 
             std::unordered_map<VoxelKey, LocalAccum, VoxelKeyHash> frame_vox;
             frame_vox.reserve(256);
             for (int k = p0; k < p1; ++k) {
-                const Vec3 pb(all_pts_b[3 * k], all_pts_b[3 * k + 1], all_pts_b[3 * k + 2]);
+                const size_t base = static_cast<size_t>(k) * 3;
+                const Vec3 pb(all_pts_b[base], all_pts_b[base + 1], all_pts_b[base + 2]);
                 if (!pb.allFinite()) continue;
                 const Vec3 pw = R * pb + t;
                 const double qx = std::floor(pw.x() * inv_vox);
@@ -1083,7 +1117,7 @@ void cpp_run_oriented_planar_ba(
                 if (!std::isfinite(nn) || nn <= 1e-6) continue;
                 n_w /= nn;
                 const Vec3 mean_w = R * mean_b + t;
-                // Orient normal strictly toward the observing sensor origin!
+                // 法向严格朝向观测传感器原点，保证薄楼板/薄隔墙两面法向相反（dot ≈ -1）
                 const Vec3 ray = mean_w - t;
                 if (n_w.dot(-ray) < 0.0) {
                     n_w = -n_w;
@@ -1110,76 +1144,91 @@ void cpp_run_oriented_planar_ba(
             }
         }
 
-        // Flatten multi-frame clusters (and evenly stride to <= max_frames_per_cluster)
-        std::vector<std::vector<FramePatchObs>> clusters;
+        // 2. 展平多帧共面簇（超过上限时按时间均匀抽样），并附带体素局部原点
+        std::vector<ActiveCluster> clusters;
         clusters.reserve(voxel_clusters.size());
         int total_obs = 0;
         for (auto& kv : voxel_clusters) {
+            const Vec3 origin_w(
+                static_cast<double>(kv.first.x) * ba_voxel_m,
+                static_cast<double>(kv.first.y) * ba_voxel_m,
+                static_cast<double>(kv.first.z) * ba_voxel_m
+            );
             for (auto& cl : kv.second) {
                 if (cl.obs.size() < 2) continue;
+                ActiveCluster ac;
+                ac.origin_w = origin_w;
                 if (max_frames_per_cluster > 1 && static_cast<int>(cl.obs.size()) > max_frames_per_cluster) {
-                    std::vector<FramePatchObs> sub;
-                    sub.reserve(max_frames_per_cluster);
+                    ac.obs.reserve(static_cast<size_t>(max_frames_per_cluster));
                     const size_t m = cl.obs.size();
                     for (int k = 0; k < max_frames_per_cluster; ++k) {
                         const size_t idx = (static_cast<size_t>(k) * (m - 1)) / static_cast<size_t>(max_frames_per_cluster - 1);
-                        sub.push_back(cl.obs[idx]);
+                        ac.obs.push_back(cl.obs[idx]);
                     }
-                    total_obs += static_cast<int>(sub.size());
-                    clusters.push_back(std::move(sub));
                 } else {
-                    total_obs += static_cast<int>(cl.obs.size());
-                    clusters.push_back(std::move(cl.obs));
+                    ac.obs = std::move(cl.obs);
                 }
+                total_obs += static_cast<int>(ac.obs.size());
+                clusters.push_back(std::move(ac));
             }
         }
-        last_clusters = static_cast<int>(clusters.size());
-        last_obs = total_obs;
         if (clusters.empty()) {
-            overall_converged = true;
+            // 保留上一外轮已接受的有效位姿与统计，不被后续空簇轮覆盖
+            if (round == 0) overall_converged = true;
             break;
         }
+        best_clusters = static_cast<int>(clusters.size());
+        best_obs = total_obs;
 
         auto compute_total_cost = [&](const std::vector<Mat4>& cur) -> double {
             double total = 0.0;
             for (int e = 0; e < n_edges; ++e) {
                 const int a = edge_a[e];
                 const int b = edge_b[e];
-                const Vec6 err = se3_log(Z_invs[e] * invert_se3(cur[a]) * cur[b]);
-                const double s = err.transpose() * infos[e] * err;
+                const Vec6 err = se3_log(Z_invs[static_cast<size_t>(e)] * invert_se3(cur[static_cast<size_t>(a)]) * cur[static_cast<size_t>(b)]);
+                const double s = err.transpose() * infos[static_cast<size_t>(e)] * err;
                 total += edge_robust[e] ? (c2 * std::log1p(s / c2)) : s;
             }
             for (int g = 0; g < n_grav; ++g) {
                 const int ni = grav_node[g];
-                const Vec3 gb(grav_body[3 * g], grav_body[3 * g + 1], grav_body[3 * g + 2]);
-                const Vec3 u = cur[ni].block<3, 3>(0, 0) * gb;
+                const size_t gbase = static_cast<size_t>(g) * 3;
+                const Vec3 gb(grav_body[gbase], grav_body[gbase + 1], grav_body[gbase + 2]);
+                const Vec3 u = cur[static_cast<size_t>(ni)].block<3, 3>(0, 0) * gb;
                 const Vec3 eg = u - g_world;
                 const double s = grav_weight[g] * eg.squaredNorm();
                 total += grav_robust[g] ? (c2 * std::log1p(s / c2)) : s;
             }
-            for (const auto& cl : clusters) {
+            for (int z = 0; z < n_zp; ++z) {
+                const int ni = zp_node[z];
+                const double ez = cur[static_cast<size_t>(ni)](2, 3) - zp_target[z];
+                const double s = zp_weight[z] * ez * ez;
+                total += zp_robust[z] ? (c2 * std::log1p(s / c2)) : s;
+            }
+            for (const auto& ac : clusters) {
                 int N = 0;
-                Vec3 sum_w = Vec3::Zero();
-                Mat3 M_w = Mat3::Zero();
-                for (const auto& o : cl) {
-                    const Mat3 R = cur[o.node_idx].block<3, 3>(0, 0);
-                    const Vec3 t = cur[o.node_idx].block<3, 1>(0, 3);
+                Vec3 sum_rel = Vec3::Zero();
+                Mat3 M_rel = Mat3::Zero();
+                for (const auto& o : ac.obs) {
+                    const Mat3 R = cur[static_cast<size_t>(o.node_idx)].block<3, 3>(0, 0);
+                    const Vec3 t_rel = cur[static_cast<size_t>(o.node_idx)].block<3, 1>(0, 3) - ac.origin_w;
                     const Vec3 Rs = R * o.sum_b;
                     N += o.count;
-                    sum_w.noalias() += Rs + static_cast<double>(o.count) * t;
-                    M_w.noalias() += R * o.M_b * R.transpose()
-                                   + Rs * t.transpose() + t * Rs.transpose()
-                                   + static_cast<double>(o.count) * (t * t.transpose());
+                    sum_rel.noalias() += Rs + static_cast<double>(o.count) * t_rel;
+                    M_rel.noalias() += R * o.M_b * R.transpose()
+                                     + Rs * t_rel.transpose() + t_rel * Rs.transpose()
+                                     + static_cast<double>(o.count) * (t_rel * t_rel.transpose());
                 }
                 if (N < 6) continue;
                 const double inv_N = 1.0 / static_cast<double>(N);
-                const Vec3 mean_w = sum_w * inv_N;
-                const Mat3 cov_w = M_w * inv_N - mean_w * mean_w.transpose();
+                const Vec3 mean_rel = sum_rel * inv_N;
+                const Mat3 cov_w = M_rel * inv_N - mean_rel * mean_rel.transpose();
                 Eigen::SelfAdjointEigenSolver<Mat3> es(cov_w, Eigen::EigenvaluesOnly);
                 if (es.info() != Eigen::Success) continue;
-                const double lam0 = std::max(0.0, es.eigenvalues()[0]);
+                const Vec3 ev = es.eigenvalues();
+                if (ev[1] <= 1e-4) continue;
+                const double lam0 = std::max(0.0, ev[0]);
                 const double s = lam0 * inv_plane_var;
-                const double cl_scale = static_cast<double>(cl.size());
+                const double cl_scale = static_cast<double>(ac.obs.size());
                 total += cl_scale * (c2 * std::log1p(s / c2));
             }
             return total;
@@ -1199,18 +1248,18 @@ void cpp_run_oriented_planar_ba(
             schur_terms.reserve(static_cast<size_t>(total_obs));
             cluster_schurs.reserve(clusters.size());
 
-            // A. PoseGraph odometry + loop edges
+            // A. 位姿图里程计与回环边
             for (int e = 0; e < n_edges; ++e) {
                 const int a = edge_a[e];
                 const int b = edge_b[e];
-                if (a < n_fixed && b < n_fixed) continue;
-                const Mat4 inv_a = invert_se3(poses[a]);
-                const Vec6 err = se3_log(Z_invs[e] * inv_a * poses[b]);
-                const double s = err.transpose() * infos[e] * err;
+                if (a == b || (a < n_fixed && b < n_fixed)) continue;
+                const Mat4 inv_a = invert_se3(poses[static_cast<size_t>(a)]);
+                const Vec6 err = se3_log(Z_invs[static_cast<size_t>(e)] * inv_a * poses[static_cast<size_t>(b)]);
+                const double s = err.transpose() * infos[static_cast<size_t>(e)] * err;
                 const double w_scale = edge_robust[e] ? (1.0 / (1.0 + s / c2)) : 1.0;
-                const Mat6 W = w_scale * infos[e];
+                const Mat6 W = w_scale * infos[static_cast<size_t>(e)];
                 const Mat6 J_b = se3_right_jacobian_inv(err);
-                const Mat6 J_a = -(J_b * adjoint_se3(invert_se3(poses[b]) * poses[a]));
+                const Mat6 J_a = -(J_b * adjoint_se3(invert_se3(poses[static_cast<size_t>(b)]) * poses[static_cast<size_t>(a)]));
                 const int idxs[2] = {a, b};
                 const Mat6* Js[2] = {&J_a, &J_b};
                 for (int ii = 0; ii < 2; ++ii) {
@@ -1235,12 +1284,13 @@ void cpp_run_oriented_planar_ba(
                 }
             }
 
-            // B. Calibrated gravity priors
+            // B. 校准世界重力先验
             for (int g = 0; g < n_grav; ++g) {
                 const int ni = grav_node[g];
                 if (ni < n_fixed) continue;
-                const Mat3 R = poses[ni].block<3, 3>(0, 0);
-                const Vec3 gb(grav_body[3 * g], grav_body[3 * g + 1], grav_body[3 * g + 2]);
+                const Mat3 R = poses[static_cast<size_t>(ni)].block<3, 3>(0, 0);
+                const size_t gbase = static_cast<size_t>(g) * 3;
+                const Vec3 gb(grav_body[gbase], grav_body[gbase + 1], grav_body[gbase + 2]);
                 const Vec3 u = R * gb;
                 const Vec3 eg = u - g_world;
                 const double s = grav_weight[g] * eg.squaredNorm();
@@ -1257,28 +1307,47 @@ void cpp_run_oriented_planar_ba(
                 }
             }
 
-            // C. Oriented 3D Planar BA via Matrix-Free Implicit Schur Complement
-            //    Assembles only M = H_graph + H_diag_BA into triplets (zero O(m^2) fill-in),
-            //    and stores compact O(m) Schur factors (B_i, inv_D) for implicit matvec in PCG.
-            for (const auto& cl : clusters) {
+            // B2. Z 高度先验（与 PoseGraph 目标保持严格一致）
+            for (int z = 0; z < n_zp; ++z) {
+                const int ni = zp_node[z];
+                if (ni < n_fixed) continue;
+                const double ez = poses[static_cast<size_t>(ni)](2, 3) - zp_target[z];
+                const double s = zp_weight[z] * ez * ez;
+                const double w_eff = zp_robust[z] ? (zp_weight[z] / (1.0 + s / c2)) : zp_weight[z];
+                const Vec3 J_t = poses[static_cast<size_t>(ni)].block<1, 3>(2, 0).transpose();
+                const int slot = 6 * (ni - n_fixed);
+                grad.segment<3>(slot).noalias() += (w_eff * ez) * J_t;
+                const Mat3 H_t = w_eff * (J_t * J_t.transpose());
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) {
+                        const double val = H_t(r, c);
+                        if (val != 0.0) triplets.emplace_back(slot + r, slot + c, val);
+                    }
+                }
+            }
+
+            // C. 定向 3D 平面 BA：Matrix-Free 隐式 Schur 补
+            //    只向稀疏预处理器 M 写入块对角 H_ii（零 O(m^2) 填充），
+            //    并紧凑保存 O(m) 的 B_i 与 inv_D 供 PCG 隐式矩阵-向量乘。
+            for (const auto& ac : clusters) {
                 int N = 0;
-                Vec3 sum_w = Vec3::Zero();
-                Mat3 M_w = Mat3::Zero();
-                for (const auto& o : cl) {
-                    const Mat3 R = poses[o.node_idx].block<3, 3>(0, 0);
-                    const Vec3 t = poses[o.node_idx].block<3, 1>(0, 3);
+                Vec3 sum_rel = Vec3::Zero();
+                Mat3 M_rel = Mat3::Zero();
+                for (const auto& o : ac.obs) {
+                    const Mat3 R = poses[static_cast<size_t>(o.node_idx)].block<3, 3>(0, 0);
+                    const Vec3 t_rel = poses[static_cast<size_t>(o.node_idx)].block<3, 1>(0, 3) - ac.origin_w;
                     const Vec3 Rs = R * o.sum_b;
                     N += o.count;
-                    sum_w.noalias() += Rs + static_cast<double>(o.count) * t;
-                    M_w.noalias() += R * o.M_b * R.transpose()
-                                   + Rs * t.transpose() + t * Rs.transpose()
-                                   + static_cast<double>(o.count) * (t * t.transpose());
+                    sum_rel.noalias() += Rs + static_cast<double>(o.count) * t_rel;
+                    M_rel.noalias() += R * o.M_b * R.transpose()
+                                     + Rs * t_rel.transpose() + t_rel * Rs.transpose()
+                                     + static_cast<double>(o.count) * (t_rel * t_rel.transpose());
                 }
                 if (N < 6) continue;
                 const double dN = static_cast<double>(N);
                 const double inv_N = 1.0 / dN;
-                const Vec3 mean_w = sum_w * inv_N;
-                const Mat3 cov_w = M_w * inv_N - mean_w * mean_w.transpose();
+                const Vec3 mean_rel = sum_rel * inv_N;
+                const Mat3 cov_w = M_rel * inv_N - mean_rel * mean_rel.transpose();
                 Eigen::SelfAdjointEigenSolver<Mat3> es(cov_w);
                 if (es.info() != Eigen::Success) continue;
                 const Vec3 ev = es.eigenvalues();
@@ -1286,7 +1355,7 @@ void cpp_run_oriented_planar_ba(
                 const double lam0 = std::max(0.0, ev[0]);
                 const double s = lam0 * inv_plane_var;
                 const double w_cauchy = 1.0 / (1.0 + s / c2);
-                const double w_pt = (static_cast<double>(cl.size()) * inv_N) * inv_plane_var * w_cauchy;
+                const double w_pt = (static_cast<double>(ac.obs.size()) * inv_N) * inv_plane_var * w_cauchy;
 
                 const Vec3 n_c = es.eigenvectors().col(0);
                 const Vec3 u1 = es.eigenvectors().col(1);
@@ -1295,20 +1364,20 @@ void cpp_run_oriented_planar_ba(
 
                 const int term_offset = static_cast<int>(schur_terms.size());
                 int free_count = 0;
-                for (const auto& o : cl) {
+                for (const auto& o : ac.obs) {
                     if (o.node_idx < n_fixed) continue;
                     const int free_idx = o.node_idx - n_fixed;
                     const int row0 = 6 * free_idx;
-                    const Mat3 R = poses[o.node_idx].block<3, 3>(0, 0);
-                    const Vec3 t = poses[o.node_idx].block<3, 1>(0, 3);
+                    const Mat3 R = poses[static_cast<size_t>(o.node_idx)].block<3, 3>(0, 0);
+                    const Vec3 t_rel = poses[static_cast<size_t>(o.node_idx)].block<3, 1>(0, 3) - ac.origin_w;
                     const Vec3 a_i = R.transpose() * n_c;
                     const Mat3 S = -hat3(a_i);  // S * p_b = p_b x a_i
                     const Vec3 Ss = S * o.sum_b;
-                    const Vec3 dt = t - mean_w;
+                    const Vec3 dt = t_rel - mean_rel;  // 等价于 t - mean_w，但已消除大世界坐标相减误差
                     const double c_i = n_c.dot(dt);
                     const double n_i = static_cast<double>(o.count);
 
-                    // H_{xi_i, pi_c} (6x3)
+                    // 交叉块 H_{xi_i, pi_c} (6x3)
                     Eigen::Matrix<double, 6, 3> B;
                     B.block<3, 1>(0, 0) = n_i * a_i;
                     B.block<3, 1>(3, 0) = Ss;
@@ -1326,13 +1395,13 @@ void cpp_run_oriented_planar_ba(
                     schur_terms.push_back(SchurTerm{free_idx, B});
                     free_count += 1;
 
-                    // Gradient g_{xi_i} = w_pt * sum_k J_{xi,k}^T r_k
+                    // 梯度 g_{xi_i} = w_pt * sum_k J_{xi,k}^T r_k
                     Vec6 g_i;
                     g_i.head<3>() = (a_i.dot(o.sum_b) + n_i * c_i) * a_i;
                     g_i.tail<3>() = S * (o.M_b * a_i + c_i * o.sum_b);
                     grad.segment<6>(row0).noalias() += w_pt * g_i;
 
-                    // Diagonal block H_{xi_i, xi_i} -> enters preconditioner M directly
+                    // 块对角 H_{xi_i, xi_i} 写入稀疏预处理器 M
                     Mat6 H_ii;
                     H_ii.block<3, 3>(0, 0) = (n_i * w_pt) * (a_i * a_i.transpose());
                     H_ii.block<3, 3>(0, 3) = w_pt * (a_i * Ss.transpose());
@@ -1355,7 +1424,7 @@ void cpp_run_oriented_planar_ba(
                 }
             }
 
-            // Build sparse SPD preconditioner M_damped = H_graph + H_diag_BA + damping * diag(H)
+            // 构造极稀疏 SPD 预处理器 M_damped = H_graph + H_diag_BA + damping * diag(H)
             Eigen::SparseMatrix<double> M_damped(size, size);
             M_damped.setFromTriplets(triplets.begin(), triplets.end());
             for (int i = 0; i < size; ++i) {
@@ -1367,42 +1436,45 @@ void cpp_run_oriented_planar_ba(
 
             Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt;
             ldlt.compute(M_damped);
-            if (ldlt.info() != Eigen::Success) {
+            if (ldlt.info() != Eigen::Success ||
+                !ldlt.vectorD().allFinite() ||
+                ldlt.vectorD().minCoeff() <= 0.0) {
                 damping *= 10.0;
                 continue;
             }
 
-            // Matrix-free matvec: A * v = M_damped * v - sum_c w_c * B_c * inv(D_c) * (B_c^T * v)
+            // Matrix-Free 矩阵-向量乘：A * v = M_damped * v - sum_c w_c * B_c * inv(D_c) * (B_c^T * v)
             auto apply_A = [&](const Eigen::VectorXd& v, Eigen::VectorXd& out) {
                 out.noalias() = M_damped * v;
                 for (const auto& cs : cluster_schurs) {
                     Vec3 u = Vec3::Zero();
                     const int end = cs.offset + cs.count;
                     for (int k = cs.offset; k < end; ++k) {
-                        const auto& st = schur_terms[k];
+                        const auto& st = schur_terms[static_cast<size_t>(k)];
                         u.noalias() += st.B.transpose() * v.segment<6>(6 * st.free_idx);
                     }
                     const Vec3 w_invD_u = cs.w_pt * cs.inv_D.cwiseProduct(u);
                     for (int k = cs.offset; k < end; ++k) {
-                        const auto& st = schur_terms[k];
+                        const auto& st = schur_terms[static_cast<size_t>(k)];
                         out.segment<6>(6 * st.free_idx).noalias() -= st.B * w_invD_u;
                     }
                 }
             };
 
-            // Pose-Graph-Preconditioned Conjugate Gradient (exact in M-inner product, O(N) per step)
+            // 位姿图预处理共轭梯度（PCG），每步严格 O(|E| + sum|c|)
             const Eigen::VectorXd rhs = -grad;
             const double rhs_norm = rhs.norm();
             Eigen::VectorXd step = Eigen::VectorXd::Zero(size);
+            bool pcg_failed = false;
             if (rhs_norm > 1e-15) {
                 Eigen::VectorXd r = rhs;
                 Eigen::VectorXd z = ldlt.solve(r);
-                if (!z.allFinite()) {
+                double rz = r.dot(z);
+                if (!z.allFinite() || !std::isfinite(rz) || rz <= 0.0) {
                     damping *= 10.0;
                     continue;
                 }
                 Eigen::VectorXd p = z;
-                double rz = r.dot(z);
                 const double tol_abs = std::max(1e-9, 1e-4 * rhs_norm);
                 Eigen::VectorXd Ap(size);
                 const int max_cg = std::min(120, std::max(30, size));
@@ -1411,7 +1483,7 @@ void cpp_run_oriented_planar_ba(
                     apply_A(p, Ap);
                     const double pAp = p.dot(Ap);
                     if (!std::isfinite(pAp) || pAp <= 1e-18) {
-                        if (cg == 0) step = z;
+                        if (cg == 0) pcg_failed = true;
                         break;
                     }
                     const double alpha = rz / pAp;
@@ -1421,33 +1493,35 @@ void cpp_run_oriented_planar_ba(
                     z = ldlt.solve(r);
                     if (!z.allFinite()) break;
                     const double rz_new = r.dot(z);
-                    if (!std::isfinite(rz_new) || rz <= 1e-30) break;
+                    if (!std::isfinite(rz_new) || rz_new <= 0.0 || rz <= 1e-30) break;
                     const double beta = rz_new / rz;
                     p = z + beta * p;
                     rz = rz_new;
                 }
             }
-            if (!step.allFinite()) {
+            if (pcg_failed || !step.allFinite()) {
                 damping *= 10.0;
                 continue;
             }
 
             for (int i = 0; i < n_fixed; ++i) {
-                trial[i] = poses[i];
+                trial[static_cast<size_t>(i)] = poses[static_cast<size_t>(i)];
             }
             for (int i = n_fixed; i < n_nodes; ++i) {
-                trial[i] = poses[i] * se3_exp(step.segment<6>(6 * (i - n_fixed)));
+                trial[static_cast<size_t>(i)] =
+                    poses[static_cast<size_t>(i)] * se3_exp(step.segment<6>(6 * (i - n_fixed)));
             }
             const double trial_cost = compute_total_cost(trial);
             const double max_step = step.cwiseAbs().maxCoeff();
-            if (trial_cost < cost) {
+            if (std::isfinite(trial_cost) && trial_cost < cost) {
                 poses.swap(trial);
+                total_accepted_steps += 1;
                 damping = std::max(1e-6, damping / 5.0);
                 round_conv = (cost - trial_cost <= 1e-7 * std::max(cost, 1e-12)) || (max_step < 1e-6);
                 cost = trial_cost;
             } else {
                 damping *= 10.0;
-                round_conv = (max_step < 1e-7);
+                round_conv = (max_step < 1e-7 && rhs_norm < 1e-7);
             }
             if (round_conv) break;
         }
@@ -1456,13 +1530,17 @@ void cpp_run_oriented_planar_ba(
     }
 
     for (int i = 0; i < n_nodes; ++i) {
-        store_mat4_rm(poses[i], poses_ptr + 16 * i);
+        store_mat4_rm(poses[static_cast<size_t>(i)], poses_ptr + static_cast<size_t>(i) * 16);
     }
     *out_converged = overall_converged ? 1 : 0;
-    *out_clusters_used = last_clusters;
-    *out_obs_used = last_obs;
+    *out_clusters_used = best_clusters;
+    *out_obs_used = best_obs;
+    *out_accepted_steps = total_accepted_steps;
     *out_error_before = first_cost;
     *out_error_after = last_cost;
+    } catch (...) {
+        *out_converged = 0;
+    }
 }
 
 }  // extern "C"

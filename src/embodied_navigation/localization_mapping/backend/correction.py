@@ -55,13 +55,36 @@ class CorrectionAdmission:
         *,
         reference_C: np.ndarray | None = None,
     ) -> bool:
+        # 统一校验候选修正矩阵与机体位姿的形状及有限性，防止 NaN/Inf 绕过跳变门。
+        C_arr = np.asarray(T_world_odom, dtype=np.float64)
+        B_arr = np.asarray(T_odom_body, dtype=np.float64)
+        if C_arr.shape != (4, 4) or B_arr.shape != (4, 4) or not (np.isfinite(C_arr).all() and np.isfinite(B_arr).all()):
+            self.rejections.append(
+                {"stamp_ns": stamp_ns, "translation_m": None, "rotation_rad": None, "reason": "non_finite_pose"}
+            )
+            return False
         ref = self._current if self._current is not None else reference_C
         if ref is None:
             return True
-        translation, rotation = pose_difference(ref @ T_odom_body, T_world_odom @ T_odom_body)
-        if translation > self.max_jump[0] or rotation > self.max_jump[1]:
+        ref_arr = np.asarray(ref, dtype=np.float64)
+        if ref_arr.shape != (4, 4) or not np.isfinite(ref_arr).all():
             self.rejections.append(
-                {"stamp_ns": stamp_ns, "translation_m": translation, "rotation_rad": rotation}
+                {"stamp_ns": stamp_ns, "translation_m": None, "rotation_rad": None, "reason": "non_finite_reference"}
+            )
+            return False
+        translation, rotation = pose_difference(ref_arr @ B_arr, C_arr @ B_arr)
+        if not (
+            np.isfinite(translation)
+            and np.isfinite(rotation)
+            and translation <= self.max_jump[0]
+            and rotation <= self.max_jump[1]
+        ):
+            self.rejections.append(
+                {
+                    "stamp_ns": stamp_ns,
+                    "translation_m": float(translation) if np.isfinite(translation) else None,
+                    "rotation_rad": float(rotation) if np.isfinite(rotation) else None,
+                }
             )
             return False
         return True
@@ -87,6 +110,22 @@ class CorrectionAdmission:
         if not self._has_mutual_cluster(agreeing, self.confirmations - 1, T_odom_body):
             world_pos = (T_world_odom @ T_odom_body)[:3, 3]
             self._pending_entries.append((stamp_ns, T_world_odom, world_pos, False))
+            return None
+        self._pending_entries = []
+        self._current = np.array(T_world_odom, dtype=np.float64)
+        return self._current
+
+    def propose_immediate(
+        self,
+        T_world_odom: np.ndarray,
+        T_odom_body: np.ndarray,
+        stamp_ns: int,
+        *,
+        reference_C: np.ndarray | None = None,
+    ) -> np.ndarray | None:
+        """Immediately adopt a geometrically verified slip-repair C behind the jump gate."""
+        self._anchored_seed = None
+        if not self._within_jump_gate(T_world_odom, T_odom_body, stamp_ns, reference_C=reference_C):
             return None
         self._pending_entries = []
         self._current = np.array(T_world_odom, dtype=np.float64)

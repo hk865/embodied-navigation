@@ -268,6 +268,9 @@ class PoseGraph:
         c2 = self.cauchy_scale**2
         for edge in self.edges:
             a, b, _, information, robust = edge
+            if a == b:
+                # 自环边 inv(T_a) @ T_a = I，残差与节点位姿无关，导数恒为零。
+                continue
             e = self._residual(poses, edge)
             weighted = self._weight(e, information, robust) * information
             J_r_inv = se3_right_jacobian_inv(e)
@@ -319,6 +322,8 @@ class PoseGraph:
             rows.append(br.ravel())
             cols.append(bc.ravel())
             values.append(H_t.ravel())
+        if not values:
+            return sparse.csr_matrix((size, size), dtype=np.float64), g
         H = sparse.coo_matrix(
             (np.concatenate(values), (np.concatenate(rows), np.concatenate(cols))), shape=(size, size)
         )

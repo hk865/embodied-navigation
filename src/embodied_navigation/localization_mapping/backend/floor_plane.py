@@ -1,17 +1,13 @@
-"""Wide-span horizontal floor-plane detection and pairwise coplanar odometry leveling.
+"""宽跨度水平地面平面检测与相邻帧共面里程计调平模块。
 
-Key physical insight:
-- Quadrupeds (e.g. Unitree Go2) walk with ~6-8 deg natural body pitch, so slicing
-  raw ``z_body`` chops tilted floor clouds and biases normals by 3-4 deg.
-- Rotating ``points_body`` by the coarse odometry attitude ``R_odom_body`` ONLY
-  to select the dominant horizontal floor slab via a 4 cm Z-histogram mode, then
-  fitting the plane directly in ``body`` coordinates yields ~0.04-0.13 deg
-  floor-normal accuracy (5-8x more accurate than noisy IMU attitude) and ~3 mm
-  step-to-step height precision.
-- Between two consecutive flat-floor keyframes ``(a, b)`` on the same level slab,
-  the true displacement along ``n_a`` equals ``h_b - h_a``; projecting out the
-  excess component along ``n_a`` eliminates open-loop vertical Z drift across
-  arbitrarily many floors without fragile floor-slab ID heuristics.
+核心物理依据：
+- 四足机器人（如 Unitree Go2）正常行走时存在约 6°~8° 机身俯仰角，直接按原始 ``z_body`` 切片
+  会把倾斜的地面点云切残，引入 3°~4° 法向偏差。
+- 仅用粗姿态 ``R_odom_body``（或后端重力稳定后的 ``R_floor_hint``）做近中距 4 cm 高度直方图
+  寻找地面主峰种子，再在完整 body 系点云 ``[min_radius_m, max_radius_m]`` 上迭代 PCA 扩展拟合，
+  实测地面法向精度可达 ~0.01°~0.04°（比带噪 IMU 姿态高一个量级），帧间高度精度 ~3 mm。
+- 相邻两帧同楼层共面关键帧 ``(a, b)`` 沿 ``n_a`` 方向的真实位移严格等于 ``h_b - h_a``；仅投影
+  消除沿 ``n_a`` 的垂直残余漂移、完全保留旋转与水平运动，即可无楼层 ID 启发式地消除平地开环 Z 漂移。
 """
 
 from __future__ import annotations
@@ -24,7 +20,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class FloorPlaneMeasurement:
-    """Horizontal ground plane measured in the body frame (``n . p + height_below_body_m = 0``)."""
+    """机体坐标系下的水平地面测量结果（平面方程 ``n · p + height_below_body_m = 0``）。"""
 
     height_below_body_m: float
     normal_body: np.ndarray
@@ -36,7 +32,7 @@ class FloorPlaneMeasurement:
 
 
 def _fit_plane_pca(points: np.ndarray) -> tuple[np.ndarray, float] | None:
-    """Fit ``n . p + d = 0`` by PCA with ``n[2] > 0``; return ``(n, d)`` or None."""
+    """用 PCA 拟合平面 ``n · p + d = 0``（保证 ``n[2] > 0``），失败返回 None。"""
     if len(points) < 3:
         return None
     mean = points.mean(axis=0)
@@ -70,12 +66,14 @@ def detect_floor_plane(
     min_span_short_m: float = 1.8,
     min_span_long_m: float = 3.5,
 ) -> FloorPlaneMeasurement | None:
-    """Detect a wide, flat horizontal floor slab under the robot in body coordinates.
+    """在机体坐标系中检测机器人脚下的宽跨度水平地面。
 
-    Uses ``R_odom_body`` (or the backend's gravity-stabilized attitude hint) to
-    seed the dominant ground plane in a deterministic near-mid range height
-    histogram, then expands and refines inliers across the full ``[min_radius_m,
-    max_radius_m]`` body-frame cloud without cropping by a narrow tilted slab.
+    步骤：
+    1. 使用 ``R_odom_body``（或后端图稳定姿态 ``R_floor_hint``）把点云粗调平；
+    2. 在近中距（``r <= 5 m``，倾角杠杆最小）做 4 cm 高度直方图取主峰确定性种子；
+    3. 在完整宽倾角候选集（``[min_radius_m, max_radius_m]``）中做 4 轮 PCA 内点扩展，
+       防止远场地面点被粗姿态倾角误切；
+    4. 通过高度范围、水平倾角、残差 MAD 与旋转不变 2D 主轴跨度四道几何门控。
     """
     R = np.asarray(R_odom_body, dtype=np.float64)
     if R.shape == (4, 4):
@@ -100,7 +98,7 @@ def detect_floor_plane(
     max_h = max(min_h + 1e-3, -float(min_z_level_m))
     cos_world_lim = math.cos(math.radians(max_plane_world_tilt_deg))
 
-    # Deterministic near-mid seed (r <= 5 m minimizes any residual tilt leverage)
+    # 1. 近中距（r <= 5 m）确定性高度直方图种子，最小化粗姿态残余倾角杠杆。
     seed_pool = np.flatnonzero(
         (r_xy >= min_radius_m)
         & (r_xy <= min(max_radius_m, 5.0))
@@ -130,8 +128,7 @@ def detect_floor_plane(
         return None
     normal, d_plane = fit1
 
-    # Expand and refine over the full wide-tilt body cloud so far-field floor points
-    # are never chopped away when R_odom_body has slight pitch/roll bias.
+    # 2. 在宽倾角全域候选集上迭代扩展内点并重拟合，避免粗姿态微倾裁掉远场真实地面。
     cand_idx = np.flatnonzero(
         (r_xy >= min_radius_m)
         & (r_xy <= max_radius_m)
@@ -158,6 +155,7 @@ def detect_floor_plane(
     if len(inliers_b) < min_points:
         return None
 
+    # 3. 高度、水平法向夹角与平面度 MAD 校验。
     if d_plane < min_h or d_plane > max_h:
         return None
     n_lvl = R @ normal
@@ -169,7 +167,7 @@ def detect_floor_plane(
     if not np.isfinite(mad_m) or mad_m > max_mad_m:
         return None
 
-    # Rotation-invariant 2D PCA principal spans on the fitted floor plane.
+    # 4. 计算平面内的旋转不变 2D PCA 短/长主轴跨度，过滤窄台阶与桌面误检。
     centered = inliers_b - inliers_b.mean(axis=0)
     ref = (
         np.array([1.0, 0.0, 0.0], dtype=np.float64)
@@ -217,34 +215,31 @@ def project_coplanar_odom_delta(
     max_step_dz_m: float = 0.06,
     max_normal_disagreement_deg: float = 3.0,
 ) -> tuple[np.ndarray, bool]:
-    """Level a consecutive flat-floor odometry edge using measured floor geometry.
+    """用相邻两帧实测共面地面几何对平地里程计边进行垂直调平。
 
-    When both ``prev_floor`` and ``cur_floor`` observe the same horizontal floor
-    slab, the true component of ``delta_odom[:3, 3]`` along ``prev_floor.normal_body``
-    equals ``cur_floor.height_below_body_m - prev_floor.height_below_body_m``.
-    Rejects steps or disconnected slabs when ``|dz_odom - dz_floor| > max_step_dz_m``
-    or the direct transformed footprint plane distance exceeds 0.04 m.
-
-    Returns ``(delta_out, applied)``; never mutates ``delta_odom``.
+    当 ``prev_floor`` 与 ``cur_floor`` 观测同一水平楼板时，``delta_odom[:3, 3]``
+    沿 ``prev_floor.normal_body`` 的真实分量应等于 ``h_b - h_a``。若高度差超限、
+    法向旋转不一致或变换后地面点残差大于 4 cm（例如上下楼梯换板），则安全跳过。
+    返回 ``(delta_out, applied)``，绝不原地修改 ``delta_odom``。
     """
     R = np.array(delta_odom[:3, :3], dtype=np.float64, copy=True)
     t = np.array(delta_odom[:3, 3], dtype=np.float64, copy=True)
     n_a = prev_floor.normal_body
     n_b = cur_floor.normal_body
 
-    # Verify the two frames truly share the same horizontal slab (rejects stairs/steps)
+    # 校验两帧高度变化一致性，拒绝楼梯台阶或断层。
     dz_odom = float(n_a @ t)
     dz_floor = float(cur_floor.height_below_body_m - prev_floor.height_below_body_m)
     if abs(dz_odom - dz_floor) > max_step_dz_m:
         return delta_odom, False
 
-    # Verify relative rotation maps n_b close to n_a (rejects stair/ramp transitions)
+    # 校验相对旋转映射后的法向一致性，拒绝斜坡/上下楼过渡段。
     n_b_in_a = R @ n_b
     cos_ang = float(np.clip(n_a @ n_b_in_a, -1.0, 1.0))
     if cos_ang < math.cos(math.radians(max_normal_disagreement_deg)):
         return delta_odom, False
 
-    # Verify direct surface overlap of cur_floor footprint against prev_floor plane
+    # 校验当前帧地面采样点经里程计变换后到前帧平面的直接距离。
     cur_sample = np.asarray(cur_floor.inlier_sample_body, dtype=np.float64).reshape(-1, 3)
     if len(cur_sample) == 0:
         return delta_odom, False
@@ -253,7 +248,7 @@ def project_coplanar_odom_delta(
     if not np.isfinite(med_plane_dist) or med_plane_dist > 0.04:
         return delta_odom, False
 
-    # Project out vertical drift along n_a ONLY; keep R untouched so yaw is never perturbed!
+    # 仅投影消除沿 n_a 的垂直漂移，完整保留旋转 R 以免扰动 yaw。
     t_clean = t + (dz_floor - dz_odom) * n_a
 
     out = np.eye(4, dtype=np.float64)

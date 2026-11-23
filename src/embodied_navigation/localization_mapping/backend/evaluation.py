@@ -262,22 +262,31 @@ def replay_backend(
     snap_pre_quat_list: list[np.ndarray] = []
     loop_events: list[dict] = []
     errors = 0
+    accepted_row = np.zeros(n, dtype=bool)
+    seen_keys: set[tuple[int, int]] = set()
 
-    def _capture_snapshot(kf_idx: int, is_loop: bool, pre_poses: list[np.ndarray] | None) -> None:
-        prefix = np.stack(backend.graph.poses[: kf_idx + 1], axis=0)
+    def _capture_snapshot(
+        kf_idx: int, is_loop: bool, pre_poses_by_key: dict[tuple[int, int], np.ndarray] | None
+    ) -> None:
+        # 按已成功入图且未重复的 key 逐行采集快照，避免首帧失败或重复 key 引起错位/空栈崩溃。
+        valid_rows = [i for i in range(kf_idx + 1) if accepted_row[i] and keys[i] in backend.graph.index]
+        if not valid_rows:
+            return
+        prefix = np.stack([backend.graph.pose(keys[i]) for i in valid_rows], axis=0)
         pos_f32, quat_f32 = _poses_to_pos_quat(prefix)
         pos_row = np.full((n, 3), np.nan, dtype=np.float32)
         quat_row = np.full((n, 4), np.nan, dtype=np.float32)
-        pos_row[: kf_idx + 1] = pos_f32
-        quat_row[: kf_idx + 1] = quat_f32
+        pos_row[valid_rows] = pos_f32
+        quat_row[valid_rows] = quat_f32
         pre_pos_row = np.full((n, 3), np.nan, dtype=np.float32)
         pre_quat_row = np.full((n, 4), np.nan, dtype=np.float32)
-        if is_loop and pre_poses is not None and len(pre_poses) > 0:
-            k_pre = min(len(pre_poses), kf_idx)
-            pre_stack = np.stack(pre_poses[:k_pre], axis=0)
-            p_pre, q_pre = _poses_to_pos_quat(pre_stack)
-            pre_pos_row[:k_pre] = p_pre
-            pre_quat_row[:k_pre] = q_pre
+        if is_loop and pre_poses_by_key:
+            pre_rows = [i for i in valid_rows if i < kf_idx and keys[i] in pre_poses_by_key]
+            if pre_rows:
+                pre_stack = np.stack([pre_poses_by_key[keys[i]] for i in pre_rows], axis=0)
+                p_pre, q_pre = _poses_to_pos_quat(pre_stack)
+                pre_pos_row[pre_rows] = p_pre
+                pre_quat_row[pre_rows] = q_pre
         snap_indices.append(kf_idx)
         snap_is_loop.append(is_loop)
         snap_pos_list.append(pos_row)
@@ -287,18 +296,20 @@ def replay_backend(
 
     t_total_0 = time.perf_counter()
     for idx, kf in enumerate(keyframes):
-        # Shallow copy of pose references before ingest: PoseGraph never mutates
-        # pose arrays in place, so this captures exact pre-optimization poses in O(N).
-        pre_poses_ref = list(backend.graph.poses)
+        # 仅浅拷贝姿态字典引用（PoseGraph 更新时替换数组而非原地修改），用于回环前后同前缀对比。
+        pre_poses_ref = {k: backend.graph.poses[i] for i, k in enumerate(backend.graph.keys)}
         t0 = time.perf_counter()
         event = backend.ingest(kf)
         step_wall[idx] = time.perf_counter() - t0
-        if "error" in event:
+        step_ok = "error" not in event
+        if not step_ok:
             errors += 1
 
         C = backend.T_world_odom
         online_adopted[idx] = kf.T_odom_body if C is None else (C @ kf.T_odom_body)
-        if kf.key in backend.graph.index:
+        if step_ok and kf.key not in seen_keys and kf.key in backend.graph.index:
+            accepted_row[idx] = True
+            seen_keys.add(kf.key)
             online_graph[idx] = backend.graph.pose(kf.key)
         else:
             online_graph[idx] = online_adopted[idx]
@@ -322,23 +333,34 @@ def replay_backend(
             idx == 0
             or idx == n - 1
             or (snapshot_on_every_loop and is_loop)
+            or bool(event.get("graph_optimized", False))
             or (snapshot_stride > 0 and idx % snapshot_stride == 0)
         )
-        if need_snap and len(backend.graph.poses) == idx + 1:
+        if need_snap and accepted_row[idx]:
             _capture_snapshot(idx, is_loop, pre_poses_ref if is_loop else None)
 
         if on_progress is not None:
             on_progress(idx, n, event)
 
+    finalize_summary: dict = {"ran": False}
     if hasattr(backend, "finalize") and callable(backend.finalize):
-        backend.finalize()
+        fin = backend.finalize()
+        if isinstance(fin, dict):
+            finalize_summary = fin
+        # 终局 BA 提交了新图版本时追加终局快照，确保 Layer 2/3 与 Layer 1 final_poses 严格一致。
+        if finalize_summary.get("committed") or (
+            finalize_summary.get("ran")
+            and finalize_summary.get("used_cpp")
+            and int(finalize_summary.get("clusters_used", 0)) > 0
+        ):
+            _capture_snapshot(n - 1, False, None)
 
     total_wall = time.perf_counter() - t_total_0
-    missing_nodes = sum(1 for k in keys if k not in backend.graph.index)
+    missing_nodes = int(np.sum(~accepted_row))
     final_poses = np.stack(
         [
-            backend.graph.pose(k) if k in backend.graph.index else online_graph[i]
-            for i, k in enumerate(keys)
+            backend.graph.pose(keys[i]) if (accepted_row[i] and keys[i] in backend.graph.index) else online_graph[i]
+            for i in range(n)
         ],
         axis=0,
     ).astype(np.float64)
@@ -348,7 +370,11 @@ def replay_backend(
         extra = dict(backend.observability_stats())
     elif hasattr(backend, "stats") and isinstance(backend.stats, dict):
         extra = dict(backend.stats)
+    if finalize_summary.get("ran"):
+        extra["finalize"] = finalize_summary
 
+    empty_pos = np.empty((0, n, 3), dtype=np.float32)
+    empty_quat = np.empty((0, n, 4), dtype=np.float32)
     return ReplayRecord(
         stamps_s=stamps_s,
         keys=keys,
@@ -358,16 +384,16 @@ def replay_backend(
         final_poses=final_poses,
         snapshot_kf_indices=np.asarray(snap_indices, dtype=np.int32),
         snapshot_is_loop=np.asarray(snap_is_loop, dtype=bool),
-        snapshot_pos=np.stack(snap_pos_list, axis=0),
-        snapshot_quat_xyzw=np.stack(snap_quat_list, axis=0),
+        snapshot_pos=np.stack(snap_pos_list, axis=0) if snap_pos_list else empty_pos,
+        snapshot_quat_xyzw=np.stack(snap_quat_list, axis=0) if snap_quat_list else empty_quat,
         step_wall_s=step_wall,
         loop_events=loop_events,
         errors=errors,
         missing_graph_nodes=missing_nodes,
         total_wall_s=float(total_wall),
         extra_stats=extra,
-        snapshot_pre_pos=np.stack(snap_pre_pos_list, axis=0),
-        snapshot_pre_quat_xyzw=np.stack(snap_pre_quat_list, axis=0),
+        snapshot_pre_pos=np.stack(snap_pre_pos_list, axis=0) if snap_pre_pos_list else empty_pos,
+        snapshot_pre_quat_xyzw=np.stack(snap_pre_quat_list, axis=0) if snap_pre_quat_list else empty_quat,
     )
 
 
@@ -924,7 +950,7 @@ def evaluate_replay(
         layer1_umeyama[name] = m_um
 
     l23_summary, l23_arrays = compute_evolution_and_revisions(
-        record, truth_poses, A_init, bucket_s=bucket_s, imu_in_base_xyz=imu_in_base_xyz
+        record, truth_poses, A_init, bucket_s=bucket_s, imu_in_base_xyz=imu_vec
     )
     arrays.update(l23_arrays)
 

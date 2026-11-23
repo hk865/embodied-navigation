@@ -293,6 +293,133 @@ class OrientedPlanarBaTests(unittest.TestCase):
         self.assertGreaterEqual(stats["planar_ba_global_runs"], 1)
         self.assertIsNotNone(backend.T_world_odom)
 
+    def test_odom_icp_repair_adopts_immediately_without_single_frame_spike(self) -> None:
+        rng = np.random.default_rng(31)
+        world_cloud = _room_world_cloud(rng)
+        cfg = BackendConfig.from_dict(
+            {
+                "map_voxel_m": 0.15,
+                "odometry_icp_repair_enabled": True,
+                "odometry_robust": True,
+                "confirmations": 2,
+                "loop_max_jump_translation_m": 3.0,
+            }
+        )
+        backend = SlamBackend(cfg)
+        gt_poses = [
+            _make_pose((1.0, 1.0, 0.6)),
+            _make_pose((1.4, 1.0, 0.6)),
+            _make_pose((1.8, 1.0, 0.6)),
+        ]
+        # Frame 2 frontend odom suddenly slips -0.80 m in Z while true pose stays at z=0.6
+        odom_poses = [
+            gt_poses[0].copy(),
+            gt_poses[1].copy(),
+            _make_pose((1.8, 1.0, -0.20)),
+        ]
+        events = []
+        for i, (gt_T, odom_T) in enumerate(zip(gt_poses, odom_poses)):
+            kf = Keyframe(
+                key=(0, i),
+                stamp_ns=int((i + 1) * 1e9),
+                T_odom_body=odom_T,
+                T_body_lidar=np.eye(4, dtype=np.float64),
+                points_lidar=_transform_points(invert(gt_T), world_cloud),
+            )
+            events.append(backend.ingest(kf))
+
+        self.assertTrue(events[2].get("odom_repaired", False))
+        self.assertTrue(events[2]["adopted"], "slip repair must adopt immediately on the repaired frame")
+        est_world = backend.T_world_odom @ odom_poses[2]
+        err_m = float(np.linalg.norm(est_world[:3, 3] - gt_poses[2][:3, 3]))
+        self.assertLess(err_m, 0.05, f"expected < 5 cm online error on repaired frame, got {err_m*100:.1f} cm")
+
+        # Jump gate must still reject out-of-bounds jumps on propose_immediate
+        huge_C = _make_pose((10.0, 0.0, 0.0))
+        self.assertIsNone(backend.admission.propose_immediate(huge_C, odom_poses[2], int(4e9)))
+        self.assertGreaterEqual(len(backend.admission.rejections), 1)
+
+    def test_p0_audit_fixes_z_priors_nan_gate_self_loop_finalize_snapshot(self) -> None:
+        from embodied_navigation.localization_mapping.backend.correction import CorrectionAdmission
+        from embodied_navigation.localization_mapping.backend.evaluation import replay_backend
+
+        # P0-7: NaN pose must be rejected by CorrectionAdmission (propose & propose_immediate)
+        adm = CorrectionAdmission(confirmations=2, max_jump_translation_m=1.0, max_jump_rotation_rad=0.35)
+        nan_C = np.eye(4, dtype=np.float64)
+        nan_C[0, 3] = float("nan")
+        self.assertIsNone(adm.propose_immediate(nan_C, np.eye(4), int(1e9), reference_C=np.eye(4)))
+        self.assertIsNone(adm.current)
+        self.assertEqual(len(adm.rejections), 1)
+
+        # P0-8: Pure-Python PoseGraph handles 2-node empty-factor graph & self-loop safely
+        pg_empty = PoseGraph()
+        pg_empty.add_node((0, 0), np.eye(4))
+        pg_empty.add_node((0, 1), _make_pose((1.0, 0.0, 0.0)))
+        pg_empty.add_edge((0, 1), (0, 1), _make_pose((0.1, 0.0, 0.0)), np.eye(6))
+        summary_py = pg_empty.optimize(5, use_cpp=False)
+        self.assertTrue(summary_py["converged"])
+
+        # P0-4: Planar BA preserves PoseGraph z_priors instead of dropping them
+        if get_accel_lib() is not None:
+            rng = np.random.default_rng(41)
+            world_cloud = _room_world_cloud(rng)
+            pg = PoseGraph()
+            gt_p = [_make_pose((0.5 + 0.4 * i, 0.6, 0.6)) for i in range(4)]
+            pts_b = [_transform_points(invert(T), world_cloud) for T in gt_p]
+            loose = np.diag([10.0, 10.0, 10.0, 500.0, 500.0, 500.0])
+            for i, T in enumerate(gt_p):
+                est = T.copy() if i == 0 else (T @ _make_pose((0.0, 0.0, 0.08)))
+                pg.add_node((0, i), est)
+                if i > 0:
+                    pg.add_edge((0, i - 1), (0, i), invert(gt_p[i - 1]) @ gt_p[i], loose)
+                    pg.add_z_prior((0, i), 0.60, 0.005, robust=False)
+            res = refine_poses_oriented_planar_ba(pg, pts_b, voxel_m=1.0, plane_sigma_m=0.05, outer_rounds=2, inner_iterations=8)
+            self.assertTrue(res.used_cpp)
+            for i in range(1, 4):
+                self.assertAlmostEqual(res.poses[i][2, 3], 0.60, delta=0.015)
+
+            # P0-1 & P0-3 & P0-6: finalize appends matching snapshot, keeps admission consistent,
+            # and replay_backend survives frame-0 error without np.stack([]) crash.
+            cfg = BackendConfig.from_dict(
+                {
+                    "map_voxel_m": 0.15,
+                    "planar_ba_enabled": True,
+                    "planar_ba_voxel_m": 1.0,
+                    "planar_ba_sigma_m": 0.02,
+                }
+            )
+            be = SlamBackend(cfg)
+            kfs = []
+            for i, T in enumerate(gt_p):
+                odom_T = T if i == 0 else (T @ _make_pose((0.03 * i, -0.02 * i, 0.04 * (1 if i % 2 else -1))))
+                kfs.append(
+                    Keyframe(
+                        key=(0, i),
+                        stamp_ns=int((i + 1) * 1e9),
+                        T_odom_body=odom_T,
+                        T_body_lidar=np.eye(4),
+                        points_lidar=pts_b[i],
+                    )
+                )
+            rec = replay_backend(be, kfs)
+            # Final snapshot must match final_poses after finalize()
+            np.testing.assert_allclose(rec.snapshot_pos[-1], rec.final_poses[:, :3, 3].astype(np.float32), atol=1e-4)
+            # Second finalize() on unchanged graph is idempotent
+            self.assertFalse(be.finalize()["ran"])
+
+            # P0-6: Frame 0 fails (empty cloud) -> replay_backend does not crash
+            be_err = SlamBackend(BackendConfig())
+            bad_kf0 = Keyframe(
+                key=(0, 0),
+                stamp_ns=int(1e9),
+                T_odom_body=np.eye(4),
+                T_body_lidar=np.eye(4),
+                points_lidar=np.empty((0, 3), dtype=np.float64),
+            )
+            rec_err = replay_backend(be_err, [bad_kf0, kfs[1]])
+            self.assertEqual(rec_err.errors, 1)
+            self.assertEqual(rec_err.missing_graph_nodes, 1)
+
     def test_backend_finalize_runs_planar_ba_and_updates_stats(self) -> None:
         if get_accel_lib() is None:
             self.skipTest("C++ accelerator unavailable")

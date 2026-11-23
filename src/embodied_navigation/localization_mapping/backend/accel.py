@@ -30,7 +30,8 @@ _LIB: ctypes.CDLL | None = None
 
 _DOUBLE_PTR = ctypes.POINTER(ctypes.c_double)
 _INT_PTR = ctypes.POINTER(ctypes.c_int)
-_MAX_CPP_COUNT = 2_000_000_000
+# 限制单次传入 C ABI 的最大元素数，防止 3*N / 16*N / 36*E 在 int32 域溢出。
+_MAX_CPP_COUNT = 50_000_000
 
 
 def _cache_dir() -> Path:
@@ -122,14 +123,15 @@ def _bind_signatures(lib: ctypes.CDLL) -> None:
 
     lib.cpp_run_oriented_planar_ba.argtypes = [
         _DOUBLE_PTR, ctypes.c_int, ctypes.c_int,
-        _DOUBLE_PTR, _INT_PTR,
+        _DOUBLE_PTR, ctypes.c_int, _INT_PTR,
         _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
         _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
         _DOUBLE_PTR,
+        _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR, _INT_PTR, ctypes.c_int,
         ctypes.c_double, ctypes.c_int, ctypes.c_double, ctypes.c_double,
         ctypes.c_double, ctypes.c_double, ctypes.c_int,
         ctypes.c_double, ctypes.c_double, ctypes.c_int, ctypes.c_int,
-        _INT_PTR, _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR,
+        _INT_PTR, _INT_PTR, _INT_PTR, _INT_PTR, _DOUBLE_PTR, _DOUBLE_PTR,
     ]
     lib.cpp_run_oriented_planar_ba.restype = None
 
@@ -404,6 +406,7 @@ def cpp_run_oriented_planar_ba(
     points_body_list: list[np.ndarray],
     edges: list[tuple[int, int, np.ndarray, np.ndarray, bool]],
     gravity_priors: list[tuple[int, np.ndarray, float, bool]],
+    z_priors: list[tuple[int, float, float, bool]] = (),
     *,
     n_fixed: int = 1,
     gravity_world: np.ndarray | None = None,
@@ -419,6 +422,7 @@ def cpp_run_oriented_planar_ba(
     outer_rounds: int = 2,
     inner_iterations: int = 8,
 ) -> tuple[list[np.ndarray], dict] | None:
+    """调用 C++17 定向 3D 平面 BA 求解器（Matrix-Free 隐式 Schur 补 + 位姿图预处理 PCG）。"""
     n_nodes = len(poses)
     if n_nodes != len(points_body_list):
         raise ValueError(
@@ -447,6 +451,8 @@ def cpp_run_oriented_planar_ba(
     ):
         if isinstance(val, bool) or not isinstance(val, (int, np.integer)) or int(val) < lo:
             raise ValueError(f"{name} must be an integer >= {lo}, got {val!r}")
+    if n_nodes > 0 and int(n_fixed) > n_nodes:
+        raise ValueError(f"n_fixed ({n_fixed}) cannot exceed n_nodes ({n_nodes})")
 
     validated_poses = [_validate_matrix_array(p, (4, 4), f"poses[{i}]") for i, p in enumerate(poses)]
     validated_pts = [_validate_points_array(pts, f"points_body_list[{i}]") for i, pts in enumerate(points_body_list)]
@@ -497,6 +503,31 @@ def cpp_run_oriented_planar_ba(
         gb = np.zeros((1, 3), dtype=np.float64)
         gw = np.zeros(1, dtype=np.float64)
 
+    z_list = list(z_priors)
+    n_zp = len(z_list)
+    if n_zp > _MAX_CPP_COUNT:
+        raise ValueError(f"z_priors exceeds maximum count {_MAX_CPP_COUNT}: {n_zp}")
+    if n_zp > 0:
+        zn_list, zt_list, zw_list, zr_list = [], [], [], []
+        for idx, (ni, target_z, weight, robust) in enumerate(z_list):
+            zn_list.append(_validate_node_index(ni, n_nodes, f"z_priors[{idx}].node"))
+            tz = float(target_z)
+            w = float(weight)
+            if not math.isfinite(tz):
+                raise ValueError(f"z_priors[{idx}].target_z must be finite, got {target_z!r}")
+            if not math.isfinite(w) or w < 0.0:
+                raise ValueError(f"z_priors[{idx}].weight must be finite and >= 0, got {weight!r}")
+            zt_list.append(tz)
+            zw_list.append(w)
+            zr_list.append(1 if robust else 0)
+        zn = np.ascontiguousarray(zn_list, dtype=np.int32)
+        zt = np.ascontiguousarray(zt_list, dtype=np.float64)
+        zw = np.ascontiguousarray(zw_list, dtype=np.float64)
+        zr = np.ascontiguousarray(zr_list, dtype=np.int32)
+    else:
+        zn = zr = np.zeros(1, dtype=np.int32)
+        zt = zw = np.zeros(1, dtype=np.float64)
+
     gw_vec = (
         _validate_matrix_array(gravity_world, (3,), "gravity_world")
         if gravity_world is not None
@@ -511,6 +542,7 @@ def cpp_run_oriented_planar_ba(
             "converged": True,
             "clusters_used": 0,
             "obs_used": 0,
+            "accepted_steps": 0,
             "error_before": 0.0,
             "error_after": 0.0,
         }
@@ -528,29 +560,33 @@ def cpp_run_oriented_planar_ba(
     out_conv = ctypes.c_int(0)
     out_clusters = ctypes.c_int(0)
     out_obs = ctypes.c_int(0)
+    out_accepted = ctypes.c_int(0)
     out_before = ctypes.c_double(0.0)
     out_after = ctypes.c_double(0.0)
 
     lib.cpp_run_oriented_planar_ba(
         poses_arr.ctypes.data_as(_DOUBLE_PTR), n_nodes, int(n_fixed),
-        all_pts.ctypes.data_as(_DOUBLE_PTR), offsets.ctypes.data_as(_INT_PTR),
+        all_pts.ctypes.data_as(_DOUBLE_PTR), int(total_pts), offsets.ctypes.data_as(_INT_PTR),
         ea.ctypes.data_as(_INT_PTR), eb.ctypes.data_as(_INT_PTR),
         eZ.ctypes.data_as(_DOUBLE_PTR), eI.ctypes.data_as(_DOUBLE_PTR),
         eR.ctypes.data_as(_INT_PTR), n_edges,
         gn.ctypes.data_as(_INT_PTR), gb.ctypes.data_as(_DOUBLE_PTR),
         gw.ctypes.data_as(_DOUBLE_PTR), gr.ctypes.data_as(_INT_PTR), n_grav,
         gw_vec.ctypes.data_as(_DOUBLE_PTR),
+        zn.ctypes.data_as(_INT_PTR), zt.ctypes.data_as(_DOUBLE_PTR),
+        zw.ctypes.data_as(_DOUBLE_PTR), zr.ctypes.data_as(_INT_PTR), n_zp,
         float(ba_voxel_m), int(min_frame_pts), float(plane_ratio_max), float(plane_thickness_max_m),
         float(min_normal_cos), float(max_plane_offset_m), int(max_frames_per_cluster),
         float(plane_sigma_m), float(cauchy_scale), int(outer_rounds), int(inner_iterations),
         ctypes.byref(out_conv), ctypes.byref(out_clusters), ctypes.byref(out_obs),
-        ctypes.byref(out_before), ctypes.byref(out_after),
+        ctypes.byref(out_accepted), ctypes.byref(out_before), ctypes.byref(out_after),
     )
     updated = [poses_arr[i].copy() for i in range(n_nodes)]
     return updated, {
         "converged": bool(out_conv.value),
         "clusters_used": int(out_clusters.value),
         "obs_used": int(out_obs.value),
+        "accepted_steps": int(out_accepted.value),
         "error_before": float(out_before.value),
         "error_after": float(out_after.value),
     }

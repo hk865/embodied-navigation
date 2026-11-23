@@ -583,6 +583,8 @@ class SlamBackend:
         self._last_gravity_opt_count: int = 0
         self._last_window_ba_nodes: int = 0
         self._last_global_ba_nodes: int = 0
+        self._graph_version: int = 0
+        self._finalized_graph_version: int | None = None
         self._prev_odom_check_pts: tuple[object, np.ndarray] | None = None
         self._zupt_anchor_kf: Keyframe | None = None
         self._zupt_recovery_anchor: Keyframe | None = None
@@ -680,22 +682,24 @@ class SlamBackend:
         )
         return stats
 
+    def _node_points_body(self, node_idx: int) -> np.ndarray:
+        """按图节点下标懒加载单帧 body 系点云（供滑窗 BA 避免全图拷贝）。"""
+        key = self.graph.keys[node_idx]
+        if key in self.map.keyframes:
+            return self.map.keyframes[key].points_body()
+        return np.empty((0, 3), dtype=np.float64)
+
     def _graph_points_body_list(self) -> list[np.ndarray]:
-        return [
-            self.map.keyframes[key].points_body()
-            if key in self.map.keyframes
-            else np.empty((0, 3), dtype=np.float64)
-            for key in self.graph.keys
-        ]
+        return [self._node_points_body(i) for i in range(len(self.graph.keys))]
 
     def refine_planar_ba(
         self,
         *,
         outer_rounds: int | None = None,
         inner_iterations: int | None = None,
-        update_correction: bool = True,
+        update_correction: bool = False,
     ) -> PlanarBaResult:
-        """Run oriented-normal 3D planar BA on the full pose graph and update poses."""
+        """对全图执行法向定向 3D 平面 BA，并仅在实际降低代价时提交图与地图位姿。"""
         c = self.config
         result = refine_poses_oriented_planar_ba(
             self.graph,
@@ -717,12 +721,20 @@ class SlamBackend:
         self._stats["planar_ba_clusters"] = int(result.clusters_used)
         self._stats["planar_ba_obs"] = int(result.obs_used)
         self._stats["planar_ba_wall_s"] = float(self._stats["planar_ba_wall_s"]) + float(result.wall_s)
-        if result.used_cpp and result.clusters_used > 0 and len(result.poses) == len(self.graph.poses):
+        committed = (
+            result.used_cpp
+            and result.clusters_used > 0
+            and result.accepted_steps > 0
+            and len(result.poses) == len(self.graph.poses)
+        )
+        if committed:
             self.graph.poses = [p.copy() for p in result.poses]
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+            self._graph_version += 1
             if update_correction and self._previous is not None and self._previous.key in self.graph.index:
-                T_world_body = self.graph.pose(self._previous.key)
-                self._correction = T_world_body @ invert(self._previous.T_odom_body)
+                # 统一经由 CorrectionAdmission 发布，保持 admission.current 与 _correction 严格一致。
+                C_new = self.graph.pose(self._previous.key) @ invert(self._previous.T_odom_body)
+                self._propose(C_new, self._previous)
         return result
 
     def refine_window_planar_ba(
@@ -732,12 +744,12 @@ class SlamBackend:
         outer_rounds: int = 1,
         inner_iterations: int | None = None,
     ) -> PlanarBaResult:
-        """Run fast online sliding-window oriented planar BA on the newest keyframes."""
+        """对最新关键帧窗口执行低延迟在线定向平面 BA（按需懒加载窗口内点云）。"""
         c = self.config
         win = c.planar_ba_window_size if window_size is None else int(window_size)
         updated_map, result = refine_window_oriented_planar_ba(
             self.graph,
-            self._graph_points_body_list(),
+            self._node_points_body,
             win,
             voxel_m=c.planar_ba_voxel_m,
             min_frame_pts=c.planar_ba_min_frame_pts,
@@ -756,25 +768,33 @@ class SlamBackend:
         self._stats["planar_ba_clusters"] = int(result.clusters_used)
         self._stats["planar_ba_obs"] = int(result.obs_used)
         self._stats["planar_ba_wall_s"] = float(self._stats["planar_ba_wall_s"]) + float(result.wall_s)
-        if result.used_cpp and result.clusters_used > 0 and updated_map:
+        if result.used_cpp and result.clusters_used > 0 and result.accepted_steps > 0 and updated_map:
             pose_updates = {}
             for node_idx, pose in updated_map.items():
                 self.graph.poses[node_idx] = pose.copy()
                 pose_updates[self.graph.keys[node_idx]] = pose
             self.map.update_poses(pose_updates)
+            self._graph_version += 1
         return result
 
     def finalize(self) -> dict:
-        """Run optional end-of-session refinement (oriented planar BA when enabled)."""
+        """会话结束时执行一次幂等的终局全局定向平面 BA（不越权绕过准入门修改在线 C）。"""
         if self.prior is not None or not self.config.planar_ba_enabled or len(self.graph.keys) <= 1:
-            return {"ran": False}
-        result = self.refine_planar_ba()
+            return {"ran": False, "committed": False}
+        if self._finalized_graph_version == self._graph_version:
+            return {"ran": False, "committed": False, "already_finalized": True}
+        result = self.refine_planar_ba(update_correction=False)
+        committed = bool(result.used_cpp and result.clusters_used > 0 and result.accepted_steps > 0)
+        if result.used_cpp:
+            self._finalized_graph_version = self._graph_version
         return {
-            "ran": True,
+            "ran": result.used_cpp,
             "used_cpp": result.used_cpp,
+            "committed": committed,
             "converged": result.converged,
             "clusters_used": result.clusters_used,
             "obs_used": result.obs_used,
+            "accepted_steps": result.accepted_steps,
             "error_before": result.error_before,
             "error_after": result.error_after,
             "wall_s": result.wall_s,
@@ -810,7 +830,9 @@ class SlamBackend:
     # Mapping mode -------------------------------------------------------
 
     def _map_step(self, keyframe: Keyframe, desc: np.ndarray) -> dict:
-        zupt_mode, _ = self._add_node(keyframe)
+        prev_kf = self._previous
+        zupt_mode, delta_use, odom_repaired = self._add_node(keyframe)
+        self._graph_version += 1
         self._current_visual_pair = self.visual_index.extract(keyframe) if self.visual_index is not None else None
         self._current_color_desc = self.color_index.compute(keyframe) if self.color_index is not None else None
         try:
@@ -834,6 +856,7 @@ class SlamBackend:
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
             self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+            self._graph_version += 1
             optimized = True
         elif (
             self.config.gravity_optimize_every > 0
@@ -843,6 +866,7 @@ class SlamBackend:
             self.graph.optimize(self.config.optimize_iterations)
             self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
             self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+            self._graph_version += 1
             optimized = True
         if self.config.planar_ba_enabled and len(self.graph.keys) >= 4:
             n_nodes = len(self.graph.keys)
@@ -861,9 +885,10 @@ class SlamBackend:
                     update_correction=False,
                 )
                 self._last_global_ba_nodes = n_nodes
-                self._last_window_ba_nodes = n_nodes
                 if ba_res.used_cpp and ba_res.clusters_used > 0:
-                    optimized = True
+                    self._last_window_ba_nodes = n_nodes
+                    if ba_res.accepted_steps > 0:
+                        optimized = True
             elif (
                 c.planar_ba_every > 0
                 and c.planar_ba_window_size > 1
@@ -876,18 +901,35 @@ class SlamBackend:
                     inner_iterations=c.planar_ba_online_iterations,
                 )
                 self._last_window_ba_nodes = n_nodes
-                if ba_res.used_cpp and ba_res.clusters_used > 0:
+                if ba_res.used_cpp and ba_res.clusters_used > 0 and ba_res.accepted_steps > 0:
                     optimized = True
         if self._correction is None:
             self._correction = np.eye(4)
         C_graph = self.graph.pose(keyframe.key) @ invert(keyframe.T_odom_body)
-        if zupt_mode is not None and not optimized:
+        if odom_repaired and prev_kf is not None:
+            # 仅基于“已发布 C + 经前后帧点云 ICP 验证的局部相对运动 delta_use”构造即时修复候选，
+            # 杜绝把同帧未经多帧确认的回环/BA 图修正夹带进单帧即时采纳通道。
+            C_local_repair = (self._correction @ prev_kf.T_odom_body @ delta_use) @ invert(keyframe.T_odom_body)
+            status = self._propose_immediate(C_local_repair, keyframe)
+            if optimized:
+                dt_opt, dr_opt = pose_difference(
+                    C_local_repair @ keyframe.T_odom_body, C_graph @ keyframe.T_odom_body
+                )
+                if dt_opt > 1e-4 or dr_opt > 1e-4:
+                    opt_status = self._propose(C_graph, keyframe)
+                    if opt_status == "pending":
+                        self.admission.seed_anchored(C_graph, keyframe.T_odom_body, keyframe.stamp_ns)
+        elif zupt_mode is not None and not optimized:
             status = self._propose_anchored(C_graph, keyframe)
         else:
             status = self._propose(C_graph, keyframe)
             if optimized and status == "pending":
                 self.admission.seed_anchored(C_graph, keyframe.T_odom_body, keyframe.stamp_ns)
         event = {"loop": loop_key is not None, "loop_key": loop_key, "adopted": status == "adopted"}
+        if optimized:
+            event["graph_optimized"] = True
+        if odom_repaired:
+            event["odom_repaired"] = True
         if zupt_mode is not None:
             event["zupt"] = zupt_mode
         if rejected is not None:
@@ -1168,11 +1210,12 @@ class SlamBackend:
         self._stats["odometry_icp_repaired"] += 1
         return best_T, True
 
-    def _add_node(self, keyframe: Keyframe) -> tuple[str | None, np.ndarray]:
+    def _add_node(self, keyframe: Keyframe) -> tuple[str | None, np.ndarray, bool]:
         """Node at the previous optimised pose composed with the odometry (or ZUPT) delta."""
         c = self.config
         previous = self._previous
         zupt_mode: str | None = None
+        odom_repaired = False
         delta_use = np.eye(4, dtype=np.float64)
         floor_meas: FloorPlaneMeasurement | None = None
         if (
@@ -1263,6 +1306,7 @@ class SlamBackend:
                         floor_meas,
                     )
                     if repaired:
+                        odom_repaired = True
                         step_dist = float(np.linalg.norm(delta_use[:3, 3]))
                 if c.floor_plane_enabled and floor_meas is not None and parent_key == previous.key:
                     parent_floor = self._floor_measurements.get(parent_key)
@@ -1334,7 +1378,7 @@ class SlamBackend:
             self._stats["floor_gravity_priors_added"] += 1
         self._previous = keyframe
         self._up_body[keyframe.key] = up_body
-        return zupt_mode, delta_use
+        return zupt_mode, delta_use, odom_repaired
 
     def _odometry_inconsistency(self, key, keyframe: Keyframe, T_world_body: np.ndarray) -> str | None:
         """Reason why a loop match disagrees with the graph estimate, or None.
@@ -2038,6 +2082,17 @@ class SlamBackend:
         """Offer a ZUPT-anchored C through CorrectionAdmission's window and jump gate."""
         rejections = len(self.admission.rejections)
         adopted = self.admission.propose_anchored(
+            C, keyframe.T_odom_body, keyframe.stamp_ns, reference_C=self._correction
+        )
+        if adopted is not None:
+            self._correction = adopted
+            return "adopted"
+        return "rejected" if len(self.admission.rejections) > rejections else "pending"
+
+    def _propose_immediate(self, C: np.ndarray, keyframe: Keyframe) -> str:
+        """Immediately adopt a geometrically verified odometry-repair C behind the jump gate."""
+        rejections = len(self.admission.rejections)
+        adopted = self.admission.propose_immediate(
             C, keyframe.T_odom_body, keyframe.stamp_ns, reference_C=self._correction
         )
         if adopted is not None:
