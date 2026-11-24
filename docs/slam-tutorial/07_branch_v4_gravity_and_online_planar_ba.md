@@ -69,7 +69,7 @@ $$
 ### 3.3 为什么能提速 722×：Matrix-Free 隐式 Schur 补 + 位姿图预处理 PCG
 如果把 $-B_c D_c^{-1} B_c^\top$ 显式展开成 $m\times m$ 两两耦合块塞进稀疏矩阵并用 `SimplicialLDLT` 直接分解，室内反复重访会让图的树宽暴涨，Cholesky 填充呈 $O(N^3)$（1,916 帧的 `D4` 需要 **1,314 秒 / 22 分钟**）。
 
-在 [slam_backend_accel.cpp](file:///home/hyh001/projects/1.Project/embodied-navigation/src/embodied_navigation/localization_mapping/backend/_cpp/slam_backend_accel.cpp#L1190-L1445) 中，我们改为**完全数学等价、零精度损失**的隐式求解：
+在 [slam_backend_accel.cpp](../../src/embodied_navigation/localization_mapping/backend/_cpp/slam_backend_accel.cpp#L1190-L1445) 中，我们改为**完全数学等价、零精度损失**的隐式求解：
 1. 只向稀疏矩阵 $M_{\text{damped}} = H_{\text{graph}} + H_{\text{diag,BA}} + \lambda D_{\text{damp}}$ 写入位姿图边与块对角 $H_{ii}$（零 $O(m^2)$ 填充，`SimplicialLDLT` 分解只需 `< 2 ms`）；
 2. 用 $M_{\text{damped}}^{-1}$ 作预处理器跑共轭梯度（PCG），每步矩阵-向量乘 $y = (M_{\text{damped}} - S)v$ 用结合律拆成两次 $O(m)$ 扫描：
    ```text
@@ -121,17 +121,53 @@ flowchart LR
 
 ---
 
-## 5. 关键配置参数速查（[slam_combined_lidar_gravity_ba.json](file:///home/hyh001/projects/1.Project/embodied-navigation/configs/localization_mapping/slam_combined_lidar_gravity_ba.json)）
+## 5. 关键配置参数速查（室内 [slam_combined_lidar_gravity_ba.json](../../configs/localization_mapping/slam_combined_lidar_gravity_ba.json) / 室外 [slam_combined_lidar_ba_outdoor.json](../../configs/localization_mapping/slam_combined_lidar_ba_outdoor.json)）
 
-| 参数 | 默认推荐值 | 物理与数值含义 |
-|---|---|---|
-| `floor_gravity_world_calibration` | `true` | 用 `kf_0` 实测地面法向标定全局重力轴 $g_w$ |
-| `gravity_optimize_every` | `10` | 开环期间每新增 10 个地板法向重力先验自动调平一次 |
-| `planar_ba_enabled` | `true` | 开启法向定向 3D 平面 BA |
-| `planar_ba_voxel_m` | `1.0` | 匹配 `map_voxel_m=0.2 m` 的平面体素尺寸（单面约 25 点，PCA 极稳） |
-| `planar_ba_min_normal_cos` | `0.85` | 有向法向夹角余弦门控（$\approx 31.8^\circ$，彻底隔离薄楼板/薄隔墙异面） |
-| `planar_ba_max_offset_m` | `0.15` | 同向平行面合并距离上限 |
-| `planar_ba_sigma_m` | `0.03` | 平面厚度观测噪声标准差（3 cm） |
-| `planar_ba_window_size` / `planar_ba_every` | `30` / `10` | 在线滑窗 BA 窗口大小与触发间隔（移动帧每 10 帧一次，~5 ms） |
-| `planar_ba_global_every` | `50` | 在线 1 轮全局 Matrix-Free PCG BA 周期（回环满半周期 25 帧可提前触发） |
-| `planar_ba_outer_rounds` / `planar_ba_iterations` | `2` / `8` | 终局 `finalize()` 的外轮重新聚类次数与内轮 LM 迭代上限 |
+| 参数 | 室内默认 | 室外默认 | 物理与数值含义 |
+|---|---|---|---|
+| `floor_gravity_world_calibration` | `true` | **`false`** | 用 `kf_0` 实测地面法向标定全局重力轴 $g_w$（室外斜坡场景必须关闭） |
+| `floor_plane_enabled` / `floor_normal_gravity_enabled` | `true` | **`false`** | 室内平地共面约束与地板法向重力先验（室外坡道会引入系统倾角偏置） |
+| `floor_normal_graph_sigma_rad` | `0.02` | **`null`** | 地板法向重力图因子标准差（室外关闭） |
+| `gravity_optimize_every` | `10` | `0` | 仅在关闭在线平面 BA 时启用；开启在线平面 BA 时自动让位给统一 $E_{\text{PGO+BA}}$ 求解器 |
+| `planar_ba_enabled` | `true` | `true` | 开启法向定向 3D 平面 BA |
+| `planar_ba_voxel_m` | `1.0` | `1.0` | 匹配 `map_voxel_m=0.2 m` 的平面体素尺寸（单面约 25 点，PCA 极稳） |
+| `planar_ba_min_normal_cos` | `0.85` | `0.85` | 有向法向夹角余弦门控（$\approx 31.8^\circ$，彻底隔离薄楼板/薄隔墙异面） |
+| `planar_ba_max_offset_m` | `0.15` | `0.15` | 同向平行面合并距离上限 |
+| `planar_ba_sigma_m` | `0.03` | `0.03` | 平面厚度观测噪声标准差（3 cm） |
+| `planar_ba_window_size` / `planar_ba_every` | `30` / `10` | `30` / `10` | 在线滑窗 BA 窗口大小与触发间隔（移动帧每 10 帧一次，~5 ms） |
+| `planar_ba_global_every` | `50` | `50` | 在线 1 轮全局 Matrix-Free PCG BA 周期（回环满半周期 25 帧可提前触发） |
+| `planar_ba_outer_rounds` / `planar_ba_iterations` | `2` / `8` | `2` / `8` | 终局 `finalize()` 的外轮重新聚类次数与内轮 LM 迭代上限 |
+
+---
+
+## 6. 统一在线目标函数（去抖动修复）与大尺度两层实机验证
+
+在 `343.72 m / 2,460 KF`（61.5 m 纵深两层建筑、实机带噪 IMU + FAST-LIVO2 ±30 m 滑窗）长轨迹实测中，我们发现初版在线调度存在**“纯 PGO ↔ 联合平面 BA”双目标函数交替覆盖**：每当 Global BA 将全图拉至 `3–5 cm` 后，紧随其后的小残差回环或 `gravity_optimize_every=10` 会调用不含平面项的裸 `PoseGraph.optimize()`，把 2,460 个节点一把拉回纯 PGO 的 `14–18 cm` 极小值点，反复乒乓累加出 `13.67 m` 历史修订抖动。
+
+**修复方案（统一目标函数 $E_{\text{PGO+BA}}$）**：
+1. 只要配置了在线 Planar BA，自动屏蔽独立的 `gravity_optimize_every` 裸 PGO 覆盖（滑窗与全局 BA 内部已完整包含全部重力与位姿图因子）；
+2. 新回环到来时，仅当回环残差超出体素聚类吸引域（平移 `> 0.35 * voxel_m` 或旋转 `> 0.10 rad`）才先跑一次纯 PGO 拉近拓扑初值，且**在同一帧内必跟一次全局 Planar BA**；小残差回环则直接交由全局/滑窗联合 BA 低抖动吸收。
+
+| 指标（`343.72 m` 两层实机带噪 IMU，`2,460` KFs） | 前端基线 | 修复前（双目标打架） | **修复后（统一 $E_{\text{PGO+BA}}$）** |
+|---|---:|---:|---:|
+| **Umeyama `online_adopted` 3D ATE** | `2.40 cm` | `8.56 cm` (`max 30.80`) | **`2.68 cm`** (`max 15.46`，**↓ 68.7%**) |
+| **Umeyama `final` 3D ATE / Z Max** | `2.40 cm` / `11.44 cm` | `2.49 cm` / `6.96 cm` | **`2.02 cm`** / **`5.92 cm`** |
+| **Init-SE3 `online_adopted` / `final` ATE** | `9.69 cm` | `11.52 cm` / `11.02 cm` | **`8.80 cm`** / **`6.62 cm`**（**↓ 39.9%**) |
+| **Layer 2 `peak_ATE` / 负向回环数** | — | `18.28 cm` / `20` 次 | **`10.82 cm`** / **`3` 次**（**↓ 85%**) |
+| **Layer 3 `max_shift` / `max_cum_jitter`** | — | `47.52 cm` / `13.67 m` | **`14.50 cm`** / **`1.52 m`**（**↓ 88.9%**) |
+
+---
+
+## 7. 真实室外泛化验证（R3LIVE + M3DGR）与室内外配置分流
+
+我们在真实户外公开数据集 **R3LIVE-Dataset**（70° 前视 Livox Avia，4 条 Return-to-Origin 室外序列合计 >1 km）与 **M3DGR**（360° 倾角 30° 安装 Livox Mid360，含室外行人与车辆及逐帧 RTK/VRPN 真值）上验证了同一套统一 V4 后端代码：
+
+1. **为什么必须分流室外配置**：室内配置中的 `floor_gravity_world_calibration=true` 与 `floor_plane_enabled=true` 假设起跑地面与行走地面水平；在 **7–8 m 坡度起伏的室外公园**（`hku_park_00/01`）中，把斜坡法向当成世界重力方向会导致在线漂移飙升至 `89–350 cm`。关闭这组室内平地先验（即 [slam_combined_lidar_ba_outdoor.json](../../configs/localization_mapping/slam_combined_lidar_ba_outdoor.json)）后，**零代码改动**即在全部室外序列实现稳定收敛与大幅精度提升：
+
+| 数据集 / 序列（场景与真值类型） | 里程 / 高差 | 前端基线 (FAST-LIVO2 LIO) | **V4 室外配置在线 / 终盘** | 核心收益 |
+|---|---:|---:|---:|---|
+| **R3LIVE `hku_campus_seq_02`**（校园闭环） | `332 m` / `1.3 m` | 闭合 `28.23 cm` (`Z 1.80`) | 在线 **`6.33 cm`** / 终盘 **`5.29 cm`** (`Z 0.03 cm`) | 闭合漂移 **↓ 81%**，地图平面锐度 `1.56 → 1.28 cm` |
+| **R3LIVE `hku_park_00`**（公园树林斜坡） | `209 m` / `7.2 m` | 闭合 `2.19 cm` (`Z 0.48`) | 在线 **`2.52 cm`** (`Z 0.06`) / 终盘 **`3.25 cm`** | 彻底消除室内平地先验导致的 `89.4 cm` 坡度发散 |
+| **R3LIVE `hku_park_01`**（长环公园斜坡，实测放回偏移 `56.8 cm`） | `350 m` / `8.1 m` | 闭合 `107.18 cm` (**`Z 76.48`**) | 在线 **`53.29 cm`** (`Z 0.36`) / 终盘 **`53.39 cm`** (**`Z 0.12 cm`**) | Z 轴漂移压降 **>600×**，消除 `349.8 cm` 坡度发散 |
+| **M3DGR `Dynamic01`**（室内动态行人，VRPN 逐帧 GT） | `69 m` | 3D ATE `2.46 m` (`Z 1.88 cm`) | 在线 **`1.45 m`** / 终盘 **`0.97 m`** (**`Z 0.76 cm`**) | 动态行人遮挡下 3D ATE **↓ 60.6%**，`36` 次零误配回环 |
+| **M3DGR `Dynamic03`**（室外行人+车辆，RTK 逐帧 GT） | `219 m` | 3D ATE `4.61 m` (`Z 10.88 cm`) | 在线 **`4.20 m`** / 终盘 **`1.79 m`** (**`Z 7.95 cm`**) | 室外动态车流下 3D ATE **↓ 61.2%**，`7` 回环 BA 仅 `1.46 s` |
