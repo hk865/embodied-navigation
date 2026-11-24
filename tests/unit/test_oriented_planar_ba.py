@@ -459,6 +459,54 @@ class OrientedPlanarBaTests(unittest.TestCase):
         self.assertEqual(stats["planar_ba_runs"], 1)
         self.assertGreater(stats["planar_ba_clusters"], 0)
 
+    def test_online_ba_suppresses_bare_pgo_overwrite(self) -> None:
+        if get_accel_lib() is None:
+            self.skipTest("C++ accelerator unavailable")
+        rng = np.random.default_rng(29)
+        world_cloud = _room_world_cloud(rng)
+        cfg = BackendConfig.from_dict(
+            {
+                "map_voxel_m": 0.15,
+                "floor_plane_enabled": True,
+                "floor_normal_gravity_enabled": True,
+                "floor_normal_graph_sigma_rad": 0.02,
+                "gravity_optimize_every": 2,
+                "planar_ba_enabled": True,
+                "planar_ba_voxel_m": 1.0,
+                "planar_ba_sigma_m": 0.02,
+                "planar_ba_window_size": 5,
+                "planar_ba_every": 2,
+                "planar_ba_global_every": 6,
+                "planar_ba_online_iterations": 6,
+            }
+        )
+        backend = SlamBackend(cfg)
+        pgo_calls = 0
+        orig_opt = backend.graph.optimize
+
+        def _counting_optimize(*args, **kwargs):
+            nonlocal pgo_calls
+            pgo_calls += 1
+            return orig_opt(*args, **kwargs)
+
+        backend.graph.optimize = _counting_optimize  # type: ignore[method-assign]
+        for i in range(8):
+            gt_T = _make_pose((0.5 + 0.35 * i, 0.5 + 0.1 * i, 0.6))
+            odom_T = gt_T if i == 0 else (gt_T @ _make_pose((0.02 * i, -0.01 * i, 0.03)))
+            kf = Keyframe(
+                key=(0, i),
+                stamp_ns=int((i + 1) * 1e9),
+                T_odom_body=odom_T,
+                T_body_lidar=np.eye(4, dtype=np.float64),
+                points_lidar=_transform_points(invert(gt_T), world_cloud),
+            )
+            backend.ingest(kf)
+        # 在线平面 BA 激活期间，gravity_optimize_every 不应触发裸 PGO 覆盖全图
+        self.assertEqual(pgo_calls, 0)
+        stats = backend.observability_stats()
+        self.assertGreaterEqual(stats["planar_ba_global_runs"], 1)
+        self.assertGreaterEqual(stats["planar_ba_window_runs"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

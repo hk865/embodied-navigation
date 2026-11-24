@@ -847,36 +847,104 @@ class SlamBackend:
             self._current_visual_pair = None
             self._current_color_desc = None
         optimized = False
+        c = self.config
+        n_nodes = len(self.graph.keys)
+        online_ba_configured = c.planar_ba_enabled and (
+            c.planar_ba_global_every > 0
+            or (c.planar_ba_every > 0 and c.planar_ba_window_size > 1)
+        )
+        online_global_ba = c.planar_ba_enabled and c.planar_ba_global_every > 0 and n_nodes >= 4
+        online_window_ba = (
+            c.planar_ba_enabled
+            and c.planar_ba_every > 0
+            and c.planar_ba_window_size > 1
+            and n_nodes >= 4
+        )
+        online_ba_active = online_global_ba or online_window_ba
+
         if loop_key is not None:
             self.loop_count += 1
             if self._last_match_visual:
                 self.visual_loops_accepted += 1
                 if self._last_match_visual_only:
                     self.visual_only_loops_accepted += 1
-            self.graph.optimize(self.config.optimize_iterations)
-            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
-            self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
-            self._graph_version += 1
-            optimized = True
-        elif (
-            self.config.gravity_optimize_every > 0
-            and (self._stats["floor_gravity_priors_added"] - self._last_gravity_opt_count)
-            >= self.config.gravity_optimize_every
-        ):
-            self.graph.optimize(self.config.optimize_iterations)
-            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
-            self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
-            self._graph_version += 1
-            optimized = True
-        if self.config.planar_ba_enabled and len(self.graph.keys) >= 4:
-            n_nodes = len(self.graph.keys)
-            c = self.config
-            run_global_ba = c.planar_ba_global_every > 0 and (
-                (n_nodes - self._last_global_ba_nodes) >= c.planar_ba_global_every
-                or (
-                    loop_key is not None
-                    and (n_nodes - self._last_global_ba_nodes) >= max(1, c.planar_ba_global_every // 2)
+            if online_global_ba:
+                # 统一目标函数：仅当新回环残差超出体素聚类吸引域时先运行纯 PGO 拉近拓扑初值，
+                # 随后立即在同一帧内执行联合 3D 平面 BA，杜绝裸 PGO 覆盖已收敛 BA 位姿造成乒乓抖动。
+                need_coarse_pgo = False
+                if self.graph.edges:
+                    a_idx, b_idx, Z_inv, _, _ = self.graph.edges[-1]
+                    loop_dt, loop_dr = pose_difference(
+                        self.graph.poses[a_idx] @ invert(Z_inv),
+                        self.graph.poses[b_idx],
+                    )
+                    need_coarse_pgo = loop_dt > 0.35 * c.planar_ba_voxel_m or loop_dr > 0.10
+                if need_coarse_pgo:
+                    self.graph.optimize(c.optimize_iterations)
+                need_global_for_loop = (
+                    need_coarse_pgo
+                    or not online_window_ba
+                    or (n_nodes - self._last_global_ba_nodes) >= max(1, c.planar_ba_global_every // 2)
                 )
+                if need_global_for_loop:
+                    ba_res = self.refine_planar_ba(
+                        outer_rounds=1,
+                        inner_iterations=c.planar_ba_online_iterations,
+                        update_correction=False,
+                    )
+                    self._last_global_ba_nodes = n_nodes
+                    self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+                    if ba_res.used_cpp and ba_res.clusters_used > 0:
+                        self._last_window_ba_nodes = n_nodes
+                        if ba_res.accepted_steps > 0:
+                            optimized = True
+                        elif need_coarse_pgo:
+                            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+                            self._graph_version += 1
+                            optimized = True
+                    else:
+                        if not need_coarse_pgo:
+                            self.graph.optimize(c.optimize_iterations)
+                        self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+                        self._graph_version += 1
+                        optimized = True
+                else:
+                    # 近期已执行过全局 BA 且新回环残差较小：用滑窗联合 BA（锚定跨窗回环端）低抖动吸收。
+                    ba_res = self.refine_window_planar_ba(
+                        c.planar_ba_window_size,
+                        outer_rounds=1,
+                        inner_iterations=c.planar_ba_online_iterations,
+                    )
+                    self._last_window_ba_nodes = n_nodes
+                    self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+                    if ba_res.used_cpp and ba_res.clusters_used > 0:
+                        if ba_res.accepted_steps > 0:
+                            optimized = True
+                    else:
+                        self.graph.optimize(c.optimize_iterations)
+                        self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+                        self._graph_version += 1
+                        optimized = True
+            else:
+                self.graph.optimize(c.optimize_iterations)
+                self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+                self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+                self._graph_version += 1
+                optimized = True
+        elif (
+            not online_ba_configured
+            and c.gravity_optimize_every > 0
+            and (self._stats["floor_gravity_priors_added"] - self._last_gravity_opt_count)
+            >= c.gravity_optimize_every
+        ):
+            self.graph.optimize(c.optimize_iterations)
+            self.map.update_poses({key: self.graph.pose(key) for key in self.graph.keys})
+            self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
+            self._graph_version += 1
+            optimized = True
+        elif online_ba_active:
+            run_global_ba = online_global_ba and (
+                (n_nodes - self._last_global_ba_nodes) >= c.planar_ba_global_every
             )
             if run_global_ba:
                 ba_res = self.refine_planar_ba(
@@ -885,13 +953,13 @@ class SlamBackend:
                     update_correction=False,
                 )
                 self._last_global_ba_nodes = n_nodes
+                self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
                 if ba_res.used_cpp and ba_res.clusters_used > 0:
                     self._last_window_ba_nodes = n_nodes
                     if ba_res.accepted_steps > 0:
                         optimized = True
             elif (
-                c.planar_ba_every > 0
-                and c.planar_ba_window_size > 1
+                online_window_ba
                 and zupt_mode is None
                 and (n_nodes - self._last_window_ba_nodes) >= c.planar_ba_every
             ):
@@ -901,6 +969,7 @@ class SlamBackend:
                     inner_iterations=c.planar_ba_online_iterations,
                 )
                 self._last_window_ba_nodes = n_nodes
+                self._last_gravity_opt_count = self._stats["floor_gravity_priors_added"]
                 if ba_res.used_cpp and ba_res.clusters_used > 0 and ba_res.accepted_steps > 0:
                     optimized = True
         if self._correction is None:
