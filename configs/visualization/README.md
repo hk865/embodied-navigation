@@ -6,8 +6,30 @@
 
 ```text
 configs/visualization/
-├── README.md            # 本文件：查看命令、QoS/坐标系约定与边界
-└── dynanav_map.rviz     # RViz2 显示配置（69 行，PointCloud2 + Grid + Orbit 视角）
+├── README.md                     # 本文件：查看命令、多机位防穿墙回放与 QoS/坐标系约定
+├── dynanav_map.rviz              # 历史静态地图查看配置（Orbit 视角）
+├── dynanav_live_pointcloud.rviz  # 实时点云生长配置（Orbit 视角，零累计去重全局图 + RGB8）
+├── dynanav_spring_follow.rviz    # 游戏风格 Spring-Arm 防穿墙第三人称跟随相机（rviz_cam_spring）
+├── dynanav_overhead_cutaway.rviz # 当前楼层天花板切片垂直俯视相机（rviz_cam_overhead + /dynanav/viz/cutaway_map）
+└── dynanav_isometric_follow.rviz # 45° 等轴双层立体追踪相机（rviz_cam_isometric）
+```
+
+## 游戏风格防穿墙多机位回放与录制（2026-11-24 新增）
+
+为解决固定大半径 `Orbit` 相机在多层室内建筑中穿墙、穿楼板与画面遮挡问题，新增 [`src/embodied_navigation/visualization/spring_arm_camera.py`](../../src/embodied_navigation/visualization/spring_arm_camera.py) 与 [`spring_arm_node.py`](../../src/embodied_navigation/visualization/spring_arm_node.py)，并通过薄 CLI [`scripts/record_dynanav_rviz.py`](../../scripts/record_dynanav_rviz.py) 统一驱动：
+
+- **防穿墙第三人称（`spring_follow`）**：基于实时去重全局地图构建 3D 体素障碍栅格，沿相机悬臂执行 9 射线球体碰撞探测（Sphere-Cast）+ 天花板高度硬保护 + 快收慢弹指数阻尼（遇墙立即收缩、离障柔和回弹），通过 RViz2 原生 `ThirdPersonFollower` 锁定 `rviz_cam_spring`。
+- **楼层切片俯视（`overhead_cutaway`）**：动态剔除机器人上方楼板/天花板点云发布到 `/dynanav/viz/cutaway_map`，配合 RViz2 原生 `TopDownOrtho` 锁定 `rviz_cam_overhead` 无遮挡透视当前楼层建图。
+- **等轴 45° 立体（`isometric_follow`）**：配合 RViz2 原生 `Orbit` 平滑锁定 `rviz_cam_isometric`，清晰展示跨楼层楼梯攀爬与双层空间结构。
+
+示例：直接回放已录制的 ROS 2 bag 并合成多机位同屏演示视频：
+
+```bash
+PYTHONPATH=src python3 -B scripts/record_dynanav_rviz.py replay \
+  --bag "$PROJECT_DATA_ROOT/embodied-navigation/runs/<batch>/<run-id>/rosbag/raw_sensors_and_replay" \
+  --output-dir "$PROJECT_DATA_ROOT/embodied-navigation/runs/<batch>/<run-id>/rviz_multiview" \
+  --views spring_follow overhead_cutaway isometric_follow \
+  --rate 10.0 --compose-multiview
 ```
 
 ## 代码、日志与配置

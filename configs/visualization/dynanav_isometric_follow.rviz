@@ -1,0 +1,92 @@
+Panels: []
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Metric Grid
+      Enabled: true
+      Alpha: 0.16
+      Cell Size: 2
+      Color: 105; 118; 136
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Backend Global Map (V4 BA)
+      Enabled: true
+      Topic:
+        Value: /dynanav/backend/global_map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds: false
+      Min Axis Value: -0.5
+      Max Axis Value: 5.5
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.06
+      Size (Pixels): 3
+      Alpha: 0.90
+      Decay Time: 0
+      Selectable: false
+      Queue Size: 2
+    - Class: rviz_default_plugins/Path
+      Name: Robot Trail
+      Enabled: true
+      Topic:
+        Value: /dynanav/viz/robot_trail
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+      Buffer Length: 1
+      Color: 56; 210; 255
+      Alpha: 0.95
+      Line Style: Billboards
+      Line Width: 0.09
+    - Class: rviz_default_plugins/Marker
+      Name: Robot Highlight
+      Enabled: true
+      Topic:
+        Value: /dynanav/viz/robot_marker
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+      Queue Size: 10
+  Enabled: true
+  Global Options:
+    Background Color: 18; 22; 30
+    Fixed Frame: map
+    Frame Rate: 25
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Isometric Follow
+      Target Frame: rviz_cam_isometric
+      Distance: 13.5
+      Pitch: 0.72
+      Yaw: 0.85
+      Focal Point:
+        X: 0.0
+        Y: 0.0
+        Z: 0.8
+      Near Clip Distance: 0.05
+      Field of View: 0.8726646259971648
+      Invert Z Axis: false
+    Saved: ~
+Window Geometry:
+  Hide Left Dock: true
+  Hide Right Dock: true
+  Width: 960
+  Height: 720
+  X: 0
+  Y: 0

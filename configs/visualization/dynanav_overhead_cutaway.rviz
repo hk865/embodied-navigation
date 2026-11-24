@@ -1,0 +1,88 @@
+Panels: []
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Metric Grid
+      Enabled: true
+      Alpha: 0.14
+      Cell Size: 2
+      Color: 95; 108; 126
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Floor Cutaway Map
+      Enabled: true
+      Topic:
+        Value: /dynanav/viz/cutaway_map
+        Depth: 1
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+      Position Transformer: XYZ
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds: false
+      Min Axis Value: -0.5
+      Max Axis Value: 5.5
+      Use Fixed Frame: true
+      Style: Flat Squares
+      Size (m): 0.075
+      Size (Pixels): 3
+      Alpha: 0.95
+      Decay Time: 0
+      Selectable: false
+      Queue Size: 2
+    - Class: rviz_default_plugins/Path
+      Name: Robot Trail
+      Enabled: true
+      Topic:
+        Value: /dynanav/viz/robot_trail
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+      Buffer Length: 1
+      Color: 56; 210; 255
+      Alpha: 0.95
+      Line Style: Billboards
+      Line Width: 0.10
+    - Class: rviz_default_plugins/Marker
+      Name: Robot Highlight
+      Enabled: true
+      Topic:
+        Value: /dynanav/viz/robot_marker
+        Depth: 5
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+      Queue Size: 10
+  Enabled: true
+  Global Options:
+    Background Color: 15; 19; 26
+    Fixed Frame: map
+    Frame Rate: 25
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Overhead Floor Cutaway
+      Target Frame: rviz_cam_overhead
+      Scale: 32
+      Angle: 0
+      X: 0
+      Y: 0
+      Near Clip Distance: 0.01
+      Invert Z Axis: false
+    Saved: ~
+Window Geometry:
+  Hide Left Dock: true
+  Hide Right Dock: true
+  Width: 960
+  Height: 720
+  X: 0
+  Y: 0
