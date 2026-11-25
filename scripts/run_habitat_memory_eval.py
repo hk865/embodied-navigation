@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         args.model,
         args.thinking_mode,
         base_timeout_s=args.timeout_s,
-        base_max_tokens=380,
+        base_max_tokens=560,
     )
 
     cfg = LlmClientConfig(

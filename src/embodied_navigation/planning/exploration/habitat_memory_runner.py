@@ -128,6 +128,52 @@ def depth_bearing_to_local_xy(planar_depth_m: float, bearing_deg: float) -> tupl
     return (d, d * math.tan(b_rad))
 
 
+def measure_depth_bearing_patch(
+    depth_m: np.ndarray,
+    bearing_deg: float,
+    *,
+    hfov_deg: float = 90.0,
+    min_range_m: float = 0.25,
+    max_range_m: float = 10.0,
+    band_half_deg: float = 6.0,
+) -> tuple[float, tuple[float, float, float]] | None:
+    """Measure planar depth and approximate 3D patch extent ``(dx, dy, dz)`` along a bearing.
+
+    Returns ``None`` if ``bearing_deg`` lies outside the horizontal FOV or lacks valid depth.
+    """
+    d_med = measure_depth_bearing_range(
+        depth_m,
+        bearing_deg,
+        hfov_deg=hfov_deg,
+        min_range_m=min_range_m,
+        max_range_m=max_range_m,
+        band_half_deg=band_half_deg,
+    )
+    if d_med is None:
+        return None
+    half_fov = 0.5 * float(hfov_deg)
+    h, w = depth_m.shape[:2]
+    arr = depth_m[:, :, 0] if depth_m.ndim == 3 else depth_m
+    fx = (0.5 * w) / math.tan(math.radians(half_fov))
+    b_lo = math.radians(max(-half_fov + 0.5, float(bearing_deg) - band_half_deg))
+    b_hi = math.radians(min(half_fov - 0.5, float(bearing_deg) + band_half_deg))
+    col_a = int(round(0.5 * w - fx * math.tan(b_hi)))
+    col_b = int(round(0.5 * w - fx * math.tan(b_lo)))
+    c0 = max(0, min(w - 1, min(col_a, col_b)))
+    c1 = max(c0 + 1, min(w, max(col_a, col_b) + 1))
+    r0 = int(0.25 * h)
+    r1 = max(r0 + 1, int(0.75 * h))
+    patch = arr[r0:r1, c0:c1]
+    near_mask = np.isfinite(patch) & (np.abs(patch - d_med) <= max(0.35, 0.2 * d_med))
+    ys, xs = np.nonzero(near_mask)
+    if ys.size < 4:
+        return (d_med, (0.2, 0.2, 0.2))
+    dx = max(0.1, min(3.0, float(np.percentile(patch[near_mask], 90) - np.percentile(patch[near_mask], 10))))
+    dy = max(0.1, min(3.0, float(np.percentile(xs, 90) - np.percentile(xs, 10)) * d_med / fx))
+    dz = max(0.1, min(2.5, float(np.percentile(ys, 90) - np.percentile(ys, 10)) * d_med / fx))
+    return (d_med, (round(dx, 2), round(dy, 2), round(dz, 2)))
+
+
 class DepthOccupancyGrid:
     """Sensor-only 2D occupancy grid built incrementally from Habitat Depth frames."""
 
@@ -430,13 +476,14 @@ class DepthOccupancyGrid:
 
 @dataclass(frozen=True)
 class HabitatObjectGT:
-    """Private ground-truth 3D location and visible viewpoints of one HM3D object."""
+    """Private ground-truth 3D surface points, centroid, and visible viewpoints of one HM3D object."""
 
     object_id: str
     category: str
     center_hab: tuple[float, float, float]
     center_mem: tuple[float, float, float]
     viewpoints_hab: tuple[tuple[float, float, float], ...]
+    surface_points_mem: tuple[tuple[float, float, float], ...] = ()
 
 
 def is_geodesic_target_reached(
@@ -534,6 +581,7 @@ def build_private_hm3d_gt(
     saved_state = sim.agents[0].get_state()
 
     accum_pts: dict[int, list[np.ndarray]] = {}
+    accum_surf_mem: dict[int, list[tuple[float, float, float]]] = {}
     accum_vps: dict[int, list[tuple[float, float, float]]] = {}
 
     # Sample navigable points and 4 cardinal yaw orientations per point
@@ -568,7 +616,7 @@ def build_private_hm3d_gt(
                 if int(np.sum(mask)) < min_pixels:
                     continue
                 ys, xs = np.nonzero(mask)
-                # Subsample up to 40 pixels for accurate 3D centroid
+                # Subsample up to 40 pixels for accurate 3D surface & centroid
                 step_s = max(1, len(ys) // 40)
                 ys = ys[::step_s]
                 xs = xs[::step_s]
@@ -584,7 +632,20 @@ def build_private_hm3d_gt(
                 med_pt = np.median(pts_hab, axis=0)
                 if float(np.linalg.norm(med_pt - cam_pos)) > float(max_view_dist_m):
                     continue
+                dists_3d = np.linalg.norm(pts_hab - cam_pos[None, :], axis=1)
                 accum_pts.setdefault(uid_i, []).append(med_pt)
+                surf_bucket = accum_surf_mem.setdefault(uid_i, [])
+                if len(surf_bucket) < 24:
+                    in_range_pts = pts_hab[dists_3d <= float(max_view_dist_m)]
+                    for sp in in_range_pts[:: max(1, len(in_range_pts) // 4)]:
+                        sm = hab_to_mem(sp)
+                        if all(
+                            math.hypot(sm[0] - k[0], sm[1] - k[1]) >= 0.25 or abs(sm[2] - k[2]) >= 0.35
+                            for k in surf_bucket
+                        ):
+                            surf_bucket.append(sm)
+                            if len(surf_bucket) >= 24:
+                                break
                 accum_vps.setdefault(uid_i, []).append((float(pt[0]), float(pt[1]), float(pt[2])))
 
     sim.agents[0].set_state(saved_state)
@@ -603,6 +664,7 @@ def build_private_hm3d_gt(
                 center_hab=(float(center_hab[0]), float(center_hab[1]), float(center_hab[2])),
                 center_mem=hab_to_mem(center_hab),
                 viewpoints_hab=vps,
+                surface_points_mem=tuple(accum_surf_mem.get(uid_i, [])),
             )
         )
     return by_cat
@@ -819,7 +881,11 @@ class HabitatMemoryRunner:
         reached = False
         r_mem = np.asarray(hab_to_mem(robot_hab), dtype=np.float64)
         for gt in gt_list:
-            d_euc = float(np.linalg.norm(r_mem - np.asarray(gt.center_mem, dtype=np.float64)))
+            if gt.surface_points_mem:
+                surf_arr = np.asarray(gt.surface_points_mem, dtype=np.float64)
+                d_euc = float(np.min(np.linalg.norm(surf_arr - r_mem[None, :], axis=1)))
+            else:
+                d_euc = float(np.linalg.norm(r_mem - np.asarray(gt.center_mem, dtype=np.float64)))
             obj_best_geo = float("inf")
             for vp in gt.viewpoints_hab:
                 d_geo = self._geodesic_dist(sim, robot_hab, vp)
@@ -932,11 +998,56 @@ class HabitatMemoryRunner:
                 first_stop_attempted = False
                 first_stop_success = False
                 memory_recalls = 0
+                l3_selective_triggers = 0
+                l3_bypassed = 0
                 fallbacks = 0
                 last_feedback = f"Started subtask {sub_idx}/{len(subtasks)}: find '{subtask.target_category}'."
                 pending_recall: dict[str, Any] | None = None
                 extra_l3_rgb: list[str] = []
                 step_traces: list[dict[str, Any]] = []
+
+                # Scene-Q confidence-aware coarse-to-fine search at subtask start when memory carries over
+                if self.memory_carryover and sub_idx > 1 and memory.graph.keyframe_poses:
+                    _, _, init_sub_hab = self._agent_pose_mem(sim)
+                    init_sub_mem = list(hab_to_mem(init_sub_hab))
+                    c2f_init = memory.coarse_to_fine_search(
+                        subtask.target_category,
+                        robot_xyz=init_sub_mem,
+                        top_k_objects=4,
+                        top_k_keyframes=3,
+                        max_l3_images=2,
+                    )
+                    if c2f_init["top_objects"] or c2f_init["top_keyframes"]:
+                        # Strip host filesystem paths before passing recalled memory to the planner
+                        safe_top_objs = [
+                            {k: v for k, v in o.items() if k != "rgb_path"}
+                            for o in c2f_init["top_objects"][:4]
+                        ]
+                        pending_recall = {
+                            "mode": "coarse_to_fine_init",
+                            "untrusted_observation_data": True,
+                            "query": subtask.target_category,
+                            "top1_prob": c2f_init["top1_prob"],
+                            "confidence_margin": c2f_init["confidence_margin"],
+                            "needs_l3_verification": c2f_init["needs_l3_verification"],
+                            "top_objects": safe_top_objs,
+                            "top_keyframes": [
+                                {
+                                    "keyframe_id": kf["keyframe_id"],
+                                    "room_type": kf.get("room_type", ""),
+                                    "scene_description": kf.get("scene_description", ""),
+                                    "surfaces": kf.get("surfaces", []),
+                                    "pose_xyz": kf["pose_xyz"],
+                                    "match_reasons": kf.get("match_reasons", []),
+                                }
+                                for kf in c2f_init["top_keyframes"][:3]
+                            ],
+                        }
+                        if c2f_init["needs_l3_verification"] and c2f_init["l3_verify_rgb_paths"]:
+                            extra_l3_rgb = list(c2f_init["l3_verify_rgb_paths"][:2])
+                            l3_selective_triggers += 1
+                        else:
+                            l3_bypassed += 1
 
                 for step in range(1, subtask.max_steps + 1):
                     robot_mem, yaw_rad, robot_hab = self._agent_pose_mem(sim)
@@ -999,7 +1110,7 @@ class HabitatMemoryRunner:
                     if decision.fallback:
                         fallbacks += 1
 
-                    # Record depth-grounded visual landmarks into hierarchical memory
+                    # Record rich keyframe annotations + depth-grounded 3D fused landmarks
                     kf_seq = memory.allocate_step_seq()
                     kf_id = f"hab_s{sub_idx}_step_{kf_seq:04d}"
                     memory.graph.add_keyframe(
@@ -1008,6 +1119,14 @@ class HabitatMemoryRunner:
                         clearance_m=0.8,
                         rgb_path=str(rgb_path),
                     )
+                    if decision.room_type or decision.scene_description or decision.visible_surfaces:
+                        memory.annotate_keyframe(
+                            kf_id,
+                            room_type=decision.room_type,
+                            scene_description=decision.scene_description,
+                            surfaces=decision.visible_surfaces,
+                            wall_s=float(kf_seq),
+                        )
                     if len(memory.graph.keyframe_poses) >= 3:
                         memory.graph.segment_floors()
                         memory.graph.partition_rooms()
@@ -1015,8 +1134,9 @@ class HabitatMemoryRunner:
                     grounded_count = 0
                     for item in decision.observed_objects:
                         b_deg = float(item.get("bearing_deg", 0.0))
-                        d_meas = measure_depth_bearing_range(depth, b_deg)
-                        if d_meas is not None:
+                        patch_res = measure_depth_bearing_patch(depth, b_deg)
+                        if patch_res is not None:
+                            d_meas, ext_xyz = patch_res
                             lx, ly = depth_bearing_to_local_xy(d_meas, b_deg)
                             prod = "vlm_depth_grounded"
                             r_src = "habitat_depth_raycast"
@@ -1025,19 +1145,22 @@ class HabitatMemoryRunner:
                             dist_use = float(item.get("dist_m", 2.0))
                             b_rad = math.radians(b_deg)
                             lx, ly = dist_use * math.cos(b_rad), dist_use * math.sin(b_rad)
+                            ext_xyz = (0.0, 0.0, 0.0)
                             prod = "opencode_vlm_unverified"
                             r_src = "vlm_unverified_guess"
-                        obj_seq = memory.allocate_object_seq()
-                        memory.add_object(
-                            object_id=f"hab_obs_{obj_seq:04d}",
+                        memory.add_or_fuse_object(
                             label=str(item["label"]),
                             keyframe_id=kf_id,
                             local_xyz=[lx, ly, 0.0],
+                            local_extent_xyz=ext_xyz,
                             confidence=float(item.get("confidence", 0.8)),
                             producer=prod,
                             range_source=r_src,
                             evidence_frame="habitat_world",
                             evidence_stamp_s=float(kf_seq),
+                            description=str(item.get("desc", "")),
+                            attributes=tuple(item.get("attrs", ())),
+                            spatial_context=str(item.get("on", "")),
                         )
 
                     exec_info: dict[str, Any] = {}
@@ -1048,22 +1171,54 @@ class HabitatMemoryRunner:
                         memory_recalls += 1
                         q = decision.query or subtask.target_category
                         q_l1 = memory.l1_submap_summaries(query=q, near_xyz=robot_mem, top_k=3)
-                        q_l2 = memory.l2_submap_entities(label=q)
-                        q_l3 = (
-                            memory.l3_on_demand_keyframes(
-                                object_id=q_l2["objects"][0]["object_id"], max_images=1
-                            )
-                            if q_l2["objects"]
-                            else []
+                        c2f = memory.coarse_to_fine_search(
+                            q,
+                            robot_xyz=robot_mem,
+                            top_k_objects=4,
+                            top_k_keyframes=3,
+                            max_l3_images=2,
                         )
-                        extra_l3_rgb = [r["rgb_path"] for r in q_l3 if r.get("rgb_path")]
+                        if c2f["needs_l3_verification"] and c2f["l3_verify_rgb_paths"]:
+                            extra_l3_rgb = list(c2f["l3_verify_rgb_paths"][:2])
+                            l3_selective_triggers += 1
+                        else:
+                            l3_bypassed += 1
+                        safe_top_objs = [
+                            {k: v for k, v in o.items() if k != "rgb_path"}
+                            for o in c2f["top_objects"][:4]
+                        ]
                         pending_recall = {
+                            "mode": "coarse_to_fine_query",
+                            "untrusted_observation_data": True,
                             "query": q,
+                            "top1_prob": c2f["top1_prob"],
+                            "confidence_margin": c2f["confidence_margin"],
+                            "needs_l3_verification": c2f["needs_l3_verification"],
                             "l1_rooms": q_l1[:3],
-                            "l2_objects": q_l2["objects"][:5],
+                            "top_objects": safe_top_objs,
+                            "top_keyframes": [
+                                {
+                                    "keyframe_id": kf["keyframe_id"],
+                                    "room_type": kf.get("room_type", ""),
+                                    "scene_description": kf.get("scene_description", ""),
+                                    "surfaces": kf.get("surfaces", []),
+                                    "pose_xyz": kf["pose_xyz"],
+                                    "match_reasons": kf.get("match_reasons", []),
+                                }
+                                for kf in c2f["top_keyframes"][:3]
+                            ],
                         }
-                        exec_info = {"status": "memory_queried", "l2_hits": len(q_l2["objects"])}
-                        last_feedback = f"query_memory('{q}') -> {len(q_l2['objects'])} remembered objects."
+                        exec_info = {
+                            "status": "memory_queried",
+                            "l2_hits": len(c2f["top_objects"]),
+                            "kf_hits": len(c2f["top_keyframes"]),
+                            "needs_l3_verification": c2f["needs_l3_verification"],
+                        }
+                        last_feedback = (
+                            f"query_memory('{q}') -> {len(c2f['top_objects'])} 3D objs, "
+                            f"{len(c2f['top_keyframes'])} keyframes "
+                            f"(L3_attached={len(extra_l3_rgb)})."
+                        )
                     elif decision.action == "stop_claim":
                         is_first_stop = not first_stop_attempted
                         first_stop_attempted = True
@@ -1078,6 +1233,7 @@ class HabitatMemoryRunner:
                                 robot_mem,
                                 target_label=subtask.target_category,
                                 stop_radius_m=subtask.stop_radius_m,
+                                require_current_keyframe_id=kf_id,
                                 excluded_producers=("opencode_vlm", "opencode_vlm_unverified"),
                             )
                             exec_info = ver.to_dict()
@@ -1119,7 +1275,14 @@ class HabitatMemoryRunner:
                                 )
                                 break
                             else:
-                                last_feedback = f"STOP rejected ({ver.reason}, dist={ver.distance_m}). Move closer."
+                                if ver.reason == "requires_current_frame_visual_confirmation":
+                                    last_feedback = (
+                                        f"STOP rejected ({ver.reason}, dist={ver.distance_m}): "
+                                        f"target '{subtask.target_category}' was only in old memory; "
+                                        "turn/scan or move so it is directly visible in the CURRENT front RGB and list it in observed_objects before calling stop_claim."
+                                    )
+                                else:
+                                    last_feedback = f"STOP rejected ({ver.reason}, dist={ver.distance_m}). Move closer."
                     elif decision.action in ("goto_candidate", "goto_xyz"):
                         goal_mem: list[float] | None = None
                         if decision.action == "goto_candidate":
@@ -1226,6 +1389,8 @@ class HabitatMemoryRunner:
                         "traveled_m": round(traveled_m, 2),
                         "steps_used": len(step_traces),
                         "memory_recalls": memory_recalls,
+                        "l3_selective_triggers": l3_selective_triggers,
+                        "l3_bypassed": l3_bypassed,
                         "fallbacks": fallbacks,
                         "memory_diagnostics": memory.diagnostic_metrics(),
                         "steps": step_traces,
@@ -1238,7 +1403,8 @@ class HabitatMemoryRunner:
             summary = {
                 "scene_id": self.scene_id,
                 "navigation_executor": "habitat_navmesh_greedy_geodesic_follower",
-                "stop_protocol": "retryable_sensor_gate_with_first_stop_tracking",
+                "stop_protocol": "current_frame_confirmed_sensor_gate_with_first_stop_tracking",
+                "retrieval_protocol": "scene_q_rich_index_coarse_to_fine_selective_l3",
                 "memory_carryover": self.memory_carryover,
                 "occupancy_carryover": not self.reset_occupancy_per_subtask,
                 "planner_config": self.planner.config.to_safe_dict(),
@@ -1255,6 +1421,8 @@ class HabitatMemoryRunner:
                 "spl": round(sum(r["spl"] for r in valid_reports) / denom, 4) if valid_reports else 0.0,
                 "total_traveled_m": round(sum(r["traveled_m"] for r in valid_reports), 2),
                 "total_steps": sum(r["steps_used"] for r in valid_reports),
+                "l3_selective_triggers": sum(r.get("l3_selective_triggers", 0) for r in valid_reports),
+                "l3_bypassed": sum(r.get("l3_bypassed", 0) for r in valid_reports),
                 "wall_s": round(time.perf_counter() - t_ep, 2),
                 "private_gt_counts": {k: len(v) for k, v in private_gt.items()},
                 "subtasks": subtask_reports,

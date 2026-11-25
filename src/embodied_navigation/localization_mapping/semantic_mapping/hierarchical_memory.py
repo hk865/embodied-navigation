@@ -52,8 +52,60 @@ NON_GEO_REJECTION_REASONS = frozenset(
         "target_evidence_stale",
         "different_floor_z_mismatch",
         "target_beyond_stop_radius",
+        "requires_current_frame_visual_confirmation",
     }
 )
+
+
+SUPPORT_SURFACE_KEYWORDS = frozenset(
+    {
+        "table",
+        "desk",
+        "counter",
+        "countertop",
+        "nightstand",
+        "shelf",
+        "shelves",
+        "dresser",
+        "cabinet",
+        "couch",
+        "sofa",
+        "bed",
+        "bench",
+        "island",
+        "vanity",
+        "sink",
+        "mantel",
+        "windowsill",
+        "stand",
+    }
+)
+
+
+def _normalize_embedding(vec: Sequence[float] | None) -> tuple[float, ...] | None:
+    if vec is None:
+        return None
+    arr = np.asarray(vec, dtype=np.float64).reshape(-1)
+    if arr.size == 0 or not np.all(np.isfinite(arr)):
+        return None
+    norm = float(np.linalg.norm(arr))
+    if norm <= 1e-12:
+        return None
+    return tuple(float(v) for v in (arr / norm))
+
+
+def _cosine_similarity(
+    a: Sequence[float] | None, b: Sequence[float] | None
+) -> float | None:
+    if a is None or b is None or len(a) != len(b) or len(a) == 0:
+        return None
+    va = np.asarray(a, dtype=np.float64)
+    vb = np.asarray(b, dtype=np.float64)
+    na = float(np.linalg.norm(va))
+    nb = float(np.linalg.norm(vb))
+    if na <= 1e-12 or nb <= 1e-12:
+        return None
+    return float(np.dot(va, vb) / (na * nb))
 
 
 def _finite_xyz(values: Sequence[float], name: str = "xyz") -> tuple[float, float, float]:
@@ -238,8 +290,48 @@ class AttemptRecord:
 
 
 @dataclass
+class KeyframeRichMeta:
+    """Rich multi-faceted index attached to one SLAM keyframe for coarse-to-fine search."""
+
+    keyframe_id: str
+    room_type: str = ""
+    scene_description: str = ""
+    surfaces: tuple[str, ...] = ()
+    embedding: tuple[float, ...] | None = None
+    map_revision: int = 0
+    observed_wall_s: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "keyframe_id": self.keyframe_id,
+            "room_type": self.room_type,
+            "scene_description": self.scene_description,
+            "surfaces": list(self.surfaces),
+            "map_revision": self.map_revision,
+            "observed_wall_s": round(self.observed_wall_s, 3),
+        }
+        if self.embedding is not None:
+            out["embedding"] = [round(v, 5) for v in self.embedding]
+        return out
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> KeyframeRichMeta:
+        raw_surfaces = data.get("surfaces") or ()
+        surfaces = tuple(str(s).strip() for s in raw_surfaces if str(s).strip())
+        return cls(
+            keyframe_id=str(data["keyframe_id"]),
+            room_type=str(data.get("room_type", "")).strip(),
+            scene_description=str(data.get("scene_description", "")).strip(),
+            surfaces=surfaces,
+            embedding=_normalize_embedding(data.get("embedding")),
+            map_revision=int(data.get("map_revision", 0)),
+            observed_wall_s=float(data.get("observed_wall_s", 0.0)),
+        )
+
+
+@dataclass
 class ObjectEvidenceMeta:
-    """Revision and freshness metadata attached to a KeyframeSceneGraph object."""
+    """Revision, freshness, and rich indexing metadata attached to a KeyframeSceneGraph object."""
 
     object_id: str
     map_revision: int = 0
@@ -252,6 +344,15 @@ class ObjectEvidenceMeta:
     evidence_frame: str | None = None
     evidence_stamp_s: float | None = None
     recorded_world_xyz: tuple[float, float, float] | None = None
+    description: str = ""
+    attributes: tuple[str, ...] = ()
+    spatial_context: str = ""
+    embedding: tuple[float, ...] | None = None
+    observation_count: int = 1
+    last_observed_keyframe_id: str | None = None
+    last_verified_label: str = ""
+    last_verified_world_xyz: tuple[float, float, float] | None = None
+    keyframe_local_obs: dict[str, tuple[float, float, float]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -265,9 +366,28 @@ class ObjectEvidenceMeta:
             "range_source": self.range_source,
             "evidence_frame": self.evidence_frame,
             "evidence_stamp_s": self.evidence_stamp_s,
+            "observation_count": int(self.observation_count),
         }
         if self.recorded_world_xyz is not None:
             out["recorded_world_xyz"] = [round(v, 4) for v in self.recorded_world_xyz]
+        if self.description:
+            out["description"] = self.description
+        if self.attributes:
+            out["attributes"] = list(self.attributes)
+        if self.spatial_context:
+            out["spatial_context"] = self.spatial_context
+        if self.embedding is not None:
+            out["embedding"] = [round(v, 5) for v in self.embedding]
+        if self.last_observed_keyframe_id is not None:
+            out["last_observed_keyframe_id"] = self.last_observed_keyframe_id
+        if self.last_verified_label:
+            out["last_verified_label"] = self.last_verified_label
+        if self.last_verified_world_xyz is not None:
+            out["last_verified_world_xyz"] = [round(v, 4) for v in self.last_verified_world_xyz]
+        if self.keyframe_local_obs:
+            out["keyframe_local_obs"] = {
+                kid: [round(v, 4) for v in xyz] for kid, xyz in self.keyframe_local_obs.items()
+            }
         return out
 
     @classmethod
@@ -277,7 +397,22 @@ class ObjectEvidenceMeta:
             if data.get("recorded_world_xyz") is not None
             else None
         )
+        last_ver_xyz = (
+            _finite_xyz(data["last_verified_world_xyz"], "last_verified_world_xyz")
+            if data.get("last_verified_world_xyz") is not None
+            else None
+        )
+        raw_kf_obs = data.get("keyframe_local_obs") or {}
+        kf_obs: dict[str, tuple[float, float, float]] = {}
+        if isinstance(raw_kf_obs, dict):
+            for kid, xyz in raw_kf_obs.items():
+                try:
+                    kf_obs[str(kid)] = _finite_xyz(xyz, "keyframe_local_obs")
+                except ValueError:
+                    continue
         stamp_raw = data.get("evidence_stamp_s")
+        raw_attrs = data.get("attributes") or ()
+        attrs = tuple(str(a).strip() for a in raw_attrs if str(a).strip())
         return cls(
             object_id=str(data["object_id"]),
             map_revision=int(data.get("map_revision", 0)),
@@ -290,6 +425,15 @@ class ObjectEvidenceMeta:
             evidence_frame=data.get("evidence_frame"),
             evidence_stamp_s=(None if stamp_raw is None else float(stamp_raw)),
             recorded_world_xyz=rec_xyz,
+            description=str(data.get("description", "")).strip(),
+            attributes=attrs,
+            spatial_context=str(data.get("spatial_context", "")).strip(),
+            embedding=_normalize_embedding(data.get("embedding")),
+            observation_count=max(1, int(data.get("observation_count", 1))),
+            last_observed_keyframe_id=data.get("last_observed_keyframe_id"),
+            last_verified_label=str(data.get("last_verified_label", "")).strip(),
+            last_verified_world_xyz=last_ver_xyz,
+            keyframe_local_obs=kf_obs,
         )
 
 
@@ -352,6 +496,7 @@ class HierarchicalMemoryStore:
 
         self._attempts: list[AttemptRecord] = []
         self._object_meta: dict[str, ObjectEvidenceMeta] = {}
+        self._keyframe_meta: dict[str, KeyframeRichMeta] = {}
         self._room_visits: dict[str, int] = {}
         self._repeat_failure_attempts = 0
         self._premature_stop_rejects = 0
@@ -366,6 +511,7 @@ class HierarchicalMemoryStore:
                 map_revision=self.map_revision,
                 producer=obj.producer,
                 recorded_world_xyz=tuple(float(v) for v in obj.world_center_xyz),
+                last_observed_keyframe_id=obj.anchor_keyframe_id,
             )
 
     def allocate_step_seq(self) -> int:
@@ -386,6 +532,33 @@ class HierarchicalMemoryStore:
         self._premature_stop_rejects = 0
         self._stale_belief_rejects = 0
 
+    def annotate_keyframe(
+        self,
+        keyframe_id: str,
+        *,
+        room_type: str = "",
+        scene_description: str = "",
+        surfaces: Sequence[str] = (),
+        embedding: Sequence[float] | None = None,
+        wall_s: float | None = None,
+    ) -> KeyframeRichMeta:
+        """Attach rich scene/surface descriptions and visual embedding to a keyframe."""
+        kf_id = str(keyframe_id).strip()
+        clean_surfaces = tuple(
+            dict.fromkeys(str(s).strip() for s in surfaces if str(s).strip())
+        )
+        meta = KeyframeRichMeta(
+            keyframe_id=kf_id,
+            room_type=str(room_type or "").strip()[:80],
+            scene_description=str(scene_description or "").strip()[:280],
+            surfaces=clean_surfaces[:10],
+            embedding=_normalize_embedding(embedding),
+            map_revision=self.map_revision,
+            observed_wall_s=(time.time() if wall_s is None else float(wall_s)),
+        )
+        self._keyframe_meta[kf_id] = meta
+        return meta
+
     def add_object(
         self,
         object_id: str,
@@ -401,8 +574,12 @@ class HierarchicalMemoryStore:
         range_source: str = "memory_anchor",
         evidence_frame: str | None = None,
         evidence_stamp_s: float | None = None,
+        description: str = "",
+        attributes: Sequence[str] = (),
+        spatial_context: str = "",
+        embedding: Sequence[float] | None = None,
     ) -> ObjectNode:
-        """Register an object in the underlying scene graph with version metadata."""
+        """Register an object in the underlying scene graph with version & rich metadata."""
         node = self.graph.add_object(
             label=label,
             anchor_keyframe_id=keyframe_id,
@@ -413,6 +590,11 @@ class HierarchicalMemoryStore:
             producer=producer,
             room_id=room_id,
         )
+        clean_attrs = tuple(
+            dict.fromkeys(str(a).strip() for a in attributes if str(a).strip())
+        )
+        local_t = _finite_xyz(local_xyz, "local_xyz")
+        world_t = tuple(float(v) for v in node.world_center_xyz)
         self._object_meta[node.object_id] = ObjectEvidenceMeta(
             object_id=node.object_id,
             map_revision=self.map_revision,
@@ -424,9 +606,220 @@ class HierarchicalMemoryStore:
             range_source=str(range_source),
             evidence_frame=evidence_frame,
             evidence_stamp_s=(None if evidence_stamp_s is None else float(evidence_stamp_s)),
-            recorded_world_xyz=tuple(float(v) for v in node.world_center_xyz),
+            recorded_world_xyz=world_t,
+            description=str(description or "").strip()[:220],
+            attributes=clean_attrs[:8],
+            spatial_context=str(spatial_context or "").strip()[:140],
+            embedding=_normalize_embedding(embedding),
+            observation_count=1,
+            last_observed_keyframe_id=keyframe_id,
+            last_verified_label=str(label).strip(),
+            last_verified_world_xyz=world_t,
+            keyframe_local_obs={keyframe_id: local_t},
         )
         return node
+
+    def add_or_fuse_object(
+        self,
+        label: str,
+        keyframe_id: str,
+        local_xyz: Sequence[float],
+        *,
+        object_id: str | None = None,
+        local_extent_xyz: Sequence[float] = (0.0, 0.0, 0.0),
+        confidence: float = 1.0,
+        producer: str = "hierarchical_memory",
+        room_id: str | None = None,
+        wall_s: float | None = None,
+        range_source: str = "memory_anchor",
+        evidence_frame: str | None = None,
+        evidence_stamp_s: float | None = None,
+        description: str = "",
+        attributes: Sequence[str] = (),
+        spatial_context: str = "",
+        embedding: Sequence[float] | None = None,
+        fusion_radius_m: float = 0.75,
+        unverified_producers: Iterable[str] = ("opencode_vlm", "opencode_vlm_unverified"),
+    ) -> tuple[ObjectNode, bool]:
+        """Insert a new 3D object or fuse into a matching nearby instance.
+
+        Returns ``(node, fused_into_existing)``. Multi-view fusion prevents duplicate
+        fragmentation and tracks ``observation_count`` and ``last_observed_keyframe_id``.
+        """
+        kf_pose = self.graph.keyframe_poses.get(keyframe_id)
+        if kf_pose is None:
+            raise ValueError(f"unknown keyframe_id for fusion: {keyframe_id!r}")
+        local_arr = np.asarray(_finite_xyz(local_xyz, "local_xyz"), dtype=np.float64)
+        world_new = (kf_pose @ np.array([local_arr[0], local_arr[1], local_arr[2], 1.0]))[:3]
+        unverified_set = {str(p).strip() for p in unverified_producers if str(p).strip()}
+        new_verified = str(producer) not in unverified_set
+
+        best_match: ObjectNode | None = None
+        best_dist = float("inf")
+        for existing in self.graph.objects.values():
+            meta = self._object_meta.get(existing.object_id)
+            if meta is not None and meta.stale:
+                continue
+            if _label_match_score(label, existing.label) < 50.0:
+                continue
+            ex_xyz = np.asarray(existing.world_center_xyz, dtype=np.float64)
+            if abs(float(ex_xyz[2]) - float(world_new[2])) > min(0.8, self.same_floor_dz_m):
+                continue
+            d_xy = math.hypot(float(ex_xyz[0] - world_new[0]), float(ex_xyz[1] - world_new[1]))
+            if d_xy <= float(fusion_radius_m) and d_xy < best_dist:
+                best_dist = d_xy
+                best_match = existing
+
+        if best_match is None:
+            oid = object_id or f"obj_{self.allocate_object_seq():04d}"
+            node = self.add_object(
+                object_id=oid,
+                label=label,
+                keyframe_id=keyframe_id,
+                local_xyz=local_xyz,
+                local_extent_xyz=local_extent_xyz,
+                confidence=confidence,
+                producer=producer,
+                room_id=room_id,
+                wall_s=wall_s,
+                range_source=range_source,
+                evidence_frame=evidence_frame,
+                evidence_stamp_s=evidence_stamp_s,
+                description=description,
+                attributes=attributes,
+                spatial_context=spatial_context,
+                embedding=embedding,
+            )
+            return node, False
+
+        meta = self._object_meta.get(best_match.object_id)
+        if meta is None:
+            meta = ObjectEvidenceMeta(
+                object_id=best_match.object_id,
+                map_revision=self.map_revision,
+                producer=best_match.producer,
+                recorded_world_xyz=tuple(float(v) for v in best_match.world_center_xyz),
+            )
+            self._object_meta[best_match.object_id] = meta
+
+        n_prev = max(1, int(meta.observation_count))
+        old_verified = meta.producer not in unverified_set
+        is_new_kf = keyframe_id not in meta.keyframe_local_obs
+        local_t = (float(local_arr[0]), float(local_arr[1]), float(local_arr[2]))
+
+        # Maintain per-keyframe local observations so non-rigid loop updates reproject fused means accurately
+        if new_verified and not old_verified:
+            meta.keyframe_local_obs = {keyframe_id: local_t}
+            meta.producer = str(producer)
+            meta.range_source = str(range_source)
+            best_match.producer = str(producer)
+            fused_world = world_new
+            meta.observation_count = 1
+        elif new_verified == old_verified:
+            if len(meta.keyframe_local_obs) < 8 or keyframe_id in meta.keyframe_local_obs:
+                meta.keyframe_local_obs[keyframe_id] = local_t
+            # Recompute fused world center directly from stored per-KF observations
+            reproj_pts: list[np.ndarray] = []
+            for kid, lxyz in meta.keyframe_local_obs.items():
+                kp = self.graph.keyframe_poses.get(kid)
+                if kp is not None:
+                    reproj_pts.append((kp @ np.array([lxyz[0], lxyz[1], lxyz[2], 1.0]))[:3])
+            if reproj_pts:
+                fused_world = np.mean(np.vstack(reproj_pts), axis=0)
+            else:
+                old_xyz = np.asarray(best_match.world_center_xyz, dtype=np.float64)
+                fused_world = (old_xyz * n_prev + world_new) / float(n_prev + 1)
+            if is_new_kf:
+                meta.observation_count = max(n_prev + 1, len(meta.keyframe_local_obs))
+        else:
+            # Unverified guess fusing into verified object: never alter verified geometry or counts
+            fused_world = np.asarray(best_match.world_center_xyz, dtype=np.float64)
+
+        # Re-anchor fused world coordinate cleanly into latest keyframe if verified
+        if new_verified or not old_verified:
+            try:
+                inv_kf = np.linalg.inv(kf_pose)
+                fused_local = (inv_kf @ np.array([fused_world[0], fused_world[1], fused_world[2], 1.0]))[:3]
+                if np.all(np.isfinite(fused_local)):
+                    best_match.anchor_keyframe_id = keyframe_id
+                    best_match.local_center_xyz = (
+                        float(fused_local[0]),
+                        float(fused_local[1]),
+                        float(fused_local[2]),
+                    )
+            except np.linalg.LinAlgError:
+                pass
+        best_match.world_center_xyz = (
+            float(fused_world[0]),
+            float(fused_world[1]),
+            float(fused_world[2]),
+        )
+        ext_arr = np.asarray(local_extent_xyz, dtype=np.float64).reshape(-1)
+        if (
+            (new_verified or not old_verified)
+            and ext_arr.shape == (3,)
+            and np.all(np.isfinite(ext_arr))
+            and float(np.max(ext_arr)) > 0.0
+        ):
+            old_ext = np.asarray(best_match.local_extent_xyz, dtype=np.float64)
+            if float(np.max(old_ext)) <= 0.0:
+                best_match.local_extent_xyz = (float(ext_arr[0]), float(ext_arr[1]), float(ext_arr[2]))
+            else:
+                fused_ext = (old_ext * n_prev + ext_arr) / float(n_prev + 1)
+                best_match.local_extent_xyz = (
+                    float(fused_ext[0]),
+                    float(fused_ext[1]),
+                    float(fused_ext[2]),
+                )
+
+        # Keep more specific label if new label is a stricter phrase
+        if (
+            (new_verified or not old_verified)
+            and len(_tokenize_list(label)) > len(_tokenize_list(best_match.label))
+            and _label_match_score(best_match.label, label) >= 50.0
+        ):
+            best_match.label = str(label).strip()
+
+        if new_verified or not old_verified:
+            meta.confidence = max(float(meta.confidence), float(confidence))
+            best_match.confidence = meta.confidence
+        meta.observed_wall_s = time.time() if wall_s is None else float(wall_s)
+        meta.map_revision = self.map_revision
+        meta.recorded_world_xyz = best_match.world_center_xyz
+        if new_verified or not old_verified:
+            meta.last_observed_keyframe_id = keyframe_id
+            meta.last_verified_label = str(label).strip()
+            meta.last_verified_world_xyz = (
+                float(world_new[0]),
+                float(world_new[1]),
+                float(world_new[2]),
+            )
+            if evidence_frame is not None:
+                meta.evidence_frame = evidence_frame
+            if evidence_stamp_s is not None:
+                meta.evidence_stamp_s = float(evidence_stamp_s)
+        new_desc = str(description or "").strip()[:220]
+        if len(new_desc) > len(meta.description):
+            meta.description = new_desc
+        new_ctx = str(spatial_context or "").strip()[:140]
+        if len(new_ctx) > len(meta.spatial_context):
+            meta.spatial_context = new_ctx
+        if attributes:
+            merged_attrs = tuple(
+                dict.fromkeys([*meta.attributes, *(str(a).strip() for a in attributes if str(a).strip())])
+            )
+            meta.attributes = merged_attrs[:8]
+        new_emb = _normalize_embedding(embedding)
+        if new_emb is not None:
+            if meta.embedding is not None and len(meta.embedding) == len(new_emb):
+                avg_emb = (
+                    np.asarray(meta.embedding, dtype=np.float64) * n_prev
+                    + np.asarray(new_emb, dtype=np.float64)
+                ) / float(n_prev + 1)
+                meta.embedding = _normalize_embedding(avg_emb)
+            else:
+                meta.embedding = new_emb
+        return best_match, True
 
     def mark_object_stale(self, object_id: str, reason: str = "reobserved_absent") -> None:
         meta = self._object_meta.get(object_id)
@@ -473,6 +866,28 @@ class HierarchicalMemoryStore:
             }
 
         report = self.graph.reproject_from_poses(updated_poses)
+        # Recompute multi-view fused object world centers from per-KF local observations
+        for obj_id, obj in self.graph.objects.items():
+            meta = self._object_meta.get(obj_id)
+            if meta is not None and len(meta.keyframe_local_obs) >= 2:
+                reproj_pts: list[np.ndarray] = []
+                for kid, lxyz in meta.keyframe_local_obs.items():
+                    kp = self.graph.keyframe_poses.get(kid)
+                    if kp is not None:
+                        reproj_pts.append((kp @ np.array([lxyz[0], lxyz[1], lxyz[2], 1.0]))[:3])
+                if reproj_pts:
+                    mean_w = np.mean(np.vstack(reproj_pts), axis=0)
+                    obj.world_center_xyz = (float(mean_w[0]), float(mean_w[1]), float(mean_w[2]))
+            if (
+                meta is not None
+                and meta.last_observed_keyframe_id
+                and meta.last_observed_keyframe_id in meta.keyframe_local_obs
+                and meta.last_observed_keyframe_id in self.graph.keyframe_poses
+            ):
+                kp_last = self.graph.keyframe_poses[meta.last_observed_keyframe_id]
+                l_last = meta.keyframe_local_obs[meta.last_observed_keyframe_id]
+                w_last = (kp_last @ np.array([l_last[0], l_last[1], l_last[2], 1.0]))[:3]
+                meta.last_verified_world_xyz = (float(w_last[0]), float(w_last[1]), float(w_last[2]))
         self.map_revision += 1
 
         max_effective_shift = max(shifts_m.values(), default=0.0)
@@ -781,8 +1196,18 @@ class HierarchicalMemoryStore:
                 continue
             match_score = 1.0
             if label is not None:
+                desc_score = 0.0
+                if meta is not None:
+                    rich_text = " ".join(
+                        p
+                        for p in (meta.description, " ".join(meta.attributes), meta.spatial_context)
+                        if p
+                    )
+                    if rich_text:
+                        desc_score = 0.75 * _label_match_score(label, rich_text)
                 match_score = max(
                     _label_match_score(label, obj.label),
+                    desc_score,
                     100.0 if str(label).strip().lower() == obj.object_id.lower() else 0.0,
                 )
                 if match_score <= 0.0:
@@ -801,15 +1226,30 @@ class HierarchicalMemoryStore:
                 "floor_id": self._floor_for_object(obj),
                 "keyframe_id": obj.anchor_keyframe_id,
                 "world_xyz": [round(float(v), 3) for v in obj.world_center_xyz],
+                "extent_xyz_m": [round(float(v), 3) for v in obj.local_extent_xyz],
                 "confidence": round(float(obj.confidence), 3),
+                "observation_count": (meta.observation_count if meta is not None else 1),
                 "match_score": round(match_score, 2),
                 "map_revision": (meta.map_revision if meta is not None else self.map_revision),
                 "stale": is_stale,
             }
+            if meta is not None:
+                if meta.description:
+                    row["description"] = meta.description
+                if meta.attributes:
+                    row["attributes"] = list(meta.attributes)
+                if meta.spatial_context:
+                    row["spatial_context"] = meta.spatial_context
             if dist_m is not None:
                 row["distance_m"] = round(dist_m, 3)
             objects_out.append(row)
-        objects_out.sort(key=lambda r: (-float(r["match_score"]), float(r.get("distance_m", 0.0))))
+        objects_out.sort(
+            key=lambda r: (
+                -float(r["match_score"]),
+                -int(r.get("observation_count", 1)),
+                float(r.get("distance_m", 0.0)),
+            )
+        )
 
         failures_out: list[dict[str, Any]] = []
         for rec in self._attempts:
@@ -880,6 +1320,297 @@ class HierarchicalMemoryStore:
         if ref_xyz is not None:
             rows.sort(key=lambda item: item[0])
         return [item[1] for item in rows[:limit]]
+
+    def coarse_to_fine_search(
+        self,
+        query: str,
+        *,
+        robot_xyz: Sequence[float] | None = None,
+        query_embedding: Sequence[float] | None = None,
+        top_k_objects: int = 4,
+        top_k_keyframes: int = 3,
+        max_l3_images: int = 2,
+        spatial_nms_m: float = 0.8,
+        expected_max_extent_m: float | None = None,
+        temperature: float = 15.0,
+        confidence_margin_threshold: float = 0.22,
+        confidence_min_score: float = 65.0,
+        include_stale: bool = False,
+    ) -> dict[str, Any]:
+        """Scene-Q style confidence-aware coarse-to-fine retrieval across L1/L2/L3.
+
+        Stage 1 (Coarse): Scores 3D objects using label + rich description/attributes/
+        spatial context + multi-view consistency + optional continuous embedding + optional
+        3D extent filter, with spatial NMS to preserve distinct 3D hypotheses. Also ranks
+        keyframes using rich scene descriptions, visible supporting surfaces (for unsegmented
+        small objects like phones/vases), and optional visual embeddings.
+
+        Stage 2 (Confidence Gate): Computes temperature-scaled softmax margin over top
+        object candidates. Sets ``needs_l3_verification=True`` when matches are absent,
+        low-confidence, or ambiguous across multiple competing 3D instances, returning
+        deduplicated ``l3_verify_rgb_paths`` for selective VLM/task-conditioned reranking.
+        """
+        q_str = str(query or "").strip()
+        q_tokens = _tokenize(q_str)
+        q_emb = _normalize_embedding(query_embedding)
+        ref_xyz = None if robot_xyz is None else _finite_xyz(robot_xyz, "robot_xyz")
+        k_obj = max(1, int(top_k_objects))
+        k_kf = max(1, int(top_k_keyframes))
+        temp = max(1e-3, float(temperature))
+
+        # --- Stage 1A: Score 3D object instances ---
+        raw_obj_hits: list[tuple[float, dict[str, Any]]] = []
+        for obj in self.graph.objects.values():
+            meta = self._object_meta.get(obj.object_id)
+            is_stale = bool(meta.stale) if meta is not None else False
+            if is_stale and not include_stale:
+                continue
+
+            lbl_score = _label_match_score(q_str, obj.label) if q_str else 1.0
+            if q_str and _label_strict_match(q_str, obj.label):
+                # Avoid penalizing richer multi-word labels (e.g. 'glass vase' vs 'vase')
+                # by a 45-point cliff that would mask competing 3D instances.
+                q_n = max(1, len(q_tokens))
+                c_n = max(q_n, len(_tokenize_list(obj.label)))
+                lbl_score = max(lbl_score, 85.0 + 15.0 * (q_n / float(c_n)))
+            desc_score = 0.0
+            ctx_score = 0.0
+            emb_bonus = 0.0
+            obs_cnt = 1
+            if meta is not None:
+                obs_cnt = max(1, int(meta.observation_count))
+                desc_text = " ".join(p for p in (meta.description, " ".join(meta.attributes)) if p)
+                if q_str and desc_text:
+                    desc_score = 0.85 * _label_match_score(q_str, desc_text)
+                if q_str and meta.spatial_context:
+                    ctx_score = 0.55 * _label_match_score(q_str, meta.spatial_context)
+                cos = _cosine_similarity(q_emb, meta.embedding)
+                if cos is not None and cos > 0.0:
+                    emb_bonus = 60.0 * cos
+
+            base_sem = max(lbl_score, desc_score, ctx_score) + 0.15 * min(lbl_score, desc_score) + emb_bonus
+            if base_sem <= 0.0:
+                continue
+
+            # Multi-view fusion bonus (rewards instances confirmed across multiple frames)
+            mv_bonus = 8.0 * min(1.0, math.log1p(obs_cnt - 1) / math.log1p(3))
+            # Optional 3D extent filter (penalize oversized mismatches, e.g. 2m couch for 'vase')
+            extent_penalty = 0.0
+            max_ext = float(max(obj.local_extent_xyz)) if obj.local_extent_xyz else 0.0
+            if expected_max_extent_m is not None and max_ext > float(expected_max_extent_m) * 1.5:
+                extent_penalty = 25.0
+
+            dist_m = None
+            prox_bonus = 0.0
+            if ref_xyz is not None:
+                dist_m = float(
+                    np.linalg.norm(np.asarray(obj.world_center_xyz) - np.asarray(ref_xyz))
+                )
+                prox_bonus = 2.0 / (1.0 + 0.25 * dist_m)
+
+            total_score = max(0.0, base_sem + mv_bonus + prox_bonus - extent_penalty)
+            kf_best = (
+                meta.last_observed_keyframe_id
+                if (meta is not None and meta.last_observed_keyframe_id)
+                else obj.anchor_keyframe_id
+            )
+            rgb_path = self.graph.keyframe_rgb_paths.get(kf_best) or self.graph.keyframe_rgb_paths.get(
+                obj.anchor_keyframe_id
+            )
+            row: dict[str, Any] = {
+                "object_id": obj.object_id,
+                "label": obj.label,
+                "room_id": obj.room_id,
+                "floor_id": self._floor_for_object(obj),
+                "keyframe_id": kf_best,
+                "rgb_path": rgb_path,
+                "world_xyz": [round(float(v), 3) for v in obj.world_center_xyz],
+                "extent_xyz_m": [round(float(v), 3) for v in obj.local_extent_xyz],
+                "observation_count": obs_cnt,
+                "confidence": round(float(obj.confidence), 3),
+                "coarse_score": round(total_score, 2),
+                "label_score": round(lbl_score, 2),
+            }
+            if meta is not None:
+                if meta.description:
+                    row["description"] = meta.description
+                if meta.attributes:
+                    row["attributes"] = list(meta.attributes)
+                if meta.spatial_context:
+                    row["spatial_context"] = meta.spatial_context
+            if dist_m is not None:
+                row["distance_m"] = round(dist_m, 2)
+            raw_obj_hits.append((total_score, row))
+
+        raw_obj_hits.sort(key=lambda item: (-item[0], float(item[1].get("distance_m", 0.0))))
+        # Spatial NMS over all distinct 3D hypotheses BEFORE top-K display truncation
+        nms_objects: list[dict[str, Any]] = []
+        for _score, cand in raw_obj_hits:
+            c_xyz = cand["world_xyz"]
+            if any(
+                abs(c_xyz[2] - prev["world_xyz"][2]) <= 0.8
+                and _xy_dist(c_xyz, prev["world_xyz"]) < float(spatial_nms_m)
+                for prev in nms_objects
+            ):
+                continue
+            nms_objects.append(cand)
+        top_objects = nms_objects[:k_obj]
+
+        # --- Stage 1B: Score Keyframes (rich descriptions + surface/container priors) ---
+        kf_scores: list[tuple[float, dict[str, Any]]] = []
+        for kf_id, pose in self.graph.keyframe_poses.items():
+            rgb_path = self.graph.keyframe_rgb_paths.get(kf_id)
+            if not rgb_path:
+                continue
+            kmeta = self._keyframe_meta.get(kf_id)
+            score = 0.0
+            reasons: list[str] = []
+
+            if kmeta is not None:
+                if q_str and kmeta.scene_description:
+                    s_desc = _label_match_score(q_str, kmeta.scene_description)
+                    if s_desc > 0.0:
+                        score += s_desc
+                        reasons.append("scene_description")
+                if q_str and kmeta.room_type:
+                    s_room = 0.6 * _label_match_score(q_str, kmeta.room_type)
+                    if s_room > 0.0:
+                        score += s_room
+                        reasons.append("room_type")
+                if q_str and kmeta.surfaces:
+                    surf_joined = " ".join(kmeta.surfaces)
+                    s_surf = 0.8 * _label_match_score(q_str, surf_joined)
+                    if s_surf > 0.0:
+                        score += s_surf
+                        reasons.append("surface_match")
+                    else:
+                        surf_toks = _tokenize(surf_joined)
+                        if surf_toks & SUPPORT_SURFACE_KEYWORDS:
+                            # Container/support surface prior for unsegmented small objects
+                            score += 6.0 + min(4.0, 1.0 * len(kmeta.surfaces))
+                            reasons.append("support_surface_prior")
+                cos_kf = _cosine_similarity(q_emb, kmeta.embedding)
+                if cos_kf is not None and cos_kf > 0.0:
+                    score += 60.0 * cos_kf
+                    reasons.append("visual_embedding")
+
+            # Also reward keyframes hosting matched L2 objects or known supporting furniture
+            kf_objs = [
+                o
+                for o in self.graph.objects.values()
+                if o.anchor_keyframe_id == kf_id
+                or (
+                    self._object_meta.get(o.object_id) is not None
+                    and self._object_meta[o.object_id].last_observed_keyframe_id == kf_id
+                )
+            ]
+            for o in kf_objs:
+                ometa = self._object_meta.get(o.object_id)
+                if ometa is not None and ometa.stale and not include_stale:
+                    continue
+                if q_str and _label_match_score(q_str, o.label) > 0.0:
+                    score += 25.0
+                    if "linked_object" not in reasons:
+                        reasons.append("linked_object")
+                elif _tokenize(o.label) & SUPPORT_SURFACE_KEYWORDS:
+                    score += 4.0
+                    if "object_surface_prior" not in reasons:
+                        reasons.append("object_surface_prior")
+
+            if score <= 0.0:
+                continue
+            pos = pose[:3, 3]
+            dist_kf = None
+            if ref_xyz is not None:
+                dist_kf = float(np.linalg.norm(pos - np.asarray(ref_xyz)))
+                score += 1.5 / (1.0 + 0.25 * dist_kf)
+            kf_entry: dict[str, Any] = {
+                "keyframe_id": kf_id,
+                "rgb_path": rgb_path,
+                "pose_xyz": [round(float(v), 3) for v in pos],
+                "coarse_score": round(score, 2),
+                "match_reasons": reasons,
+            }
+            if kmeta is not None:
+                if kmeta.room_type:
+                    kf_entry["room_type"] = kmeta.room_type
+                if kmeta.scene_description:
+                    kf_entry["scene_description"] = kmeta.scene_description
+                if kmeta.surfaces:
+                    kf_entry["surfaces"] = list(kmeta.surfaces)
+            if dist_kf is not None:
+                kf_entry["distance_m"] = round(dist_kf, 2)
+            kf_scores.append((score, kf_entry))
+
+        kf_scores.sort(key=lambda item: (-item[0], float(item[1].get("distance_m", 0.0))))
+        top_keyframes: list[dict[str, Any]] = []
+        seen_kf_rgb: set[str] = set()
+        for _sc, entry in kf_scores:
+            if entry["rgb_path"] in seen_kf_rgb:
+                continue
+            seen_kf_rgb.add(entry["rgb_path"])
+            top_keyframes.append(entry)
+            if len(top_keyframes) >= k_kf:
+                break
+
+        # --- Stage 2: Scene-Q Temperature-Scaled Confidence Gate ---
+        # Compute softmax & margin over ALL spatially-NMS'd competitors BEFORE top_k truncation.
+        unverified_producers = {"opencode_vlm", "opencode_vlm_unverified"}
+        if nms_objects:
+            logits = np.array([float(o["coarse_score"]) / temp for o in nms_objects], dtype=np.float64)
+            logits -= float(np.max(logits))
+            probs = np.exp(logits)
+            probs /= float(np.sum(probs))
+            for obj_row, p in zip(top_objects, probs[: len(top_objects)]):
+                obj_row["prob"] = round(float(p), 3)
+            top1_prob = float(probs[0])
+            margin = float(probs[0] - probs[1]) if len(nms_objects) >= 2 else top1_prob
+            top1_obj = nms_objects[0]
+            top1_score = float(top1_obj["coarse_score"])
+            top1_obs = int(top1_obj.get("observation_count", 1))
+            top1_conf = float(top1_obj.get("confidence", 0.0))
+            top1_meta = self._object_meta.get(str(top1_obj["object_id"]))
+            top1_prod = top1_meta.producer if top1_meta is not None else ""
+            top1_unverified = top1_prod in unverified_producers
+            needs_l3 = (
+                top1_unverified
+                or top1_conf < 0.65
+                or top1_score < float(confidence_min_score)
+                or (len(nms_objects) >= 2 and margin < float(confidence_margin_threshold))
+                or (top1_obs <= 1 and float(top1_obj.get("label_score", 0.0)) < 100.0)
+            )
+        else:
+            top1_prob = 0.0
+            margin = 0.0
+            needs_l3 = bool(top_keyframes)
+
+        # Deduplicated Top-K L3 RGB paths for selective VLM / task-conditioned verification
+        l3_paths: list[str] = []
+        if needs_l3:
+            for o in nms_objects:
+                rp = o.get("rgb_path")
+                if isinstance(rp, str) and rp and rp not in l3_paths:
+                    l3_paths.append(rp)
+                if len(l3_paths) >= max(1, int(max_l3_images)):
+                    break
+            if len(l3_paths) < max(1, int(max_l3_images)):
+                for kf in top_keyframes:
+                    rp = kf.get("rgb_path")
+                    if isinstance(rp, str) and rp and rp not in l3_paths:
+                        l3_paths.append(rp)
+                    if len(l3_paths) >= max(1, int(max_l3_images)):
+                        break
+
+        return {
+            "query": q_str,
+            "map_revision": self.map_revision,
+            "top_objects": top_objects,
+            "top_keyframes": top_keyframes,
+            "top1_prob": round(top1_prob, 3),
+            "confidence_margin": round(margin, 3),
+            "needs_l3_verification": bool(needs_l3),
+            "l3_verify_rgb_paths": l3_paths,
+        }
 
     def _support_z_for_object(self, obj: ObjectNode) -> float:
         """Return navigable floor/support Z for an object (anchor KF or room centroid)."""
@@ -1029,11 +1760,15 @@ class HierarchicalMemoryStore:
             ranked.append(
                 (
                     -float(obj.get("match_score", 1.0)),
+                    -int(obj.get("observation_count", 1)),
                     dist_to_obj,
                     {
                         "kind": "memory_target",
                         "object_id": obj["object_id"],
                         "label": obj["label"],
+                        "description": str(obj.get("description", ""))[:80],
+                        "spatial_context": str(obj.get("spatial_context", ""))[:60],
+                        "observation_count": int(obj.get("observation_count", 1)),
                         "room_id": obj["room_id"],
                         "keyframe_id": obj.get("keyframe_id"),
                         "xy": [round(goal_x, 2), round(goal_y, 2)],
@@ -1047,9 +1782,9 @@ class HierarchicalMemoryStore:
                 )
             )
 
-        ranked.sort(key=lambda item: (item[0], item[1]))
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]))
         out: list[dict[str, Any]] = []
-        for idx, (_, _, cand) in enumerate(ranked[: max(1, int(max_candidates))], start=1):
+        for idx, (_, _, _, cand) in enumerate(ranked[: max(1, int(max_candidates))], start=1):
             cand["id"] = f"M{idx}"
             out.append(cand)
         return out
@@ -1067,6 +1802,7 @@ class HierarchicalMemoryStore:
         target_room_id: str | None = None,
         stop_radius_m: float | None = None,
         require_fresh: bool = True,
+        require_current_keyframe_id: str | None = None,
         allowed_aliases: Sequence[str] = (),
         excluded_producers: Iterable[str] = (),
     ) -> StopVerificationResult:
@@ -1151,9 +1887,32 @@ class HierarchicalMemoryStore:
                 )
 
             pool = fresh_matches if require_fresh else verified_matches
-            evaluated: list[tuple[bool, float, ObjectNode, bool]] = []
+            evaluated: list[tuple[bool, bool, float, ObjectNode, bool]] = []
             for obj in pool:
-                dist = float(np.linalg.norm(np.asarray(obj.world_center_xyz) - np.asarray(pos)))
+                meta = self._object_meta.get(obj.object_id)
+                is_stale = bool(meta.stale) if meta is not None else False
+                in_cur_kf = True
+                eval_xyz = np.asarray(obj.world_center_xyz, dtype=np.float64)
+                if require_current_keyframe_id is not None:
+                    last_kf = meta.last_observed_keyframe_id if meta is not None else None
+                    kf_match = (
+                        obj.anchor_keyframe_id == require_current_keyframe_id
+                        or last_kf == require_current_keyframe_id
+                    )
+                    # Current-frame STOP must match the CURRENT frame's observed label & measured point
+                    # (never allowing a coarser current detection or older closer measurement to vouch).
+                    cur_label = (
+                        meta.last_verified_label
+                        if (meta is not None and meta.last_verified_label)
+                        else obj.label
+                    )
+                    lbl_ok = True if target_label is None else _label_strict_match(
+                        target_label, cur_label, allowed_aliases
+                    )
+                    in_cur_kf = bool(kf_match and lbl_ok)
+                    if in_cur_kf and meta is not None and meta.last_verified_world_xyz is not None:
+                        eval_xyz = np.asarray(meta.last_verified_world_xyz, dtype=np.float64)
+                dist = float(np.linalg.norm(eval_xyz - np.asarray(pos)))
                 obj_floor = self._floor_for_object(obj)
                 support_z = self._support_z_for_object(obj)
                 same_floor = (
@@ -1161,13 +1920,11 @@ class HierarchicalMemoryStore:
                     if (robot_floor is not None and obj_floor is not None)
                     else (abs(support_z - pos[2]) <= self.same_floor_dz_m)
                 )
-                meta = self._object_meta.get(obj.object_id)
-                is_stale = bool(meta.stale) if meta is not None else False
-                evaluated.append((same_floor, dist, obj, is_stale))
+                evaluated.append((same_floor, in_cur_kf, dist, obj, is_stale))
 
-            # Prefer same-floor candidates first, then shortest distance
-            evaluated.sort(key=lambda item: (not item[0], item[1]))
-            same_floor, best_dist, best_obj, is_stale = evaluated[0]
+            # Prefer same-floor + current-frame-confirmed candidates first, then shortest distance
+            evaluated.sort(key=lambda item: (not item[0], not item[1], item[2]))
+            same_floor, in_cur_kf, best_dist, best_obj, is_stale = evaluated[0]
             meta = self._object_meta.get(best_obj.object_id)
             r_src = meta.range_source if meta is not None else "memory_anchor"
             ev_frame = meta.evidence_frame if meta is not None else None
@@ -1182,6 +1939,20 @@ class HierarchicalMemoryStore:
                     matched_room_id=best_obj.room_id,
                     distance_m=best_dist,
                     same_floor=False,
+                    evidence_stale=is_stale,
+                    range_source=r_src,
+                    evidence_frame=ev_frame,
+                    evidence_stamp_s=ev_stamp,
+                )
+            if require_current_keyframe_id is not None and not in_cur_kf:
+                self._premature_stop_rejects += 1
+                return StopVerificationResult(
+                    allowed=False,
+                    reason="requires_current_frame_visual_confirmation",
+                    matched_object_id=best_obj.object_id,
+                    matched_room_id=best_obj.room_id,
+                    distance_m=best_dist,
+                    same_floor=True,
                     evidence_stale=is_stale,
                     range_source=r_src,
                     evidence_frame=ev_frame,
@@ -1299,6 +2070,7 @@ class HierarchicalMemoryStore:
             "scene_graph": self.graph.to_dict(),
             "attempts": [rec.to_dict() for rec in self._attempts],
             "object_meta": {oid: meta.to_dict() for oid, meta in self._object_meta.items()},
+            "keyframe_meta": {kid: kmeta.to_dict() for kid, kmeta in self._keyframe_meta.items()},
             "room_visits": dict(self._room_visits),
             "counters": {
                 "repeat_failure_attempts": self._repeat_failure_attempts,
@@ -1327,6 +2099,10 @@ class HierarchicalMemoryStore:
         store._object_meta = {
             str(k): ObjectEvidenceMeta.from_dict(v)
             for k, v in data.get("object_meta", {}).items()
+        }
+        store._keyframe_meta = {
+            str(k): KeyframeRichMeta.from_dict(v)
+            for k, v in data.get("keyframe_meta", {}).items()
         }
         store._room_visits = {
             str(k): int(v) for k, v in data.get("room_visits", {}).items()

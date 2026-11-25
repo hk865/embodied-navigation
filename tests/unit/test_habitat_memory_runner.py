@@ -9,6 +9,10 @@ import unittest
 
 import numpy as np
 
+from embodied_navigation.localization_mapping.semantic_mapping import (
+    HierarchicalMemoryStore,
+    KeyframeSceneGraph,
+)
 from embodied_navigation.planning.exploration.habitat_memory_runner import (
     DepthOccupancyGrid,
     _dedup_viewpoints,
@@ -17,10 +21,12 @@ from embodied_navigation.planning.exploration.habitat_memory_runner import (
     hab_quat_to_mem_yaw,
     hab_to_mem,
     is_geodesic_target_reached,
+    measure_depth_bearing_patch,
     measure_depth_bearing_range,
     mem_to_hab,
 )
 from embodied_navigation.planning.exploration.streaming_task_agent import (
+    parse_task_decision,
     resolve_thinking_options,
 )
 
@@ -143,6 +149,235 @@ class TestHabitatMemoryRunnerPrimitives(unittest.TestCase):
         self.assertEqual(extra_q, {"enable_thinking": False})
         self.assertEqual(t_q, 20.0)
         self.assertEqual(tok_q, 380)
+
+    def test_measure_depth_bearing_patch_and_rich_decision_parsing(self) -> None:
+        depth = np.full((100, 100), 2.5, dtype=np.float32)
+        res = measure_depth_bearing_patch(depth, bearing_deg=0.0, hfov_deg=90.0)
+        self.assertIsNotNone(res)
+        d_m, ext = res
+        self.assertAlmostEqual(d_m, 2.5, places=2)
+        self.assertEqual(len(ext), 3)
+        self.assertTrue(all(v > 0.0 for v in ext))
+        self.assertIsNone(measure_depth_bearing_patch(depth, bearing_deg=60.0, hfov_deg=90.0))
+
+        raw = (
+            '{"action":"goto_candidate","target_id":"F1","room_type":"living room",'
+            '"scene_description":"wooden coffee table with small black phone and glass vase",'
+            '"visible_surfaces":["coffee table","couch"],'
+            '"observed_objects":[{"label":"vase","desc":"narrow clear glass flower vase",'
+            '"on":"coffee table","attrs":["glass","narrow"],"dist_m":1.5,"bearing_deg":10.0}],'
+            '"reason":"explore living room"}'
+        )
+        dec = parse_task_decision(raw, valid_candidate_ids=["F1"])
+        self.assertFalse(dec.fallback)
+        self.assertEqual(dec.room_type, "living room")
+        self.assertIn("phone", dec.scene_description)
+        self.assertEqual(dec.visible_surfaces, ("coffee table", "couch"))
+        self.assertEqual(dec.observed_objects[0]["desc"], "narrow clear glass flower vase")
+        self.assertEqual(dec.observed_objects[0]["on"], "coffee table")
+        self.assertEqual(dec.observed_objects[0]["attrs"], ["glass", "narrow"])
+
+    def test_rich_indexing_3d_fusion_coarse_to_fine_and_current_frame_stop(self) -> None:
+        graph = KeyframeSceneGraph()
+        p1 = np.eye(4, dtype=np.float64)
+        p2 = np.eye(4, dtype=np.float64)
+        p2[:3, 3] = [4.0, 0.0, 0.0]
+        p3 = np.eye(4, dtype=np.float64)
+        p3[:3, 3] = [0.2, 0.0, 0.0]
+        graph.add_keyframe("kf1", p1, rgb_path="/tmp/kf1.png")
+        graph.add_keyframe("kf2", p2, rgb_path="/tmp/kf2.png")
+        graph.add_keyframe("kf3", p3, rgb_path="/tmp/kf3.png")
+        mem = HierarchicalMemoryStore(graph, default_stop_radius_m=1.8)
+
+        mem.annotate_keyframe(
+            "kf1",
+            room_type="living room",
+            scene_description="wooden coffee table with small black smartphone and clear vase",
+            surfaces=("coffee table", "couch"),
+            embedding=[1.0, 0.0, 0.0],
+        )
+        mem.annotate_keyframe(
+            "kf2",
+            room_type="kitchen",
+            scene_description="countertop with blue plastic water bottle",
+            surfaces=("countertop",),
+            embedding=[0.0, 1.0, 0.0],
+        )
+
+        # 3D multi-view fusion: two close observations of the same vase fuse into 1 instance
+        n1, fused1 = mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf1",
+            local_xyz=[1.0, 0.0, 0.0],
+            local_extent_xyz=(0.15, 0.15, 0.3),
+            producer="vlm_depth_grounded",
+            range_source="habitat_depth_raycast",
+            description="clear narrow glass flower vase",
+            attributes=("clear", "glass"),
+            spatial_context="coffee table",
+            embedding=[0.9, 0.1, 0.0],
+        )
+        self.assertFalse(fused1)
+        n1_b, fused2 = mem.add_or_fuse_object(
+            label="glass vase",
+            keyframe_id="kf3",
+            local_xyz=[0.9, 0.05, 0.0],
+            local_extent_xyz=(0.16, 0.14, 0.32),
+            producer="vlm_depth_grounded",
+            range_source="habitat_depth_raycast",
+            description="clear narrow glass flower vase with dried flowers",
+            embedding=[0.95, 0.05, 0.0],
+        )
+        self.assertTrue(fused2)
+        self.assertEqual(n1.object_id, n1_b.object_id)
+        self.assertEqual(mem._object_meta[n1.object_id].observation_count, 2)
+
+        # Unverified guess on a new frame must NOT spoof current-frame STOP confirmation
+        p4 = np.eye(4, dtype=np.float64)
+        p4[:3, 3] = [0.5, 0.0, 0.0]
+        graph.add_keyframe("kf4", p4, rgb_path="/tmp/kf4.png")
+        _, fused_unver = mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf4",
+            local_xyz=[0.5, 0.0, 0.0],
+            producer="opencode_vlm_unverified",
+            range_source="vlm_unverified_guess",
+        )
+        self.assertTrue(fused_unver)
+        ver_old = mem.verify_stop_claim(
+            [0.5, 0.0, 0.0],
+            target_label="vase",
+            stop_radius_m=1.8,
+            require_current_keyframe_id="kf4",
+            excluded_producers=("opencode_vlm", "opencode_vlm_unverified"),
+        )
+        self.assertFalse(ver_old.allowed)
+        self.assertEqual(ver_old.reason, "requires_current_frame_visual_confirmation")
+
+        # Once verified in kf3, current-frame STOP succeeds
+        ver_now = mem.verify_stop_claim(
+            [0.2, 0.0, 0.0],
+            target_label="vase",
+            stop_radius_m=1.8,
+            require_current_keyframe_id="kf3",
+            excluded_producers=("opencode_vlm", "opencode_vlm_unverified"),
+        )
+        self.assertTrue(ver_now.allowed)
+
+        # Single clear multi-view match -> high confidence, bypasses L3
+        res_clear = mem.coarse_to_fine_search("glass vase", robot_xyz=[0.0, 0.0, 0.0])
+        self.assertEqual(len(res_clear["top_objects"]), 1)
+        self.assertFalse(res_clear["needs_l3_verification"])
+
+        # Add a second competing vase in another room -> low margin -> triggers selective L3
+        mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf2",
+            local_xyz=[1.0, 0.0, 0.0],
+            producer="vlm_depth_grounded",
+            description="tall ceramic vase",
+        )
+        res_ambig = mem.coarse_to_fine_search("vase", robot_xyz=[2.0, 0.0, 0.0])
+        self.assertEqual(len(res_ambig["top_objects"]), 2)
+        self.assertTrue(res_ambig["needs_l3_verification"])
+        self.assertGreaterEqual(len(res_ambig["l3_verify_rgb_paths"]), 2)
+
+        # Unsegmented small object ('smartphone') -> recalled via rich keyframe description & surfaces
+        res_small = mem.coarse_to_fine_search("smartphone", robot_xyz=[0.0, 0.0, 0.0])
+        self.assertEqual(len(res_small["top_objects"]), 0)
+        self.assertTrue(res_small["needs_l3_verification"])
+        self.assertEqual(res_small["top_keyframes"][0]["keyframe_id"], "kf1")
+        self.assertIn("/tmp/kf1.png", res_small["l3_verify_rgb_paths"])
+
+        # Persistence roundtrip preserves keyframe_meta and object rich fields
+        restored = HierarchicalMemoryStore.from_dict(mem.to_dict())
+        self.assertIn("kf1", restored._keyframe_meta)
+        self.assertEqual(restored._keyframe_meta["kf1"].surfaces, ("coffee table", "couch"))
+        self.assertEqual(restored._object_meta[n1.object_id].observation_count, 2)
+
+    def test_astra_audit_stop_current_measurement_and_nonrigid_reprojection(self) -> None:
+        graph = KeyframeSceneGraph()
+        p1 = np.eye(4, dtype=np.float64)
+        p2 = np.eye(4, dtype=np.float64)
+        graph.add_keyframe("kf1", p1, rgb_path="/tmp/kf1.png")
+        graph.add_keyframe("kf2", p2, rgb_path="/tmp/kf2.png")
+        mem = HierarchicalMemoryStore(graph, default_stop_radius_m=1.5)
+
+        # P1-1 & P1-2: Historical observation at 1.1 m with finer label 'glass vase'
+        n, _ = mem.add_or_fuse_object(
+            label="glass vase",
+            keyframe_id="kf1",
+            local_xyz=[1.1, 0.0, 0.0],
+            producer="vlm_depth_grounded",
+        )
+        # Current frame kf2 sees coarser 'vase' at 1.8 m (within 0.75 m fusion radius, fused mean=1.45 m)
+        n2, fused = mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf2",
+            local_xyz=[1.8, 0.0, 0.0],
+            producer="vlm_depth_grounded",
+        )
+        self.assertTrue(fused)
+        self.assertEqual(n.object_id, n2.object_id)
+
+        # P1-1: STOP at 1.5 m for 'vase' MUST fail because kf2 measured 1.8 m (> 1.5 m), NOT fused 1.45 m
+        ver_dist = mem.verify_stop_claim(
+            [0.0, 0.0, 0.0],
+            target_label="vase",
+            stop_radius_m=1.5,
+            require_current_keyframe_id="kf2",
+        )
+        self.assertFalse(ver_dist.allowed)
+        self.assertEqual(ver_dist.reason, "target_beyond_stop_radius")
+
+        # P1-2: STOP at 2.0 m for 'glass vase' MUST fail because kf2 only observed coarser 'vase'
+        ver_lbl = mem.verify_stop_claim(
+            [0.0, 0.0, 0.0],
+            target_label="glass vase",
+            stop_radius_m=2.0,
+            require_current_keyframe_id="kf2",
+        )
+        self.assertFalse(ver_lbl.allowed)
+        self.assertEqual(ver_lbl.reason, "requires_current_frame_visual_confirmation")
+
+        # P2-2: Duplicate same-frame observation does NOT inflate observation_count
+        mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf2",
+            local_xyz=[1.8, 0.0, 0.0],
+            producer="vlm_depth_grounded",
+        )
+        self.assertEqual(mem._object_meta[n.object_id].observation_count, 2)
+
+        # P2-1: Non-rigid loop update moving only kf1 by +1.0 m moves fused mean by +0.5 m (1.45 -> 1.95)
+        p1_shifted = np.eye(4, dtype=np.float64)
+        p1_shifted[:3, 3] = [1.0, 0.0, 0.0]
+        mem.sync_poses({"kf1": p1_shifted, "kf2": p2})
+        self.assertAlmostEqual(mem.graph.objects[n.object_id].world_center_xyz[0], 1.95, places=3)
+
+        # P2-3: top_k_objects=1 still detects competing instance & unverified single guess triggers L3
+        p3 = np.eye(4, dtype=np.float64)
+        p3[:3, 3] = [5.0, 0.0, 0.0]
+        graph.add_keyframe("kf3", p3, rgb_path="/tmp/kf3.png")
+        mem.add_or_fuse_object(
+            label="vase",
+            keyframe_id="kf3",
+            local_xyz=[1.0, 0.0, 0.0],
+            producer="vlm_depth_grounded",
+        )
+        res_k1 = mem.coarse_to_fine_search("vase", robot_xyz=[3.0, 0.0, 0.0], top_k_objects=1)
+        self.assertEqual(len(res_k1["top_objects"]), 1)
+        self.assertTrue(res_k1["needs_l3_verification"])
+
+        mem.add_or_fuse_object(
+            label="lamp",
+            keyframe_id="kf3",
+            local_xyz=[1.0, 0.0, 0.0],
+            producer="opencode_vlm_unverified",
+            confidence=0.9,
+        )
+        res_unver = mem.coarse_to_fine_search("lamp", robot_xyz=[5.0, 0.0, 0.0])
+        self.assertTrue(res_unver["needs_l3_verification"])
 
 
 if __name__ == "__main__":

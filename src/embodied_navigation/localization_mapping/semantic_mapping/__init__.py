@@ -24,6 +24,7 @@ from .hierarchical_memory import (
     MEMORY_SCHEMA,
     AttemptRecord,
     HierarchicalMemoryStore,
+    KeyframeRichMeta,
     ObjectEvidenceMeta,
     StopVerificationResult,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "DoorwayEdge",
     "FloorNode",
     "HierarchicalMemoryStore",
+    "KeyframeRichMeta",
     "KeyframeSceneGraph",
     "LayeredMap",
     "ObjectEvidenceMeta",
