@@ -41,7 +41,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--timeout-s", type=float, default=30.0)
     parser.add_argument("--stop-radius-m", type=float, default=1.8)
-    parser.add_argument("--max-steps-per-subtask", type=int, default=10)
+    parser.add_argument(
+        "--max-steps-per-subtask",
+        type=int,
+        default=25,
+        help="Macro LLM decision safety cap per subtask (actual physical budget is --max-primitive-steps).",
+    )
+    parser.add_argument(
+        "--max-primitive-steps",
+        type=int,
+        default=500,
+        help="Habitat atomic action budget per subtask (500 matches official Habitat ObjectNav / GOAT-Bench).",
+    )
+    parser.add_argument(
+        "--eval-mode",
+        choices=("sequential", "independent"),
+        default="sequential",
+        help="'sequential' runs GOAT-style multi-task carryover; 'independent' resets pose/map/memory per target for fair cold-start comparison.",
+    )
     parser.add_argument("--no-memory-carryover", action="store_true", default=False)
     parser.add_argument(
         "--reset-occupancy-per-subtask",
@@ -95,14 +112,19 @@ def main(argv: list[str] | None = None) -> int:
             ),
             stop_radius_m=args.stop_radius_m,
             max_steps=args.max_steps_per_subtask,
+            max_primitive_steps=args.max_primitive_steps,
         )
         for idx, cat in enumerate(args.targets, start=1)
     ]
-    report = runner.run_sequential_episode(subtasks)
+    report = runner.run_sequential_episode(
+        subtasks,
+        independent_subtasks=(args.eval_mode == "independent"),
+    )
     print(
         json.dumps(
             {
                 "scene_id": report["scene_id"],
+                "eval_mode": report["eval_mode"],
                 "memory_carryover": report["memory_carryover"],
                 "occupancy_carryover": report["occupancy_carryover"],
                 "model": args.model,
@@ -114,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                 "spl": report["spl"],
                 "total_traveled_m": report["total_traveled_m"],
                 "total_steps": report["total_steps"],
+                "total_primitives": report["total_primitives"],
                 "wall_s": report["wall_s"],
             },
             indent=2,

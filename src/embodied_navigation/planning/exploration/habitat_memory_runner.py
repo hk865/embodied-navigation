@@ -681,7 +681,8 @@ class HabitatSubtaskSpec:
     target_category: str
     instruction: str
     stop_radius_m: float = 1.8
-    max_steps: int = 12
+    max_steps: int = 25
+    max_primitive_steps: int = 500
 
 
 class HabitatMemoryRunner:
@@ -905,8 +906,9 @@ class HabitatMemoryRunner:
         subtasks: Sequence[HabitatSubtaskSpec],
         *,
         start_hab: Sequence[float] | None = None,
+        independent_subtasks: bool = False,
     ) -> dict[str, Any]:
-        """Execute a sequential multi-subtask episode inside real Habitat-Sim HM3D."""
+        """Execute a sequential multi-subtask (or independent single-target) Habitat-Sim episode."""
         from PIL import Image
         import quaternion
 
@@ -955,12 +957,38 @@ class HabitatMemoryRunner:
             subtask_reports: list[dict[str, Any]] = []
 
             for sub_idx, subtask in enumerate(subtasks, start=1):
-                if not self.memory_carryover and sub_idx > 1:
+                if independent_subtasks and sub_idx > 1:
+                    # Cold-start independent episode: re-sample navigable start & reset memory/map
                     memory = HierarchicalMemoryStore(
                         KeyframeSceneGraph(), default_stop_radius_m=subtask.stop_radius_m
                     )
-                if self.reset_occupancy_per_subtask and sub_idx > 1:
                     occ_grid = DepthOccupancyGrid()
+                    cat_gts = private_gt.get(subtask.target_category.strip().lower(), [])
+                    sub_init_pt = init_pt
+                    for _ in range(40):
+                        cand_pt = np.asarray(
+                            sim.pathfinder.get_random_navigable_point(), dtype=np.float32
+                        )
+                        if not cat_gts:
+                            sub_init_pt = cand_pt
+                            break
+                        _, d_g, _, _ = self._eval_gt_proximity(
+                            sim, cand_pt, cat_gts, subtask.stop_radius_m
+                        )
+                        if math.isfinite(d_g) and d_g >= 1.5:
+                            sub_init_pt = cand_pt
+                            break
+                    st_r = sim.agents[0].get_state()
+                    st_r.position = sub_init_pt
+                    st_r.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+                    sim.agents[0].set_state(st_r)
+                else:
+                    if not self.memory_carryover and sub_idx > 1:
+                        memory = HierarchicalMemoryStore(
+                            KeyframeSceneGraph(), default_stop_radius_m=subtask.stop_radius_m
+                        )
+                    if self.reset_occupancy_per_subtask and sub_idx > 1:
+                        occ_grid = DepthOccupancyGrid()
 
                 gt_list = private_gt.get(subtask.target_category.strip().lower(), [])
                 _, _, sub_start_hab = self._agent_pose_mem(sim)
@@ -993,6 +1021,8 @@ class HabitatMemoryRunner:
                 sub_dir = self.output_dir / f"subtask_{sub_idx:02d}"
                 sub_dir.mkdir(parents=True, exist_ok=True)
                 traveled_m = 0.0
+                primitives_used = 0
+                max_prim_budget = max(1, int(subtask.max_primitive_steps))
                 oracle_reached = False
                 stop_verified_gt = False
                 first_stop_attempted = False
@@ -1001,13 +1031,21 @@ class HabitatMemoryRunner:
                 l3_selective_triggers = 0
                 l3_bypassed = 0
                 fallbacks = 0
-                last_feedback = f"Started subtask {sub_idx}/{len(subtasks)}: find '{subtask.target_category}'."
+                last_feedback = (
+                    f"Started subtask {sub_idx}/{len(subtasks)}: find '{subtask.target_category}' "
+                    f"(budget: {max_prim_budget} atomic steps)."
+                )
                 pending_recall: dict[str, Any] | None = None
                 extra_l3_rgb: list[str] = []
                 step_traces: list[dict[str, Any]] = []
 
                 # Scene-Q confidence-aware coarse-to-fine search at subtask start when memory carries over
-                if self.memory_carryover and sub_idx > 1 and memory.graph.keyframe_poses:
+                if (
+                    not independent_subtasks
+                    and self.memory_carryover
+                    and sub_idx > 1
+                    and memory.graph.keyframe_poses
+                ):
                     _, _, init_sub_hab = self._agent_pose_mem(sim)
                     init_sub_mem = list(hab_to_mem(init_sub_hab))
                     c2f_init = memory.coarse_to_fine_search(
@@ -1050,6 +1088,8 @@ class HabitatMemoryRunner:
                             l3_bypassed += 1
 
                 for step in range(1, subtask.max_steps + 1):
+                    if primitives_used >= max_prim_budget:
+                        break
                     robot_mem, yaw_rad, robot_hab = self._agent_pose_mem(sim)
                     obs = sim.get_sensor_observations()
                     rgb = obs["color_sensor"][:, :, :3]
@@ -1302,8 +1342,12 @@ class HabitatMemoryRunner:
                             exec_info = {"status": "blacklisted_goal"}
                             last_feedback = "Goal blocked by failure blacklist; pick another candidate."
                         else:
-                            exec_info = self._step_toward_goal(sim, occ_grid, goal_mem)
+                            rem_prims = max(1, max_prim_budget - primitives_used)
+                            exec_info = self._step_toward_goal(
+                                sim, occ_grid, goal_mem, max_primitives=min(24, rem_prims)
+                            )
                             traj_hab = exec_info.pop("_traj_hab", [])
+                            primitives_used += int(exec_info.get("primitives", 0))
                             traveled_m += float(exec_info.get("traveled_m", 0.0))
                             memory.record_attempt(
                                 "goto",
@@ -1322,11 +1366,14 @@ class HabitatMemoryRunner:
                                         break
                             last_feedback = (
                                 f"goto {[round(v, 2) for v in goal_mem]} -> "
-                                f"{exec_info['status']} (+{exec_info['traveled_m']}m)."
+                                f"{exec_info['status']} (+{exec_info['traveled_m']}m, "
+                                f"atomic_steps={primitives_used}/{max_prim_budget})."
                             )
                     elif decision.action in ("scan", "maneuver"):
                         # Turn 60 deg (4 x 15 deg) or short forward step using real primitives
-                        prims = 4 if decision.action == "scan" else max(1, min(6, int(round(decision.duration * 2))))
+                        rem_prims = max(0, max_prim_budget - primitives_used)
+                        req_prims = 4 if decision.action == "scan" else max(1, min(6, int(round(decision.duration * 2))))
+                        prims = min(req_prims, rem_prims)
                         act_name = "turn_left" if (decision.action == "scan" or decision.yaw_rate >= 0.0) else "turn_right"
                         if decision.action == "maneuver" and decision.forward > 0.15:
                             act_name = "move_forward"
@@ -1334,6 +1381,7 @@ class HabitatMemoryRunner:
                         _, _, prev_h = self._agent_pose_mem(sim)
                         for _ in range(prims):
                             o_s = sim.step(act_name)
+                            primitives_used += 1
                             cm, cy, ch = self._agent_pose_mem(sim)
                             t_step += float(np.linalg.norm(ch - prev_h))
                             prev_h = ch
@@ -1345,8 +1393,16 @@ class HabitatMemoryRunner:
                                 if r_pt:
                                     oracle_reached = True
                         traveled_m += t_step
-                        exec_info = {"status": "completed", "action": act_name, "traveled_m": round(t_step, 3)}
-                        last_feedback = f"{decision.action} ({act_name} x{prims}) completed."
+                        exec_info = {
+                            "status": "completed",
+                            "action": act_name,
+                            "primitives": prims,
+                            "traveled_m": round(t_step, 3),
+                        }
+                        last_feedback = (
+                            f"{decision.action} ({act_name} x{prims}) completed "
+                            f"(atomic_steps={primitives_used}/{max_prim_budget})."
+                        )
 
                     print(
                         f"[Habitat sub {sub_idx}:{subtask.target_category} | step {step}] "
@@ -1388,6 +1444,8 @@ class HabitatMemoryRunner:
                         "optimal_geodesic_m": round(optimal_geo_m, 2),
                         "traveled_m": round(traveled_m, 2),
                         "steps_used": len(step_traces),
+                        "primitives_used": primitives_used,
+                        "max_primitive_steps": max_prim_budget,
                         "memory_recalls": memory_recalls,
                         "l3_selective_triggers": l3_selective_triggers,
                         "l3_bypassed": l3_bypassed,
@@ -1402,11 +1460,12 @@ class HabitatMemoryRunner:
             denom = max(1, len(valid_reports))
             summary = {
                 "scene_id": self.scene_id,
+                "eval_mode": ("independent_cold_start" if independent_subtasks else "sequential_multi_task"),
                 "navigation_executor": "habitat_navmesh_greedy_geodesic_follower",
                 "stop_protocol": "current_frame_confirmed_sensor_gate_with_first_stop_tracking",
                 "retrieval_protocol": "scene_q_rich_index_coarse_to_fine_selective_l3",
-                "memory_carryover": self.memory_carryover,
-                "occupancy_carryover": not self.reset_occupancy_per_subtask,
+                "memory_carryover": (False if independent_subtasks else self.memory_carryover),
+                "occupancy_carryover": (False if independent_subtasks else not self.reset_occupancy_per_subtask),
                 "planner_config": self.planner.config.to_safe_dict(),
                 "subtasks_count": len(subtask_reports),
                 "valid_subtasks_count": len(valid_reports),
@@ -1421,6 +1480,7 @@ class HabitatMemoryRunner:
                 "spl": round(sum(r["spl"] for r in valid_reports) / denom, 4) if valid_reports else 0.0,
                 "total_traveled_m": round(sum(r["traveled_m"] for r in valid_reports), 2),
                 "total_steps": sum(r["steps_used"] for r in valid_reports),
+                "total_primitives": sum(int(r.get("primitives_used", 0)) for r in valid_reports),
                 "l3_selective_triggers": sum(r.get("l3_selective_triggers", 0) for r in valid_reports),
                 "l3_bypassed": sum(r.get("l3_bypassed", 0) for r in valid_reports),
                 "wall_s": round(time.perf_counter() - t_ep, 2),
