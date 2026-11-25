@@ -36,6 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--planner-timeout-s", type=float, default=18.0)
     parser.add_argument("--sentinel-timeout-s", type=float, default=6.0)
     parser.add_argument("--max-steps", type=int, default=10)
+    parser.add_argument("--step-timeout-s", type=float, default=180.0)
     parser.add_argument("--stop-radius-m", type=float, default=1.5)
     parser.add_argument("--pose-source", default="backend_corrected")
     parser.add_argument("--prior-memory", default=None, help="Optional saved hierarchical_memory.json.")
@@ -81,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         pose_source=args.pose_source,
         sentinel_config=sentinel_cfg,
         stop_radius_m=args.stop_radius_m,
+        step_timeout_s=args.step_timeout_s,
         stop_simulator_on_exit=not args.no_stop_on_exit,
     )
     report = runner.run(max_steps=args.max_steps)

@@ -216,6 +216,52 @@ class TestStreamingTaskAgent(unittest.TestCase):
                 stop_flag.set()
                 tracker_thread.join(timeout=2.0)
 
+    def test_timeout_records_blacklist_and_cancels_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            mailbox = run_dir / "capture" / "interactive"
+            mailbox.mkdir(parents=True, exist_ok=True)
+            (mailbox / "observation.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "timeout-run",
+                        "pose": {"position_xyz_m": [0.0, 0.0, 0.0], "yaw_rad": 0.0},
+                        "waypoints": {"phase": "idle", "current_epoch": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            planner = _ScriptedPlanner(
+                [TaskDecision(action="goto_candidate", target_id="F1", reason="will timeout")]
+            )
+
+            def _snap(tag: str) -> dict:
+                return {
+                    "tag": tag,
+                    "products": {
+                        "rgb": None,
+                        "height_charts": [
+                            {
+                                "level_key": "+0.00",
+                                "candidates": [{"id": "F1", "xy": [3.0, 0.0], "z": 0.0}],
+                            }
+                        ],
+                    },
+                }
+
+            runner = StaticStreamingTaskRunner(
+                run_dir,
+                task_instruction="Timeout test",
+                planner=planner,
+                memory_store=HierarchicalMemoryStore(KeyframeSceneGraph()),
+                pose_source="backend_corrected",
+                snapshot_fn=_snap,
+                step_timeout_s=0.35,
+            )
+            report = runner.run(max_steps=1)
+            self.assertEqual(report["steps"][0]["execution"]["status"], "timeout")
+            self.assertEqual(report["memory_diagnostics"]["active_blacklist_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

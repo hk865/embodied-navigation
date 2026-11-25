@@ -526,8 +526,8 @@ class StaticStreamingTaskRunner:
         snapshot_fn: Callable[[str], dict[str, Any]] | None = None,
         sop_script: str | Path | None = None,
         stop_radius_m: float = 1.5,
-        step_timeout_s: float = 90.0,
-        sentinel_poll_interval_s: float = 3.0,
+        step_timeout_s: float = 180.0,
+        sentinel_poll_interval_s: float = 4.0,
         stop_simulator_on_exit: bool = True,
     ) -> None:
         self.run_dir = Path(run_dir)
@@ -572,17 +572,21 @@ class StaticStreamingTaskRunner:
     def _capture_snapshot(self, tag: str) -> dict[str, Any]:
         if self._snapshot_fn is not None:
             return self._snapshot_fn(tag)
-        out_dir = self.run_dir / "agent_evidence" / tag
+        evidence_dir = self.run_dir / "agent_evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        repo_root = Path.cwd().resolve()
         cmd = [
             sys.executable,
             str(self.sop_script),
-            "snapshot",
+            "--repo",
+            str(repo_root),
             "--run-dir",
             str(self.run_dir),
+            "--evidence-dir",
+            str(evidence_dir),
+            "snapshot",
             "--tag",
             tag,
-            "--output",
-            str(out_dir),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=90)
         if proc.returncode != 0:
@@ -705,7 +709,22 @@ class StaticStreamingTaskRunner:
                         }, sentinel_events
             time.sleep(0.25)
 
-        return waypoint_mailbox.timeout_result(payload, self.step_timeout_s), sentinel_events
+        # Cancel the timed-out active action so the next step starts cleanly.
+        try:
+            epoch = self._current_action_epoch()
+            waypoint_mailbox.submit(
+                self.mailbox,
+                action="cancel",
+                pose_source=self.pose_source,
+                extra={"action_epoch": epoch} if epoch > 0 else None,
+            )
+            time.sleep(0.5)
+        except OSError:
+            pass
+        return (
+            waypoint_mailbox.timeout_result(seq, self.step_timeout_s, str(run_id or "")),
+            sentinel_events,
+        )
 
     def run(self, *, max_steps: int = 12) -> dict[str, Any]:
         """Execute a bounded closed-loop static task and return full diagnostic report."""
@@ -910,6 +929,14 @@ class StaticStreamingTaskRunner:
                     )
                     last_feedback = f"scan yaw +90deg -> {exec_info.get('status')}"
 
+                print(
+                    f"[step {step}] pos={[round(v, 2) for v in robot_xyz]} "
+                    f"act={decision.action} target={decision.target_id or decision.target_label} "
+                    f"obs={len(decision.observed_objects)} llm={decision.latency_ms:.0f}ms "
+                    f"-> {exec_info.get('status', exec_info.get('reason', 'ok'))} "
+                    f"sentinel={len(sentinel_events)}",
+                    flush=True,
+                )
                 step_logs.append(
                     TaskStepLog(
                         step=step,
