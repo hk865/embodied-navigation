@@ -6,8 +6,9 @@ Architecture (strictly obeys the 7-layer boundary in AGENTS.md):
   simulator ground truth or writes cmd_vel directly.
 - Maintains a versioned :class:`HierarchicalMemoryStore` (L0-L3 retrieval,
   Attempt & Failure Ledger geographic blacklist, and pre-STOP geometric gate).
-- Runs a main multimodal SSE streaming planner (e.g. OpenCode Go ``glm-5.3-flash``
-  or ``qwen3.8-flash``) together with an optional in-motion async streaming sentinel
+- Runs a main multimodal/reasoning SSE streaming planner (e.g. OpenCode Go
+  ``qwen3.8-flash`` for vision or ``deepseek-v4.1-flash`` for high-reasoning)
+  together with an optional in-motion async streaming sentinel
   (:class:`SentinelCoordinator` + :class:`AsyncDecisionRunner`) that can preempt
   active goals via ``action_epoch``.
 """

@@ -63,7 +63,7 @@ flowchart TB
 | `## [INTERMEDIATE_STATE]` | `user` | 每步更新 | 步号、经鲜度校验的实时位姿/航向、已行里程、过滤黑名单后的候选表（全拦时不回退可执行黑名单） |
 | `## [TOOL_RESULTS]` | `user` | 每步更新 | 上一步动作回执 + 最近一次本地 `query_memory` 回想到的 L1/L2/L3 结果 |
 
-> **实现边界说明**：CLI 每次启动绑定**一个可替换主干模型**（如 `qwen3.8-flash` 视觉主干或 `deepseek-v4.1-flash --thinking-mode high` 深度思考主干）加**一个可选并行哨兵**（如 `glm-5.3-flash`）；`query_memory` 在本地内存执行，不存在运行期自动跨模型动态路由；`x-opencode-session` 请求头已按官方要求携带，实际前缀缓存加速收益尚待冷暖请求对比测试单独量化。
+> **实现边界说明**：CLI 每次启动绑定**一个可替换主干模型**（主力为 `qwen3.8-flash` 视觉主干或 `deepseek-v4.1-flash --thinking-mode high` 深度思考主干）加**一个可选并行视觉哨兵**（现已默认统一为 `qwen3.8-flash`，传 `--sentinel-model ""` 可关闭）；`query_memory` 在本地内存执行，不存在运行期自动跨模型动态路由；`x-opencode-session` 请求头已按官方要求携带，实际前缀缓存加速收益尚待冷暖请求对比测试单独量化。
 
 ### 3.2 流式解析与回执闭合关键修复
 - **严格顶层 JSON 与单调绝对期限**：SSE 流式解析只认 `_extract_outer_json_object` 闭合后的顶层对象，截断流或解析异常返回无移动 `noop`（绝不从内层 `observed_objects` 误提动作，也不盲走 `M1`）；单调绝对 `deadline` 覆盖建连、响应头与 `readline()` 全程。

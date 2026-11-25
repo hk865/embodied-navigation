@@ -47,7 +47,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--planner-model", default="qwen3.8-flash", help="Main planner model ID.")
     parser.add_argument(
         "--sentinel-model",
-        default="glm-5.3-flash",
+        default="qwen3.8-flash",
         help="In-motion async sentinel model ID (empty to disable sentinel).",
     )
     parser.add_argument(
