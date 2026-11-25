@@ -897,7 +897,9 @@ class StaticStreamingTaskRunner:
                         extra=m_extra,
                     )
                     exec_info = waypoint_mailbox.wait_for_action(
-                        self.mailbox, payload, timeout_s=max(30.0, decision.duration * 15.0)
+                        self.mailbox,
+                        int(payload["seq"]),
+                        timeout_s=max(30.0, decision.duration * 15.0),
                     )
                     outcome = str(exec_info.get("status", "unknown"))
                     self.memory.record_attempt(
@@ -925,7 +927,9 @@ class StaticStreamingTaskRunner:
                         extra=y_extra,
                     )
                     exec_info = waypoint_mailbox.wait_for_action(
-                        self.mailbox, payload, timeout_s=90.0
+                        self.mailbox,
+                        int(payload["seq"]),
+                        timeout_s=90.0,
                     )
                     last_feedback = f"scan yaw +90deg -> {exec_info.get('status')}"
 

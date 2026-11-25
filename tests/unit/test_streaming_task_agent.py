@@ -262,6 +262,77 @@ class TestStreamingTaskAgent(unittest.TestCase):
             self.assertEqual(report["steps"][0]["execution"]["status"], "timeout")
             self.assertEqual(report["memory_diagnostics"]["active_blacklist_count"], 1)
 
+    def test_scan_and_maneuver_wait_for_action_signatures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            mailbox = run_dir / "capture" / "interactive"
+            mailbox.mkdir(parents=True, exist_ok=True)
+            (mailbox / "observation.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "action-run",
+                        "pose": {"position_xyz_m": [0.0, 0.0, 0.0], "yaw_rad": 0.0},
+                        "waypoints": {"phase": "idle", "current_epoch": 0},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            stop_flag = threading.Event()
+
+            def _responder():
+                req_path = mailbox / "request.json"
+                rec_path = mailbox / "receipts.jsonl"
+                seen: set[int] = set()
+                while not stop_flag.is_set():
+                    if req_path.is_file():
+                        try:
+                            req = json.loads(req_path.read_text(encoding="utf-8"))
+                        except (OSError, ValueError):
+                            time.sleep(0.03)
+                            continue
+                        seq = int(req.get("seq", 0))
+                        if seq not in seen:
+                            seen.add(seq)
+                            act = req.get("action")
+                            ev = (
+                                "yaw_complete"
+                                if act == "yaw"
+                                else ("maneuver_complete" if act == "maneuver" else "stop_accepted")
+                            )
+                            with rec_path.open("a", encoding="utf-8") as fh:
+                                fh.write(
+                                    json.dumps(
+                                        {"event": ev, "seq": seq, "run_id": req.get("run_id")}
+                                    )
+                                    + "\n"
+                                )
+                    time.sleep(0.03)
+
+            t = threading.Thread(target=_responder, daemon=True)
+            t.start()
+            try:
+                planner = _ScriptedPlanner(
+                    [
+                        TaskDecision(action="scan", reason="look around"),
+                        TaskDecision(action="maneuver", forward=0.3, yaw_rate=0.0, duration=1.0),
+                    ]
+                )
+                runner = StaticStreamingTaskRunner(
+                    run_dir,
+                    task_instruction="Scan and maneuver test",
+                    planner=planner,
+                    memory_store=HierarchicalMemoryStore(KeyframeSceneGraph()),
+                    pose_source="backend_corrected",
+                    snapshot_fn=lambda tag: {"tag": tag, "products": {"rgb": None, "height_charts": []}},
+                    step_timeout_s=5.0,
+                )
+                report = runner.run(max_steps=2)
+                self.assertEqual(report["steps"][0]["execution"]["event"], "yaw_complete")
+                self.assertEqual(report["steps"][1]["execution"]["event"], "maneuver_complete")
+            finally:
+                stop_flag.set()
+                t.join(timeout=2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
