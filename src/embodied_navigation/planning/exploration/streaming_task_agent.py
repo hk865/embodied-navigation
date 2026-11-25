@@ -107,6 +107,42 @@ def _clamp(val: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, float(val)))
 
 
+def resolve_thinking_options(
+    model_id: str,
+    mode: str,
+    *,
+    base_timeout_s: float = 25.0,
+    base_max_tokens: int = 380,
+) -> tuple[dict[str, Any] | None, float, int]:
+    """Return ``(extra_body, timeout_s, max_tokens)`` for a planner thinking mode.
+
+    Reasoning models count reasoning tokens inside ``max_tokens`` on OpenCode Go,
+    so ``medium`` and ``high`` allocate a 30K completion budget to prevent
+    empty-content JSON truncation. Note: DeepSeek API maps ``medium`` to ``high``
+    server-side, so those two modes differ mainly in timeout budget.
+    """
+    m = str(model_id or "").lower()
+    norm = str(mode or "disabled").strip().lower()
+    if norm == "high":
+        return (
+            {"reasoning_effort": "high"},
+            max(180.0, float(base_timeout_s)),
+            max(30000, int(base_max_tokens)),
+        )
+    if norm == "medium":
+        return (
+            {"reasoning_effort": "medium"},
+            max(120.0, float(base_timeout_s)),
+            max(30000, int(base_max_tokens)),
+        )
+    if norm == "disabled":
+        extra: dict[str, Any] = (
+            {"enable_thinking": False} if "qwen" in m else {"thinking": {"type": "disabled"}}
+        )
+        return (extra, float(base_timeout_s), int(base_max_tokens))
+    return (None, float(base_timeout_s), int(base_max_tokens))
+
+
 @dataclass(frozen=True)
 class TaskDecision:
     """Structured action decision produced by the streaming task planner."""

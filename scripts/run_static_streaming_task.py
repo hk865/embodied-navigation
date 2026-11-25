@@ -17,18 +17,8 @@ from embodied_navigation.planning.exploration.streaming_task_agent import (
     OpenCodeTaskPlanner,
     StaticStreamingTaskRunner,
     VisionLandmarkObserver,
+    resolve_thinking_options,
 )
-
-
-def _thinking_extra_body(model_id: str, mode: str) -> dict[str, object] | None:
-    m = model_id.lower()
-    if mode == "high":
-        return {"reasoning_effort": "high"}
-    if mode == "disabled":
-        if "qwen" in m:
-            return {"enable_thinking": False}
-        return {"thinking": {"type": "disabled"}}
-    return None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -58,9 +48,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--thinking-mode",
-        choices=("disabled", "default", "high"),
+        choices=("disabled", "default", "medium", "high"),
         default="disabled",
-        help="Reasoning mode for planner ('high' supports DeepSeek high reasoning).",
+        help="Reasoning mode for planner ('medium'/'high' support DeepSeek reasoning).",
     )
     parser.add_argument(
         "--text-only",
@@ -94,11 +84,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    planner_extra = _thinking_extra_body(args.planner_model, args.thinking_mode)
-    planner_timeout = (
-        max(90.0, args.planner_timeout_s) if args.thinking_mode == "high" else args.planner_timeout_s
+    planner_extra, planner_timeout, planner_max_tokens = resolve_thinking_options(
+        args.planner_model,
+        args.thinking_mode,
+        base_timeout_s=args.planner_timeout_s,
+        base_max_tokens=380,
     )
-    planner_max_tokens = 2048 if args.thinking_mode == "high" else 380
     planner_vision = not bool(args.text_only)
 
     planner_cfg = LlmClientConfig(
@@ -114,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     sentinel_cfg = None
     if args.sentinel_model and args.sentinel_model.strip():
         s_model = args.sentinel_model.strip()
+        s_extra, _, _ = resolve_thinking_options(s_model, "disabled")
         sentinel_cfg = LlmClientConfig(
             provider=args.provider,
             model=s_model,
@@ -122,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             temperature=0.1,
             supports_vision=True,
             stream=True,
-            extra_body=_thinking_extra_body(s_model, "disabled"),
+            extra_body=s_extra,
         )
 
     allowed_roots = [Path(args.run_dir), *(Path(p) for p in args.prior_evidence_root)]
@@ -133,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         and args.vision_observer_model.strip()
     ):
         v_model = args.vision_observer_model.strip()
+        v_extra, _, _ = resolve_thinking_options(v_model, "disabled")
         v_cfg = LlmClientConfig(
             provider=args.provider,
             model=v_model,
@@ -141,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             temperature=0.1,
             supports_vision=True,
             stream=True,
-            extra_body=_thinking_extra_body(v_model, "disabled"),
+            extra_body=v_extra,
         )
         vision_observer = VisionLandmarkObserver(v_cfg, allowed_image_roots=allowed_roots)
 
