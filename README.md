@@ -89,7 +89,7 @@ Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本
 | 感知 | `perception/` | 深度包与位姿/速度契约适配 | [README](src/embodied_navigation/perception/README.md) |
 | 定位建图 | `localization_mapping/` | 前端接入、后端 SLAM、语义建图 | [README](src/embodied_navigation/localization_mapping/README.md) |
 | 定位建图 | `localization_mapping/backend/` | 关键帧、回环、位姿图、地图存取、严格配置加载 | [README](src/embodied_navigation/localization_mapping/backend/README.md) |
-| 定位建图 | `localization_mapping/semantic_mapping/` | 语义地图核心、查询与调度 | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
+| 定位建图 | `localization_mapping/semantic_mapping/` | 语义点层、关键帧锚定 3D 场景图（`KeyframeSceneGraph`）、后端适配器与调度（离线 CLI `scripts/build_semantic_scene_graph.py`；在线回环需显式调用 `sync_backend_loop_update`，暂未自动接在线 `backend.py`） | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
 | 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与来源 | [README](src/embodied_navigation/planning/README.md) |
 | 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
 | 规划 | `planning/exploration/` | 航点候选、路线信息与 OS1 标定 | [README](src/embodied_navigation/planning/exploration/README.md) |

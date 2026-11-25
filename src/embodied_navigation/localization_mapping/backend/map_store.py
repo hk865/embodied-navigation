@@ -17,12 +17,27 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Iterator
 
 import numpy as np
 
 from .keyframes import Keyframe, VisualObservation, transform_points, voxel_downsample
 
 SCHEMA = "embodied_navigation_map/v1"
+
+
+def _resolve_map_file(directory: Path, rel_file: str | Path) -> Path:
+    """Resolve a map-relative NPZ path inside ``directory``, preserving subdirectories."""
+    if not isinstance(rel_file, (str, Path)) or not str(rel_file).strip():
+        raise ValueError(f"{directory}: empty keyframe file path")
+    rel = Path(rel_file)
+    if rel.is_absolute():
+        raise ValueError(f"{directory}: keyframe file path must be relative: {rel_file}")
+    root = directory.resolve()
+    candidate = (root / rel).resolve()
+    if candidate == root or not candidate.is_relative_to(root):
+        raise ValueError(f"{directory}: keyframe file escapes map directory: {rel_file}")
+    return candidate
 
 
 class MapStore:
@@ -97,15 +112,52 @@ class MapStore:
         (directory / "map.json").write_text(json.dumps(document))
 
     @classmethod
+    def iter_keyframes_from_dir(
+        cls,
+        directory: Path,
+        *,
+        include_descriptors: bool = False,
+    ) -> Iterator[tuple[Keyframe, np.ndarray, np.ndarray | None]]:
+        """Stream saved keyframes one at a time in numeric ``(epoch, sequence)`` order."""
+        directory = Path(directory)
+        document = json.loads((directory / "map.json").read_text(encoding="utf-8"))
+        if document.get("schema") != SCHEMA:
+            raise ValueError(f"{directory}: schema is not {SCHEMA}")
+        rows = sorted(
+            document["keyframes"],
+            key=lambda r: (int(r["key"][0]), int(r["key"][1])),
+        )
+        for row in rows:
+            key = (int(row["key"][0]), int(row["key"][1]))
+            npz_path = _resolve_map_file(directory, row["file"])
+            with np.load(npz_path) as arrays:
+                points = np.array(arrays["points_lidar"], dtype=np.float64)
+                descriptor = (
+                    np.array(arrays["descriptor"])
+                    if include_descriptors and "descriptor" in arrays
+                    else None
+                )
+            keyframe = Keyframe(
+                key,
+                int(row["stamp_ns"]),
+                np.array(row["T_odom_body"], dtype=np.float64),
+                np.array(row["T_body_lidar"], dtype=np.float64),
+                points,
+            )
+            pose = np.array(row["T_world_body"], dtype=np.float64)
+            yield keyframe, pose, descriptor
+
+    @classmethod
     def load(cls, directory: Path) -> "MapStore":
         directory = Path(directory)
-        document = json.loads((directory / "map.json").read_text())
+        document = json.loads((directory / "map.json").read_text(encoding="utf-8"))
         if document.get("schema") != SCHEMA:
             raise ValueError(f"{directory}: schema is not {SCHEMA}")
         store = cls(document["voxel_m"])
         for row in document["keyframes"]:
-            key = tuple(row["key"])
-            with np.load(directory / Path(row["file"]).name) as arrays:
+            key = (int(row["key"][0]), int(row["key"][1]))
+            npz_path = _resolve_map_file(directory, row["file"])
+            with np.load(npz_path) as arrays:
                 points, descriptor = arrays["points_lidar"], arrays["descriptor"]
             visual = None
             vfile = row.get("visual_file")
@@ -123,13 +175,13 @@ class MapStore:
                         )
             keyframe = Keyframe(
                 key,
-                row["stamp_ns"],
-                np.array(row["T_odom_body"]),
-                np.array(row["T_body_lidar"]),
+                int(row["stamp_ns"]),
+                np.array(row["T_odom_body"], dtype=np.float64),
+                np.array(row["T_body_lidar"], dtype=np.float64),
                 points,
                 visual=visual,
             )
             store.keyframes[key] = keyframe
-            store.poses[key] = np.array(row["T_world_body"])
+            store.poses[key] = np.array(row["T_world_body"], dtype=np.float64)
             store.descriptors[key] = descriptor
         return store

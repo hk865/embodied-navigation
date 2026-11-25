@@ -1,59 +1,76 @@
-# semantic_mapping：来源绑定的语义点层
+# semantic_mapping：来源绑定的语义点层与关键帧场景图
 
-本包是纯 CPU 的观测地图小实现：持有静态/动态/未知点层、对象 ID 与可查询对象表，**不含** ROS、模拟器、检测器、网络或模型加载依赖，导入即用、无副作用。真实的传感器点、同刻位姿与逐点分类证据都由调用方提供，本包只负责证据绑定、有界存储与只读查询。
+本包是纯 CPU 的语义地图与场景图实现：包含两层互补能力——(1) `core.py` 持有静态/动态/未知点层、对象 ID 与可查询对象表；(2) `scene_graph.py` + `backend_adapter.py` 提供以 SLAM 关键帧位姿为锚点的层次化 3D 场景图（楼层、楼梯、房间、门洞、对象），支持回环位姿重投影、显式双图原子同步、流式 `MapStore` 构图与只读查询。本包**不含** ROS、模拟器、检测器、网络或模型加载依赖，导入即用、无副作用。
 
-盘点日期 2026-11-20（分支 `refactor/06-clean-base`，HEAD 5b880b2）。
+盘点日期 2026-11-23（分支 `feat/semantic-keyframe-graph`）。
 
 ## 模块定位与架构层级
 
 - 架构层级：第 3 层「定位建图」下的语义子包（隶属 [localization_mapping](../README.md)），同时属于 Agent 感知与控制介入层的只读数据面。
-- 输入：`Observation`（点、`T_map_sensor`、epoch/sequence、frame/标定、`pose_source`）与可选的 `PointMask`（逐点 `UNKNOWN/STATIC/DYNAMIC`、instance ID、标签、provenance）；查询侧输入是 `LayeredMap.save()` 写出的 JSON 快照。
-- 输出：`integrate()` 返回完整导航点云与按状态切分的点/索引；`snapshot()`/`save()` 产出 schema `layered_observed_map/v1` 的自包含快照；`query.select`/`context_text` 产出确定性过滤结果与紧凑上下文文本。
-- 上游/下游：仓库内调用方为 `scripts/reconstruct_dynanav_slam_map.py`（用录制的 LIO 估计重建点层）、`scripts/query_scene_map.py`（读快照查询）、`simulation/dynanav/capture/ros_interface.py`（只 import `STATIC` 常量，用于发布 `/dynanav/lidar_static`）与测试；当前 HEAD 的在线 mapper 未接线（`git grep oracle_mapper` 只命中 `publish_cloud` 的参数，实际调用点传 `None`）。
-- 边界：不做感知推理（不跑检测/分割、不读图像/ROS/Isaac），mask 由调用方给出；不把 oracle 结果重标为 learned（`pose_source` 只能是 `slam` 或 `sim_oracle`，mask `kind` 只能是 `sim_oracle`/`learned`/`geometric`）；查询只读，不授予导航/执行器权限。
+- 输入：
+  - 点层侧：`Observation`（点、`T_map_sensor`、epoch/sequence、frame/标定、`pose_source`）与可选 `PointMask`（逐点 `UNKNOWN/STATIC/DYNAMIC`、instance ID、标签、provenance）；查询侧输入 `LayeredMap.save()` 写出的 JSON 快照。
+  - 场景图侧：`MapStore` 或磁盘目录（`map.json` + `.npz`，含子目录相对路径如 `keyframes/kf_*.npz`）以及可选的 `interactive_frames/index.jsonl` RGB 索引（支持 `stamp_ns` / `source_time_s` / `stamp_s` 与 `rgb_path` / `path` / `image_path`，逐行容错跳过坏行并对迁移归档路径回退到索引同目录 basename）。
+- 输出：
+  - 点层：`integrate()` 返回导航点云与按状态切分的点/索引；`snapshot()`/`save()` 产出 schema `layered_observed_map/v1`。
+  - 场景图：`save()` 产出 schema `keyframe_scene_graph/v1`；`query()` 产出 `keyframe_scene_graph_query/v1`；`compact_agent_summary()` 产出 `keyframe_scene_graph_summary/v1`。
+- 上游/下游与**当前接线状态**：
+  - 离线入口：`scripts/build_semantic_scene_graph.py`（流式读取 `MapStore` 目录构建场景图并输出紧凑摘要/JSON）、`scripts/reconstruct_dynanav_slam_map.py`（用录制的 LIO 估计重建点层）、`scripts/query_scene_map.py`（读快照查询）。
+  - 在线接线状态：**当前仓库在线后端循环（`backend/backend.py`）只更新 `MapStore.update_poses`，尚未自动调用 `sync_backend_loop_update`**（`git grep -n 'sync_backend_loop_update(' -- src scripts` 只命中 `backend_adapter.py` 定义）；回环同步目前通过显式调用 `sync_backend_loop_update(...)` 触发，在线 `publish_cloud` 的 `oracle_mapper` 参数仍传 `None`。
+- 边界：不做感知推理（不跑检测/分割、不读图像/ROS/Isaac），mask 与对象检测由调用方给出；不把 oracle 结果重标为 learned；查询只读，不授予导航/执行器权限。
 
 ## 当前文件夹结构
 
 ```text
 src/embodied_navigation/localization_mapping/semantic_mapping/
-├── README.md      # 本文件
-├── __init__.py    # 23 行：唯一门面，重导出 7 个名字 + __all__ 9 项
-├── core.py        # 670 行：点层、对象关联、修订/重投影、快照与原子保存
-├── query.py       # 130 行：只读确定性过滤与结构化上下文
-└── scheduler.py   # 52 行：传感器时钟上的语义准入
+├── README.md            # 本文件
+├── __init__.py          # 唯一门面：重导出核心、场景图、适配器与调度接口
+├── core.py              # 点层、对象关联、修订/重投影、SE(3) 校验、快照与原子保存
+├── scene_graph.py       # 关键帧锚定 3D 场景图（楼层/楼梯/房间/门洞/对象/重投影/查询）
+├── backend_adapter.py   # MapStore 流式/内存构图、RGB 索引容错解析、净空估计与原子双图同步
+├── query.py             # 只读确定性点层快照过滤与结构化上下文
+└── scheduler.py         # 传感器时钟上的语义准入
 ```
 
-5 个跟踪文件（4 个 `.py` + 本 README），共 875 行。
+7 个跟踪文件（6 个 `.py` + 本 README）。
 
 ## 逐文件职责
 
 | 文件 | 核心职责 | 关键接口/入口 |
 | --- | --- | --- |
-| [README.md](README.md) | 本文件：定位、文件清单、掩码/身份/容量规则、查询入口、测试。 | — |
-| [__init__.py](__init__.py) | 唯一门面：重导出 `DYNAMIC/STATIC/UNKNOWN`、`LayeredMap`、`Observation`、`PointMask`、`SemanticScheduler`、`read_snapshot`。 | `__all__`；`from embodied_navigation.localization_mapping.semantic_mapping import LayeredMap, …` |
-| [core.py](core.py) | 点层与对象表：两个 frozen dataclass 在构造时校验 epoch/sequence/时间/位姿/形状/provenance；`LayeredMap` 做有界积分、对象关联、延迟 mask 修订、位姿重投影、快照与原子保存。 | `Observation`（`observation_id = "{epoch}:{sequence}"`）、`PointMask`、`LayeredMap.integrate/revise_mask/update_anchor/static_points/query/summary/snapshot/save`、`read_snapshot`；常量 `UNKNOWN, STATIC, DYNAMIC = 0, 1, 2` |
-| [query.py](query.py) | 只读、确定性查询：按 `label`/`near`+`radius`/`include_expired` 过滤已有记录，绝不推断缺失对象、楼层、关系或控制权。 | `select(snapshot, *, label, near, radius, include_expired)`（schema `observed_scene_map_query/v1`）、`context_text(result)`（`observed_scene_map_context/v1`）；只 import `json`/`math`，不 import `core` |
-| [scheduler.py](scheduler.py) | 传感器时钟上的语义准入（周期/事件/epoch），调用方负责推理与超时。 | `SemanticScheduler.request(source_ns, *, epoch, event=False)` → bool、`complete(source_ns, *, epoch)`（只释放被准入的那一个任务，陈旧完成不会清掉新任务）；计数器 `requested/skipped_busy/skipped_interval` |
+| [README.md](README.md) | 本文件：定位、文件清单、规则、显式同步契约、离线 CLI 与测试。 | — |
+| [__init__.py](__init__.py) | 唯一门面：重导出 `LayeredMap`、`Observation`、`PointMask`、`KeyframeSceneGraph`、`RgbIndexReport`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` 等。 | `from embodied_navigation.localization_mapping.semantic_mapping import KeyframeSceneGraph, ...` |
+| [core.py](core.py) | 点层与对象表：两个 frozen dataclass 与 `LayeredMap`；提供 `validate_rigid_pose` 校验有限刚体 SE(3) 矩阵。 | `Observation`、`PointMask`、`LayeredMap`、`read_snapshot`、`validate_rigid_pose` |
+| [scene_graph.py](scene_graph.py) | 关键帧锚定 3D 场景图：按连续轨迹分段与局部纵坡 `\|dz/ds\|` 聚类楼层并做 Z 平移不变峰抑制（跨 epoch/时间断层不连楼梯）；用 `cKDTree` + 轨迹邻接/跨轨迹自由空间守卫与扇区视线检查分割房间；按瓶颈局部接触与轨迹穿越顺序建门洞（持久化 `bottleneck_anchor_ids`）；支持引用完整性校验、空间距离过滤查询与幂等/拓扑自愈重投影。 | `KeyframeSceneGraph`、`FloorNode`、`StairEdge`、`RoomNode`、`DoorwayEdge`、`ObjectNode` |
+| [backend_adapter.py](backend_adapter.py) | 后端桥接：逐扇区净空估计（无有效点云返回 `None` 未知）；`load_rgb_index_report` 容错解析；`build_scene_graph_from_map_dir` 调用 `MapStore.iter_keyframes_from_dir` 逐帧流式构图；`sync_backend_loop_update` 显式双图原子同步。 | `estimate_keyframe_clearance_m`、`estimate_keyframe_clearance_profile`、`load_rgb_index_report`、`load_rgb_index`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` |
+| [query.py](query.py) | 只读、确定性快照过滤：`select`/`context_text`（schema `observed_scene_map_query/v1`）。 | `select`、`context_text` |
+| [scheduler.py](scheduler.py) | 传感器时钟上的语义准入（周期/事件/epoch）。 | `SemanticScheduler.request/complete` |
 
-## 掩码、身份与修订规则（对应 `core.py`）
+## 显式同步契约（`sync_backend_loop_update`）
 
-- `PointMask` 的 epoch、sequence、源时间戳、frame、标定与点数必须与 `Observation` 一致；`produced_ns` 必须落在 `source_ns` 与调用方给的 `now_ns` 之间，且 `now_ns - source_ns <= max_mask_age_ns`（默认 2 s）。缺失/过期/不匹配一律给 UNKNOWN，**绝不默认 STATIC**。
-- 整组含动态点、或被标为 `person`/`pedestrian`/`human`（`movable_labels`）的 instance，整组排除出静态积分——站着的人仍算可移动物。
-- `instance_id_scope="epoch"` 用 `(epoch, provenance.kind, provenance.producer, instance)` 作为稳定键；默认 `frame` 作用域用「类别兼容 + 3D 最近邻（`association_distance`）+ `object_ttl_ns`」关联，并列歧义时分配新 ID 而不是合并。这不是通用视觉 re-ID。
-- `revise_mask(observation_id, mask, *, now_ns)` 只替换该保留观测的贡献；对象转动态后，与它关联的更早贡献在 `_effective_states` 里一并排除。`update_anchor(anchor_id, T_map_sensor, *, revision)` 要求 revision 递增，并在导出时重投影。
-- 有界存储默认值：`voxel_size=0.08`、`max_observations=512`、`max_points_per_observation=8192`、`max_objects=256`、`history_length=32`、`max_mask_age_ns=2_000_000_000`、`object_ttl_ns=5_000_000_000`、`association_distance=1.0`。容量拒绝会计数并把地图标为不完整，但**不会**丢掉已返回的完整导航点云。
+调用方将后端回环位姿同步至 `KeyframeSceneGraph` 与可选 `LayeredMap` 时遵守以下契约：
 
-## 产物与查询入口
+- **批前原子校验**：先校验全部输入位姿为合法 SE(3)、合成目标传感器位姿，并核对所有匹配锚点的修订号；任意锚点遇到过期修订或同修订号冲突位姿时立即抛 `ValueError`，在修改任一图之前原子拒绝。
+- **修订号规则**：未传 `revision`（默认 `None`）时，取 `LayeredMap` 当前最大锚点修订号 `+1` 单调递增；重复投递相同修订号且位姿一致时幂等跳过。
+- **观测锚点映射与外参合成**：支持 `anchor_to_keyframe_map`（如将 `rgbd:{seq}` 映射到后端 `{epoch}:{seq}`）与 `T_keyframe_sensor`（默认单位阵，支持单矩阵或按锚点字典），按 `T_map_sensor = T_map_keyframe @ T_keyframe_sensor` 合成后更新 `LayeredMap`。关联与外参可随 `KeyframeSceneGraph` 持久化。
 
-- `LayeredMap.save(path, *, now_ns=None, include_points=True)`：写 schema `layered_observed_map/v1`，用同目录 `NamedTemporaryFile` + `flush` + `os.fsync` + `os.replace` 原子替换；`read_snapshot(path)` 只认这个 schema。实时遥测应显式用 `include_points=False`，避免每次写整张静态点图。
-- 本包**不指定产物路径**：写到哪里由调用方决定（`scripts/reconstruct_dynanav_slam_map.py`、DynaNav 适配层）。`summary()` 只产出计数/provenance/当前对象，不物化点图。
-- CLI：`python3 scripts/query_scene_map.py <snapshot.json> [--label person] [--near 0 0 1 --radius 5] [--include-expired] [--context]`，默认输出确定性 JSON，`--context` 输出紧凑结构化文本；查询时钟是快照里记录的 `query_clock_ns`，不是机器当前墙钟。
-- 快照里 `semantic_coverage_complete` 是 `mask_coverage_complete` 的 legacy 别名（旁边有 `semantic_coverage_complete_is_legacy_mask_alias=true`）；`semantic_label_coverage_complete` 才问「保留的已知点是否都有 instance ID 与非 unknown 标签」。`complete` 只描述已保留观测的 mask 覆盖与容量，不表示整场景已探索或语义正确。
+## 磁盘布局、离线 CLI 与查询入口
+
+- **MapStore 磁盘布局（`localization_mapping/backend/map_store.py`）**：`map.json`（schema `embodied_navigation_map/v1`）允许平铺（`kf_1_0.npz`）或地图目录内子目录相对路径（`keyframes/kf_1_0.npz`），加载与流式读取（`MapStore.iter_keyframes_from_dir`）均校验路径位于地图目录内并保留子目录结构。
+- **场景图离线构建 CLI**：
+
+  ```bash
+  PYTHONPATH=src python3 scripts/build_semantic_scene_graph.py \
+      --map-dir "$RUN/map" \
+      [--rgb-index-jsonl "$RUN/capture/interactive_frames/index.jsonl"] \
+      [--output "$RUN/scene_graph.json"] [--summary]
+  ```
+
+  CLI 通过 `build_scene_graph_from_map_dir` 流式逐帧提取净空并立即释放点云，显著降低大规模地图的峰值内存；RGB 索引中的坏行号与跳过数会输出至 `stderr`。
+- **点层离线 CLI**：`scripts/reconstruct_dynanav_slam_map.py` 与 `scripts/query_scene_map.py`。
 
 ## 验证与测试入口 / 配置注意
 
-- 行为用例：[tests/unit/test_layered_mapping.py](../../../../tests/unit/test_layered_mapping.py) 20 个用例，覆盖 UNKNOWN 隔离、完整导航点云保留、迟到修订、站立/移动对象、epoch 作用域 ID、楼层分离、位姿重投影、原子产物、容量界限与周期/事件/epoch 调度。
-- 来源快照：[tests/unit/test_dynanav_source_snapshot.py](../../../../tests/unit/test_dynanav_source_snapshot.py) 用 AST 断言 DynaNav 的源码快照包含 `semantic_mapping/query.py` 与 `scripts/query_scene_map.py`。
-- 单测命令：`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src python3 -m unittest discover -s tests/unit -p 'test_layered_mapping.py' -v`；全量 CPU 测试 `PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`。
-- 配置：本包**没有配置读取点**（不读 `configs/`、不读环境变量、不写日志框架），所有界限都是 `LayeredMap.__init__` 与 `SemanticScheduler.__init__` 的关键字参数默认值，调用方可覆盖。
-- 边界提醒：只有本包与它的 CPU 测试属于本实现范围。SLAM 之后过滤归档**不能**证明 FAST-LIVO2 内部几何/视觉地图排除了动态物体；前端 mask 准入与真实话题接线需要各自的集成与仿真检查，未在本次文档盘点中运行。
+- 点层单测：[tests/unit/test_layered_mapping.py](../../../../tests/unit/test_layered_mapping.py)。
+- 场景图与后端适配单测：[tests/unit/test_semantic_scene_graph.py](../../../../tests/unit/test_semantic_scene_graph.py)，覆盖斜坡/漂移平台楼层聚类、Z 平移不变性、跨 epoch/时间断层不连楼梯、门洞锚点持久化与重投影、房间拆分/迁移/幂等、走廊相邻建边、平行双走廊隔墙防穿墙、未知净空 `None`、流式子目录读取与路径越界拒绝、RGB 索引容错与归档解析、SE(3)/引用完整性校验、远距离空间查询过滤、代表图上限以及双图原子同步/外参合成。
+- 全量 CPU 测试：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`。
+- 配置：本包**不读环境变量**、不写日志框架；所有阈值均为方法/构造器关键字参数默认值，调用方可显式覆盖。

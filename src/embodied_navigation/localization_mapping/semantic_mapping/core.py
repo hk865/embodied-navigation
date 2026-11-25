@@ -40,6 +40,11 @@ def _transform(value):
     return result
 
 
+def validate_rigid_pose(value) -> np.ndarray:
+    """Validate and return a read-only finite 4x4 SE(3) homogeneous matrix."""
+    return _transform(value)
+
+
 def _world(points, transform):
     return np.asarray(points) @ transform[:3, :3].T + transform[:3, 3]
 
