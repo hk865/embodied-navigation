@@ -615,6 +615,129 @@ class HierarchicalMemoryStore:
             rows.sort(key=lambda item: item[0])
         return [item[1] for item in rows[:limit]]
 
+    def narrative_summary(
+        self,
+        *,
+        robot_xyz: Sequence[float] | None = None,
+        target_label: str | None = None,
+    ) -> str:
+        """Return ONE concise prose paragraph summarizing global spatial memory."""
+        n_floors = len(self.graph.floors)
+        n_rooms = len(self.graph.rooms)
+        n_stairs = len(self.graph.stairs)
+        n_doors = len(self.graph.doorways)
+        active_objs = [
+            obj
+            for obj in self.graph.objects.values()
+            if not (
+                self._object_meta.get(obj.object_id) is not None
+                and self._object_meta[obj.object_id].stale
+            )
+        ]
+        active_fails = sum(1 for r in self._attempts if r.is_failure and not r.stale)
+
+        parts: list[str] = [
+            f"当前空间记忆版本 rev={self.map_revision}，已构建 {n_floors} 个楼层、"
+            f"{n_rooms} 个房间/区域、{n_doors} 个门洞与 {n_stairs} 条楼梯连接，"
+            f"共记录 {len(active_objs)} 个有效语义地标。"
+        ]
+
+        if robot_xyz is not None and self.graph.rooms:
+            pos = np.asarray(_finite_xyz(robot_xyz, "robot_xyz"))
+            nearest_room = min(
+                self.graph.rooms.values(),
+                key=lambda r: float(np.linalg.norm(np.asarray(r.centroid_xyz) - pos)),
+            )
+            r_dist = float(np.linalg.norm(np.asarray(nearest_room.centroid_xyz) - pos))
+            alias_str = (
+                f"（{nearest_room.alias}）"
+                if nearest_room.alias and nearest_room.alias != nearest_room.room_id
+                else ""
+            )
+            parts.append(
+                f"机器人当前最接近 {nearest_room.floor_id}/{nearest_room.room_id}{alias_str}"
+                f"（距中心约 {r_dist:.1f} m）。"
+            )
+
+        if target_label:
+            matched = self.l2_submap_entities(label=target_label, include_stale=False)["objects"]
+            if matched:
+                if robot_xyz is not None:
+                    pos = np.asarray(_finite_xyz(robot_xyz, "robot_xyz"))
+                    matched.sort(
+                        key=lambda o: float(np.linalg.norm(np.asarray(o["world_xyz"]) - pos))
+                    )
+                brief = "；".join(
+                    f"{o['label']}({o['object_id']}@{o['room_id'] or 'open'}, "
+                    f"[{o['world_xyz'][0]:.1f},{o['world_xyz'][1]:.1f},{o['world_xyz'][2]:.1f}])"
+                    for o in matched[:3]
+                )
+                parts.append(
+                    f"全局记忆中已命中与目标“{target_label}”相关的地标：{brief}（已转为 M* 直达候选）。"
+                )
+            else:
+                parts.append(f"全局记忆中暂未记录与目标“{target_label}”匹配的地标，需继续探索。")
+        elif active_objs:
+            top_labels = sorted({o.label for o in active_objs})[:5]
+            parts.append(f"代表性已记住地标包括：{', '.join(top_labels)}。")
+
+        if active_fails > 0:
+            parts.append(f"当前存在 {active_fails} 处活跃失败黑名单区域（已自动过滤高危候选）。")
+        parts.append("如需查询特定房间完整物体列表、精确坐标或历史关键帧原图，请调用 query_memory 工具回想。")
+        return "".join(parts)
+
+    def memory_goal_candidates(
+        self,
+        robot_xyz: Sequence[float],
+        *,
+        target_label: str | None = None,
+        standoff_m: float = 1.0,
+        max_candidates: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Project globally remembered target objects into safe standoff M1..M* goto candidates."""
+        pos = np.asarray(_finite_xyz(robot_xyz, "robot_xyz"), dtype=np.float64)
+        matches = self.l2_submap_entities(label=target_label, include_stale=False)["objects"]
+        if not matches:
+            return []
+
+        ranked: list[tuple[float, dict[str, Any]]] = []
+        for obj in matches:
+            obj_xyz = np.asarray(obj["world_xyz"], dtype=np.float64)
+            delta = pos - obj_xyz
+            xy_norm = math.hypot(float(delta[0]), float(delta[1]))
+            if xy_norm > max(0.25, standoff_m):
+                ux, uy = float(delta[0]) / xy_norm, float(delta[1]) / xy_norm
+                goal_x = float(obj_xyz[0] + ux * standoff_m)
+                goal_y = float(obj_xyz[1] + uy * standoff_m)
+            else:
+                goal_x, goal_y = float(pos[0]), float(pos[1])
+            goal_z = float(obj_xyz[2])
+            dist_to_obj = float(np.linalg.norm(obj_xyz - pos))
+            ranked.append(
+                (
+                    dist_to_obj,
+                    {
+                        "kind": "memory_target",
+                        "object_id": obj["object_id"],
+                        "label": obj["label"],
+                        "room_id": obj["room_id"],
+                        "xy": [round(goal_x, 2), round(goal_y, 2)],
+                        "z": round(goal_z, 3),
+                        "object_xyz": obj["world_xyz"],
+                        "dist_m": round(dist_to_obj, 2),
+                        "clearance_m": 1.0,
+                        "turn_safe": True,
+                    },
+                )
+            )
+
+        ranked.sort(key=lambda item: item[0])
+        out: list[dict[str, Any]] = []
+        for idx, (_, cand) in enumerate(ranked[: max(1, int(max_candidates))], start=1):
+            cand["id"] = f"M{idx}"
+            out.append(cand)
+        return out
+
     # ------------------------------------------------------------------
     # Pre-STOP Geometric & Evidence Verification
     # ------------------------------------------------------------------

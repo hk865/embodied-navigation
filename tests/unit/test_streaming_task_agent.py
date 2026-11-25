@@ -345,6 +345,50 @@ class TestStreamingTaskAgent(unittest.TestCase):
                 stop_flag.set()
                 t.join(timeout=2.0)
 
+    def test_six_zone_context_prose_memory_and_global_memory_candidates(self) -> None:
+        import numpy as np
+
+        graph = KeyframeSceneGraph()
+        pose = np.eye(4, dtype=np.float64)
+        graph.add_keyframe("kf_0", pose, clearance_m=1.5)
+        store = HierarchicalMemoryStore(graph)
+        store.add_object("obj_door", "red double door", "kf_0", [5.5, -0.5, 0.0], confidence=0.95)
+
+        # Even from 15 m away, global memory_goal_candidates still surfaces M1 with 1.0 m standoff
+        m_cands = store.memory_goal_candidates([15.5, -0.5, 0.0], target_label="door", standoff_m=1.0)
+        self.assertEqual(len(m_cands), 1)
+        self.assertEqual(m_cands[0]["id"], "M1")
+        self.assertEqual(m_cands[0]["kind"], "memory_target")
+        self.assertAlmostEqual(m_cands[0]["xy"][0], 6.5, places=1)
+
+        prose = store.narrative_summary(robot_xyz=[15.5, -0.5, 0.0], target_label="door")
+        self.assertIn("red double door", prose)
+        self.assertIn("query_memory", prose)
+
+        planner = OpenCodeTaskPlanner(
+            LlmClientConfig(provider="opencode", api_key="sk-test", supports_vision=False)
+        )
+        msgs = planner.build_messages(
+            task_instruction="Reach the red double door.",
+            step_index=3,
+            robot_xyz=[15.5, -0.5, 0.0],
+            yaw_rad=0.0,
+            candidates=m_cands,
+            memory_summary=prose,
+            target_label="door",
+            last_feedback="goto completed",
+            tool_recall_result={"query": "door", "l2_objects": [{"object_id": "obj_door"}]},
+        )
+        sys_txt = msgs[0]["content"]
+        usr_txt = msgs[1]["content"]
+        self.assertIn("## [SYSTEM]", sys_txt)
+        self.assertIn("## [SKILL]", sys_txt)
+        self.assertIn("## [TASK]", usr_txt)
+        self.assertIn("## [MEMORY_SUMMARY]", usr_txt)
+        self.assertIn("## [INTERMEDIATE_STATE]", usr_txt)
+        self.assertIn("## [TOOL_RESULTS]", usr_txt)
+        self.assertIn("memory_tool_recall", usr_txt)
+
 
 if __name__ == "__main__":
     unittest.main()

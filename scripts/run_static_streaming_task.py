@@ -10,12 +10,24 @@ import sys
 
 from embodied_navigation.localization_mapping.semantic_mapping import (
     HierarchicalMemoryStore,
+    build_scene_graph_from_map_dir,
 )
 from embodied_navigation.planning.exploration.llm_agent_client import LlmClientConfig
 from embodied_navigation.planning.exploration.streaming_task_agent import (
     OpenCodeTaskPlanner,
     StaticStreamingTaskRunner,
 )
+
+
+def _thinking_extra_body(model_id: str, mode: str) -> dict[str, object] | None:
+    m = model_id.lower()
+    if mode == "high":
+        return {"reasoning_effort": "high"}
+    if mode == "disabled":
+        if "qwen" in m:
+            return {"enable_thinking": False}
+        return {"thinking": {"type": "disabled"}}
+    return None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -26,52 +38,69 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", required=True, help="Natural language task instruction.")
     parser.add_argument("--target-label", default=None, help="Target label for STOP verification.")
     parser.add_argument("--provider", default="opencode", help="LLM provider preset.")
-    parser.add_argument("--planner-model", default="glm-5.3-flash", help="Main planner model ID.")
+    parser.add_argument("--planner-model", default="qwen3.8-flash", help="Main planner model ID.")
     parser.add_argument(
         "--sentinel-model",
         default="glm-5.3-flash",
         help="In-motion async sentinel model ID (empty to disable sentinel).",
     )
-    parser.add_argument("--disable-thinking", action="store_true", default=True)
-    parser.add_argument("--planner-timeout-s", type=float, default=18.0)
-    parser.add_argument("--sentinel-timeout-s", type=float, default=6.0)
+    parser.add_argument(
+        "--thinking-mode",
+        choices=("disabled", "default", "high"),
+        default="disabled",
+        help="Reasoning mode for planner ('high' supports DeepSeek high reasoning).",
+    )
+    parser.add_argument("--planner-timeout-s", type=float, default=25.0)
+    parser.add_argument("--sentinel-timeout-s", type=float, default=8.0)
     parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--step-timeout-s", type=float, default=180.0)
     parser.add_argument("--stop-radius-m", type=float, default=1.5)
     parser.add_argument("--pose-source", default="backend_corrected")
     parser.add_argument("--prior-memory", default=None, help="Optional saved hierarchical_memory.json.")
+    parser.add_argument("--prior-map-dir", default=None, help="Optional saved MapStore dir for initial L0-L3 memory.")
     parser.add_argument("--no-stop-on-exit", action="store_true", default=False)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    extra_body = {"thinking": {"type": "disabled"}} if args.disable_thinking else None
+    planner_extra = _thinking_extra_body(args.planner_model, args.thinking_mode)
+    planner_timeout = (
+        max(60.0, args.planner_timeout_s) if args.thinking_mode == "high" else args.planner_timeout_s
+    )
+    planner_max_tokens = 1024 if args.thinking_mode == "high" else 380
+    planner_vision = "deepseek" not in args.planner_model.lower()
 
     planner_cfg = LlmClientConfig(
         provider=args.provider,
         model=args.planner_model,
-        timeout_s=args.planner_timeout_s,
-        max_tokens=360,
+        timeout_s=planner_timeout,
+        max_tokens=planner_max_tokens,
         temperature=0.1,
+        supports_vision=planner_vision,
         stream=True,
-        extra_body=extra_body,
+        extra_body=planner_extra,
     )
     sentinel_cfg = None
     if args.sentinel_model and args.sentinel_model.strip():
+        s_model = args.sentinel_model.strip()
         sentinel_cfg = LlmClientConfig(
             provider=args.provider,
-            model=args.sentinel_model.strip(),
+            model=s_model,
             timeout_s=args.sentinel_timeout_s,
             max_tokens=96,
             temperature=0.1,
+            supports_vision=("deepseek" not in s_model.lower()),
             stream=True,
-            extra_body=extra_body,
+            extra_body=_thinking_extra_body(s_model, "disabled"),
         )
 
     memory_store = None
     if args.prior_memory:
         memory_store = HierarchicalMemoryStore.load(Path(args.prior_memory))
+    elif args.prior_map_dir:
+        graph = build_scene_graph_from_map_dir(Path(args.prior_map_dir))
+        memory_store = HierarchicalMemoryStore(graph, default_stop_radius_m=args.stop_radius_m)
 
     runner = StaticStreamingTaskRunner(
         args.run_dir,

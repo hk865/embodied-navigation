@@ -56,25 +56,33 @@ VALID_TASK_ACTIONS = (
 )
 
 _TASK_PLANNER_SYSTEM_PROMPT = (
+    "## [SYSTEM]\n"
     "You are an autonomous quadruped navigation agent operating in a static indoor "
     "multi-floor building using real SLAM poses, front RGB, annotated 2D maps, and "
-    "hierarchical L0-L3 spatial memory.\n"
+    "versioned hierarchical spatial memory. Never invent coordinates outside sensors/memory.\n"
     "Images attached (when present): image 1 = front RGB camera; image 2 = annotated "
     "2D occupancy map with robot footprint, turning circle (green=safe to scan, red=tight), "
-    "and numbered frontier/waypoint candidates (F1..F*, W1..W*).\n"
-    "Rules:\n"
-    "- Prefer clear, non-blacklisted F*/W* candidates (goto_candidate) to explore or approach.\n"
-    "- Avoid candidates marked blacklisted unless no alternative exists.\n"
-    "- If front RGB shows a doorway/wall jam or stairs to climb directly, use maneuver "
-    "(bounded: forward in [-0.45, 0.50], yaw_rate in [-0.15, 0.15], duration in [0.5, 2.0]).\n"
-    "- Report any salient furniture/landmark you clearly see in front RGB inside observed_objects "
-    "(each item: {\"label\": \"short name\", \"dist_m\": float, \"bearing_deg\": float, \"confidence\": 0.5-1.0}; "
-    "bearing_deg=0 straight ahead, +left, -right).\n"
-    "- Call stop_claim ONLY when you have reached and confirmed the task target within ~1.5 m on the same floor.\n"
-    "- Reply ONLY with ONE compact JSON object matching:\n"
+    "and numbered frontier/waypoint candidates (F1..F*, W1..W*). Additional images (if any) "
+    "are L3 historical keyframe RGBs recalled by query_memory.\n"
+    "Output ONLY ONE compact JSON object matching:\n"
     '{"action":"goto_candidate"|"goto_xyz"|"maneuver"|"scan"|"query_memory"|"stop_claim",'
-    '"target_id":"F1"|null,"xyz":[x,y,z]|null,"forward":0.0,"yaw_rate":0.0,"duration":1.0,'
-    '"query":null,"target_label":null,"observed_objects":[],"reason":"short"}'
+    '"target_id":"M1"|"F1"|null,"xyz":[x,y,z]|null,"forward":0.0,"yaw_rate":0.0,"duration":1.0,'
+    '"query":null,"target_label":null,"observed_objects":[],"reason":"short"}\n\n'
+    "## [SKILL]\n"
+    "1. Memory-first approach: If an M* candidate (memory_target) matches the task goal and is "
+    "non-blacklisted, prioritize goto_candidate on M* instead of wandering unrelated frontiers.\n"
+    "2. Exploration: When the target is not yet in memory, pick a clear, non-blacklisted F*/W* "
+    "candidate within ~6 m; avoid blacklisted spots unless no alternative exists.\n"
+    "3. On-demand memory recall: [MEMORY_SUMMARY] is intentionally a 1-paragraph summary. Call "
+    "query_memory (with a room/object query) ONLY when you need detailed room object lists, "
+    "exact coordinates, or L3 historical RGB images.\n"
+    "4. Visual logging: Always report salient landmarks clearly visible in front RGB inside "
+    "observed_objects ({\"label\":\"short name\",\"dist_m\":float,\"bearing_deg\":float,"
+    "\"confidence\":0.5-1.0}; bearing_deg=0 straight ahead, +left, -right).\n"
+    "5. Anti-trapping & stairs: Use maneuver (forward in [-0.45,0.50], yaw_rate in [-0.15,0.15], "
+    "duration in [0.5,2.0]) for door jams or stair climbing.\n"
+    "6. Active STOP gate: Call stop_claim ONLY when within stop_radius_m on the same floor and "
+    "target is confirmed; if rejected in [TOOL_RESULTS], move closer and re-verify."
 )
 
 
@@ -315,10 +323,15 @@ class OpenCodeTaskPlanner:
         robot_xyz: Sequence[float],
         yaw_rad: float,
         candidates: Sequence[dict[str, Any]],
-        memory_l0: dict[str, Any],
-        memory_l1: Sequence[dict[str, Any]],
-        memory_l2: dict[str, Any],
+        memory_summary: str = "",
+        memory_l0: dict[str, Any] | None = None,
+        memory_l1: Sequence[dict[str, Any]] = (),
+        memory_l2: dict[str, Any] | None = None,
+        target_label: str | None = None,
+        stop_radius_m: float = 1.5,
+        estimated_travel_m: float = 0.0,
         last_feedback: str = "",
+        tool_recall_result: dict[str, Any] | None = None,
         rgb_path: str | Path | None = None,
         local_map_path: str | Path | None = None,
         extra_rgb_paths: Sequence[str | Path] = (),
@@ -327,6 +340,7 @@ class OpenCodeTaskPlanner:
             {
                 "id": c.get("id"),
                 "kind": c.get("kind"),
+                "label": c.get("label"),
                 "xy": c.get("xy"),
                 "z": c.get("z"),
                 "dist_m": c.get("dist_m"),
@@ -334,23 +348,45 @@ class OpenCodeTaskPlanner:
                 "turn_safe": c.get("turn_safe"),
                 "blacklisted": c.get("blacklisted", False),
             }
-            for c in list(candidates)[:10]
+            for c in list(candidates)[:12]
         ]
-        state_obj = {
-            "task": task_instruction,
+
+        summary_text = memory_summary.strip() if memory_summary else ""
+        if not summary_text and memory_l0 is not None:
+            summary_text = (
+                f"当前空间记忆版本 rev={memory_l0.get('rev', 0)}，"
+                f"楼层数={len(memory_l0.get('floors', []))}，"
+                f"房间数={len(memory_l0.get('rooms', []))}，"
+                f"活跃失败黑名单={memory_l0.get('fail_cnt', 0)}。"
+                "如需详细房间物体清单或历史关键帧原图，请调用 query_memory 工具回想。"
+            )
+
+        state_block = {
             "step": step_index,
             "robot_xyz": [round(float(v), 2) for v in robot_xyz],
             "yaw_deg": round(math.degrees(yaw_rad), 1),
+            "estimated_travel_m": round(float(estimated_travel_m), 2),
             "candidates": compact_cands,
-            "memory_l0": memory_l0,
-            "memory_l1_top": list(memory_l1)[:4],
-            "memory_l2_local": {
-                "objects": memory_l2.get("objects", [])[:8],
-                "failures": memory_l2.get("failures", [])[:6],
-            },
-            "last_feedback": last_feedback,
         }
-        text_payload = json.dumps(state_obj, ensure_ascii=False, separators=(",", ":"))
+        tool_block: dict[str, Any] = {"last_action_receipt": last_feedback}
+        if tool_recall_result is not None:
+            tool_block["memory_tool_recall"] = tool_recall_result
+        elif memory_l1 or (memory_l2 and (memory_l2.get("objects") or memory_l2.get("failures"))):
+            # Backward-compatible compact fallback if caller passed explicit L1/L2 without recall
+            tool_block["active_local_failures"] = (memory_l2 or {}).get("failures", [])[:4]
+
+        text_payload = (
+            f"## [TASK]\n"
+            f"instruction: {task_instruction}\n"
+            f"target_label: {target_label or 'unspecified'}\n"
+            f"stop_verification: same floor & distance <= {stop_radius_m:.1f} m\n\n"
+            f"## [MEMORY_SUMMARY]\n"
+            f"{summary_text}\n\n"
+            f"## [INTERMEDIATE_STATE]\n"
+            f"{json.dumps(state_block, ensure_ascii=False, separators=(',', ':'))}\n\n"
+            f"## [TOOL_RESULTS]\n"
+            f"{json.dumps(tool_block, ensure_ascii=False, separators=(',', ':'))}"
+        )
         if not self.config.supports_vision:
             return [
                 {"role": "system", "content": _TASK_PLANNER_SYSTEM_PROMPT},
@@ -445,10 +481,15 @@ class OpenCodeTaskPlanner:
         robot_xyz: Sequence[float],
         yaw_rad: float,
         candidates: Sequence[dict[str, Any]],
-        memory_l0: dict[str, Any],
-        memory_l1: Sequence[dict[str, Any]],
-        memory_l2: dict[str, Any],
+        memory_summary: str = "",
+        memory_l0: dict[str, Any] | None = None,
+        memory_l1: Sequence[dict[str, Any]] = (),
+        memory_l2: dict[str, Any] | None = None,
+        target_label: str | None = None,
+        stop_radius_m: float = 1.5,
+        estimated_travel_m: float = 0.0,
         last_feedback: str = "",
+        tool_recall_result: dict[str, Any] | None = None,
         rgb_path: str | Path | None = None,
         local_map_path: str | Path | None = None,
         extra_rgb_paths: Sequence[str | Path] = (),
@@ -462,10 +503,15 @@ class OpenCodeTaskPlanner:
             robot_xyz=robot_xyz,
             yaw_rad=yaw_rad,
             candidates=candidates,
+            memory_summary=memory_summary,
             memory_l0=memory_l0,
             memory_l1=memory_l1,
             memory_l2=memory_l2,
+            target_label=target_label,
+            stop_radius_m=stop_radius_m,
+            estimated_travel_m=estimated_travel_m,
             last_feedback=last_feedback,
+            tool_recall_result=tool_recall_result,
             rgb_path=rgb_path,
             local_map_path=local_map_path,
             extra_rgb_paths=extra_rgb_paths,
@@ -767,6 +813,7 @@ class StaticStreamingTaskRunner:
         t_start = time.monotonic()
         step_logs: list[dict[str, Any]] = []
         last_feedback = "Episode started."
+        pending_recall: dict[str, Any] | None = None
         extra_l3_rgb: list[str] = []
         task_succeeded = False
         terminal_status = "max_steps_reached"
@@ -787,22 +834,22 @@ class StaticStreamingTaskRunner:
                 rgb_path = snap.get("products", {}).get("rgb")
                 local_map_path, raw_cands = select_active_chart_and_candidates(snap, robot_xyz[2])
 
+                mem_cands = self.memory.memory_goal_candidates(
+                    robot_xyz,
+                    target_label=self.target_label,
+                    standoff_m=min(1.0, max(0.5, self.stop_radius_m * 0.6)),
+                )
+                combined_cands = [*mem_cands, *raw_cands]
                 allowed_cands, blocked_cands = self.memory.filter_candidates(
-                    raw_cands, default_z=robot_xyz[2]
+                    combined_cands, default_z=robot_xyz[2]
                 )
                 cands_for_planner = allowed_cands if allowed_cands else blocked_cands
 
+                mem_summary = self.memory.narrative_summary(
+                    robot_xyz=robot_xyz,
+                    target_label=self.target_label,
+                )
                 l0 = self.memory.l0_global_topology()
-                l1 = self.memory.l1_submap_summaries(
-                    query=self.target_label or self.task_instruction,
-                    near_xyz=robot_xyz,
-                    top_k=4,
-                )
-                l2 = self.memory.l2_submap_entities(
-                    label=self.target_label,
-                    near_xyz=robot_xyz,
-                    radius_m=8.0,
-                )
 
                 decision = self.planner.decide(
                     task_instruction=self.task_instruction,
@@ -810,14 +857,18 @@ class StaticStreamingTaskRunner:
                     robot_xyz=robot_xyz,
                     yaw_rad=yaw_rad,
                     candidates=cands_for_planner,
+                    memory_summary=mem_summary,
                     memory_l0=l0,
-                    memory_l1=l1,
-                    memory_l2=l2,
+                    target_label=self.target_label,
+                    stop_radius_m=self.stop_radius_m,
+                    estimated_travel_m=total_travel_m,
                     last_feedback=last_feedback,
+                    tool_recall_result=pending_recall,
                     rgb_path=rgb_path,
                     local_map_path=local_map_path,
                     extra_rgb_paths=extra_l3_rgb,
                 )
+                pending_recall = None
                 extra_l3_rgb = []
 
                 kf_id = self._record_live_step_in_memory(
@@ -833,8 +884,20 @@ class StaticStreamingTaskRunner:
                     q_l2 = self.memory.l2_submap_entities(label=q)
                     q_l3 = self.memory.l3_on_demand_keyframes(near_xyz=robot_xyz, max_images=2)
                     extra_l3_rgb = [row["rgb_path"] for row in q_l3 if row.get("rgb_path")]
-                    exec_info = {"status": "memory_queried", "l1_hits": len(q_l1), "l2_objects": len(q_l2["objects"]), "l3_images": len(extra_l3_rgb)}
-                    last_feedback = f"Memory query '{q}': L1={q_l1[:2]}, L2_objs={q_l2['objects'][:4]}"
+                    pending_recall = {
+                        "query": q,
+                        "l1_rooms": q_l1[:3],
+                        "l2_objects": q_l2["objects"][:6],
+                        "l2_failures": q_l2["failures"][:4],
+                        "l3_keyframes": q_l3,
+                    }
+                    exec_info = {
+                        "status": "memory_queried",
+                        "l1_hits": len(q_l1),
+                        "l2_objects": len(q_l2["objects"]),
+                        "l3_images": len(extra_l3_rgb),
+                    }
+                    last_feedback = f"query_memory('{q}') returned {len(q_l1)} rooms, {len(q_l2['objects'])} objects, {len(extra_l3_rgb)} L3 images."
 
                 elif decision.action == "stop_claim":
                     claim_label = decision.target_label or self.target_label
