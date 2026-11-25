@@ -62,6 +62,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="disabled",
         help="Reasoning mode for planner ('high' supports DeepSeek high reasoning).",
     )
+    parser.add_argument(
+        "--text-only",
+        action="store_true",
+        default=False,
+        help="Disable native image attachments on planner (falls back to --vision-observer-model).",
+    )
     parser.add_argument("--planner-timeout-s", type=float, default=25.0)
     parser.add_argument("--sentinel-timeout-s", type=float, default=8.0)
     parser.add_argument("--max-steps", type=int, default=10)
@@ -93,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         max(90.0, args.planner_timeout_s) if args.thinking_mode == "high" else args.planner_timeout_s
     )
     planner_max_tokens = 2048 if args.thinking_mode == "high" else 380
-    planner_vision = "deepseek" not in args.planner_model.lower()
+    planner_vision = not bool(args.text_only)
 
     planner_cfg = LlmClientConfig(
         provider=args.provider,
@@ -114,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.sentinel_timeout_s,
             max_tokens=96,
             temperature=0.1,
-            supports_vision=("deepseek" not in s_model.lower()),
+            supports_vision=True,
             stream=True,
             extra_body=_thinking_extra_body(s_model, "disabled"),
         )
