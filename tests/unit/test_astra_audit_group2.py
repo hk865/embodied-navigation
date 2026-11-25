@@ -439,7 +439,7 @@ class TestStreamingRunnerAuditFixes(unittest.TestCase):
             run2 = Path(tmp) / "run2"
             self._setup_mailbox(run2, xyz=(2.0, 0.0, 0.0))
             p2 = _ScriptedPlanner(
-                [TaskDecision(action="noop", observed_objects=[{"label": "chair", "dist_m": 1.5, "bearing_deg": 0.0}])]
+                [TaskDecision(action="query_memory", query="chair", observed_objects=[{"label": "chair", "dist_m": 1.5, "bearing_deg": 0.0}])]
             )
             r2 = StaticStreamingTaskRunner(
                 run2,
@@ -498,6 +498,123 @@ class TestStreamingRunnerAuditFixes(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_stop_unconfirmed_revokes_task_success_and_text_planner_uses_vision_observer(self) -> None:
+        from embodied_navigation.planning.exploration.sentinel_coordinator import SentinelCoordinator
+
+        # 1. SentinelCoordinator suppresses brake-safe false STOP and rejects stale active_seq
+        with tempfile.TemporaryDirectory() as tmp:
+            mb = Path(tmp)
+            verdicts: list[SentinelVerdict] = [
+                SentinelVerdict(act="STOP", reason="brake_no_cands", frame_seq=1, action_epoch=0),
+                SentinelVerdict(act="STOP", reason="old_action", frame_seq=2, action_epoch=0),
+            ]
+
+            class _SeqStub:
+                def submit(self, payload, **kwargs):
+                    return True
+
+                def poll_latest(self):
+                    return verdicts.pop(0) if verdicts else None
+
+            coord = SentinelCoordinator(mb, _SeqStub())
+            coord.submit_observation(
+                observation={
+                    "pose": {"position_xyz_m": [0.0, 0.0, 0.0]},
+                    "waypoints": {"active_seq": 10, "phase": "brake"},
+                    "turning_circle": {"safe": True, "min_obstacle_dist_m": 4.2},
+                },
+                candidates=[],
+            )
+            r1 = coord.poll_and_dispatch(expected_active_seq=10)
+            self.assertFalse(r1["dispatched"])
+            self.assertEqual(r1["reason"], "suppressed_stop_safe_brake_phase")
+
+            coord.submit_observation(
+                observation={
+                    "pose": {"position_xyz_m": [0.0, 0.0, 0.0]},
+                    "waypoints": {"active_seq": 10, "phase": "cruise"},
+                },
+                candidates=[],
+            )
+            r2 = coord.poll_and_dispatch(expected_active_seq=11)
+            self.assertFalse(r2["dispatched"])
+            self.assertEqual(r2["reason"], "stale_action_seq")
+
+        # 2. Text-only planner + VisionLandmarkObserver + stop_unconfirmed when stop_accepted missing
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self._setup_mailbox(run_dir, xyz=(0.0, 0.0, 0.0))
+            chart_dir = run_dir / "charts"
+            chart_dir.mkdir(parents=True, exist_ok=True)
+            rgb = chart_dir / "rgb.png"
+            rgb.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+            chart_img = chart_dir / "height_chart_000.png"
+            chart_img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+            (chart_dir / "height_chart_000.json").write_text(
+                json.dumps({"resolution_m": 0.05, "map_frame": "map", "source_clock_used": 5.0}),
+                encoding="utf-8",
+            )
+            np.savez(
+                chart_dir / "height_chart_000.npz",
+                ix=np.array([20], dtype=np.int32),
+                iy=np.array([0], dtype=np.int32),
+                code=np.array([1], dtype=np.int32),
+            )
+
+            class _FakeVisionObserver:
+                config = LlmClientConfig(provider="opencode", model="qwen3.8-flash", api_key="sk-v")
+                allowed_image_roots = None
+                latencies_ms = [50.0]
+
+                def observe(self, rgb_path, *, target_label=None):
+                    return {
+                        "ok": True,
+                        "scene_caption": "red double door right ahead",
+                        "observed_objects": [
+                            {"label": "red double door", "dist_m": 1.0, "bearing_deg": 0.0, "confidence": 0.95}
+                        ],
+                        "observer_model": "qwen3.8-flash",
+                    }
+
+            class _TextOnlyPlanner(OpenCodeTaskPlanner):
+                def __init__(self):
+                    super().__init__(
+                        LlmClientConfig(
+                            provider="opencode",
+                            model="deepseek-v4.1-flash",
+                            api_key="sk-ds",
+                            supports_vision=False,
+                        )
+                    )
+
+                def decide(self, **kwargs):
+                    self._latencies_ms.append(20.0)
+                    return TaskDecision(action="stop_claim", target_label="red double door", reason="near M1")
+
+            runner = StaticStreamingTaskRunner(
+                run_dir,
+                task_instruction="Find red double door",
+                target_label="red double door",
+                planner=_TextOnlyPlanner(),
+                vision_observer=_FakeVisionObserver(),  # type: ignore[arg-type]
+                memory_store=HierarchicalMemoryStore(KeyframeSceneGraph()),
+                snapshot_fn=lambda tag: {
+                    "tag": tag,
+                    "products": {
+                        "rgb": str(rgb),
+                        "height_charts": [{"level_key": "+0.0", "image": str(chart_img), "candidates": []}],
+                    },
+                },
+                control_receipt_timeout_s=0.25,
+                stop_simulator_on_exit=True,
+            )
+            report = runner.run(max_steps=1)
+            # Target verified via VisionLandmarkObserver + LiDAR, but no simulator replied stop_accepted -> stop_unconfirmed!
+            self.assertTrue(report["stop_verified"])
+            self.assertFalse(report["stop_confirmed"])
+            self.assertFalse(report["task_succeeded"])
+            self.assertEqual(report["terminal_status"], "stop_unconfirmed")
 
 
 if __name__ == "__main__":

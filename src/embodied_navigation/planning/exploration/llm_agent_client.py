@@ -212,7 +212,9 @@ _EMPTY = object()
 _SYSTEM_PROMPT = (
     "You are an embodied navigation safety sentinel. "
     "Decide CONT (keep course), PREEMPT (switch to a better F*/W* candidate), "
-    "STOP (unsafe/stuck), or SPIN (in-place active SLAM loop spin). "
+    "STOP (imminent collision or confirmed entrapment ONLY), or SPIN (in-place active SLAM loop spin). "
+    "Never output STOP solely because nav.phase is brake/idle or candidates is empty; "
+    "if turning_circle.safe is true and no imminent obstacle blocks the robot, output CONT. "
     "When two images are attached, image 1 is the front RGB view and image 2 is "
     "the local top-down occupancy map with F*/W* candidates. "
     'Reply ONLY with 1 compact JSON line: {"act":"CONT"|"PREEMPT"|"STOP"|"SPIN",'
@@ -633,6 +635,36 @@ def _detect_image_mime(raw: bytes) -> str | None:
     return None
 
 
+def _read_validated_image_bytes(
+    image_path: str | Path,
+    *,
+    allowed_roots: Iterable[str | Path] | None = None,
+    max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
+) -> tuple[Path | None, bytes | None, str | None, str | None]:
+    """Read and validate image bytes ONCE (bound to the exact bytes encoded)."""
+    try:
+        resolved = Path(image_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None, None, None, "missing_or_unreadable"
+    if not resolved.is_file():
+        return None, None, None, "not_a_file"
+    if allowed_roots is not None:
+        roots = [Path(r).resolve() for r in allowed_roots]
+        if not any(resolved.is_relative_to(root) for root in roots):
+            return None, None, None, "outside_allowed_roots"
+    try:
+        with resolved.open("rb") as fh:
+            raw = fh.read(max_bytes + 1)
+    except OSError:
+        return None, None, None, "missing_or_unreadable"
+    if not raw or len(raw) > max_bytes:
+        return None, None, None, "invalid_file_size"
+    mime = _detect_image_mime(raw)
+    if mime is None:
+        return None, None, None, "invalid_image_header"
+    return resolved, raw, mime, None
+
+
 def validate_image_path(
     image_path: str | Path,
     *,
@@ -640,31 +672,10 @@ def validate_image_path(
     max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
 ) -> tuple[Path | None, str | None]:
     """Validate image existence, root containment, byte budget, and magic header."""
-    try:
-        resolved = Path(image_path).resolve(strict=True)
-    except (OSError, RuntimeError, ValueError):
-        return None, "missing_or_unreadable"
-    if not resolved.is_file():
-        return None, "not_a_file"
-    if allowed_roots is not None:
-        roots = [Path(r).resolve() for r in allowed_roots]
-        if not any(resolved.is_relative_to(root) for root in roots):
-            return None, "outside_allowed_roots"
-    try:
-        size = resolved.stat().st_size
-    except OSError:
-        return None, "missing_or_unreadable"
-    if size <= 0 or size > max_bytes:
-        return None, "invalid_file_size"
-    try:
-        raw = resolved.read_bytes()
-    except OSError:
-        return None, "missing_or_unreadable"
-    if not raw or len(raw) > max_bytes:
-        return None, "invalid_file_size"
-    if _detect_image_mime(raw) is None:
-        return None, "invalid_image_header"
-    return resolved, None
+    resolved, _raw, _mime, err = _read_validated_image_bytes(
+        image_path, allowed_roots=allowed_roots, max_bytes=max_bytes
+    )
+    return resolved, err
 
 
 def _encode_image_part(
@@ -673,17 +684,10 @@ def _encode_image_part(
     allowed_roots: Iterable[str | Path] | None = None,
     max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
 ) -> dict[str, Any] | None:
-    resolved, err = validate_image_path(
+    resolved, raw, mime, err = _read_validated_image_bytes(
         image_path, allowed_roots=allowed_roots, max_bytes=max_bytes
     )
-    if resolved is None or err is not None:
-        return None
-    try:
-        raw = resolved.read_bytes()
-    except OSError:
-        return None
-    mime = _detect_image_mime(raw)
-    if mime is None:
+    if resolved is None or raw is None or mime is None or err is not None:
         return None
     encoded = base64.b64encode(raw).decode("ascii")
     return {

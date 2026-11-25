@@ -52,6 +52,9 @@ class SentinelCoordinator:
         self._action_epoch = 0
         self._candidates_by_frame: dict[int, dict[str, dict[str, Any]]] = {}
         self._pose_z_by_frame: dict[int, float] = {}
+        self._active_seq_by_frame: dict[int, int | None] = {}
+        self._phase_by_frame: dict[int, str | None] = {}
+        self._tc_safe_by_frame: dict[int, bool | None] = {}
         self._last_backend_status: dict[str, Any] | None = None
         self._last_slam_health: dict[str, Any] | None = None
         self._in_flight_spin_seq: int | None = None
@@ -149,10 +152,22 @@ class SentinelCoordinator:
         f_seq = self._frame_seq
         self._candidates_by_frame[f_seq] = cand_map
         self._pose_z_by_frame[f_seq] = pose_z
+        obs_wps = obs_payload.get("waypoints") if isinstance(obs_payload.get("waypoints"), dict) else {}
+        raw_aseq = obs_wps.get("active_seq")
+        self._active_seq_by_frame[f_seq] = (
+            int(raw_aseq) if isinstance(raw_aseq, int) and not isinstance(raw_aseq, bool) else None
+        )
+        raw_phase = obs_wps.get("phase")
+        self._phase_by_frame[f_seq] = str(raw_phase).lower() if isinstance(raw_phase, str) else None
+        obs_tc = obs_payload.get("turning_circle") if isinstance(obs_payload.get("turning_circle"), dict) else {}
+        self._tc_safe_by_frame[f_seq] = obs_tc.get("safe") if isinstance(obs_tc.get("safe"), bool) else None
         if len(self._candidates_by_frame) > 16:
             oldest = min(self._candidates_by_frame)
             self._candidates_by_frame.pop(oldest, None)
             self._pose_z_by_frame.pop(oldest, None)
+            self._active_seq_by_frame.pop(oldest, None)
+            self._phase_by_frame.pop(oldest, None)
+            self._tc_safe_by_frame.pop(oldest, None)
 
         submitted = self.runner.submit(
             {
@@ -200,6 +215,7 @@ class SentinelCoordinator:
         *,
         now_s: float | None = None,
         wait_timeout_s: float | None = None,
+        expected_active_seq: int | None = None,
     ) -> dict[str, Any] | None:
         """Consume latest fresh sentinel verdict and submit any preemptive mailbox action."""
         verdict: SentinelVerdict | None = self.runner.poll_latest()
@@ -214,6 +230,16 @@ class SentinelCoordinator:
                 "payload": None,
             }
 
+        if expected_active_seq is not None and verdict.frame_seq is not None:
+            v_seq = self._active_seq_by_frame.get(verdict.frame_seq)
+            if v_seq is not None and v_seq != expected_active_seq:
+                return {
+                    "verdict": verdict,
+                    "dispatched": False,
+                    "reason": "stale_action_seq",
+                    "payload": None,
+                }
+
         if verdict.act == "CONT":
             return {
                 "verdict": verdict,
@@ -224,6 +250,16 @@ class SentinelCoordinator:
 
         payload: dict[str, Any] | None = None
         if verdict.act == "STOP":
+            if verdict.frame_seq is not None:
+                v_phase = self._phase_by_frame.get(verdict.frame_seq)
+                v_tc_safe = self._tc_safe_by_frame.get(verdict.frame_seq)
+                if v_phase in ("brake", "idle") and v_tc_safe is True:
+                    return {
+                        "verdict": verdict,
+                        "dispatched": False,
+                        "reason": "suppressed_stop_safe_brake_phase",
+                        "payload": None,
+                    }
             self._action_epoch += 1
             payload = waypoint_mailbox.submit(
                 self.mailbox,

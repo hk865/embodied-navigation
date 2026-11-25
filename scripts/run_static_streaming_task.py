@@ -16,6 +16,7 @@ from embodied_navigation.planning.exploration.llm_agent_client import LlmClientC
 from embodied_navigation.planning.exploration.streaming_task_agent import (
     OpenCodeTaskPlanner,
     StaticStreamingTaskRunner,
+    VisionLandmarkObserver,
 )
 
 
@@ -51,6 +52,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="In-motion async sentinel model ID (empty to disable sentinel).",
     )
     parser.add_argument(
+        "--vision-observer-model",
+        default="qwen3.8-flash",
+        help="Vision landmark observer model used automatically when planner is text-only (empty to disable).",
+    )
+    parser.add_argument(
         "--thinking-mode",
         choices=("disabled", "default", "high"),
         default="disabled",
@@ -84,9 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     planner_extra = _thinking_extra_body(args.planner_model, args.thinking_mode)
     planner_timeout = (
-        max(60.0, args.planner_timeout_s) if args.thinking_mode == "high" else args.planner_timeout_s
+        max(90.0, args.planner_timeout_s) if args.thinking_mode == "high" else args.planner_timeout_s
     )
-    planner_max_tokens = 1024 if args.thinking_mode == "high" else 380
+    planner_max_tokens = 2048 if args.thinking_mode == "high" else 380
     planner_vision = "deepseek" not in args.planner_model.lower()
 
     planner_cfg = LlmClientConfig(
@@ -113,6 +119,26 @@ def main(argv: list[str] | None = None) -> int:
             extra_body=_thinking_extra_body(s_model, "disabled"),
         )
 
+    allowed_roots = [Path(args.run_dir), *(Path(p) for p in args.prior_evidence_root)]
+    vision_observer = None
+    if (
+        not planner_vision
+        and args.vision_observer_model
+        and args.vision_observer_model.strip()
+    ):
+        v_model = args.vision_observer_model.strip()
+        v_cfg = LlmClientConfig(
+            provider=args.provider,
+            model=v_model,
+            timeout_s=max(20.0, args.sentinel_timeout_s),
+            max_tokens=256,
+            temperature=0.1,
+            supports_vision=True,
+            stream=True,
+            extra_body=_thinking_extra_body(v_model, "disabled"),
+        )
+        vision_observer = VisionLandmarkObserver(v_cfg, allowed_image_roots=allowed_roots)
+
     memory_store = None
     if args.prior_memory:
         memory_store = HierarchicalMemoryStore.load(Path(args.prior_memory))
@@ -122,13 +148,13 @@ def main(argv: list[str] | None = None) -> int:
         graph = build_scene_graph_from_map_dir(Path(args.prior_map_dir))
         memory_store = HierarchicalMemoryStore(graph, default_stop_radius_m=args.stop_radius_m)
 
-    allowed_roots = [Path(args.run_dir), *(Path(p) for p in args.prior_evidence_root)]
     runner = StaticStreamingTaskRunner(
         args.run_dir,
         task_instruction=args.task,
         target_label=args.target_label,
         target_aliases=args.target_alias,
         planner=OpenCodeTaskPlanner(planner_cfg, allowed_image_roots=allowed_roots),
+        vision_observer=vision_observer,
         memory_store=memory_store,
         pose_source=args.pose_source,
         sentinel_config=sentinel_cfg,

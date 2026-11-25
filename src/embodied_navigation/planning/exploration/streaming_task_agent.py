@@ -739,6 +739,123 @@ class TaskStepLog:
     sentinel_events: list[dict[str, Any]] = field(default_factory=list)
 
 
+_VISION_OBSERVER_SYSTEM_PROMPT = (
+    "You are a concise robot camera landmark observer. "
+    "Given the front RGB view, describe the scene briefly and list up to 4 clearly visible "
+    "salient architectural landmarks or objects with estimated distance (m) and bearing_deg "
+    "(0 straight ahead, +left, -right). Reply ONLY with 1 compact JSON object: "
+    '{"scene_caption":"short description","observed_objects":'
+    '[{"label":"short name","dist_m":2.5,"bearing_deg":0.0,"confidence":0.9}]}.'
+)
+
+
+class VisionLandmarkObserver:
+    """Dedicated VLM perception observer providing structured visual landmarks for text-only planners."""
+
+    def __init__(
+        self,
+        config: LlmClientConfig,
+        *,
+        allowed_image_roots: Iterable[str | Path] | None = None,
+    ) -> None:
+        self.config = config
+        self._client = OpenCodeTaskPlanner(config, allowed_image_roots=allowed_image_roots)
+        self._latencies_ms: list[float] = []
+
+    @property
+    def allowed_image_roots(self) -> tuple[Path, ...] | None:
+        return self._client.allowed_image_roots
+
+    @allowed_image_roots.setter
+    def allowed_image_roots(self, roots: tuple[Path, ...] | None) -> None:
+        self._client.allowed_image_roots = roots
+
+    @property
+    def latencies_ms(self) -> list[float]:
+        return list(self._latencies_ms)
+
+    def observe(
+        self,
+        rgb_path: str | Path | None,
+        *,
+        target_label: str | None = None,
+    ) -> dict[str, Any]:
+        if rgb_path is None or not self.config.supports_vision:
+            return {"scene_caption": "", "observed_objects": [], "latency_ms": 0.0, "ok": False}
+        part = _encode_image_part(rgb_path, allowed_roots=self._client.allowed_image_roots)
+        if part is None:
+            return {
+                "scene_caption": "",
+                "observed_objects": [],
+                "latency_ms": 0.0,
+                "ok": False,
+                "error": "image_rejected",
+            }
+        hint = (
+            f"Pay special attention to whether '{target_label}' is visible."
+            if target_label
+            else "Report salient doors, stairs, signs, and landmarks."
+        )
+        messages = [
+            {"role": "system", "content": _VISION_OBSERVER_SYSTEM_PROMPT},
+            {"role": "user", "content": [{"type": "text", "text": hint}, part]},
+        ]
+        t0 = time.perf_counter()
+        try:
+            raw = self._client._stream_completion(messages)
+        except Exception as exc:
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            self._latencies_ms.append(dt_ms)
+            return {
+                "scene_caption": "",
+                "observed_objects": [],
+                "latency_ms": round(dt_ms, 1),
+                "ok": False,
+                "error": type(exc).__name__,
+            }
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        self._latencies_ms.append(dt_ms)
+        parsed = _extract_outer_json_object(raw)
+        if not isinstance(parsed, dict):
+            return {
+                "scene_caption": "",
+                "observed_objects": [],
+                "latency_ms": round(dt_ms, 1),
+                "ok": False,
+                "error": "parse_error",
+            }
+        obs_clean: list[dict[str, Any]] = []
+        raw_obs = parsed.get("observed_objects")
+        if isinstance(raw_obs, list):
+            for item in raw_obs[:6]:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get("label", "")).strip()
+                if not label:
+                    continue
+                try:
+                    dist_m = _clamp(float(item.get("dist_m", 2.0)), 0.4, 10.0)
+                    bearing_deg = _clamp(float(item.get("bearing_deg", 0.0)), -75.0, 75.0)
+                    conf = _clamp(float(item.get("confidence", 0.8)), 0.1, 1.0)
+                except (TypeError, ValueError):
+                    continue
+                obs_clean.append(
+                    {
+                        "label": label,
+                        "dist_m": round(dist_m, 2),
+                        "bearing_deg": round(bearing_deg, 1),
+                        "confidence": round(conf, 2),
+                    }
+                )
+        return {
+            "scene_caption": str(parsed.get("scene_caption", "")).strip()[:200],
+            "observed_objects": obs_clean,
+            "latency_ms": round(dt_ms, 1),
+            "ok": True,
+            "observer_model": self.config.model,
+        }
+
+
 class StaticStreamingTaskRunner:
     """Run a closed-loop static embodied task over a live DynaNav run directory."""
 
@@ -750,6 +867,7 @@ class StaticStreamingTaskRunner:
         target_label: str | None = None,
         target_aliases: Sequence[str] = (),
         planner: OpenCodeTaskPlanner,
+        vision_observer: VisionLandmarkObserver | None = None,
         memory_store: HierarchicalMemoryStore | None = None,
         pose_source: str = "backend_corrected",
         sentinel_config: LlmClientConfig | None = None,
@@ -773,6 +891,8 @@ class StaticStreamingTaskRunner:
             str(a).strip() for a in target_aliases if str(a).strip()
         )
         self.planner = planner
+        self.vision_observer = vision_observer
+        self.sentinel_config = sentinel_config
         self.pose_source = pose_source
         self.stop_radius_m = float(stop_radius_m)
         self.step_timeout_s = float(step_timeout_s)
@@ -788,6 +908,7 @@ class StaticStreamingTaskRunner:
         )
         self._snapshot_fn = snapshot_fn
         self._sentinel_stop_locked = False
+        self._sentinel_stop_confirmed = False
         self._last_synced_backend_rev = -1
 
         roots: list[Path] = [self.run_dir.resolve()]
@@ -799,6 +920,8 @@ class StaticStreamingTaskRunner:
         self.allowed_image_roots: tuple[Path, ...] = tuple(roots)
         if self.planner.allowed_image_roots is None:
             self.planner.allowed_image_roots = self.allowed_image_roots
+        if self.vision_observer is not None and self.vision_observer.allowed_image_roots is None:
+            self.vision_observer.allowed_image_roots = self.allowed_image_roots
 
         if memory_store is not None:
             self.memory = memory_store
@@ -1041,17 +1164,10 @@ class StaticStreamingTaskRunner:
         while True:
             receipts = active_cursor.poll()
             for receipt in receipts:
-                if eff_run and receipt.get("run_id") not in (None, eff_run):
+                if eff_run and receipt.get("run_id") != eff_run:
                     continue
                 ev = receipt.get("event")
                 r_seq = receipt.get("seq")
-                if ev == "terminal":
-                    return {
-                        "status": "terminal",
-                        "event": "terminal",
-                        "seq": seq,
-                        "receipt": dict(receipt),
-                    }
                 if isinstance(r_seq, int) and not isinstance(r_seq, bool) and r_seq == seq:
                     if ev in expected_events:
                         return {
@@ -1116,7 +1232,12 @@ class StaticStreamingTaskRunner:
             if self._sentinel_coord is not None:
                 # Consume any completed verdict BEFORE submitting a new observation so
                 # latest-wins submission cannot overwrite an unconsumed verdict.
-                dispatched = self._sentinel_coord.poll_and_dispatch()
+                try:
+                    dispatched = self._sentinel_coord.poll_and_dispatch(
+                        expected_active_seq=active_seq
+                    )
+                except TypeError:
+                    dispatched = self._sentinel_coord.poll_and_dispatch()
                 if dispatched is not None and dispatched.get("dispatched"):
                     verdict = dispatched["verdict"]
                     disp_payload = dispatched.get("payload") or {}
@@ -1142,12 +1263,16 @@ class StaticStreamingTaskRunner:
                             if isinstance(disp_seq, int)
                             else {"status": "missing_stop_seq"}
                         )
+                        self._sentinel_stop_confirmed = (
+                            stop_receipt.get("event") == "stop_accepted"
+                        )
                         event["closing_receipt"] = stop_receipt
                         return {
                             "status": "sentinel_stop",
                             "event": "sentinel_stop",
                             "success": False,
                             "locked_terminal": True,
+                            "stop_confirmed": self._sentinel_stop_confirmed,
                             "seq": disp_seq,
                             "stop_receipt": stop_receipt,
                             "reason": verdict.reason,
@@ -1205,7 +1330,7 @@ class StaticStreamingTaskRunner:
         last_feedback = "Episode started."
         pending_recall: dict[str, Any] | None = None
         extra_l3_rgb: list[str] = []
-        task_succeeded = False
+        stop_verified = False
         terminal_status = "max_steps_reached"
         prev_xyz: list[float] | None = None
         total_travel_m = 0.0
@@ -1251,6 +1376,38 @@ class StaticStreamingTaskRunner:
                 rgb_path = snap.get("products", {}).get("rgb")
                 local_map_path, raw_cands = select_active_chart_and_candidates(snap, robot_xyz[2])
 
+                # For text-only planners (e.g. DeepSeek high), run dedicated VLM observer
+                # on current RGB and ground landmarks with independent LiDAR range BEFORE planning.
+                pre_kf_id: str | None = None
+                vision_obs_summary: dict[str, Any] | None = None
+                if (
+                    not self.planner.config.supports_vision
+                    and self.vision_observer is not None
+                    and rgb_path is not None
+                ):
+                    vision_obs_summary = self.vision_observer.observe(
+                        rgb_path, target_label=self.target_label
+                    )
+                    if vision_obs_summary.get("ok"):
+                        pre_kf_id = self._record_live_step_in_memory(
+                            step,
+                            robot_xyz,
+                            yaw_rad,
+                            rgb_path,
+                            vision_obs_summary.get("observed_objects", ()),
+                            snapshot=snap,
+                        )
+                        cap = vision_obs_summary.get("scene_caption", "")
+                        objs_txt = ", ".join(
+                            f"{o['label']}({o['bearing_deg']:+.0f}deg)"
+                            for o in vision_obs_summary.get("observed_objects", [])
+                        )
+                        obs_note = (
+                            f"Front camera ({self.vision_observer.config.model}): {cap}; "
+                            f"detected=[{objs_txt or 'none'}]."
+                        )
+                        last_feedback = f"{last_feedback} | {obs_note}".strip(" |")
+
                 mem_cands = self.memory.memory_goal_candidates(
                     robot_xyz,
                     target_label=self.target_label,
@@ -1260,6 +1417,7 @@ class StaticStreamingTaskRunner:
                 allowed_cands, blocked_cands = self.memory.filter_candidates(
                     combined_cands, default_z=robot_xyz[2]
                 )
+                allowed_mem_cands = [c for c in allowed_cands if c.get("kind") == "memory_target"]
                 # Never silently re-enable blacklisted candidates when all are blocked.
                 cands_for_planner = allowed_cands
                 if not cands_for_planner and blocked_cands:
@@ -1271,7 +1429,7 @@ class StaticStreamingTaskRunner:
                 mem_summary = self.memory.narrative_summary(
                     robot_xyz=robot_xyz,
                     target_label=self.target_label,
-                    memory_candidates=mem_cands,
+                    memory_candidates=allowed_mem_cands,
                 )
                 l0 = self.memory.l0_global_topology()
 
@@ -1295,17 +1453,17 @@ class StaticStreamingTaskRunner:
                 pending_recall = None
                 extra_l3_rgb = []
 
-                # Verify control epoch/run_id did not change during planner inference.
+                # Verify full control token (run_id, active_seq, epoch) did not change during inference.
                 token_after = self._read_control_token()
-                if token_after[0] != token_before[0] or token_after[2] != token_before[2]:
+                if token_after != token_before:
                     exec_info = {
                         "status": "discarded_stale_epoch",
-                        "epoch_before": token_before[2],
-                        "epoch_after": token_after[2],
+                        "token_before": list(token_before),
+                        "token_after": list(token_after),
                     }
                     last_feedback = (
-                        f"Decision discarded due to control epoch shift "
-                        f"({token_before[2]}->{token_after[2]})."
+                        f"Decision discarded due to control state shift "
+                        f"({token_before}->{token_after})."
                     )
                     step_logs.append(
                         TaskStepLog(
@@ -1319,18 +1477,6 @@ class StaticStreamingTaskRunner:
                     )
                     continue
 
-                kf_id = self._record_live_step_in_memory(
-                    step,
-                    robot_xyz,
-                    yaw_rad,
-                    rgb_path,
-                    decision.observed_objects,
-                    snapshot=snap,
-                )
-
-                exec_info = {}
-                sentinel_events: list[dict[str, Any]] = []
-
                 if decision.action == "noop":
                     exec_info = {
                         "status": "noop",
@@ -1338,8 +1484,39 @@ class StaticStreamingTaskRunner:
                         "reason": decision.reason,
                     }
                     last_feedback = f"Planner returned noop ({decision.reason}); holding position."
+                    step_logs.append(
+                        TaskStepLog(
+                            step=step,
+                            robot_xyz=[round(v, 3) for v in robot_xyz],
+                            yaw_deg=round(math.degrees(yaw_rad), 1),
+                            decision=decision.to_dict(),
+                            execution=exec_info,
+                            memory_diag=self.memory.diagnostic_metrics(),
+                        ).__dict__
+                    )
+                    continue
 
-                elif decision.action == "query_memory":
+                # Only vision-capable planners may log directly observed landmarks;
+                # text-only planners rely on the dedicated VisionLandmarkObserver above.
+                if pre_kf_id is not None:
+                    kf_id = pre_kf_id
+                else:
+                    obs_to_record = (
+                        decision.observed_objects if self.planner.config.supports_vision else ()
+                    )
+                    kf_id = self._record_live_step_in_memory(
+                        step,
+                        robot_xyz,
+                        yaw_rad,
+                        rgb_path,
+                        obs_to_record,
+                        snapshot=snap,
+                    )
+
+                exec_info = {}
+                sentinel_events: list[dict[str, Any]] = []
+
+                if decision.action == "query_memory":
                     q = decision.query or self.target_label or self.task_instruction
                     q_l1 = self.memory.l1_submap_summaries(query=q, near_xyz=robot_xyz, top_k=3)
                     q_l2 = self.memory.l2_submap_entities(label=q)
@@ -1356,8 +1533,10 @@ class StaticStreamingTaskRunner:
                         )
                     validated_l3: list[str] = []
                     rejected_l3: list[dict[str, str]] = []
+                    sanitized_l3_meta: list[dict[str, Any]] = []
                     for row in q_l3:
                         raw_p = row.get("rgb_path")
+                        kf_ref = str(row.get("keyframe_id", "unknown"))
                         if not raw_p:
                             continue
                         res_p, rej_r = validate_image_path(
@@ -1365,15 +1544,23 @@ class StaticStreamingTaskRunner:
                         )
                         if res_p is not None:
                             validated_l3.append(str(res_p))
+                            sanitized_l3_meta.append(
+                                {
+                                    "keyframe_id": kf_ref,
+                                    "pose_xyz": row.get("pose_xyz"),
+                                    "map_revision": row.get("map_revision"),
+                                }
+                            )
                         else:
-                            rejected_l3.append({"path": str(raw_p), "reason": str(rej_r)})
+                            # Never leak rejected raw local filesystem paths into model prompts.
+                            rejected_l3.append({"keyframe_id": kf_ref, "reason": str(rej_r)})
                     extra_l3_rgb = validated_l3
                     pending_recall = {
                         "query": q,
                         "l1_rooms": q_l1[:3],
                         "l2_objects": q_l2["objects"][:6],
                         "l2_failures": q_l2["failures"][:4],
-                        "l3_keyframes": q_l3,
+                        "l3_keyframes": sanitized_l3_meta,
                         "l3_rejected": rejected_l3,
                     }
                     exec_info = {
@@ -1389,10 +1576,23 @@ class StaticStreamingTaskRunner:
                     )
 
                 elif decision.action == "stop_claim":
-                    # Freeze task target: never let planner override target_label to another object!
-                    if (
-                        self.target_label is not None
-                        and decision.target_label is not None
+                    # Freeze task target: require frozen target_label and reject overrides!
+                    if self.target_label is None:
+                        exec_info = {
+                            "allowed": False,
+                            "reason": "missing_frozen_target_label",
+                        }
+                        self.memory.record_attempt(
+                            "stop_claim",
+                            robot_xyz,
+                            "rejected",
+                            reason="missing_frozen_target_label",
+                            keyframe_id=kf_id,
+                            blocks_location=False,
+                        )
+                        last_feedback = "STOP REJECTED (task has no frozen target_label configured)."
+                    elif (
+                        decision.target_label is not None
                         and not _label_strict_match(
                             self.target_label,
                             decision.target_label,
@@ -1418,17 +1618,16 @@ class StaticStreamingTaskRunner:
                             f"task requires '{self.target_label}')."
                         )
                     else:
-                        frozen_label = self.target_label or decision.target_label
                         verify = self.memory.verify_stop_claim(
                             robot_xyz,
-                            target_label=frozen_label,
+                            target_label=self.target_label,
                             stop_radius_m=self.stop_radius_m,
                             allowed_aliases=self.target_aliases,
-                            excluded_producers=("opencode_vlm_unverified",),
+                            excluded_producers=("opencode_vlm", "opencode_vlm_unverified"),
                         )
                         exec_info = verify.to_dict()
                         if verify.allowed:
-                            task_succeeded = True
+                            stop_verified = True
                             terminal_status = "verified_stop_success"
                             last_feedback = (
                                 f"STOP verified: {verify.reason} "
@@ -1607,8 +1806,12 @@ class StaticStreamingTaskRunner:
             if self._sentinel_runner is not None:
                 self._sentinel_runner.shutdown(timeout_s=2.0)
             if self.stop_simulator_on_exit and self.mailbox.is_dir():
-                if self._sentinel_stop_locked:
-                    cleanup_status = {"requested": False, "reason": "already_stopped_by_sentinel"}
+                if self._sentinel_stop_locked and self._sentinel_stop_confirmed:
+                    cleanup_status = {
+                        "requested": False,
+                        "reason": "already_stopped_by_sentinel",
+                        "stop_confirmed": True,
+                    }
                 else:
                     cleanup_status = {"requested": True}
                     try:
@@ -1620,19 +1823,32 @@ class StaticStreamingTaskRunner:
                             extra={"action_epoch": epoch} if epoch > 0 else None,
                         )
                         cleanup_status["stop_seq"] = stop_payload["seq"]
-                        cleanup_status["receipt"] = self._wait_for_control_receipt(
+                        receipt = self._wait_for_control_receipt(
                             int(stop_payload["seq"]),
                             {"stop_accepted"},
                             run_id=stop_payload.get("run_id"),
                         )
+                        cleanup_status["receipt"] = receipt
+                        cleanup_status["stop_confirmed"] = receipt.get("event") == "stop_accepted"
                     except OSError as exc:
                         cleanup_status["error"] = type(exc).__name__
+                        cleanup_status["stop_confirmed"] = False
+
+        if self.stop_simulator_on_exit:
+            stop_confirmed = bool(cleanup_status.get("stop_confirmed", False))
+        else:
+            stop_confirmed = True
+        task_succeeded = bool(stop_verified and stop_confirmed)
+        if stop_verified and not stop_confirmed:
+            terminal_status = "stop_unconfirmed"
 
         report = {
             "episode_id": self.episode_id,
             "task_instruction": self.task_instruction,
             "target_label": self.target_label,
             "target_aliases": list(self.target_aliases),
+            "stop_verified": stop_verified,
+            "stop_confirmed": stop_confirmed,
             "task_succeeded": task_succeeded,
             "terminal_status": terminal_status,
             "steps_executed": len(step_logs),
@@ -1640,6 +1856,19 @@ class StaticStreamingTaskRunner:
             "estimated_travel_m": round(total_travel_m, 2),
             "memory_map_revision": self.memory.map_revision,
             "planner_config": self.planner.config.to_safe_dict(),
+            "sentinel_config": (
+                self.sentinel_config.to_safe_dict() if self.sentinel_config is not None else None
+            ),
+            "vision_observer_config": (
+                self.vision_observer.config.to_safe_dict()
+                if self.vision_observer is not None
+                else None
+            ),
+            "vision_observer_latencies_ms": (
+                [round(v, 1) for v in self.vision_observer.latencies_ms]
+                if self.vision_observer is not None
+                else []
+            ),
             "planner_latencies_ms": [round(v, 1) for v in self.planner.latencies_ms],
             "memory_diagnostics": self.memory.diagnostic_metrics(),
             "sentinel_stats": (
