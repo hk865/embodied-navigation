@@ -859,7 +859,7 @@ class StaticStreamingTaskRunner:
                             self.mailbox,
                             action="goto",
                             goal=goal_xyz,
-                            ttl_s=max(60.0, self.step_timeout_s),
+                            ttl_s=min(120.0, max(30.0, self.step_timeout_s)),
                             pose_source=self.pose_source,
                             extra={"action_epoch": epoch} if epoch > 0 else None,
                         )
@@ -892,7 +892,7 @@ class StaticStreamingTaskRunner:
                     payload = waypoint_mailbox.submit(
                         self.mailbox,
                         action="maneuver",
-                        ttl_s=max(60.0, decision.duration * 20.0),
+                        ttl_s=min(120.0, max(30.0, decision.duration * 20.0)),
                         pose_source=self.pose_source,
                         extra=m_extra,
                     )
