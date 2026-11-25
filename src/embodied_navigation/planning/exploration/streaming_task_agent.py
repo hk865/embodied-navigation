@@ -126,6 +126,40 @@ class TaskDecision:
         }
 
 
+def _extract_outer_json_object(raw_text: str) -> dict[str, Any] | None:
+    """Extract the first complete top-level JSON object (ignoring nested objects)."""
+    start = raw_text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_str = False
+    escaped = False
+    for idx in range(start, len(raw_text)):
+        ch = raw_text[idx]
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = raw_text[start : idx + 1]
+                try:
+                    parsed = json.loads(candidate)
+                except ValueError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 def parse_task_decision(
     raw_text: str,
     *,
@@ -133,7 +167,9 @@ def parse_task_decision(
     latency_ms: float = 0.0,
 ) -> TaskDecision:
     """Parse one compact JSON task decision with fail-safe validation."""
-    obj = _extract_json_object(raw_text)
+    obj = _extract_outer_json_object(raw_text)
+    if obj is None:
+        obj = _extract_json_object(raw_text)
     if not isinstance(obj, dict):
         return _fallback_decision(
             valid_candidate_ids,
@@ -395,7 +431,7 @@ class OpenCodeTaskPlanner:
                 if delta:
                     chunks.append(delta)
                     joined = "".join(chunks)
-                    if _extract_json_object(joined) is not None:
+                    if _extract_outer_json_object(joined) is not None:
                         break
             return "".join(chunks)
         finally:

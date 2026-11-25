@@ -57,6 +57,18 @@ class TestStreamingTaskAgent(unittest.TestCase):
         self.assertEqual(bad.action, "goto_candidate")
         self.assertEqual(bad.target_id, "F1")
 
+        # Partial stream with complete inner object must NOT early-match the inner object
+        from embodied_navigation.planning.exploration.streaming_task_agent import (
+            _extract_outer_json_object,
+        )
+
+        partial = '{"action":"goto_candidate","observed_objects":[{"label":"door","dist_m":4.0}],'
+        self.assertIsNone(_extract_outer_json_object(partial))
+        complete = partial + '"target_id":"F1","reason":"ok"}'
+        parsed_outer = _extract_outer_json_object(complete)
+        self.assertIsNotNone(parsed_outer)
+        self.assertEqual(parsed_outer["action"], "goto_candidate")
+
     def test_select_active_chart_prefers_closest_z_with_candidates(self) -> None:
         snap = {
             "products": {
