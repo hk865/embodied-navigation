@@ -46,6 +46,32 @@ def _tokenize(text: str | None) -> set[str]:
     return {tok for tok in cleaned.split() if tok}
 
 
+def _label_match_score(query: str | None, candidate_label: str) -> float:
+    """Return semantic match specificity (>0 if matched, 0.0 if unrelated)."""
+    if not query:
+        return 1.0
+    q_norm = " ".join(str(query).lower().split())
+    c_norm = " ".join(str(candidate_label).lower().split())
+    if not q_norm or not c_norm:
+        return 0.0
+    if q_norm == c_norm:
+        return 100.0
+    if q_norm in c_norm or c_norm in q_norm:
+        return 50.0 + 10.0 * (min(len(q_norm), len(c_norm)) / max(len(q_norm), len(c_norm)))
+    q_toks = _tokenize(q_norm)
+    c_toks = _tokenize(c_norm)
+    if not q_toks or not c_toks:
+        return 0.0
+    overlap = len(q_toks & c_toks)
+    if overlap == 0:
+        return 0.0
+    recall = overlap / len(q_toks)
+    if len(q_toks) >= 2 and recall < 0.5:
+        return 0.0
+    jaccard = overlap / len(q_toks | c_toks)
+    return 20.0 * recall + 10.0 * jaccard
+
+
 def _xy_dist(a: Sequence[float], b: Sequence[float]) -> float:
     return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
 
@@ -519,9 +545,13 @@ class HierarchicalMemoryStore:
             is_stale = bool(meta.stale) if meta is not None else False
             if is_stale and not include_stale:
                 continue
-            if q_tokens:
-                obj_toks = _tokenize(obj.label) | _tokenize(obj.object_id)
-                if not (q_tokens & obj_toks) and str(label).lower() not in obj.label.lower():
+            match_score = 1.0
+            if label is not None:
+                match_score = max(
+                    _label_match_score(label, obj.label),
+                    100.0 if str(label).strip().lower() == obj.object_id.lower() else 0.0,
+                )
+                if match_score <= 0.0:
                     continue
             dist_m = None
             if ref_xyz is not None:
@@ -538,12 +568,14 @@ class HierarchicalMemoryStore:
                 "keyframe_id": obj.anchor_keyframe_id,
                 "world_xyz": [round(float(v), 3) for v in obj.world_center_xyz],
                 "confidence": round(float(obj.confidence), 3),
+                "match_score": round(match_score, 2),
                 "map_revision": (meta.map_revision if meta is not None else self.map_revision),
                 "stale": is_stale,
             }
             if dist_m is not None:
                 row["distance_m"] = round(dist_m, 3)
             objects_out.append(row)
+        objects_out.sort(key=lambda r: (-float(r["match_score"]), float(r.get("distance_m", 0.0))))
 
         failures_out: list[dict[str, Any]] = []
         for rec in self._attempts:
@@ -715,6 +747,7 @@ class HierarchicalMemoryStore:
             dist_to_obj = float(np.linalg.norm(obj_xyz - pos))
             ranked.append(
                 (
+                    -float(obj.get("match_score", 1.0)),
                     dist_to_obj,
                     {
                         "kind": "memory_target",
@@ -731,9 +764,9 @@ class HierarchicalMemoryStore:
                 )
             )
 
-        ranked.sort(key=lambda item: item[0])
+        ranked.sort(key=lambda item: (item[0], item[1]))
         out: list[dict[str, Any]] = []
-        for idx, (_, cand) in enumerate(ranked[: max(1, int(max_candidates))], start=1):
+        for idx, (_, _, cand) in enumerate(ranked[: max(1, int(max_candidates))], start=1):
             cand["id"] = f"M{idx}"
             out.append(cand)
         return out
@@ -762,14 +795,16 @@ class HierarchicalMemoryStore:
             if obj is not None:
                 candidates.append(obj)
         elif target_label is not None:
-            q_tokens = _tokenize(target_label)
+            scored_objs: list[tuple[float, ObjectNode]] = []
             for obj in self.graph.objects.values():
                 if target_room_id is not None and obj.room_id != target_room_id:
                     continue
-                if (q_tokens & _tokenize(obj.label)) or (
-                    str(target_label).lower() in obj.label.lower()
-                ):
-                    candidates.append(obj)
+                ms = _label_match_score(target_label, obj.label)
+                if ms > 0.0:
+                    scored_objs.append((ms, obj))
+            if scored_objs:
+                max_ms = max(ms for ms, _ in scored_objs)
+                candidates = [obj for ms, obj in scored_objs if ms >= max_ms - 1e-6]
 
         if candidates:
             best_obj: ObjectNode | None = None
