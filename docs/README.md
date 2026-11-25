@@ -4,9 +4,12 @@
 
 ## 开发计划入口（新会话先读）
 
-- [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–4 里程碑与当前状态、分支归属、数据卷约定。
+- [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–5 里程碑与当前状态、分支归属、数据卷约定。
+- [七层冻结基线 BASELINES](plan/BASELINES.md)：L1–L7 内部冻结基线、单卡 16 GB 显存红线、标准化数据集与 4 个独立子模块包边界。
 - [活体任务板 TASKS](plan/TASKS.md)：已完成 / 进行中 / 待办队列与远期触发式架构优化，每条任务带建议角色、对应模块与验收标准。
 - [活跃分支测试计划 TEST_PLANS](plan/TEST_PLANS.md)：每个活跃分支的合入验收清单、Phase 4 统一评测数据集（D1/D2/D3）与 `B0–B3` / 三条回环分支消融口径。
+- 专题调研与决策蓝图 `plan/research/`：[2026-11 学术创新查重与论文方向总评](plan/research/2026-11-novelty-audit-and-directions.md)、[VLN 评测真相与「感知 + 记忆 + 失败驱动控制」演进总纲](plan/research/2026-11-vln-perception-memory-strategy-synthesis.md)、[ADR 深度调研蓝图](plan/research/adr-0002-0003-0004-survey.md)、[四大方向入门精讲与总施工图](plan/research/four-directions-roadmap-and-blueprint.md)。
+- 模块教程：[Agent 技能/工具/视频流与记忆教程](agent-tutorial/README.md) · [SLAM 前端至 V4 后端教程](slam-tutorial/README.md)。
 - 架构决策记录 `plan/adr/`（4 篇，状态与关联分支见各文件首部）：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界，已采纳）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）、[ADR-0003](plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md)（单主干流式 Fork 异步控制、关键帧锚定语义图片图数据库与停驻期 ZUPT 约束）、[ADR-0004](plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)（面向 FAST-LIVO2 的增量 Mesh / 3DGS 演进与三层 SLAM 后端评测口径）。
 - 协作、分支与提交规则以 [AGENTS.md](../AGENTS.md) 为准；项目整体入口见根 [README.md](../README.md)。
 

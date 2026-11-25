@@ -1,6 +1,6 @@
 # 活体任务板（TASKS）
 
-> 盘点日期：2026-11-22 · 集成基线 `main` `2144e5f`（= `origin/main`） · Phase 4 稳定化分支 `exp/slam-backend-stabilization`（含 GPT-6.2-Astra 全量审计修复与 30/30 干净对照） · 前端/规划分支 `exp/startup-walk-imu-bias` `76138ba`。阶段目标与完成判据见 [ROADMAP.md](ROADMAP.md)，协作规则见 [AGENTS.md](../../AGENTS.md)。
+> 盘点日期：2026-11-25 · 集成基线 `main` `2144e5f`（= `origin/main`） · 当前开发分支 `exp/live-v4-ba-sliding-window`（HEAD `fb35dd8`，807 单测 / 60 回归） · 冻结基线与边界见 [BASELINES.md](BASELINES.md) · 阶段目标与完成判据见 [ROADMAP.md](ROADMAP.md)，协作规则见 [AGENTS.md](../../AGENTS.md)。
 
 ## 使用说明
 
@@ -29,6 +29,8 @@
 | GPT-6.2-Astra（非 fast）独立全量审计与四分支 P0/P1/P2 修复 | Codex + 主控 | `pose_graph.py`、`registration.py`、`backend.py`、`correction.py`、`evaluation.py`、`node.py`、`map_store.py`、`visual.py` | 修复全部 4 项 P0（IMU/机身评分原点、位姿图精确 $\mathcal{J}_r^{-1}(e)$、同前缀回环收益、视觉在线 spool 加载与存图）及 ZUPT 体素解耦、`candidate` 锚点、3D 去重、ICP 质心居中等 P1/P2，四分支单测全绿 |
 | 三路正交 v2 分支重切 + `D1/D2/D3` 30/30 组干净对照与完整文档交付 | 主控 | `exp/slam-v2-{measured-submaps,surface-gate,visual-retrieval}`、[REPORT.md](../../experiments/slam-backend-phase4/REPORT.md)、[slam-backend-branches-guide.md](../design/slam-backend-branches-guide.md) | 30 组全量 `dirty=False` 机身原点对照归档于 `runs/20261122-slam-backend-phase4-clean/`；D1 `0.0997 m`、D2 `stabilized` `0.0554 m` / `v2_sg_soft` `0.0608 m`、D3 `v2_ms` `0.1126–0.1268 m` / `v2_visual_akaze_only` `0.0825 m (84.1 s)` |
 | ADR-0002 / 0003 / 0004 论文开源调研与数据盘只读清理台账 | 主控 | [adr-0002-0003-0004-survey.md](research/adr-0002-0003-0004-survey.md) | 覆盖 InternNav/NaVILA/VLFM/SGLang/3D-Mem/HOV-SG/Hydra/ImMesh/Kimera-PGMO/DUFOMap/Khronos/PGSR-2DGS、P0–P3 分支路线与 ~199 GB 只读清理台账 |
+| V4 在线定向 Planar BA + 前端/PCT 滑窗 + 物体级 3D Surface Nets 网格记忆 + 教程文档 | 主控 + Codex | `localization_mapping/backend/`、`semantic_mapping/object_mesh_memory.py`、`docs/slam-tutorial/`、`docs/agent-tutorial/` | `exp/live-v4-ba-sliding-window`（`fb35dd8`）：1h 51m / 343.72 m 两层闭环（Umeyama 终图 `2.02 cm` / 在线 `2.68 cm`，`max_cum_jitter` `13.67 → 1.52 m`），42.7 s 产出 145 物体彩色网格与 88 裁剪图，807 单测 / 60 回归全绿 |
+| 2026-11 七层冻结基线、学术创新查重、VLN 基准 Tricks 核查与三轴演进总纲 | 主控 + Codex | [BASELINES.md](BASELINES.md)、[2026-11-novelty-audit-and-directions.md](research/2026-11-novelty-audit-and-directions.md)、[2026-11-vln-perception-memory-strategy-synthesis.md](research/2026-11-vln-perception-memory-strategy-synthesis.md) | 冻结 L1–L7 内部基线与 16 GB 显存红线；完成 SuperNav/ASENA/HarnessVLN/VLN-PE/HA-VLN 2.0/MemoryAgentBench/VSI-Bench 与上游 DynaNav 85 题审计；收敛为「感知 + 记忆 + 失败驱动控制」三轴主线与两条 2 周止损探针 |
 
 ## 进行中（用户审阅与实机收口）
 
@@ -46,6 +48,11 @@
 | `[ ]` | 排查并优化前端起步重力/俯仰初值收敛（消除 D3 初窗 ~0.5° 俯仰偏置贡献的 ~14 cm Z 杆臂误差） | 主控 + Codex | `third_party/fast_livo2/`、`simulation/dynanav/` | D3 前端 Init-SE3 Z RMSE 与 Umeyama Z RMSE 差距明显收窄，不引入静态起步发散 |
 | `[ ]` | 按评测结论重构动态行人支线（结合 M-detector / DUFOMap） | 主控 | 从 `ref/dynanav-dynamic-pedestrian` 提取 | 只提取明确需要的模块；主底座保持静态场景可复现；新增/修改有单测与真值对照 |
 | `[ ]` | 后端模块文档补充板载部署/线程模型说明 | DSH | `localization_mapping/backend/README.md` | 与 `node.py --config` 实际参数一致；无过期文件引用 |
+| `[ ]` | **【Phase 5 · 记忆探针 1】** 开展 2 周止损实验：地图修订 / 环境变化后的旧经验失效测试与朴素强基线对比 | 主控 + Codex | `localization_mapping/semantic_mapping/`、`planning/exploration/` | 在 `D-Indoor-2F` 固定路口、观测、地图版本与候选动作，仅替换/注入 1 条旧经验量化翻错率；正面硬刚“同楼层最新可见证据 + 按需看原图”基线，输出 8 项 Agent 诊断量初版读数 |
+| `[ ]` | **【Phase 5 · 记忆系统】** 构建四层子地图检索与分层存储模态原型（建筑矢量轮廓 + 规则家具原型码本/误差分裂 + 异形物离线 `Hunyuan3D-Omni/2DGS` + 局部高清图按需挂接 + 屏幕“几何静/外观动”指纹） | 主控 + Flash | `localization_mapping/semantic_mapping/`、`scripts/build_object_mesh_memory.py` | 适配单卡 `16 GB` 显存串行复用；在 `D-Indoor-2F` 10–20 个代表物体上量化存储压缩比、相对原生 USD 几何/自由空间侵入率与回环后旧射线证据撤销开销 |
+| `[ ]` | **【Phase 5 · 语义感知】** 封装免训练感知工具铁三角（`YOLOE` 高频 + `SAM 3` 异步关键帧 + `DINOv3` 原型检索/差分）、`PixelGoal` 像素选点与地图语义墙/门洞/路标矢量轮廓叠加 | 主控 + Flash | `perception/`、`planning/exploration/visual_map_overlay.py`、`scripts/explore_waypoint_client.py` | 语义轮廓与 `goto_pixel / query_pixel_3d` 不越层写 `cmd_vel`、不读仿真真值；支持按需挂接已验证四向环视；CPU 契约单测全绿 |
+| `[ ]` | **【Phase 5 · 动态感知探针 2】** 开展 2 周上界验证：向扫描匹配器注入准确机体运动测高遮挡动态点分割上界；通过后在 RoboGauge 极端地形（30 cm 台阶/凹坑/悬崖/烂泥阻力 + IMU 偏置）采样训练本体速度/协方差并验证交替迭代动态 SLAM | 主控 + Codex | `perception/`、`localization_mapping/`、`robot/unitree/robogauge/`、参考 `ref/dynanav-dynamic-pedestrian` | 先在 `ref/dynanav-dynamic-pedestrian` 与 `D-Dynamic-M3DGR` 核销“真本体运动上界增益”并核实 `MoE-CTS` 策略隐状态导出能力；成立后再建 `exp/prop-latent-dynamic-filter` 对比无过滤 / `DUFOMap` / 2D 语义掩码 |
+| `[ ]` | **【Phase 5 · 失败驱动控制与策略】** 落地回合内 `Attempt & Failure Ledger`、前置 `STOP` 几何校验、回环机体系相对净空风险门控（方向 D）与跨回合置信域门控 Skill 进化评测 | 主控 + Codex | `planning/exploration/`、`navigation/`、`.agents/skills/` | 在冻结 PCT/SCAN/MoE-CTS 下，产出 `D-Indoor-2F` 101 次回环 5 时间戳对齐事件表与机体系相对净空变化 $Y^{(k)}$；重复踩坑率与过早/漏停失误率相对基线可量化下降 |
 | `[ ]` | 持续维护：每次改动同步根 README 与 `docs/plan/` | 全体 | `docs/` | 盘点日期更新；`git diff --check` 通过；链接可达 |
 
 ## 架构决策记录（ADR）索引
@@ -76,16 +83,16 @@
 - 本机若无 Isaac/ROS，只能做 CPU 单测与文档工作；仿真验证须在有 Isaac 的 Linux 主机执行。数据包体积大（≈9.3 GB / ≈80 GB），离线评测先做关键帧缓存，禁止在调参循环里反复扫描原始 MCAP。
 - 数据卷路径由 `.env.local` 的 `PROJECT_DATA_ROOT` 提供；缺失时脚本 fail-closed，不回退到仓库内路径。
 
-## 当前基线快照（2026-11-22）
+## 当前基线快照（2026-11-25）
 
 | 项 | 值 |
 | --- | --- |
 | 集成基线 | `main` = `origin/main` = `2144e5f`（`fix(viz): use dynanav_lio_map as Fixed Frame in dynanav_live_pointcloud.rviz`） |
-| 活跃工作分支 | `exp/slam-backend-stabilization`（稳定化新底座，698 单测 / 60 回归）；`exp/slam-v2-{measured-submaps@59c60a4,surface-gate@0e98406,visual-retrieval@2aeea82}`（各 99/99 SLAM 单测）；`exp/startup-walk-imu-bias@76138ba`（前端/规划实机修复，679 单测） |
-| 测试基线 | `exp/slam-backend-stabilization`：`tests/unit` **698 条 OK、0 失败 0 跳过**；`tests/regression` **60 条 OK、0 失败**（本机 3 条按环境 skip） |
-| 默认入口 | `scripts/run_dynanav_native_exploration.sh`（默认 FAST-LIVO2 + PCT/SCAN + RoboGauge），`--truth-pose` 切真值模式；推荐离线后端预设 `configs/localization_mapping/slam_backend_stabilized.json` 待接线 |
-| 数据卷 | `$PROJECT_DATA_ROOT/embodied-navigation/`；30 组干净评测归档于 `runs/20261122-slam-backend-phase4-clean/` |
-| 文档入口 | 根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md)、本文件、[TEST_PLANS.md](TEST_PLANS.md)、[Phase 4 报告](../../experiments/slam-backend-phase4/REPORT.md)、[后端分支公式手册](../design/slam-backend-branches-guide.md)、[ADR-0001–0004](adr/)、[ADR 调研蓝图](research/adr-0002-0003-0004-survey.md) |
+| 活跃工作分支 | `exp/live-v4-ba-sliding-window`（HEAD `fb35dd8`，V4 在线定向 Planar BA + 滑窗 + Object Surface Nets 网格记忆，807 单测 / 60 回归）；`exp/slam-backend-stabilization`（Phase 4 稳定化底座）；`exp/slam-v2-{measured-submaps,surface-gate,visual-retrieval}`；`exp/startup-walk-imu-bias@76138ba` |
+| 测试基线 | `exp/live-v4-ba-sliding-window`：`tests/unit` **807 条 OK、0 失败 0 跳过**；`tests/regression` **60 条 OK、0 失败**（本机 3 条按环境 skip） |
+| 默认入口 | `scripts/run_dynanav_native_exploration.sh`（默认 FAST-LIVO2 + PCT/SCAN + RoboGauge），`--truth-pose` 切真值模式；冻结基线配置见 [BASELINES.md](BASELINES.md) |
+| 数据卷 | `$PROJECT_DATA_ROOT/embodied-navigation/`；核心冻结包 `D-Indoor-2F` / `D-Outdoor-R3LIVE` / `D-Dynamic-M3DGR` 与 30 组 Phase 4 干净归档 |
+| 文档入口 | 根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md)、[BASELINES.md](BASELINES.md)、本文件、[TEST_PLANS.md](TEST_PLANS.md)、[2026-11 学术查重总评](research/2026-11-novelty-audit-and-directions.md)、[VLN 评测真相与三轴演进总纲](research/2026-11-vln-perception-memory-strategy-synthesis.md)、[ADR-0001–0004](adr/)、[Agent 教程](../agent-tutorial/README.md)、[SLAM 教程](../slam-tutorial/README.md) |
 
 ## 新任务登记模板
 

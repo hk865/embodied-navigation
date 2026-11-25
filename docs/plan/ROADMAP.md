@@ -1,8 +1,8 @@
 # 开发路线图（ROADMAP）
 
-> 盘点日期：2026-11-22 · 集成基线 `main` `2144e5f`（= `origin/main`） · Phase 4 稳定化主分支 `exp/slam-backend-stabilization`（含 GPT-6.2-Astra 全量审计修复与 30/30 干净对照） · 实机前端/规划分支 `exp/startup-walk-imu-bias` `76138ba` · 活体文档，随阶段推进更新。
+> 盘点日期：2026-11-25 · 集成基线 `main` `2144e5f`（= `origin/main`） · 当前开发分支 `exp/live-v4-ba-sliding-window`（HEAD `fb35dd8`，V4 在线定向 Planar BA + 滑窗 + Object Surface Nets 网格记忆，807 单测 / 60 回归全绿） · Phase 4 稳定化分支 `exp/slam-backend-stabilization` · 活体文档，随阶段推进更新。
 
-本文件是项目唯一主线的开发计划入口。阅读顺序：根 [README.md](../../README.md) → 本文件 → [TASKS.md](TASKS.md) → [TEST_PLANS.md](TEST_PLANS.md)（各活跃分支测试与验收计划） → [Phase 4 后端评测报告](../../experiments/slam-backend-phase4/REPORT.md) & [各后端分支机制与公式手册](../design/slam-backend-branches-guide.md) → 架构决策记录（[ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)、[ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md)、[ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)）、[ADR 深度调研蓝图](research/adr-0002-0003-0004-survey.md) 与 [四大方向入门精讲与总施工图](research/four-directions-roadmap-and-blueprint.md) → 各模块 `README.md`。协作与提交规则以 [AGENTS.md](../../AGENTS.md) 为准。
+本文件是项目唯一主线的开发计划入口。阅读顺序：根 [README.md](../../README.md) → 本文件 → [BASELINES.md](BASELINES.md)（七层架构冻结基线与子模块优化边界）→ [2026-11 学术创新查重与论文方向总评](research/2026-11-novelty-audit-and-directions.md)（2025–2026 顶会排雷与五大候选方向决策矩阵）→ [VLN 评测真相与「感知 + 记忆 + 失败驱动控制」演进总纲](research/2026-11-vln-perception-memory-strategy-synthesis.md)（Benchmark Tricks 核查、Agent 弱点与下一阶段三轴蓝图）→ [TASKS.md](TASKS.md) → [TEST_PLANS.md](TEST_PLANS.md)（各活跃分支测试与验收计划） → [Phase 4 后端评测报告](../../experiments/slam-backend-phase4/REPORT.md) & [各后端分支机制与公式手册](../design/slam-backend-branches-guide.md) → 架构决策记录（[ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md)、[ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md)、[ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)）、[ADR 深度调研蓝图](research/adr-0002-0003-0004-survey.md) 与 [四大方向入门精讲与总施工图](research/four-directions-roadmap-and-blueprint.md) → [Agent 教程](../agent-tutorial/README.md) & [SLAM 教程](../slam-tutorial/README.md) → 各模块 `README.md`。协作与提交规则以 [AGENTS.md](../../AGENTS.md) 为准。
 
 ## 1. 唯一主线与七层架构边界
 
@@ -77,6 +77,21 @@
    - [ ] 将推荐预设显式冻结接入 `scripts/run_dynanav_native_exploration.sh` 并完成 Isaac Sim / ROS 2 实时链路验收（含回环时延与视觉 spool 在线入库）；
    - [ ] 精度向 `2–4 cm` 进阶：航向门控混合准入（同向视觉验真 + 反向 360° 几何/表面门）、精 ICP 细体素 / 平面因子（BALM2/X-ICP 思路）与前端重力初始化优化；
    - [ ] 数据盘清理审批与 ADR-0002/0003/0004 新分支立项。
+
+### Phase 5 — 感知（动态 + 语义）× 记忆（形式 / 检索 / 模态）× 失败驱动控制演进主线（2026-11-25 确立）
+
+**定位与原则**：在 V4 在线定向 Planar BA（`1.4–2.0 cm` 级两层闭环）与七层内部基线冻结（见 [BASELINES.md](BASELINES.md)）之后，项目核心矛盾已从“底层能不能建图与爬楼”切换为“**动态与语义感知 + 结构化时空记忆 + 失败中进化的策略**”。原则上冻结其余底层模块作为控制变量，按子模块独立分支推进，先跑 2 周止损探针再扩张（详见 [2026-11-vln-perception-memory-strategy-synthesis.md](research/2026-11-vln-perception-memory-strategy-synthesis.md)）：
+
+1. **感知主线（动态感知 + 语义感知，L2 / L6 → L2）**：
+   - **语义感知**：免训练专用模型工具化——`YOLOE`（高频在线动态/目标初筛）+ `SAM 3`（异步关键帧概念分割与跨帧跟踪）+ `DINOv3`（原型检索与跨时刻差分），叠加语义墙体/门洞/路标地图轮廓与 `PixelGoal` 选点（按需复用已验证的四向环视能力）。
+   - **动态感知与动态 SLAM**：先用准确机体运动做人群遮挡下的动态点分割上界验证；上界成立后，借鉴 `AirIO / AI-IO / Legolas` 在 RoboGauge 仿真域随机化（含 30 cm 台阶、凹坑、悬崖、烂泥阻力、IMU 噪声/零偏）训练四足本体速度/角速度与异方差协方差，驱动**本体先验 → 动态点分割/跟踪 → 交替迭代动态 SLAM**，并利用“几何静 + 外观动”物理指纹隔离显示屏/视频动画。
+2. **记忆主线（记忆形式、场景描述、子地图检索、存储模态与失效治理，L4 / L7）**：
+   - **分层存储模态**（严守单卡 `16 GB` 显存）：建筑骨架走平面拟合/参数化矢量轮廓；规则家具走原型码本与误差驱动在线分裂/参数化短代码；异形物体走 `SAM 3 + DINOv3` 去重后的离线串行 `Hunyuan3D-Omni`（点云/3D 框/RGB 约束）或 `2DGS/PGSR` 联动八叉树；局部高清 RGB 裁剪图按需挂接。
+   - **四层子地图检索与版本失效**：构建 `L0 全局语义拓扑/矢量轮廓 → L1 子地图/房间摘要 → L2 物体原型与失败节点 → L3 按需原图` 检索金字塔，绑定 `keyframe_id` 随回环重投影；率先用 2 周止损实验检验**地图修订/环境变化后的旧经验撤销与置信域门控**（对抗记忆税，正面硬刚“同楼层最新可见证据 + 按需看原图”基线）。
+3. **控制与策略主线（失败中优化，L5 / L7）**：
+   - 底层 PCT + SCAN + RouteTracker + MoE-CTS 保持冻结，只叠加**回环机体系相对净空风险交付门控**与**前置 `STOP` 几何校验**；
+   - 策略侧围绕失败反馈闭环演进：回合内 `Attempt & Failure Ledger` 地理黑名单 + 跨回合受置信域门控的 Skill/Tool 迭代；
+   - 评测侧在兼容上游 DynaNav 指标之上，引入 8 项超越 `SR/SPL` 的 **Agent 认知与记忆诊断指标**（证据命中翻错率、过时经验翻错率、无效重访率、跨层记忆混淆率、重复踩坑率、停驻/停机失误、长程退化斜率与定位落差 $\Delta\text{SR}$）。
 
 ## 3. 活跃分支现状与关键提交 Log 摘要
 
