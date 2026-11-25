@@ -31,6 +31,7 @@ class SentinelCoordinator:
         ttl_s: float = 30.0,
         yaw_rate_rps: float | None = None,
         max_yaw_rate_rps: float | None = None,
+        memory_store: Any | None = None,
     ) -> None:
         if not math.isfinite(spin_delta_rad) or spin_delta_rad == 0.0 or abs(spin_delta_rad) > 3.15:
             raise ValueError("spin_delta_rad must be nonzero and within [-3.15, 3.15]")
@@ -45,6 +46,7 @@ class SentinelCoordinator:
         self.ttl_s = float(ttl_s)
         self.yaw_rate_rps = yaw_rate_rps
         self.max_yaw_rate_rps = max_yaw_rate_rps
+        self.memory_store = memory_store
 
         self._frame_seq = 0
         self._action_epoch = 0
@@ -123,6 +125,18 @@ class SentinelCoordinator:
         self._last_slam_health = health
 
         candidate_list = list(candidates) if candidates is not None else []
+        blocked_candidates: list[dict[str, Any]] = []
+        obs_payload: dict[str, Any] = dict(obs) if isinstance(obs, dict) else {}
+        if self.memory_store is not None:
+            allowed_cands, blocked_candidates = self.memory_store.filter_candidates(
+                candidate_list, default_z=pose_z
+            )
+            if allowed_cands:
+                candidate_list = allowed_cands
+            else:
+                candidate_list = blocked_candidates
+            obs_payload["memory_l0"] = self.memory_store.l0_global_topology()
+
         cand_map: dict[str, dict[str, Any]] = {}
         for item in candidate_list:
             if not isinstance(item, dict):
@@ -142,7 +156,7 @@ class SentinelCoordinator:
 
         submitted = self.runner.submit(
             {
-                "observation_summary": obs or {},
+                "observation_summary": obs_payload,
                 "candidates": candidate_list,
                 "backend_health": health,
                 "rgb_path": rgb_path,
@@ -156,6 +170,7 @@ class SentinelCoordinator:
             "frame_seq": f_seq,
             "action_epoch": self._action_epoch,
             "slam_health": health,
+            "blacklisted_candidates": len(blocked_candidates),
             "submitted": submitted,
         }
 

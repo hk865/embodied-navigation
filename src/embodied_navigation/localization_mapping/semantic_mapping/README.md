@@ -25,13 +25,15 @@ src/embodied_navigation/localization_mapping/semantic_mapping/
 ├── README.md            # 本文件
 ├── __init__.py          # 唯一门面：重导出核心、场景图、适配器与调度接口
 ├── core.py              # 点层、对象关联、修订/重投影、SE(3) 校验、快照与原子保存
-├── scene_graph.py       # 关键帧锚定 3D 场景图（楼层/楼梯/房间/门洞/对象/重投影/查询）
-├── backend_adapter.py   # MapStore 流式/内存构图、RGB 索引容错解析、净空估计与原子双图同步
-├── query.py             # 只读确定性点层快照过滤与结构化上下文
-└── scheduler.py         # 传感器时钟上的语义准入
+├── scene_graph.py         # 关键帧锚定 3D 场景图（楼层/楼梯/房间/门洞/对象/重投影/查询）
+├── hierarchical_memory.py # L0–L3 四层子地图检索、Attempt & Failure Ledger 黑名单与前置 STOP 校验
+├── object_mesh_memory.py  # 纯 LiDAR Surface Nets 物体网格下界基线（L4 几何对照）
+├── backend_adapter.py     # MapStore 流式/内存构图、RGB 索引容错解析、净空估计与原子双图同步
+├── query.py               # 只读确定性点层快照过滤与结构化上下文
+└── scheduler.py           # 传感器时钟上的语义准入
 ```
 
-7 个跟踪文件（6 个 `.py` + 本 README）。
+9 个跟踪文件（8 个 `.py` + 本 README）。
 
 ## 逐文件职责
 
@@ -41,6 +43,8 @@ src/embodied_navigation/localization_mapping/semantic_mapping/
 | [__init__.py](__init__.py) | 唯一门面：重导出 `LayeredMap`、`Observation`、`PointMask`、`KeyframeSceneGraph`、`RgbIndexReport`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` 等。 | `from embodied_navigation.localization_mapping.semantic_mapping import KeyframeSceneGraph, ...` |
 | [core.py](core.py) | 点层与对象表：两个 frozen dataclass 与 `LayeredMap`；提供 `validate_rigid_pose` 校验有限刚体 SE(3) 矩阵。 | `Observation`、`PointMask`、`LayeredMap`、`read_snapshot`、`validate_rigid_pose` |
 | [scene_graph.py](scene_graph.py) | 关键帧锚定 3D 场景图：按连续轨迹分段与局部纵坡 `\|dz/ds\|` 聚类楼层并做 Z 平移不变峰抑制（跨 epoch/时间断层不连楼梯）；用 `cKDTree` + 轨迹邻接/跨轨迹自由空间守卫与扇区视线检查分割房间；按瓶颈局部接触与轨迹穿越顺序建门洞（持久化 `bottleneck_anchor_ids`）；支持引用完整性校验、空间距离过滤查询与幂等/拓扑自愈重投影。 | `KeyframeSceneGraph`、`FloorNode`、`StairEdge`、`RoomNode`、`DoorwayEdge`、`ObjectNode` |
+| [hierarchical_memory.py](hierarchical_memory.py) | 四层子地图检索与治理：`L0` 全局拓扑（<2 KB）→ `L1` 房间摘要检索 → `L2` 物体与失败黑名单（带 `map_revision` 与 `stale` 门控）→ `L3` 按需关键帧 RGB；提供 `Attempt & Failure Ledger` 候选过滤与前置 `verify_stop_claim` 几何校验。 | `HierarchicalMemoryStore`、`AttemptRecord`、`StopVerificationResult` |
+| [object_mesh_memory.py](object_mesh_memory.py) | 纯 LiDAR Surface Nets 物体级 3D 网格与关键帧锚定空间记忆基线（L4 纯几何下界对照）。 | `build_object_mesh_memory` |
 | [backend_adapter.py](backend_adapter.py) | 后端桥接：逐扇区净空估计（无有效点云返回 `None` 未知）；`load_rgb_index_report` 容错解析；`build_scene_graph_from_map_dir` 调用 `MapStore.iter_keyframes_from_dir` 逐帧流式构图；`sync_backend_loop_update` 显式双图原子同步。 | `estimate_keyframe_clearance_m`、`estimate_keyframe_clearance_profile`、`load_rgb_index_report`、`load_rgb_index`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` |
 | [query.py](query.py) | 只读、确定性快照过滤：`select`/`context_text`（schema `observed_scene_map_query/v1`）。 | `select`、`context_text` |
 | [scheduler.py](scheduler.py) | 传感器时钟上的语义准入（周期/事件/epoch）。 | `SemanticScheduler.request/complete` |

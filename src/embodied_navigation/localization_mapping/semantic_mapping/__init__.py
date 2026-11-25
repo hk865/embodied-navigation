@@ -20,6 +20,13 @@ from .core import (
     read_snapshot,
     validate_rigid_pose,
 )
+from .hierarchical_memory import (
+    MEMORY_SCHEMA,
+    AttemptRecord,
+    HierarchicalMemoryStore,
+    ObjectEvidenceMeta,
+    StopVerificationResult,
+)
 from .scene_graph import (
     DoorwayEdge,
     FloorNode,
@@ -32,12 +39,16 @@ from .scheduler import SemanticScheduler
 
 __all__ = [
     "DYNAMIC",
+    "MEMORY_SCHEMA",
     "STATIC",
     "UNKNOWN",
+    "AttemptRecord",
     "DoorwayEdge",
     "FloorNode",
+    "HierarchicalMemoryStore",
     "KeyframeSceneGraph",
     "LayeredMap",
+    "ObjectEvidenceMeta",
     "ObjectNode",
     "Observation",
     "PointMask",
@@ -45,6 +56,7 @@ __all__ = [
     "RoomNode",
     "SemanticScheduler",
     "StairEdge",
+    "StopVerificationResult",
     "build_scene_graph_from_map_dir",
     "build_scene_graph_from_map_store",
     "estimate_keyframe_clearance_m",

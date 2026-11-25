@@ -22,6 +22,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable
 import urllib.parse
+import uuid
 
 VALID_SENTINEL_ACTS = ("CONT", "PREEMPT", "STOP", "SPIN")
 
@@ -30,6 +31,24 @@ _QWEN_PRESET = {
     "default_model": "qwen3.8-flash",
     "api_key_env": "DASHSCOPE_API_KEY",
     "supports_vision": True,
+}
+
+_OPENCODE_GO_PRESET = {
+    "base_url": "https://opencode.ai/zen/go/v1",
+    "default_model": "qwen3.8-flash",
+    "api_key_env": "OPENCODE_API_KEY",
+    "supports_vision": True,
+    "opencode_auth_provider": "opencode",
+    "requires_session_header": True,
+}
+
+_OPENCODE_ZEN_PRESET = {
+    "base_url": "https://opencode.ai/zen/v1",
+    "default_model": "qwen3.8-flash",
+    "api_key_env": "OPENCODE_API_KEY",
+    "supports_vision": True,
+    "opencode_auth_provider": "opencode",
+    "requires_session_header": True,
 }
 
 PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
@@ -41,6 +60,9 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     },
     "qwen3.8-flash": dict(_QWEN_PRESET),
     "qwen": dict(_QWEN_PRESET),
+    "opencode": dict(_OPENCODE_GO_PRESET),
+    "opencode_go": dict(_OPENCODE_GO_PRESET),
+    "opencode_zen": dict(_OPENCODE_ZEN_PRESET),
     "openai_compatible": {
         "base_url": "",
         "default_model": "qwen3.8-flash",
@@ -48,6 +70,58 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "supports_vision": True,
     },
 }
+
+
+def _read_key_file(path: Path) -> str | None:
+    """Read an API token from a single-line or KEY=VALUE local file silently."""
+    try:
+        raw_lines = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    except OSError:
+        return None
+    if not raw_lines:
+        return None
+    token = raw_lines[0]
+    if "=" in token and not token.startswith("sk-"):
+        token = token.split("=", 1)[1].strip().strip('"').strip("'")
+    return token or None
+
+
+def _read_opencode_auth_key(provider_name: str) -> str | None:
+    """Read an API key from OpenCode's XDG auth.json store when present."""
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg_data) if xdg_data else (Path.home() / ".local" / "share")
+    auth_path = base / "opencode" / "auth.json"
+    try:
+        payload = json.loads(auth_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entry = payload.get(provider_name) if isinstance(payload, dict) else None
+    if isinstance(entry, dict):
+        key = entry.get("key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    return None
+
+
+def _resolve_preset_api_key(preset: dict[str, Any]) -> str | None:
+    env_name = preset.get("api_key_env")
+    if isinstance(env_name, str) and env_name:
+        env_val = os.environ.get(env_name)
+        if env_val and env_val.strip():
+            return env_val.strip()
+        file_env = os.environ.get(f"{env_name}_FILE")
+        if file_env and file_env.strip():
+            token = _read_key_file(Path(file_env).expanduser())
+            if token:
+                return token
+    auth_provider = preset.get("opencode_auth_provider")
+    if isinstance(auth_provider, str) and auth_provider:
+        return _read_opencode_auth_key(auth_provider)
+    return None
 
 _EMPTY = object()
 
@@ -85,6 +159,8 @@ class LlmClientConfig:
     supports_vision: bool | None = None
     stream: bool = True
     extra_body: dict[str, Any] | None = None
+    session_id: str | None = None
+    user_agent: str = "embodied-navigation-agent/1.0"
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDER_PRESETS:
@@ -119,9 +195,7 @@ class LlmClientConfig:
 
         api_key = self.api_key
         if api_key is None:
-            env_name = preset.get("api_key_env")
-            if env_name:
-                api_key = os.environ.get(env_name)
+            api_key = _resolve_preset_api_key(preset)
         elif not isinstance(api_key, str):
             raise ValueError("api_key must be a string or None")
 
@@ -137,6 +211,15 @@ class LlmClientConfig:
                 raise ValueError("extra_body must be a dict or None")
             extra_body = dict(self.extra_body)
 
+        session_id = self.session_id
+        if session_id is None and preset.get("requires_session_header"):
+            session_id = str(uuid.uuid4())
+        elif session_id is not None:
+            session_id = str(session_id).strip() or None
+        user_agent = str(self.user_agent or "embodied-navigation-agent/1.0").strip()
+        if not user_agent:
+            user_agent = "embodied-navigation-agent/1.0"
+
         object.__setattr__(self, "model", model)
         object.__setattr__(self, "base_url", base_url)
         object.__setattr__(self, "api_key", api_key)
@@ -145,6 +228,8 @@ class LlmClientConfig:
         object.__setattr__(self, "supports_vision", supports_vision)
         object.__setattr__(self, "stream", stream)
         object.__setattr__(self, "extra_body", extra_body)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "user_agent", user_agent)
 
     def to_safe_dict(self) -> dict[str, Any]:
         """Export a redacted configuration dictionary free of credentials."""
@@ -907,9 +992,12 @@ class FastSentinelClient:
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
+            "User-Agent": self.config.user_agent,
         }
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
+        if self.config.session_id:
+            headers["x-opencode-session"] = self.config.session_id
 
         parsed_url = urllib.parse.urlparse(self.config.base_url)
         base_path = parsed_url.path.rstrip("/")
