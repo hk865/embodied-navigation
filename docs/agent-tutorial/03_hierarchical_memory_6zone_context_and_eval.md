@@ -1,6 +1,6 @@
-# 03 · L0–L3 层次空间记忆、六分区上下文、30 题消融评测与 0.2 s 流式延迟算力账
+# 03 · L0–L3 层次空间记忆、六分区上下文、公平 30 题消融与 0.2 s 流式延迟预算
 
-> **整理日期**：2026-11-25 · **对应分支**：`feat/static-memory-streaming`（基线 `exp/live-v4-ba-sliding-window` + 完整合流 `feat/semantic-keyframe-graph` 与 `feat/agent-preemptable-active-slam`）
+> **整理日期**：2026-11-25 · **对应分支**：`feat/static-memory-streaming`（基线 `exp/live-v4-ba-sliding-window` + 完整合流 `feat/semantic-keyframe-graph` 与 `feat/agent-preemptable-active-slam`，已按 `gpt-6.2-astra` 审查完成全部 P0/P1/P2 修复与复验）
 >
 > **前序文档**：[01 Skill / Tool 与控制链路](01_skills_tools_and_control_pipeline.md) · [02 实时视频流控制与记忆蓝图](02_streaming_video_control_and_memory_system.md) · [VLN 评测真相与三轴演进总纲](../plan/research/2026-11-vln-perception-memory-strategy-synthesis.md)
 
@@ -8,12 +8,12 @@
 
 ## 1. 这一阶段把什么真正落地了？
 
-前两篇教程分别梳理了同步探索链路和异步/记忆架构设计。本阶段（`feat/static-memory-streaming`）完成了四件闭环落地工作，全部受 **870+ 项单测与 60 项回归测试** 保护：
+本阶段（`feat/static-memory-streaming`）完成四项闭环落地并通过 **`904` 项单元测试与 `60` 项回归测试** 保护：
 
-1. **三线底座合流**：将 V4 统一目标在线平面 BA（[SLAM 教程 07](../slam-tutorial/07_branch_v4_gravity_and_online_planar_ba.md)）、关键帧锚定 3D 场景图（`scene_graph.py`）和异步可抢占邮箱/哨兵（`llm_agent_client.py` / `sentinel_coordinator.py`）无损合流到同一代码底座。
-2. **L0–L3 版本化层次空间记忆（`hierarchical_memory.py`）**：落地一段话自然语言记忆总结、语义精确匹配排序、全局安全留距 `M*` 记忆导航候选、`Attempt & Failure Ledger` 地理黑名单（随回环位姿偏移自动失效），以及前置 `verify_stop_claim` 几何校验。
-3. **六分区上下文解耦与 OpenCode Go 双模型 SSE 流式闭环（`streaming_task_agent.py`）**：严格隔离 `[SYSTEM]` / `[SKILL]` / `[TASK]` / `[MEMORY_SUMMARY]` / `[INTERMEDIATE_STATE]` / `[TOOL_RESULTS]`，打通 `qwen3.8-flash`（强视觉主干）+ `deepseek-v4.1-flash (high)`（按需深度回想）+ `glm-5.3-flash`（行进中异步流式哨兵），并在 Isaac Sim 静态闭环拿到首个 `verified_stop_success`。
-4. **30 题三梯度任务集与 90 回合消融（`static_task_suite.py`）**：在真实 `D-Indoor-2F`（`2,460 KF / 2 层 / 14 房间 / 20 门洞 / 1 楼梯`）拓扑上完成 3 组记忆策略同台消融，实证量化过时信念门控与全局 `M*` 候选的真实收益。
+1. **三线底座合流**：将 V4 统一目标在线平面 BA（[SLAM 教程 07](../slam-tutorial/07_branch_v4_gravity_and_online_planar_ba.md)）、关键帧锚定 3D 场景图（`scene_graph.py`）和异步可抢占邮箱/哨兵（`llm_agent_client.py` / `sentinel_coordinator.py`）无损合流到同一底座，并消除有序邮箱 `inbox` 与 `request.json` 镜像间的跳序窗口及 PCT 重试节流前的冗余点云拷贝。
+2. **L0–L3 版本化层次空间记忆（`hierarchical_memory.py`）**：落地一段话自然语言记忆总结、整词边界语义排序、全局支撑面安全留距 `M*` 记忆候选、地理/非地理失败分离的 `Attempt & Failure Ledger`（支持 SE(3) 锚点重投影与累计漂移失效）、以及前置独立证据 `verify_stop_claim` 门控。
+3. **六分区上下文解耦与可替换主干 + 并行哨兵（`streaming_task_agent.py`）**：严格隔离 `[SYSTEM]` / `[SKILL]` / `[TASK]` / `[MEMORY_SUMMARY]` / `[INTERMEDIATE_STATE]` / `[TOOL_RESULTS]`；在线主干使用冻结任务目标 + 实测 `height_chart_*.npz` LiDAR 射线独立测距作为 STOP 几何依据，并行哨兵真实携带在线 `front_rgb` 与有界 `memory_l0`，且 `STOP / PREEMPT / SPIN` 全部闭合到邮箱回执。
+4. **修复版 30 题公平评测基准（`static_task_suite.py`）**：在真实 `D-Indoor-2F`（`2,460 KF / 2 层 / 14 房间 / 20 门洞 / 1 楼梯`）拓扑上，使用**私有真值与先验记忆分离**、**真实门洞/楼梯折线可达路径（断图禁瞬移）**和**单变量控制消融**，并将两个无模型确定性图搜索策略纳入正式对照基线。
 
 ---
 
@@ -24,101 +24,124 @@
 ```mermaid
 flowchart TB
     SG["KeyframeSceneGraph<br/>楼层 / 房间 / 门洞 / 楼梯 / 关键帧位姿"] --> HM["HierarchicalMemoryStore<br/>map_revision + ObjectEvidenceMeta + AttemptRecord"]
-    HM --> L0["L0 全局拓扑与一段话总结<br/>narrative_summary() 常驻上下文<br/>2460 KF 两层图 L0 仅 ~1.1–1.6 KB"]
-    HM --> L1["L1 子地图/房间摘要检索<br/>l1_submap_summaries() 实测 0.06 ms"]
-    HM --> L2["L2 物体实体 + 失败黑名单<br/>l2_submap_entities() 语义精确度优先排序<br/>自动生成 M1..M* 安全留距候选"]
-    HM --> L3["L3 按需关键帧原图<br/>l3_on_demand_keyframes() 最多 1–3 张高清 RGB"]
-    HM --> STOP["前置 STOP 几何校验<br/>verify_stop_claim()<br/>同楼层 + 半径 + 非过时三重门控"]
+    HM --> L0["L0 全局拓扑与一段话总结<br/>narrative_summary() 常驻上下文<br/>引用最终 M1..M* 候选编号"]
+    HM --> L1["L1 子地图/房间摘要检索<br/>l1_submap_summaries()"]
+    HM --> L2["L2 物体实体 + 地理失败黑名单<br/>整词边界排序 + 支撑面 Z + 未知净空如实标记"]
+    HM --> L3["L3 按需关键帧原图<br/>优先命中目标锚帧，经目录白名单与魔数校验"]
+    HM --> STOP["前置 STOP 独立几何门<br/>verify_stop_claim()<br/>冻结目标 + 排除未验证自估距 + 先筛新鲜再判同层半径"]
 ```
 
-### 2.1 四项关键工程机制
-1. **一段话记忆总结（`narrative_summary`）替代裸 JSON 倾倒**：
-   - 主干规划器每步只看一段精炼中文总结（含当前 `map_revision`、楼层/房间/门洞/楼梯数、机器人最近房间、全局命中的目标地标及活跃黑名单数量），并明确提示“需要详细房间物体列表、精确坐标或历史原图时调用 `query_memory` 工具回想”。
-   - 避免 `MemoryAgentBench` 揭示的“上下文塞太满导致准确率反降”的记忆税。
-2. **多词语义精确度优先排序（`_label_match_score`）**：
-   - 修复了单靠任意单词重合导致 `"red fire hose cabinet"` 误匹配更近的 `"red double door"` 的真实检索缺陷：
-     - 精确全等（`100`）> 完整子串包含（`50–60`）> 多词召回率 $\ge 50\%$（`20·recall + 10·jaccard`）；
-     - 检索 `L2` 与生成 `M*` 候选严格按 `(-match_score, distance_m)` 排序。
-3. **全局安全留距 `M1..M*` 记忆候选（`memory_goal_candidates`）**：
-   - 不受局部 `8 m` 窗口截断；一旦目标曾在任何楼层/房间被记住且未过时，自动沿“物体 → 机器人”方向后退 `standoff_m`（默认 `1.0 m`）生成安全抵近坐标并置顶为 `M1/M2`，避免机器人试图站进墙体或家具内部。
-4. **版本化过时治理与失败地理黑名单（`sync_poses` + `Attempt & Failure Ledger`）**：
-   - 后端回环更新位姿调用 `sync_poses(...)` 时自动递增 `map_revision`；若某失败记录锚定关键帧发生 $\ge 0.25\,\text{m}$ 位移，旧黑名单自动标为 `stale=True` 解除误封。
-   - 被搬移或复检缺席的物体调用 `mark_object_stale(...)` 标废，`L2` 默认查询与 `verify_stop_claim(require_fresh=True)` 均拒绝依赖过时信念早停。
+### 2.1 关键工程与安全契约
+1. **一段话记忆总结与 `M*` 候选严格对齐**：
+   - `narrative_summary()` 直接复用 `memory_goal_candidates()` 的最终排序结果并引用 `M1..M*` 编号，避免摘要二次排序导致上下文和候选表错位。
+   - `M*` 候选的目标高度 `z` 取锚点关键帧/所属房间的可行走支撑面高度，净空未知时如实标为 `clearance_m=None, clearance_known=False, turn_safe=None`，交由下游 PCT/SCAN 做运动准入。
+2. **整词边界语义匹配与严格 STOP 验收**：
+   - `_label_match_score` 与 `_label_strict_match` 均基于完整词边界匹配（避免 `"board"` 误匹配 `"cardboard"`）。
+   - `verify_stop_claim` 冻结任务 `target_label` / 显式 `target_aliases`，排除未验证的纯 VLM 估距（`excluded_producers=("opencode_vlm_unverified",)`），先筛选新鲜有效证据再在同楼层中取最近距离；请求物体目标时绝不回退到房间占用放行。
+3. **SE(3) 锚点重投影与地理/非地理失败分离**：
+   - 仅导航类地理失败（`stuck`、`timeout`、`failed`、几何 `rejected`）进入地理黑名单；`stop_claim` 拒绝、`cancelled` 及 `stale_action_epoch` 等协议拒绝记入尝试日志但**不污染黑名单**。
+   - 失败记录保存创建时的锚点局部坐标 `anchor_local_xyz` 与原始世界坐标 `recorded_goal_xyz`；后端回环调用 `sync_poses(...)` 时按完整 SE(3) 重投影计算累计位移（可捕获纯 180° 旋转与多次小幅累计漂移），重复调用相同位姿保持幂等。
+4. **跨信任边界与持久化安全**：
+   - 外部图像（含 `--prior-memory` L3 `rgb_path`）必须通过 `validate_image_path` 的软链解析、允许目录白名单（`--prior-evidence-root` 显式授权）、10 MB 上限与 PNG/JPEG/WEBP 真实魔数校验。
+   - 换主机覆盖 `base_url` 时禁止自动附带原 preset 凭据；非 `localhost` 的明文 `http://` 拒绝发送云端 `api_key`；HTTP 错误正文绝不写入异常、决策 `reason` 或任务报告。
+   - 记忆与报告持久化均复用 `atomic_write_json`（先原子落盘版本化记忆，再原子发布引用该 `map_revision` 的报告）。
 
 ---
 
-## 3. 六分区上下文解耦与 OpenCode Go 双模型流式链路
+## 3. 六分区上下文解耦与可替换主干 + 并行哨兵链路
 
 核心源码：[llm_agent_client.py](../../src/embodied_navigation/planning/exploration/llm_agent_client.py)、[streaming_task_agent.py](../../src/embodied_navigation/planning/exploration/streaming_task_agent.py)、[sentinel_coordinator.py](../../src/embodied_navigation/planning/exploration/sentinel_coordinator.py)、薄 CLI [scripts/run_static_streaming_task.py](../../scripts/run_static_streaming_task.py)。
 
-### 3.1 六分区 Prompt 架构（最大化 Prefix KV-Cache 命中）
+### 3.1 六分区上下文布局
 
 | 分区 | 所在消息角色 | 变化频率 | 承载内容 |
 | :--- | :---: | :---: | :--- |
-| `## [SYSTEM]` | `system` | 全程不变 | 角色定位、七层安全边界（禁止虚构坐标/读真值）、单行 JSON 动作契约 |
-| `## [SKILL]` | `system` | 全程不变 | 6 条导航与记忆技能（优先 `M*`、探索 `F*/W*`、按需 `query_memory`、视觉地标上报、脱困/爬楼 `maneuver`、主动 `stop_claim`） |
-| `## [TASK]` | `user` | 单任务不变 | 自然语言任务指令、`target_label`、同楼层与 `stop_radius_m` 验收口径 |
-| `## [MEMORY_SUMMARY]` | `user` | 随建图缓变 | `narrative_summary()` 输出的**一段话**全局空间记忆总结 |
-| `## [INTERMEDIATE_STATE]` | `user` | 每步实时更新 | 当前步号、位姿/航向、已行里程、过滤黑名单后的 `M*` + `F*/W*` 候选表 |
-| `## [TOOL_RESULTS]` | `user` | 每步实时更新 | 上一步邮箱动作回执 + 最近一次 `query_memory` 工具回想到的 L1/L2/L3 结构化结果 |
+| `## [SYSTEM]` | `system` | 全程不变 | 角色定位、七层安全边界、单行顶层 JSON 契约 |
+| `## [SKILL]` | `system` | 全程不变 | 6 条导航与记忆技能（优先 `M*`、探索 `F*/W*`、按需 `query_memory`、地标上报、脱困 `maneuver`、主动 `stop_claim`） |
+| `## [TASK]` | `user` | 单任务不变 | 任务指令、冻结 `target_label`、同楼层与 `stop_radius_m` 验收口径 |
+| `## [MEMORY_SUMMARY]` | `user` | 随建图缓变 | `narrative_summary()` 输出的一段话全局空间记忆总结 |
+| `## [INTERMEDIATE_STATE]` | `user` | 每步更新 | 步号、经鲜度校验的实时位姿/航向、已行里程、过滤黑名单后的候选表（全拦时不回退可执行黑名单） |
+| `## [TOOL_RESULTS]` | `user` | 每步更新 | 上一步动作回执 + 最近一次本地 `query_memory` 回想到的 L1/L2/L3 结果 |
 
-### 3.2 OpenCode Go 协议与流式坑修复
-- **端点与官方会话缓存**：`opencode` / `opencode_go` preset 指向 `https://opencode.ai/zen/go/v1`，按官方要求自动注入稳定会话 UUID 头 `x-opencode-session`（用于路由会话亲和与 Prompt Caching）和显式 `User-Agent`。
-- **零明文泄露凭据回退链**：显式参数 → 环境变量 `OPENCODE_API_KEY` → 文件指针 `OPENCODE_API_KEY_FILE` → OpenCode 标准 XDG 存储 `$XDG_DATA_HOME/opencode/auth.json`；`repr()` 与 `to_safe_dict()` 严格脱敏。
-- **嵌套 JSON 提前截断修复（`_extract_outer_json_object`）**：当规划器输出含嵌套 `observed_objects: [{...}]` 的 JSON 时，普通正则会在第一个内层 `}` 误触发 SSE 断流；改为维护字符串转义感知的顶层大括号深度计数器，直到外层 `depth == 0` 才结束流式读取。
-- **双模型分工**：
-  - **视觉主干**：`qwen3.8-flash`（`enable_thinking: False`，强视觉定位，实测 `4.7–8.2 s`）；
-  - **深度思考回想**：`deepseek-v4.1-flash / deepseek-v4-pro`（`--thinking-mode high`，实测在两层先验记忆中 `8.18 s` 主动先调 `query_memory` 查 1 层路线再规划）；
-  - **行进中异步流式哨兵**：`glm-5.3-flash`（`thinking: disabled`，实测 `p50 = 3.73–3.82 s / p95 = 4.69–4.86 s`，49 + 13 次实机调用 0 超时，已实盘触发 `action_epoch: 0 → 1` `PREEMPT` 抢占）。
+> **实现边界说明**：CLI 每次启动绑定**一个可替换主干模型**（如 `qwen3.8-flash` 视觉主干或 `deepseek-v4.1-flash --thinking-mode high` 深度思考主干）加**一个可选并行哨兵**（如 `glm-5.3-flash`）；`query_memory` 在本地内存执行，不存在运行期自动跨模型动态路由；`x-opencode-session` 请求头已按官方要求携带，实际前缀缓存加速收益尚待冷暖请求对比测试单独量化。
+
+### 3.2 流式解析与回执闭合关键修复
+- **严格顶层 JSON 与单调绝对期限**：SSE 流式解析只认 `_extract_outer_json_object` 闭合后的顶层对象，截断流或解析异常返回无移动 `noop`（绝不从内层 `observed_objects` 误提动作，也不盲走 `M1`）；单调绝对 `deadline` 覆盖建连、响应头与 `readline()` 全程。
+- **独立 LiDAR 测距投影**：在线视觉上报的 `observed_objects` 自动对当前快照的 `height_chart_*.npz`（`0.05 m` 去畸变 LIO 占据栅格）沿相机方位角做射线测距；命中实测障碍物时标记 `producer="vlm_lidar_grounded"`、`range_source="height_chart_lidar_raycast"` 并记录 `evidence_frame` 与 `evidence_stamp_s`；无实测支撑时标为 `opencode_vlm_unverified`，禁止用于 `stop_claim` 自证。
+- **哨兵回执闭合与竞态消除**：行进等待循环中严格**先 `poll_and_dispatch()` 消费已完成判决，再按周期 `submit_observation()`**；实时帧统一读取 `latest_sim_frame()["latest"]`，且 `build_visual_first_messages` 实际序列化有界 `memory_l0`（`<= 1 KB`）；哨兵触发 `STOP` 时立即锁死主循环并同步等待 `stop_accepted`，触发 `PREEMPT / SPIN` 时切换到新 `seq / action_epoch` 继续跟踪直到终态回执。
 
 ---
 
-## 4. 实测验证结果（严格区分实时物理闭环与离线 30 题记忆消融）
+## 4. 修复后实测验证结果（严格区分实机物理闭环与离线公平基准）
 
-### 4.1 实时 Isaac Sim + V4 BA 物理闭环（静态寻物验收）
-- **产物路径**：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-streaming-task/static_task_qwen_20261125T085027Z/`
-- **实测过程**（`qwen3.8-flash` 主干 + `glm-5.3-flash` 异步哨兵 + V4 在线 BA `--backend-pose`）：
-  - Step 1 识别 `5.0 m` 处 `red double door` 写入 3D 记忆并前进至 `[2.79, 0.17, 0.01]`；
-  - Step 2–3 从一段话记忆摘要自动生成 `M1` 抵近候选，连续两次 `goto_candidate M1` 精准走至门前 `[3.74, -0.11, 0.01]`；
-  - Step 4 视觉确认 `1.28 m, 0.0°` 处为目标双开门，调用 `stop_claim("door")` 并通过 `verify_stop_claim`（`allowed=True, same_floor=True, evidence_stale=False`），**4 步 / `82.56 s` 达成 `verified_stop_success`，`0` 失败、`0` fallback、安全停车 `exit 0`**。
+### 4.1 实时 Isaac Sim + V4 BA 物理闭环（两轮独立实盘验证）
 
-### 4.2 30 题三梯度 × 3 组记忆消融（90 个真实 `qwen3.8-flash` 回合）
-- **评测脚本**：[scripts/eval_static_task_suite.py](../../scripts/eval_static_task_suite.py)（基于 `D-Indoor-2F` `2,460 KF / 2 层 / 14 房间 / 20 门洞 / 1 楼梯` 拓扑，采用房间图测地最短路计算诚实 `SPL`）
-- **产物路径**：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-task-suite-30/qwen38_flash_30tasks_ablation.json`
+1. **实盘 A · 视觉哨兵闭环与安全停车锁死验证**：
+   - 产物：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-streaming-task/static_task_qwen_verified_20261125T105150Z/`
+   - 配置：`qwen3.8-flash` 主干 + `glm-5.3-flash` 并行哨兵 + V4 在线 BA `--backend-pose`
+   - 实证结果：
+     - 哨兵真实收到在线图像与拓扑摘要（`last_request_modalities: {"has_memory_l0": true, "images": ["front_rgb"], "l0_rev": 0}`，`10` 次调用 `0` 超时，`p50 = 3.76 s`）；
+     - Step 1 目标 `red double door` 经独立 LiDAR 射线测距入库（`producer="vlm_lidar_grounded"`, `range_source="height_chart_lidar_raycast"`, `[8.33, -1.86]`）；
+     - Step 2 哨兵基于实时前视画面主动下发 `STOP`（`seq=3, action_epoch=1`），主循环立即锁死（`terminal_status="sentinel_stop_locked"`），同步收到 `stop_accepted` 回执后干净退出（`CAPTURE_EXIT=0`）。
 
-| 记忆策略模式（每组 30 题） | 总 SR | Tier 1 单层 (10) | Tier 2 多目标链 (10) | Tier 3 跨层+对抗 (10) | 总 SPL | `OSR − SR` | 过时记忆误停 | 平均步数 | 延迟 p50 |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`hierarchical_6zone`（完整方案）** | **96.7%** (`29/30`) | 90.0% | **100.0%** | **100.0%** | **0.919** | `0.033` | **0 / 3** | **3.13** | `4.64 s` |
-| **`stale_unfiltered`（无过时过滤）** | **86.7%** (`26/30`) | 90.0% | 100.0% | **70.0%** | **0.823** | `0.033` | **3 / 3（100%）** | 3.10 | `4.68 s` |
-| **`no_memory_targets`（无 `M*` 直达）** | **0.0%** (`0/30`) | 0.0% (`OSR 30%`) | 0.0% | 0.0% (`OSR 40%`) | **0.000** | `0.233` | 0 | **8.20**（`20` 次回想） | `4.97 s` |
+2. **实盘 B · 独立 LiDAR 测距 STOP 端到端成功验收**：
+   - 产物：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-streaming-task/static_task_qwen_lidar_stop_20261125T105416Z/`
+   - 配置：`qwen3.8-flash` 主干 + V4 在线 BA `--backend-pose`（`stop_radius_m = 1.5`）
+   - 实证结果：
+     - 机器人从 `[0.01, 0.01, 0.01]` 实走 **`7.22 m`** 抵近至 `[7.22, -0.12, 0.02]`（修复前仅走到 `3.74 m` 即靠 VLM 自猜 `1.28 m` 早停）；
+     - Step 4 前视 `rgb.png` 近距离正对红色双开门及推杆，通过独立 LiDAR 测距校验（`distance_m = 1.178 m <= 1.5 m`, `range_source = "height_chart_lidar_raycast"`, `evidence_frame = "map"`, `evidence_stamp_s = 6.975`, `same_floor = True`）；
+     - **4 步 / `87.22 s` 达成 `verified_stop_success`**，`0` 失败、`0` fallback，退出清理同步取得 `stop_accepted`（`seq=4`），`CAPTURE_EXIT=0`。
 
-> **口径边界说明**：本 30 题基准为**离线拓扑记忆与决策评测**，用于无物理随机干扰地定量验证记忆表达、检索与过时治理；真实物理碰撞、足式爬楼与实时定位抖动仍须由 Isaac Sim 物理闭环独立验收。
+### 4.2 修复版 30 题公平离线评测（独立私有真值 + 门户路径 + 单变量消融）
+
+- **评测脚本**：[scripts/eval_static_task_suite.py](../../scripts/eval_static_task_suite.py)（基于 `D-Indoor-2F` 真实拓扑，私有真值与先验记忆分离；含 4 题未重访搬移题、3 题未发现探索题、3 题黑名单绕行题与 10 题跨层/双目标题；断图不可达返回 `unreachable` 且路程不增长；解析/API 失败记 `fallback_noop` 不盲走 `M1`）
+- **产物路径**：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-task-suite-30/qwen38_flash_30tasks_fair_ablation_v2.json`
+
+| 对照组 / 消融模式（每组 30 题） | 总 SR | 无回退 SR | T1 已知 (10) | T2 治理+探索 (10) | T3 跨层 (10) | OSR | 总 SPL | 过时误停 | 回退步数 | 单请求 p50 / p95 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `baseline: det_m1_greedy`（无模型 BFS） | `100.0%` | `100.0%` | `100%` | `100%` | `100%` | `100.0%` | `0.758` | `0` | `0` | `1 / 1 ms` |
+| `baseline: det_recall_goto_xyz`（无模型） | `100.0%` | `100.0%` | `100%` | `100%` | `100%` | `100.0%` | `0.725` | `0` | `0` | `1 / 1 ms` |
+| **`mode: hierarchical_6zone`（完整方案）** | **`76.7%`** (`23/30`) | `70.0%` | **`100%`** | **`60%`** | `70%` | `83.3%` | **`0.690`** | **`0`** | `12` | `3.23 / 5.53 s` |
+| `mode: no_m_candidates`（仅去 `M*` 候选） | `13.3%` (`4/30`) | `6.7%` | `0%` | `30%` | `10%` | `33.3%` | `0.110` | `0` | `269` | `3.41 / 25.02 s` |
+| `mode: no_stale_gate`（仅关过时门） | `73.3%` (`22/30`) | `70.0%` | `100%` | **`40%`** | `80%` | `80.0%` | `0.684` | **`6`** | `3` | `3.26 / 5.21 s` |
+| `mode: no_blacklist_gate`（仅关黑名单） | `80.0%` (`24/30`) | `73.3%` | `100%` | `60%` | `80%` | `86.7%` | `0.723` | `0` | `6` | `3.08 / 5.90 s` |
+
+**诚实结论与局限性解读**：
+1. **结构化空间落地（`M*` 候选）收益显著**：在保留完全相同一段话记忆摘要与 `query_memory` 工具的前提下，仅去掉 `M*` 候选，`qwen3.8-flash` 成功率从 **`76.7%` 骤降至 `13.3%`**（且出现 `269` 次超时/解析失败），说明当前轻量 VLM 很难仅靠自由文本坐标可靠下发 `goto_xyz`，将记忆实体投影为结构化安全留距候选是高价值的工程设计。
+2. **过时信念门控把搬移误停从 `6` 次清零至 `0` 次**：关闭 `stale_gate` 后，6 道搬移未重访题全部在旧位置误停（T2 SR 从 `60%` 降至 `40%`）；开启后误停降为 `0`。
+3. **当前短板已暴露清晰**：在未发现/搬移后的未知房间搜索题中，`qwen3.8-flash`（`76.7%`）显著落后于自带图遍历记忆的确定性 BFS 基线（`100%`），主要因为 LLM 在多房间搜索时容易重复进出已访房间；后续在 `[INTERMEDIATE_STATE]` 中显式提供房间访问计数/未访前沿优先级即可针对性补强。
+4. **`no_blacklist_gate` 与完整方案差距在 1 题随机波动内**（`24/30` vs `23/30`）：原因是已知目标 `M1` 本身优先级高于陷阱 `W1`，模型未主动选择 `W1`，本基准尚不足以单独证明黑名单在大规模真实窄道中的全部收益（窄道避障需结合实机物理探索验证）。
 
 ---
 
-## 5. 流式调用要达到 `0.2 s`（200 ms）端到端延迟，模型到底要多快 `token/s`？
+## 5. 流式调用达到 `0.2 s`（200 ms）延迟的理论容量预算与链路瓶颈
 
-单看 `token/s` 会掉进误区。一次端到端流式调用的真实延迟必须拆成四段：
+### 5.1 延迟公式与吞吐边界
+单次模型请求从发起到生成 $N$ 个输出 token 的耗时可近似写为：
+- 若固定开销 $T_f$ **止于首个输出 token 生成前**（网络传输 + 视觉编码 + 文本 Prefill），则所需最低解码速率：
+  $$R_{\min} = \frac{N}{0.200 - T_f}$$
+- 若使用客户端实测、**已包含首 token 到达**的 `TTFT`（其中已覆盖本次请求的 `TCP/TLS` 与首 token 生成），则剩余解码耗时约为 $(N-1)/R_{\text{decode}}$。
 
-$$T_{\text{total}} = T_{\text{net}} + T_{\text{vision}} + T_{\text{prefill}} + \frac{N_{\text{out}}}{R_{\text{decode}}}$$
+### 5.2 关于云端实测与不同通道差异的客观说明
+- 此前在 OpenCode Go 通道上对短提示纯文本流式做的两次采样中：`qwen3.8-flash` 实测 `TTFT = 3,274 ms`、`Decode = 384 ms`（总 `3,658 ms`，其中 `TCP+TLS = 250 ms` 已计入 `TTFT`）；`glm-5.3-flash` 实测 `TTFT = 3,102 ms`、`Decode = 269 ms`（总 `3,371 ms`，`TCP+TLS = 234 ms`）。
+- **重要纠偏**：这两次采样只说明 OpenCode Go 当下网关排队/限速明显超出 `200 ms` 预算，**不能推出“所有公网 API 物理上都做不到”**。例如在解码速度维度，**本机实测 DSH 通道已经可以达到 `133–261 token/s`**，而 OpenCode Go 侧 DeepSeek 变慢主因是网关限速与队列延迟。要评估具体云端或本地服务能否达标，必须以实际 Keep-Alive 连接下的冷/暖启动 `TTFT` 与持续负载分位数为准。
 
-### 5.1 为什么任何公网云端 API 物理上都做不到 `0.2 s`？
-我们在本机对 OpenCode Go 做了最小化纯文本流式拆解实测（提示 ~`214 tok`、0 图片、输出 ~`15–28 tok`）：
-- `qwen3.8-flash`：`TCP+TLS = 250 ms`、`TTFT = 3,274 ms`、`Decode = 384 ms`、总计 `3,658 ms`；
-- `glm-5.3-flash`：`TCP+TLS = 234 ms`、`TTFT = 3,102 ms`、`Decode = 269 ms`、总计 `3,371 ms`。
+### 5.3 本地推理容量预算表（理论推算，待本机实测标定）
 
-**结论**：哪怕云端解码速度达到 $\infty\;\text{token/s}$，仅跨网建连（`~240 ms`）与云端网关排队/预填充（`~3,000 ms`）就已远超 `200 ms` 红线。**要做到 `0.2 s` 级流式响应，必须采用本地/局域网常驻推理（HTTP Keep-Alive / IPC，$T_{\text{net}} \le 5\,\text{ms}$）+ Prefix KV-Cache 复用。**
+下表保留为**单次模型调用的理论吞吐预算**（假设局域网/本地 Keep-Alive 常驻，$T_f$ 为首 token 前固定开销）：
 
-### 5.2 本地部署下，不同输出负载达成 `200 ms` 所需的最低 `token/s`
+| 负载档位 | 输出长度 $N$ | 假设固定开销 $T_f$ | 留给解码时间 | 理论所需最低 $R_{\min}$ | 说明（非本机实测值） |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **A1. 动作前缀抢占**（需流式前缀触发器） | `4 – 5 tok` | `40 – 75 ms` | `125 – 160 ms` | **`25 – 40 token/s`** | 当前哨兵仍等待完整 JSON，前缀触发入口尚未实现 |
+| **A2. 极简哨兵 JSON**（去 `reason`） | `8 – 12 tok` | `40 – 75 ms` | `125 – 160 ms` | **`50 – 96 token/s`** | 轻量量化 VLM（如 `3B–4B`）理论容量区间，待 RTX 5070 Ti 实测冷暖 p50/p95 |
+| **B. 带短理由哨兵 JSON** | `20 – 30 tok` | `50 – 85 ms` | `115 – 150 ms` | **`133.3 – 260.9 token/s`** | 仅解码速率一项，DSH 等高速通道已可达该区间；端到端 `200 ms` 仍受限于 `TTFT` |
+| **C. 主干规划器全量 JSON** | `60 – 90 tok` | `70 – 120 ms` | `80 – 130 ms` | **`461.5 – 1,125 token/s`** | 单卡消费级 GPU 难以在 `200 ms` 内完成，应留在慢速 System 2 |
 
-| 流式场景 | 输入构成（命中固定前缀 KV-Cache） | $T_{\text{net}} + T_{\text{vision}} + T_{\text{prefill}}$ 估算 | 留给 Decode 的时间 | 输出长度 $N_{\text{out}}$ | **所需最低 $R_{\text{decode}}$** | 本机 RTX 5070 Ti（16 GB, ~896 GB/s）可行性 |
-| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
-| **A. 首 Token / 极简哨兵拦截**（如仅输出 `{"act":"STOP","id":null}`，去掉 `reason`） | 1 张 `336×336` RGB（~144–256 视觉 tok）+ ~180 增量状态 tok | `40 – 75 ms` | `125 – 160 ms` | `8 – 12 tok`（首动作仅 `4–5 tok`） | **`50 – 96 token/s`**（首动作抢占仅需 **`30 – 40 token/s`**） | **完全可行**：`3B–4B INT4/FP4` VLM 实测可达 `200–320 tok/s`（占 `3–4 GB` 显存，全链路 **`100–150 ms`**）；`7B–8B INT4` 可达 `100–150 tok/s`（卡在 **`160–210 ms`**） |
-| **B. 带短理由的完整哨兵 JSON** | 同上 | `50 – 85 ms` | `115 – 150 ms` | `20 – 30 tok` | **`135 – 260 token/s`** | **仅 `3B–4B INT4/FP4` 可达**；`7B+` 会落到 `250–350 ms` |
-| **C. 主干规划器全量 JSON**（含 `observed_objects` + `reason` + 2 张图） | 2 张 `512×512` 图（~512–1024 视觉 tok）+ ~300 增量状态 tok | `70 – 120 ms` | `80 – 130 ms` | `60 – 90 tok` | **`460 – 1,125 token/s`** | **单卡消费级 GPU 无法达成**（除非 `≤1.5B` 专用模型 + 投机解码或专用推理芯片） |
+### 5.4 从“模型推理 200 ms”到“机器人闭环 200 ms”的系统工程缺口
+对机器人控制真正有意义的验收量是 **`控制器接受动作时刻 − 传感器采样时刻`**，除模型推理外还包含：
+1. 等待下一帧哨兵采样（当前默认 `sentinel_poll_interval_s = 4.0 s`）；
+2. 图像落盘/读取与 Base64 编码；
+3. 主循环判决轮询间隔（当前已从 `250 ms` 压至 `100 ms`）与邮箱文件消费；
+4. 当前哨兵解析器等待完整 JSON 对象闭合，尚无 4–5 token 前缀抢占执行入口。
 
-### 5.3 工程落地的正确架构结论
-不要强求云端大模型或完整规划器压进 `0.2 s`，而应坚持**三层频率解耦**：
-- **System 0（`50 Hz / 20 ms`）**：PCT / SCAN / `RouteTracker` / `MoE-CTS` 纯数值闭环安全控制；
-- **System 1（`5 Hz / ≤ 200 ms`，本地小模型）**：后续若需 `0.2 s` 级实时流式拦截，在本地部署 **`3B–4B INT4/FP4` VLM**（如 `Qwen2.5-VL-3B` / `InternVL-2B/4B` + SGLang/vLLM/TensorRT-LLM + Prefix Cache），**输出砍掉 `reason`、只吐 `8–12 tok` 枚举动作**（甚至 4–5 tok 首动作提前触发抢占），在 RTX 5070 Ti 上即可稳定压进 `120–180 ms`；
-- **System 2（`0.1–0.25 Hz / 4–8 s`，云端强模型）**：继续用 OpenCode Go `qwen3.8-flash` / `deepseek-v4.1-flash (high)` 负责长程语义理解、地标入库、跨楼层记忆回想与复杂规划。
+因此，**坚持 System 0（`50 Hz` 纯数值安全控制）/ System 1（高频本地轻量哨兵 + 压缩采样/轮询/前缀触发）/ System 2（慢速强语义主干）三层解耦**仍是正确路线；在完成本地 GPU 同一模型/量化/图像负载的端到端传感器到回执 p50/p95 实测前，不宣称硬件已达标。

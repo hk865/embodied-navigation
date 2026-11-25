@@ -37,6 +37,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-dir", required=True, help="Active DynaNav run directory.")
     parser.add_argument("--task", required=True, help="Natural language task instruction.")
     parser.add_argument("--target-label", default=None, help="Target label for STOP verification.")
+    parser.add_argument(
+        "--target-alias",
+        action="append",
+        default=[],
+        help="Optional explicit alias accepted for frozen target STOP verification.",
+    )
     parser.add_argument("--provider", default="opencode", help="LLM provider preset.")
     parser.add_argument("--planner-model", default="qwen3.8-flash", help="Main planner model ID.")
     parser.add_argument(
@@ -57,6 +63,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stop-radius-m", type=float, default=1.5)
     parser.add_argument("--pose-source", default="backend_corrected")
     parser.add_argument("--prior-memory", default=None, help="Optional saved hierarchical_memory.json.")
+    parser.add_argument(
+        "--prior-evidence-root",
+        action="append",
+        default=[],
+        help="Explicitly allowed directory root(s) for prior-memory L3 RGB files.",
+    )
+    parser.add_argument(
+        "--continue-episode",
+        action="store_true",
+        default=False,
+        help="Keep transient attempt ledger from --prior-memory instead of starting a fresh episode.",
+    )
     parser.add_argument("--prior-map-dir", default=None, help="Optional saved MapStore dir for initial L0-L3 memory.")
     parser.add_argument("--no-stop-on-exit", action="store_true", default=False)
     return parser.parse_args(argv)
@@ -98,21 +116,26 @@ def main(argv: list[str] | None = None) -> int:
     memory_store = None
     if args.prior_memory:
         memory_store = HierarchicalMemoryStore.load(Path(args.prior_memory))
+        if not args.continue_episode:
+            memory_store.clear_episode_attempts()
     elif args.prior_map_dir:
         graph = build_scene_graph_from_map_dir(Path(args.prior_map_dir))
         memory_store = HierarchicalMemoryStore(graph, default_stop_radius_m=args.stop_radius_m)
 
+    allowed_roots = [Path(args.run_dir), *(Path(p) for p in args.prior_evidence_root)]
     runner = StaticStreamingTaskRunner(
         args.run_dir,
         task_instruction=args.task,
         target_label=args.target_label,
-        planner=OpenCodeTaskPlanner(planner_cfg),
+        target_aliases=args.target_alias,
+        planner=OpenCodeTaskPlanner(planner_cfg, allowed_image_roots=allowed_roots),
         memory_store=memory_store,
         pose_source=args.pose_source,
         sentinel_config=sentinel_cfg,
         stop_radius_m=args.stop_radius_m,
         step_timeout_s=args.step_timeout_s,
         stop_simulator_on_exit=not args.no_stop_on_exit,
+        allowed_image_roots=allowed_roots,
     )
     report = runner.run(max_steps=args.max_steps)
     print(

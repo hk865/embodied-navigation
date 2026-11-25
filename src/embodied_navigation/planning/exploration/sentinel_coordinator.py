@@ -131,10 +131,10 @@ class SentinelCoordinator:
             allowed_cands, blocked_candidates = self.memory_store.filter_candidates(
                 candidate_list, default_z=pose_z
             )
-            if allowed_cands:
-                candidate_list = allowed_cands
-            else:
-                candidate_list = blocked_candidates
+            candidate_list = allowed_cands
+            if blocked_candidates and not allowed_cands:
+                obs_payload["all_candidates_blacklisted"] = True
+                obs_payload["blacklisted_count"] = len(blocked_candidates)
             obs_payload["memory_l0"] = self.memory_store.l0_global_topology()
 
         cand_map: dict[str, dict[str, Any]] = {}
@@ -171,6 +171,8 @@ class SentinelCoordinator:
             "action_epoch": self._action_epoch,
             "slam_health": health,
             "blacklisted_candidates": len(blocked_candidates),
+            "has_rgb": bool(rgb_path),
+            "has_memory_l0": "memory_l0" in obs_payload,
             "submitted": submitted,
         }
 
@@ -290,6 +292,13 @@ class SentinelCoordinator:
                     "verdict": verdict,
                     "dispatched": False,
                     "reason": "unknown_or_stale_candidate",
+                    "payload": None,
+                }
+            if self.memory_store is not None and self.memory_store.match_blacklist(goal_xyz):
+                return {
+                    "verdict": verdict,
+                    "dispatched": False,
+                    "reason": "blacklisted_goal",
                     "payload": None,
                 }
             self._action_epoch += 1

@@ -391,6 +391,15 @@ class PctPlanCoordinator:
             call_kwargs["cancel_event"] = cancel_event
         self.active_future = self._pool.submit(self._plan_fn, *args, **call_kwargs)
 
+    def can_accept_or_preempt(self, seq: int, *, now_mono: float | None = None) -> bool:
+        """Return whether a new planning snapshot should be built for seq right now."""
+        if self.active_future is not None:
+            return bool((not self.active_future.done()) and self.active_seq != seq)
+        now = time.monotonic() if now_mono is None else float(now_mono)
+        if self.last_attempt > 0.0 and (now - self.last_attempt) <= self._retry_interval_s:
+            return False
+        return True
+
     def submit(self, seq: int, *args, now_mono: float | None = None, **kwargs) -> bool:
         """Submit planning for seq, or overwrite latest pending goal while active aborts."""
         now = time.monotonic() if now_mono is None else float(now_mono)
@@ -991,7 +1000,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         if state['route'] is None:
             done_future = plan_coordinator.poll(request['seq'])
             if done_future is None and measured_voxels:
-                if plan_coordinator.active_future is None or plan_coordinator.active_seq != request['seq']:
+                if plan_coordinator.can_accept_or_preempt(request['seq']):
                     position = vio.pose.pose.position
                     recent_points = (
                         select_recent_voxels(

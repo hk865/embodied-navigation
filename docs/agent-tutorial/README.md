@@ -1,8 +1,8 @@
 # 具身导航 Agent 架构教程：Skill、Tool、实时视频流控制与记忆系统
 
-> **整理日期**：2026-11-25  
+> **整理日期**：2026-11-25
 > **对应代码基线**：
-> - 静态记忆与流式全栈集成主分支：`feat/static-memory-streaming`（合流 V4 在线平面 BA + 3D 场景图 + 异步可抢占哨兵 + OpenCode Go 流式 + 30 题记忆消融基准，870+ 单测 / 60 回归全绿）
+> - 静态记忆与流式全栈集成主分支：`feat/static-memory-streaming`（合流 V4 在线平面 BA + 3D 场景图 + 异步可抢占哨兵 + OpenCode Go 流式 + 修复版 30 题公平记忆消融基准，904 单测 / 60 回归全绿）
 > - 主线探索工具与 Skill：`.agents/skills/dynanav-explore/`、`scripts/explore_waypoint_client.py`、`scripts/run_static_streaming_task.py`、`scripts/eval_static_task_suite.py`、`src/embodied_navigation/planning/exploration/`
 > - 层次空间记忆与场景图：`src/embodied_navigation/localization_mapping/semantic_mapping/`（`scene_graph.py`、`hierarchical_memory.py`、`backend_adapter.py`、`object_mesh_memory.py`）
 > - 历史专题分支：`feat/agent-preemptable-active-slam`（`8aebc95`）、`feat/semantic-keyframe-graph`（`46e0b48`）、`exp/slam-v4-oriented-planar-ba`（`6da00f3`）

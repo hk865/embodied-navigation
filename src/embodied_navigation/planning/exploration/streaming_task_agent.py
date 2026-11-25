@@ -19,18 +19,24 @@ import http.client
 import json
 import math
 from pathlib import Path
+import socket
 import subprocess
 import sys
 import time
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 import urllib.parse
+import uuid
 
 import numpy as np
 
+from embodied_navigation.common.runtime_io import atomic_write_json
 from embodied_navigation.localization_mapping.semantic_mapping import (
     HierarchicalMemoryStore,
     KeyframeSceneGraph,
     build_scene_graph_from_map_dir,
+)
+from embodied_navigation.localization_mapping.semantic_mapping.hierarchical_memory import (
+    _label_strict_match,
 )
 from embodied_navigation.planning.exploration import waypoint_mailbox
 from embodied_navigation.planning.exploration.llm_agent_client import (
@@ -39,8 +45,8 @@ from embodied_navigation.planning.exploration.llm_agent_client import (
     LlmClientConfig,
     _encode_image_part,
     _extract_choice_content,
-    _extract_json_object,
     _extract_sse_delta_content,
+    validate_image_path,
 )
 from embodied_navigation.planning.exploration.sentinel_coordinator import (
     SentinelCoordinator,
@@ -53,6 +59,7 @@ VALID_TASK_ACTIONS = (
     "scan",
     "query_memory",
     "stop_claim",
+    "noop",
 )
 
 _TASK_PLANNER_SYSTEM_PROMPT = (
@@ -174,10 +181,12 @@ def parse_task_decision(
     valid_candidate_ids: Sequence[str] = (),
     latency_ms: float = 0.0,
 ) -> TaskDecision:
-    """Parse one compact JSON task decision with fail-safe validation."""
+    """Parse one compact top-level JSON task decision with fail-safe validation.
+
+    Truncated outer objects are rejected strictly (never falling back to inner
+    nested objects such as observed_objects entries).
+    """
     obj = _extract_outer_json_object(raw_text)
-    if obj is None:
-        obj = _extract_json_object(raw_text)
     if not isinstance(obj, dict):
         return _fallback_decision(
             valid_candidate_ids,
@@ -202,12 +211,10 @@ def parse_task_decision(
         else None
     )
     if action == "goto_candidate":
-        if valid_candidate_ids and target_id not in valid_candidate_ids:
-            target_id = valid_candidate_ids[0]
-        elif not target_id:
+        if not target_id or (valid_candidate_ids and target_id not in valid_candidate_ids):
             return _fallback_decision(
                 valid_candidate_ids,
-                reason="missing_candidate_id",
+                reason="invalid_or_missing_candidate_id",
                 latency_ms=latency_ms,
                 raw_text=raw_text,
             )
@@ -290,17 +297,10 @@ def _fallback_decision(
     latency_ms: float,
     raw_text: str,
 ) -> TaskDecision:
-    if valid_candidate_ids:
-        return TaskDecision(
-            action="goto_candidate",
-            target_id=valid_candidate_ids[0],
-            reason=reason,
-            latency_ms=latency_ms,
-            fallback=True,
-            raw_text=raw_text[:500],
-        )
+    """Fail safe to a non-moving noop on parse/transport error (never blind-goto M1)."""
+    del valid_candidate_ids
     return TaskDecision(
-        action="scan",
+        action="noop",
         reason=reason,
         latency_ms=latency_ms,
         fallback=True,
@@ -311,9 +311,20 @@ def _fallback_decision(
 class OpenCodeTaskPlanner:
     """Multimodal SSE-streaming task planner backed by OpenCode Go / OpenAI-compatible API."""
 
-    def __init__(self, config: LlmClientConfig) -> None:
+    def __init__(
+        self,
+        config: LlmClientConfig,
+        *,
+        allowed_image_roots: Iterable[str | Path] | None = None,
+    ) -> None:
         self.config = config
+        self.allowed_image_roots: tuple[Path, ...] | None = (
+            tuple(Path(r).resolve() for r in allowed_image_roots)
+            if allowed_image_roots is not None
+            else None
+        )
         self._latencies_ms: list[float] = []
+        self.last_rejected_images: list[dict[str, str]] = []
 
     def build_messages(
         self,
@@ -393,14 +404,22 @@ class OpenCodeTaskPlanner:
                 {"role": "user", "content": text_payload},
             ]
 
-        parts: list[dict[str, Any]] = []
+        self.last_rejected_images = []
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text_payload}]
         for img in [rgb_path, local_map_path, *list(extra_rgb_paths)[:2]]:
             if img is None:
                 continue
-            part = _encode_image_part(img)
+            resolved, reject_reason = validate_image_path(
+                img, allowed_roots=self.allowed_image_roots
+            )
+            if resolved is None:
+                self.last_rejected_images.append(
+                    {"path": str(img), "reason": str(reject_reason or "rejected")}
+                )
+                continue
+            part = _encode_image_part(resolved, allowed_roots=self.allowed_image_roots)
             if part is not None:
                 parts.append(part)
-        parts.append({"type": "text", "text": text_payload})
         return [
             {"role": "system", "content": _TASK_PLANNER_SYSTEM_PROMPT},
             {"role": "user", "content": parts},
@@ -435,22 +454,44 @@ class OpenCodeTaskPlanner:
             if parsed.scheme == "https"
             else http.client.HTTPConnection
         )
+        deadline = time.monotonic() + self.config.timeout_s
         conn = conn_cls(parsed.hostname, parsed.port, timeout=self.config.timeout_s)
         try:
+            rem = deadline - time.monotonic()
+            if rem <= 0.0:
+                raise TimeoutError("request_deadline_exceeded")
+            conn.timeout = rem
             conn.request("POST", req_path, body=body, headers=headers)
+            if conn.sock is not None:
+                rem = deadline - time.monotonic()
+                if rem <= 0.0:
+                    raise TimeoutError("request_deadline_exceeded")
+                conn.sock.settimeout(rem)
             resp = conn.getresponse()
             if resp.status >= 400:
-                err = resp.read(256).decode("utf-8", errors="replace")
-                raise RuntimeError(f"HTTP_{resp.status}:{err}")
+                # Never copy upstream HTTP error body into exception or persisted reports.
+                raise RuntimeError(f"http_{resp.status}")
             ctype = (resp.getheader("Content-Type") or "").lower()
             if not self.config.stream or "text/event-stream" not in ctype:
+                if conn.sock is not None:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0.0:
+                        raise TimeoutError("request_deadline_exceeded")
+                    conn.sock.settimeout(rem)
                 raw = resp.read().decode("utf-8", errors="replace")
                 return _extract_choice_content(json.loads(raw))
 
             chunks: list[str] = []
-            deadline = time.monotonic() + self.config.timeout_s
-            while time.monotonic() < deadline:
-                raw_line = resp.readline()
+            while True:
+                rem = deadline - time.monotonic()
+                if rem <= 0.0:
+                    raise TimeoutError("request_deadline_exceeded")
+                if conn.sock is not None:
+                    conn.sock.settimeout(rem)
+                try:
+                    raw_line = resp.readline()
+                except (TimeoutError, socket.timeout) as exc:
+                    raise TimeoutError("request_deadline_exceeded") from exc
                 if not raw_line:
                     break
                 line = raw_line.decode("utf-8", errors="replace").strip()
@@ -522,9 +563,12 @@ class OpenCodeTaskPlanner:
         except Exception as exc:
             dt_ms = (time.perf_counter() - t0) * 1000.0
             self._latencies_ms.append(dt_ms)
+            safe_msg = str(exc) if isinstance(exc, (RuntimeError, TimeoutError)) else type(exc).__name__
+            if len(safe_msg) > 64:
+                safe_msg = type(exc).__name__
             return _fallback_decision(
                 valid_ids,
-                reason=f"planner_error:{type(exc).__name__}:{exc}",
+                reason=f"planner_error:{type(exc).__name__}:{safe_msg}",
                 latency_ms=dt_ms,
                 raw_text="",
             )
@@ -546,6 +590,20 @@ def select_active_chart_and_candidates(
     charts = snapshot.get("products", {}).get("height_charts", [])
     if not isinstance(charts, list) or not charts:
         return None, []
+    best_chart = _select_active_chart_entry(snapshot, robot_z)
+    if best_chart is None:
+        return None, []
+    map_img = best_chart.get("local_image") or best_chart.get("image")
+    cands = [dict(c) for c in (best_chart.get("candidates") or []) if isinstance(c, dict)]
+    return (str(map_img) if map_img else None), cands
+
+
+def _select_active_chart_entry(
+    snapshot: dict[str, Any], robot_z: float
+) -> dict[str, Any] | None:
+    charts = snapshot.get("products", {}).get("height_charts", [])
+    if not isinstance(charts, list) or not charts:
+        return None
     best_chart = None
     best_key = (1, float("inf"))
     for ch in charts:
@@ -562,23 +620,111 @@ def select_active_chart_and_candidates(
         if score < best_key:
             best_key = score
             best_chart = ch
-    if best_chart is None:
-        return None, []
-    map_img = best_chart.get("local_image") or best_chart.get("image")
-    cands = [dict(c) for c in (best_chart.get("candidates") or []) if isinstance(c, dict)]
-    return (str(map_img) if map_img else None), cands
+    return best_chart
 
 
-def _extract_robot_pose(observation: dict[str, Any] | None) -> tuple[list[float], float]:
+def _measure_bearing_range_from_snapshot(
+    snapshot: dict[str, Any],
+    robot_xyz: Sequence[float],
+    yaw_rad: float,
+    bearing_deg: float,
+    *,
+    allowed_roots: Sequence[Path] | None = None,
+    half_angle_deg: float = 6.0,
+    min_range_m: float = 0.25,
+    max_range_m: float = 12.0,
+) -> dict[str, Any] | None:
+    """Measure independent LiDAR/occupancy ray distance from snapshot height_chart NPZ.
+
+    Returns None when no valid deskewed occupancy chart is present or no
+    occupied return falls along the queried bearing fan.
+    """
+    if not isinstance(snapshot, dict):
+        return None
+    chart = _select_active_chart_entry(snapshot, float(robot_xyz[2]))
+    if chart is None:
+        return None
+    base_img = chart.get("image") or chart.get("local_image")
+    if not isinstance(base_img, str) or not base_img:
+        return None
+    img_path = Path(base_img)
+    stem = img_path.stem
+    if stem.endswith("_local"):
+        stem = stem[:-6]
+    json_path = img_path.with_name(f"{stem}.json")
+    npz_path = img_path.with_name(f"{stem}.npz")
+    try:
+        json_resolved = json_path.resolve(strict=True)
+        npz_resolved = npz_path.resolve(strict=True)
+    except OSError:
+        return None
+    if allowed_roots is not None:
+        if not any(json_resolved.is_relative_to(r) for r in allowed_roots):
+            return None
+        if not any(npz_resolved.is_relative_to(r) for r in allowed_roots):
+            return None
+    try:
+        meta = json.loads(json_resolved.read_text(encoding="utf-8"))
+        res = float(meta["resolution_m"])
+        if not math.isfinite(res) or res <= 0.0:
+            return None
+        with np.load(npz_resolved) as data:
+            ix = data["ix"]
+            iy = data["iy"]
+            code = data["code"]
+            occ = code == 1
+            if not np.any(occ):
+                return None
+            ox = (ix[occ].astype(np.float64) + 0.5) * res
+            oy = (iy[occ].astype(np.float64) + 0.5) * res
+    except (OSError, ValueError, KeyError):
+        return None
+
+    dx = ox - float(robot_xyz[0])
+    dy = oy - float(robot_xyz[1])
+    dist = np.hypot(dx, dy)
+    ang = np.arctan2(dy, dx) - float(yaw_rad)
+    ang = (ang + math.pi) % (2.0 * math.pi) - math.pi
+    target_rad = math.radians(float(bearing_deg))
+    ang_diff = np.abs((ang - target_rad + math.pi) % (2.0 * math.pi) - math.pi)
+    mask = (ang_diff <= math.radians(half_angle_deg)) & (dist >= min_range_m) & (dist <= max_range_m)
+    if not np.any(mask):
+        return None
+    d_min = float(np.min(dist[mask]))
+    stamp_raw = meta.get("source_clock_used")
+    stamp_s = float(stamp_raw) if isinstance(stamp_raw, (int, float)) and math.isfinite(float(stamp_raw)) else None
+    return {
+        "distance_m": round(d_min, 3),
+        "range_source": "height_chart_lidar_raycast",
+        "evidence_frame": str(meta.get("map_frame") or "map"),
+        "evidence_stamp_s": stamp_s,
+    }
+
+
+def _extract_robot_pose(observation: dict[str, Any] | None) -> tuple[list[float], float] | None:
+    """Return validated live robot pose or None if observation is stale/missing/terminal."""
     if not isinstance(observation, dict):
-        return [0.0, 0.0, 0.0], 0.0
+        return None
+    wps = observation.get("waypoints")
+    if isinstance(wps, dict) and str(wps.get("phase", "")).lower() == "terminal":
+        return None
     pose = observation.get("pose")
-    if isinstance(pose, dict):
-        xyz = pose.get("position_xyz_m")
-        yaw = pose.get("yaw_rad", 0.0)
-        if isinstance(xyz, (list, tuple)) and len(xyz) >= 3:
-            return [float(xyz[0]), float(xyz[1]), float(xyz[2])], float(yaw or 0.0)
-    return [0.0, 0.0, 0.0], 0.0
+    if not isinstance(pose, dict):
+        return None
+    if pose.get("fresh") is False:
+        return None
+    xyz = pose.get("position_xyz_m")
+    yaw = pose.get("yaw_rad")
+    if not isinstance(xyz, (list, tuple)) or len(xyz) < 3:
+        return None
+    try:
+        pos = [float(xyz[0]), float(xyz[1]), float(xyz[2])]
+        yaw_f = 0.0 if yaw is None else float(yaw)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in pos) or not math.isfinite(yaw_f):
+        return None
+    return pos, yaw_f
 
 
 @dataclass
@@ -601,6 +747,7 @@ class StaticStreamingTaskRunner:
         *,
         task_instruction: str,
         target_label: str | None = None,
+        target_aliases: Sequence[str] = (),
         planner: OpenCodeTaskPlanner,
         memory_store: HierarchicalMemoryStore | None = None,
         pose_source: str = "backend_corrected",
@@ -610,25 +757,47 @@ class StaticStreamingTaskRunner:
         stop_radius_m: float = 1.5,
         step_timeout_s: float = 180.0,
         sentinel_poll_interval_s: float = 4.0,
+        control_receipt_timeout_s: float = 5.0,
+        pose_wait_timeout_s: float = 2.0,
         stop_simulator_on_exit: bool = True,
+        allowed_image_roots: Iterable[str | Path] | None = None,
+        episode_id: str | None = None,
     ) -> None:
         self.run_dir = Path(run_dir)
         self.capture_dir = self.run_dir / "capture"
         self.mailbox = waypoint_mailbox.mailbox_for(self.capture_dir)
         self.task_instruction = task_instruction
         self.target_label = target_label
+        self.target_aliases: tuple[str, ...] = tuple(
+            str(a).strip() for a in target_aliases if str(a).strip()
+        )
         self.planner = planner
         self.pose_source = pose_source
         self.stop_radius_m = float(stop_radius_m)
         self.step_timeout_s = float(step_timeout_s)
         self.sentinel_poll_interval_s = float(sentinel_poll_interval_s)
+        self.control_receipt_timeout_s = float(control_receipt_timeout_s)
+        self.pose_wait_timeout_s = float(pose_wait_timeout_s)
         self.stop_simulator_on_exit = bool(stop_simulator_on_exit)
+        self.episode_id = episode_id or f"ep_{uuid.uuid4().hex[:8]}"
         self.sop_script = (
             Path(sop_script)
             if sop_script is not None
             else Path(".agents/skills/dynanav-explore/scripts/dynanav_sop.py")
         )
         self._snapshot_fn = snapshot_fn
+        self._sentinel_stop_locked = False
+        self._last_synced_backend_rev = -1
+
+        roots: list[Path] = [self.run_dir.resolve()]
+        if allowed_image_roots is not None:
+            for r in allowed_image_roots:
+                rp = Path(r).resolve()
+                if rp not in roots:
+                    roots.append(rp)
+        self.allowed_image_roots: tuple[Path, ...] = tuple(roots)
+        if self.planner.allowed_image_roots is None:
+            self.planner.allowed_image_roots = self.allowed_image_roots
 
         if memory_store is not None:
             self.memory = memory_store
@@ -643,7 +812,12 @@ class StaticStreamingTaskRunner:
         self._sentinel_runner: AsyncDecisionRunner | None = None
         self._sentinel_coord: SentinelCoordinator | None = None
         if sentinel_config is not None:
-            self._sentinel_runner = AsyncDecisionRunner(FastSentinelClient(sentinel_config))
+            self._sentinel_runner = AsyncDecisionRunner(
+                FastSentinelClient(
+                    sentinel_config,
+                    allowed_image_roots=self.allowed_image_roots,
+                )
+            )
             self._sentinel_coord = SentinelCoordinator(
                 self.mailbox,
                 self._sentinel_runner,
@@ -687,6 +861,43 @@ class StaticStreamingTaskRunner:
                 return {}
         return {}
 
+    def _sync_memory_from_backend_map(self) -> dict[str, Any] | None:
+        """Synchronize memory poses when the live SLAM backend publishes a newer map revision."""
+        status = self._read_backend_status()
+        backend_rev = status.get("map_revision", status.get("loop_count"))
+        if not isinstance(backend_rev, int) or isinstance(backend_rev, bool):
+            return None
+        if backend_rev <= self._last_synced_backend_rev:
+            return None
+        kf_path = self.run_dir / "map" / "keyframes.json"
+        if not kf_path.is_file():
+            return None
+        try:
+            raw = json.loads(kf_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        rows = raw.get("keyframes", raw) if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            return None
+        updated_poses: dict[str, np.ndarray] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            kf_id = row.get("keyframe_id") or row.get("id")
+            pose_raw = row.get("pose_matrix") or row.get("pose")
+            if not kf_id or pose_raw is None:
+                continue
+            try:
+                mat = np.asarray(pose_raw, dtype=np.float64)
+                if mat.shape == (4, 4) and np.all(np.isfinite(mat)):
+                    updated_poses[str(kf_id)] = mat
+            except (TypeError, ValueError):
+                continue
+        if not updated_poses:
+            return None
+        self._last_synced_backend_rev = backend_rev
+        return self.memory.sync_poses(updated_poses)
+
     def _record_live_step_in_memory(
         self,
         step_index: int,
@@ -694,34 +905,73 @@ class StaticStreamingTaskRunner:
         yaw_rad: float,
         rgb_path: str | None,
         observed_objects: Sequence[dict[str, Any]],
+        *,
+        snapshot: dict[str, Any] | None = None,
     ) -> str:
-        kf_id = f"live_step_{step_index:04d}"
+        del step_index
+        seq = self.memory.allocate_step_seq()
+        kf_id = f"{self.episode_id}_step_{seq:04d}"
         pose = _pose_from_xyz_yaw(robot_xyz, yaw_rad)
+        validated_rgb: str | None = None
+        if rgb_path is not None:
+            resolved_rgb, _ = validate_image_path(
+                rgb_path, allowed_roots=self.allowed_image_roots
+            )
+            if resolved_rgb is not None:
+                validated_rgb = str(resolved_rgb)
         self.memory.graph.add_keyframe(
             kf_id,
             pose,
             clearance_m=1.2,
-            rgb_path=rgb_path,
+            rgb_path=validated_rgb,
         )
         if len(self.memory.graph.keyframe_poses) >= 3:
             self.memory.graph.segment_floors()
             self.memory.graph.partition_rooms()
 
-        for idx, item in enumerate(observed_objects):
-            bearing_rad = math.radians(float(item.get("bearing_deg", 0.0)))
-            dist_m = float(item.get("dist_m", 2.0))
+        for item in observed_objects:
+            bearing_deg = float(item.get("bearing_deg", 0.0))
+            bearing_rad = math.radians(bearing_deg)
+            measured = (
+                _measure_bearing_range_from_snapshot(
+                    snapshot,
+                    robot_xyz,
+                    yaw_rad,
+                    bearing_deg,
+                    allowed_roots=self.allowed_image_roots,
+                )
+                if snapshot is not None
+                else None
+            )
+            if measured is not None:
+                dist_m = float(measured["distance_m"])
+                producer = "vlm_lidar_grounded"
+                range_source = str(measured["range_source"])
+                evidence_frame = measured.get("evidence_frame")
+                evidence_stamp_s = measured.get("evidence_stamp_s")
+            else:
+                dist_m = float(item.get("dist_m", 2.0))
+                producer = "opencode_vlm_unverified"
+                range_source = "vlm_unverified_guess"
+                evidence_frame = None
+                evidence_stamp_s = None
+
             local_xyz = [
                 dist_m * math.cos(bearing_rad),
                 dist_m * math.sin(bearing_rad),
                 0.0,
             ]
+            obj_seq = self.memory.allocate_object_seq()
             self.memory.add_object(
-                object_id=f"obs_{step_index:04d}_{idx}",
+                object_id=f"{self.episode_id}_obs_{obj_seq:04d}",
                 label=str(item["label"]),
                 keyframe_id=kf_id,
                 local_xyz=local_xyz,
                 confidence=float(item.get("confidence", 0.8)),
-                producer="opencode_vlm",
+                producer=producer,
+                range_source=range_source,
+                evidence_frame=evidence_frame,
+                evidence_stamp_s=evidence_stamp_s,
             )
         return kf_id
 
@@ -738,13 +988,117 @@ class StaticStreamingTaskRunner:
                     epoch = max(epoch, obs_ep)
         return epoch
 
+    def _read_control_token(self, obs: dict[str, Any] | None = None) -> tuple[str | None, Any, int]:
+        """Snapshot (run_id, active_seq, epoch) to bind planner decisions to current control state."""
+        data = obs if isinstance(obs, dict) else waypoint_mailbox.read_observation(self.mailbox)
+        run_id = waypoint_mailbox.run_id_for(self.mailbox)
+        active_seq = None
+        epoch = self._current_action_epoch()
+        if isinstance(data, dict):
+            if isinstance(data.get("run_id"), str) and data["run_id"]:
+                run_id = data["run_id"]
+            wps = data.get("waypoints")
+            if isinstance(wps, dict):
+                active_seq = wps.get("active_seq")
+                obs_ep = wps.get("current_epoch", wps.get("action_epoch", 0))
+                if isinstance(obs_ep, int) and not isinstance(obs_ep, bool):
+                    epoch = max(epoch, obs_ep)
+        return run_id, active_seq, epoch
+
+    def _wait_for_valid_pose(self) -> tuple[dict[str, Any] | None, tuple[list[float], float] | None]:
+        """Wait up to pose_wait_timeout_s for a fresh non-terminal pose (never fake [0,0,0])."""
+        deadline = time.monotonic() + max(0.0, self.pose_wait_timeout_s)
+        last_obs = None
+        while True:
+            obs = waypoint_mailbox.read_observation(self.mailbox)
+            last_obs = obs
+            parsed = _extract_robot_pose(obs)
+            if parsed is not None:
+                return obs, parsed
+            if isinstance(obs, dict):
+                wps = obs.get("waypoints")
+                if isinstance(wps, dict) and str(wps.get("phase", "")).lower() == "terminal":
+                    return obs, None
+            if time.monotonic() >= deadline:
+                return last_obs, None
+            time.sleep(0.1)
+
+    def _wait_for_control_receipt(
+        self,
+        seq: int,
+        expected_events: set[str],
+        *,
+        run_id: str | None = None,
+        timeout_s: float | None = None,
+        cursor: waypoint_mailbox.ReceiptCursor | None = None,
+    ) -> dict[str, Any]:
+        """Wait for a closing receipt for a stop/cancel control request."""
+        active_cursor = cursor if cursor is not None else waypoint_mailbox.ReceiptCursor(self.mailbox)
+        wait_limit = self.control_receipt_timeout_s if timeout_s is None else float(timeout_s)
+        deadline = time.monotonic() + max(0.1, wait_limit)
+        eff_run = str(run_id or "")
+        while True:
+            receipts = active_cursor.poll()
+            for receipt in receipts:
+                if eff_run and receipt.get("run_id") not in (None, eff_run):
+                    continue
+                ev = receipt.get("event")
+                r_seq = receipt.get("seq")
+                if ev == "terminal":
+                    return {
+                        "status": "terminal",
+                        "event": "terminal",
+                        "seq": seq,
+                        "receipt": dict(receipt),
+                    }
+                if isinstance(r_seq, int) and not isinstance(r_seq, bool) and r_seq == seq:
+                    if ev in expected_events:
+                        return {
+                            "status": str(ev),
+                            "event": str(ev),
+                            "seq": seq,
+                            "receipt": dict(receipt),
+                        }
+                    if isinstance(ev, str) and ev.endswith("_rejected"):
+                        return {
+                            "status": "rejected",
+                            "event": ev,
+                            "reason": receipt.get("reason"),
+                            "seq": seq,
+                            "receipt": dict(receipt),
+                        }
+            obs = waypoint_mailbox.read_observation(self.mailbox)
+            if isinstance(obs, dict):
+                wps = obs.get("waypoints")
+                if isinstance(wps, dict) and str(wps.get("phase", "")).lower() == "terminal":
+                    return {
+                        "status": "simulator_terminal",
+                        "event": "terminal",
+                        "seq": seq,
+                    }
+            if time.monotonic() >= deadline:
+                return {
+                    "status": "receipt_timeout",
+                    "event": "timeout",
+                    "seq": seq,
+                }
+            time.sleep(0.05)
+
     def _wait_with_sentinel(
         self,
         payload: dict[str, Any],
         candidates: Sequence[dict[str, Any]],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Wait for an active mailbox action while polling the async streaming sentinel."""
-        seq = int(payload["seq"])
+        """Wait for an active mailbox action while polling the async streaming sentinel.
+
+        Guarantees receipt closure:
+        - Poll completed sentinel verdicts BEFORE submitting new observations.
+        - On sentinel STOP: lock main loop immediately and wait for stop_accepted receipt.
+        - On sentinel PREEMPT/SPIN: switch active tracking to the new seq/epoch and wait
+          until that action reaches a real terminal receipt (never mark dispatch as success).
+        - On timeout: submit cancel and wait for cancel/terminal receipt without swallowing errors.
+        """
+        active_seq = int(payload["seq"])
         run_id = payload.get("run_id")
         cursor = waypoint_mailbox.ReceiptCursor(self.mailbox)
         deadline = time.monotonic() + self.step_timeout_s
@@ -753,17 +1107,64 @@ class StaticStreamingTaskRunner:
 
         while time.monotonic() < deadline:
             res = waypoint_mailbox._match_action_result(
-                cursor.poll(), seq=seq, run_id=run_id
+                cursor.poll(), seq=active_seq, run_id=run_id
             )
             if res is not None:
                 return res, sentinel_events
 
             if self._sentinel_coord is not None:
+                # Consume any completed verdict BEFORE submitting a new observation so
+                # latest-wins submission cannot overwrite an unconsumed verdict.
+                dispatched = self._sentinel_coord.poll_and_dispatch()
+                if dispatched is not None and dispatched.get("dispatched"):
+                    verdict = dispatched["verdict"]
+                    disp_payload = dispatched.get("payload") or {}
+                    disp_seq = disp_payload.get("seq")
+                    event = {
+                        "act": verdict.act,
+                        "target_id": verdict.target_id,
+                        "reason": verdict.reason,
+                        "latency_ms": round(verdict.latency_ms, 1),
+                        "dispatched_seq": disp_seq,
+                        "action_epoch": disp_payload.get("action_epoch"),
+                    }
+                    sentinel_events.append(event)
+                    if verdict.act == "STOP":
+                        self._sentinel_stop_locked = True
+                        stop_receipt = (
+                            self._wait_for_control_receipt(
+                                int(disp_seq),
+                                {"stop_accepted"},
+                                run_id=run_id,
+                                cursor=cursor,
+                            )
+                            if isinstance(disp_seq, int)
+                            else {"status": "missing_stop_seq"}
+                        )
+                        event["closing_receipt"] = stop_receipt
+                        return {
+                            "status": "sentinel_stop",
+                            "event": "sentinel_stop",
+                            "success": False,
+                            "locked_terminal": True,
+                            "seq": disp_seq,
+                            "stop_receipt": stop_receipt,
+                            "reason": verdict.reason,
+                        }, sentinel_events
+                    if verdict.act in ("PREEMPT", "SPIN") and isinstance(disp_seq, int):
+                        # Track the newly dispatched preempt/spin seq until its real receipt!
+                        active_seq = int(disp_seq)
+                        continue
+
                 now = time.monotonic()
                 if now - last_sentinel_submit >= self.sentinel_poll_interval_s:
                     obs = waypoint_mailbox.read_observation(self.mailbox)
                     sim_frame = waypoint_mailbox.latest_sim_frame(self.mailbox.parent)
-                    rgb_live = sim_frame.get("rgb_path") if isinstance(sim_frame, dict) else None
+                    rgb_live = (
+                        (sim_frame.get("latest") or sim_frame.get("rgb_path"))
+                        if isinstance(sim_frame, dict)
+                        else None
+                    )
                     self._sentinel_coord.submit_observation(
                         observation=obs,
                         candidates=candidates,
@@ -772,41 +1173,29 @@ class StaticStreamingTaskRunner:
                     )
                     last_sentinel_submit = now
 
-                dispatched = self._sentinel_coord.poll_and_dispatch()
-                if dispatched is not None and dispatched.get("dispatched"):
-                    verdict = dispatched["verdict"]
-                    event = {
-                        "act": verdict.act,
-                        "target_id": verdict.target_id,
-                        "reason": verdict.reason,
-                        "latency_ms": round(verdict.latency_ms, 1),
-                    }
-                    sentinel_events.append(event)
-                    if verdict.act in ("STOP", "PREEMPT", "SPIN"):
-                        return {
-                            "status": f"sentinel_{verdict.act.lower()}",
-                            "event": f"sentinel_{verdict.act.lower()}",
-                            "success": verdict.act != "STOP",
-                            "reason": verdict.reason,
-                        }, sentinel_events
-            time.sleep(0.25)
+            time.sleep(0.1)
 
-        # Cancel the timed-out active action so the next step starts cleanly.
+        # Cancel the timed-out active action and wait for its closing receipt.
+        cancel_receipt: dict[str, Any] = {}
         try:
             epoch = self._current_action_epoch()
-            waypoint_mailbox.submit(
+            cancel_payload = waypoint_mailbox.submit(
                 self.mailbox,
                 action="cancel",
                 pose_source=self.pose_source,
                 extra={"action_epoch": epoch} if epoch > 0 else None,
             )
-            time.sleep(0.5)
-        except OSError:
-            pass
-        return (
-            waypoint_mailbox.timeout_result(seq, self.step_timeout_s, str(run_id or "")),
-            sentinel_events,
-        )
+            cancel_receipt = self._wait_for_control_receipt(
+                int(cancel_payload["seq"]),
+                {"cancel_accepted"},
+                run_id=run_id,
+                cursor=cursor,
+            )
+        except OSError as exc:
+            cancel_receipt = {"status": "cancel_submit_error", "error": type(exc).__name__}
+        result = waypoint_mailbox.timeout_result(active_seq, self.step_timeout_s, str(run_id or ""))
+        result["cancel_receipt"] = cancel_receipt
+        return result, sentinel_events
 
     def run(self, *, max_steps: int = 12) -> dict[str, Any]:
         """Execute a bounded closed-loop static task and return full diagnostic report."""
@@ -819,18 +1208,45 @@ class StaticStreamingTaskRunner:
         terminal_status = "max_steps_reached"
         prev_xyz: list[float] | None = None
         total_travel_m = 0.0
+        cleanup_status: dict[str, Any] = {"requested": False}
 
         try:
             for step in range(1, max(1, int(max_steps)) + 1):
-                obs = waypoint_mailbox.read_observation(self.mailbox)
-                robot_xyz, yaw_rad = _extract_robot_pose(obs)
+                if self._sentinel_stop_locked:
+                    terminal_status = "sentinel_stop_locked"
+                    break
+
+                obs, pose_pair = self._wait_for_valid_pose()
+                if pose_pair is None:
+                    terminal_status = "pose_unavailable_or_terminal"
+                    break
+                robot_xyz, yaw_rad = pose_pair
+
+                # Sync backend loop-closure pose updates into hierarchical memory when available.
+                self._sync_memory_from_backend_map()
+
                 if prev_xyz is not None:
                     total_travel_m += float(
                         np.linalg.norm(np.asarray(robot_xyz) - np.asarray(prev_xyz))
                     )
                 prev_xyz = list(robot_xyz)
 
+                token_before = self._read_control_token(obs)
                 snap = self._capture_snapshot(f"task_step_{step:03d}")
+                if isinstance(snap, dict) and snap.get("error"):
+                    last_feedback = f"snapshot unavailable ({snap.get('error')}); retrying safely."
+                    step_logs.append(
+                        TaskStepLog(
+                            step=step,
+                            robot_xyz=[round(v, 3) for v in robot_xyz],
+                            yaw_deg=round(math.degrees(yaw_rad), 1),
+                            decision={"action": "noop", "reason": "snapshot_error"},
+                            execution={"status": "snapshot_error", "error": snap.get("error")},
+                            memory_diag=self.memory.diagnostic_metrics(),
+                        ).__dict__
+                    )
+                    continue
+
                 rgb_path = snap.get("products", {}).get("rgb")
                 local_map_path, raw_cands = select_active_chart_and_candidates(snap, robot_xyz[2])
 
@@ -843,11 +1259,18 @@ class StaticStreamingTaskRunner:
                 allowed_cands, blocked_cands = self.memory.filter_candidates(
                     combined_cands, default_z=robot_xyz[2]
                 )
-                cands_for_planner = allowed_cands if allowed_cands else blocked_cands
+                # Never silently re-enable blacklisted candidates when all are blocked.
+                cands_for_planner = allowed_cands
+                if not cands_for_planner and blocked_cands:
+                    last_feedback = (
+                        f"{last_feedback} All {len(blocked_cands)} goto candidates are blacklisted; "
+                        "use query_memory, scan, or maneuver to escape."
+                    ).strip()
 
                 mem_summary = self.memory.narrative_summary(
                     robot_xyz=robot_xyz,
                     target_label=self.target_label,
+                    memory_candidates=mem_cands,
                 )
                 l0 = self.memory.l0_global_topology()
 
@@ -871,68 +1294,167 @@ class StaticStreamingTaskRunner:
                 pending_recall = None
                 extra_l3_rgb = []
 
+                # Verify control epoch/run_id did not change during planner inference.
+                token_after = self._read_control_token()
+                if token_after[0] != token_before[0] or token_after[2] != token_before[2]:
+                    exec_info = {
+                        "status": "discarded_stale_epoch",
+                        "epoch_before": token_before[2],
+                        "epoch_after": token_after[2],
+                    }
+                    last_feedback = (
+                        f"Decision discarded due to control epoch shift "
+                        f"({token_before[2]}->{token_after[2]})."
+                    )
+                    step_logs.append(
+                        TaskStepLog(
+                            step=step,
+                            robot_xyz=[round(v, 3) for v in robot_xyz],
+                            yaw_deg=round(math.degrees(yaw_rad), 1),
+                            decision=decision.to_dict(),
+                            execution=exec_info,
+                            memory_diag=self.memory.diagnostic_metrics(),
+                        ).__dict__
+                    )
+                    continue
+
                 kf_id = self._record_live_step_in_memory(
-                    step, robot_xyz, yaw_rad, rgb_path, decision.observed_objects
+                    step,
+                    robot_xyz,
+                    yaw_rad,
+                    rgb_path,
+                    decision.observed_objects,
+                    snapshot=snap,
                 )
 
-                exec_info: dict[str, Any] = {}
+                exec_info = {}
                 sentinel_events: list[dict[str, Any]] = []
 
-                if decision.action == "query_memory":
+                if decision.action == "noop":
+                    exec_info = {
+                        "status": "noop",
+                        "fallback": decision.fallback,
+                        "reason": decision.reason,
+                    }
+                    last_feedback = f"Planner returned noop ({decision.reason}); holding position."
+
+                elif decision.action == "query_memory":
                     q = decision.query or self.target_label or self.task_instruction
                     q_l1 = self.memory.l1_submap_summaries(query=q, near_xyz=robot_xyz, top_k=3)
                     q_l2 = self.memory.l2_submap_entities(label=q)
-                    q_l3 = self.memory.l3_on_demand_keyframes(near_xyz=robot_xyz, max_images=2)
-                    extra_l3_rgb = [row["rgb_path"] for row in q_l3 if row.get("rgb_path")]
+                    # Ground L3 imagery on matched target object anchor frame first!
+                    q_l3: list[dict[str, Any]] = []
+                    if q_l2["objects"]:
+                        top_obj_id = q_l2["objects"][0]["object_id"]
+                        q_l3 = self.memory.l3_on_demand_keyframes(
+                            object_id=top_obj_id, max_images=2
+                        )
+                    if not q_l3:
+                        q_l3 = self.memory.l3_on_demand_keyframes(
+                            near_xyz=robot_xyz, max_images=2
+                        )
+                    validated_l3: list[str] = []
+                    rejected_l3: list[dict[str, str]] = []
+                    for row in q_l3:
+                        raw_p = row.get("rgb_path")
+                        if not raw_p:
+                            continue
+                        res_p, rej_r = validate_image_path(
+                            raw_p, allowed_roots=self.allowed_image_roots
+                        )
+                        if res_p is not None:
+                            validated_l3.append(str(res_p))
+                        else:
+                            rejected_l3.append({"path": str(raw_p), "reason": str(rej_r)})
+                    extra_l3_rgb = validated_l3
                     pending_recall = {
                         "query": q,
                         "l1_rooms": q_l1[:3],
                         "l2_objects": q_l2["objects"][:6],
                         "l2_failures": q_l2["failures"][:4],
                         "l3_keyframes": q_l3,
+                        "l3_rejected": rejected_l3,
                     }
                     exec_info = {
                         "status": "memory_queried",
                         "l1_hits": len(q_l1),
                         "l2_objects": len(q_l2["objects"]),
                         "l3_images": len(extra_l3_rgb),
+                        "l3_rejected": len(rejected_l3),
                     }
-                    last_feedback = f"query_memory('{q}') returned {len(q_l1)} rooms, {len(q_l2['objects'])} objects, {len(extra_l3_rgb)} L3 images."
+                    last_feedback = (
+                        f"query_memory('{q}') returned {len(q_l1)} rooms, "
+                        f"{len(q_l2['objects'])} objects, {len(extra_l3_rgb)} L3 images."
+                    )
 
                 elif decision.action == "stop_claim":
-                    claim_label = decision.target_label or self.target_label
-                    verify = self.memory.verify_stop_claim(
-                        robot_xyz,
-                        target_label=claim_label,
-                        stop_radius_m=self.stop_radius_m,
-                    )
-                    exec_info = verify.to_dict()
-                    if verify.allowed:
-                        task_succeeded = True
-                        terminal_status = "verified_stop_success"
-                        last_feedback = f"STOP verified: {verify.reason}"
-                        step_logs.append(
-                            TaskStepLog(
-                                step=step,
-                                robot_xyz=[round(v, 3) for v in robot_xyz],
-                                yaw_deg=round(math.degrees(yaw_rad), 1),
-                                decision=decision.to_dict(),
-                                execution=exec_info,
-                                memory_diag=self.memory.diagnostic_metrics(),
-                            ).__dict__
+                    # Freeze task target: never let planner override target_label to another object!
+                    if (
+                        self.target_label is not None
+                        and decision.target_label is not None
+                        and not _label_strict_match(
+                            self.target_label,
+                            decision.target_label,
+                            self.target_aliases,
                         )
-                        break
+                    ):
+                        exec_info = {
+                            "allowed": False,
+                            "reason": "target_label_mismatch",
+                            "expected_target": self.target_label,
+                            "claimed_target": decision.target_label,
+                        }
+                        self.memory.record_attempt(
+                            "stop_claim",
+                            robot_xyz,
+                            "rejected",
+                            reason="target_label_mismatch",
+                            keyframe_id=kf_id,
+                            blocks_location=False,
+                        )
+                        last_feedback = (
+                            f"STOP REJECTED (target_label_mismatch: claimed '{decision.target_label}', "
+                            f"task requires '{self.target_label}')."
+                        )
                     else:
+                        frozen_label = self.target_label or decision.target_label
+                        verify = self.memory.verify_stop_claim(
+                            robot_xyz,
+                            target_label=frozen_label,
+                            stop_radius_m=self.stop_radius_m,
+                            allowed_aliases=self.target_aliases,
+                            excluded_producers=("opencode_vlm_unverified",),
+                        )
+                        exec_info = verify.to_dict()
+                        if verify.allowed:
+                            task_succeeded = True
+                            terminal_status = "verified_stop_success"
+                            last_feedback = (
+                                f"STOP verified: {verify.reason} "
+                                f"(dist={verify.distance_m}m, source={verify.range_source})"
+                            )
+                            step_logs.append(
+                                TaskStepLog(
+                                    step=step,
+                                    robot_xyz=[round(v, 3) for v in robot_xyz],
+                                    yaw_deg=round(math.degrees(yaw_rad), 1),
+                                    decision=decision.to_dict(),
+                                    execution=exec_info,
+                                    memory_diag=self.memory.diagnostic_metrics(),
+                                ).__dict__
+                            )
+                            break
                         self.memory.record_attempt(
                             "stop_claim",
                             robot_xyz,
                             "rejected",
                             reason=verify.reason,
                             keyframe_id=kf_id,
+                            blocks_location=False,
                         )
                         last_feedback = (
                             f"STOP REJECTED ({verify.reason}, dist={verify.distance_m}). "
-                            "Move closer to the target on the same floor and confirm visually."
+                            "Move closer to the target on the same floor and confirm with measured range."
                         )
 
                 elif decision.action in ("goto_candidate", "goto_xyz"):
@@ -942,7 +1464,11 @@ class StaticStreamingTaskRunner:
                             if c.get("id") == decision.target_id:
                                 xy = c.get("xy")
                                 if isinstance(xy, (list, tuple)) and len(xy) >= 2:
-                                    goal_xyz = [float(xy[0]), float(xy[1]), float(c.get("z", robot_xyz[2]))]
+                                    goal_xyz = [
+                                        float(xy[0]),
+                                        float(xy[1]),
+                                        float(c.get("z", robot_xyz[2])),
+                                    ]
                                 elif isinstance(c.get("goal_xyz_m"), (list, tuple)):
                                     goal_xyz = [float(v) for v in c["goal_xyz_m"]]
                                 break
@@ -952,8 +1478,19 @@ class StaticStreamingTaskRunner:
                     if goal_xyz is None:
                         exec_info = {"status": "skipped", "reason": "unresolved_goal"}
                         last_feedback = "Could not resolve target coordinates; pick a valid candidate ID."
+                    elif self.memory.match_blacklist(goal_xyz):
+                        # Unified final-dispatch blacklist check covering both goto_candidate and goto_xyz!
+                        exec_info = {
+                            "status": "blacklisted_goal",
+                            "reason": "goal_in_active_failure_blacklist",
+                            "goal_xyz": [round(v, 3) for v in goal_xyz],
+                        }
+                        last_feedback = (
+                            f"goto {[round(v, 2) for v in goal_xyz]} BLOCKED by active failure blacklist; "
+                            "choose another route or maneuver."
+                        )
                     else:
-                        epoch = self._current_action_epoch()
+                        epoch = token_after[2]
                         payload = waypoint_mailbox.submit(
                             self.mailbox,
                             action="goto",
@@ -977,9 +1514,23 @@ class StaticStreamingTaskRunner:
                             f"goto {goal_xyz} -> {outcome} ({exec_info.get('reason', '')}); "
                             f"sentinel_events={len(sentinel_events)}"
                         )
+                        if exec_info.get("locked_terminal") or self._sentinel_stop_locked:
+                            terminal_status = "sentinel_stop_locked"
+                            step_logs.append(
+                                TaskStepLog(
+                                    step=step,
+                                    robot_xyz=[round(v, 3) for v in robot_xyz],
+                                    yaw_deg=round(math.degrees(yaw_rad), 1),
+                                    decision=decision.to_dict(),
+                                    execution=exec_info,
+                                    memory_diag=self.memory.diagnostic_metrics(),
+                                    sentinel_events=sentinel_events,
+                                ).__dict__
+                            )
+                            break
 
                 elif decision.action == "maneuver":
-                    epoch = self._current_action_epoch()
+                    epoch = token_after[2]
                     m_extra: dict[str, Any] = {
                         "body_forward_mps": decision.forward,
                         "body_lateral_mps": 0.0,
@@ -1011,7 +1562,7 @@ class StaticStreamingTaskRunner:
                     last_feedback = f"maneuver -> {outcome} ({exec_info.get('reason', '')})"
 
                 elif decision.action == "scan":
-                    epoch = self._current_action_epoch()
+                    epoch = token_after[2]
                     y_extra: dict[str, Any] = {
                         "delta_yaw_rad": math.pi / 2.0,
                         "yaw_rate_rps": 0.15,
@@ -1055,37 +1606,49 @@ class StaticStreamingTaskRunner:
             if self._sentinel_runner is not None:
                 self._sentinel_runner.shutdown(timeout_s=2.0)
             if self.stop_simulator_on_exit and self.mailbox.is_dir():
-                try:
-                    epoch = self._current_action_epoch()
-                    waypoint_mailbox.submit(
-                        self.mailbox,
-                        action="stop",
-                        pose_source=self.pose_source,
-                        extra={"action_epoch": epoch} if epoch > 0 else None,
-                    )
-                except OSError:
-                    pass
+                if self._sentinel_stop_locked:
+                    cleanup_status = {"requested": False, "reason": "already_stopped_by_sentinel"}
+                else:
+                    cleanup_status = {"requested": True}
+                    try:
+                        epoch = self._current_action_epoch()
+                        stop_payload = waypoint_mailbox.submit(
+                            self.mailbox,
+                            action="stop",
+                            pose_source=self.pose_source,
+                            extra={"action_epoch": epoch} if epoch > 0 else None,
+                        )
+                        cleanup_status["stop_seq"] = stop_payload["seq"]
+                        cleanup_status["receipt"] = self._wait_for_control_receipt(
+                            int(stop_payload["seq"]),
+                            {"stop_accepted"},
+                            run_id=stop_payload.get("run_id"),
+                        )
+                    except OSError as exc:
+                        cleanup_status["error"] = type(exc).__name__
 
         report = {
+            "episode_id": self.episode_id,
             "task_instruction": self.task_instruction,
             "target_label": self.target_label,
+            "target_aliases": list(self.target_aliases),
             "task_succeeded": task_succeeded,
             "terminal_status": terminal_status,
             "steps_executed": len(step_logs),
             "wall_s": round(time.monotonic() - t_start, 2),
             "estimated_travel_m": round(total_travel_m, 2),
+            "memory_map_revision": self.memory.map_revision,
             "planner_config": self.planner.config.to_safe_dict(),
             "planner_latencies_ms": [round(v, 1) for v in self.planner.latencies_ms],
             "memory_diagnostics": self.memory.diagnostic_metrics(),
             "sentinel_stats": (
                 self._sentinel_runner.stats() if self._sentinel_runner is not None else None
             ),
+            "cleanup": cleanup_status,
             "steps": step_logs,
         }
-        report_path = self.run_dir / "static_task_report.json"
         if self.run_dir.is_dir():
-            report_path.write_text(
-                json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            # Save versioned memory atomically first, then atomically publish the report referencing it.
             self.memory.save(self.run_dir / "hierarchical_memory.json")
+            atomic_write_json(self.run_dir / "static_task_report.json", report)
         return report

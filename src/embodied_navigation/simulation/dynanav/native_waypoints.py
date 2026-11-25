@@ -237,6 +237,8 @@ class NativeWaypointTracker:
         except (ValueError, UnicodeDecodeError):
             self._receipt("request_rejected", reason="invalid_json")
             return
+        if isinstance(payload, dict) and payload.get("delivery") == "inbox":
+            return
         if (
             isinstance(payload, dict)
             and type(payload.get("seq")) is int

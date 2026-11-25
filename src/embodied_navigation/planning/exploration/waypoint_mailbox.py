@@ -281,6 +281,7 @@ def submit(
                 created_wall_s=time.perf_counter(),
                 extra=resolved_extra or None,
             )
+            payload["delivery"] = "inbox"
             inbox_dir = inbox_dir_for(mailbox_path)
             inbox_dir.mkdir(parents=True, exist_ok=True)
             atomic_write_json(inbox_dir / f"{seq:06d}.json", payload)

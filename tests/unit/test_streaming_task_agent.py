@@ -54,8 +54,17 @@ class TestStreamingTaskAgent(unittest.TestCase):
 
         bad = parse_task_decision("not json at all", valid_candidate_ids=["F1"])
         self.assertTrue(bad.fallback)
-        self.assertEqual(bad.action, "goto_candidate")
-        self.assertEqual(bad.target_id, "F1")
+        self.assertEqual(bad.action, "noop")
+        self.assertIsNone(bad.target_id)
+
+        # Truncated outer JSON whose inner observed_object contains "action" must NOT execute!
+        truncated_inner = (
+            '{"action":"goto_candidate","observed_objects":['
+            '{"action":"stop_claim","target_label":"door","label":"door"}'
+        )
+        trunc_dec = parse_task_decision(truncated_inner, valid_candidate_ids=["F1"])
+        self.assertTrue(trunc_dec.fallback)
+        self.assertEqual(trunc_dec.action, "noop")
 
         # Partial stream with complete inner object must NOT early-match the inner object
         from embodied_navigation.planning.exploration.streaming_task_agent import (
@@ -182,6 +191,30 @@ class TestStreamingTaskAgent(unittest.TestCase):
                     ]
                 )
 
+                import numpy as np
+
+                chart_dir = run_dir / "agent_evidence" / "charts"
+                chart_dir.mkdir(parents=True, exist_ok=True)
+                chart_img = chart_dir / "height_chart_000.png"
+                chart_img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+                (chart_dir / "height_chart_000.json").write_text(
+                    json.dumps(
+                        {
+                            "resolution_m": 0.05,
+                            "map_frame": "map",
+                            "source_clock_used": 12.5,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                # Place measured LiDAR occupied cell at x=1.025 m, y=0.025 m (1.0 m ahead of (0,0) and 1.0 m from (2,0))
+                np.savez(
+                    chart_dir / "height_chart_000.npz",
+                    ix=np.array([20], dtype=np.int32),
+                    iy=np.array([0], dtype=np.int32),
+                    code=np.array([1], dtype=np.int32),
+                )
+
                 def _fake_snap(tag: str) -> dict:
                     return {
                         "tag": tag,
@@ -190,6 +223,7 @@ class TestStreamingTaskAgent(unittest.TestCase):
                             "height_charts": [
                                 {
                                     "level_key": "+0.00",
+                                    "image": str(chart_img),
                                     "candidates": [
                                         {
                                             "id": "F1",
@@ -220,6 +254,10 @@ class TestStreamingTaskAgent(unittest.TestCase):
                 self.assertTrue(report["task_succeeded"])
                 self.assertEqual(report["terminal_status"], "verified_stop_success")
                 self.assertEqual(report["steps_executed"], 3)
+                self.assertEqual(
+                    report["steps"][-1]["execution"]["range_source"],
+                    "height_chart_lidar_raycast",
+                )
                 # Premature STOP on step 1 was caught and rejected!
                 self.assertEqual(report["memory_diagnostics"]["premature_stop_rejects"], 1)
                 self.assertTrue((run_dir / "static_task_report.json").is_file())
@@ -269,6 +307,7 @@ class TestStreamingTaskAgent(unittest.TestCase):
                 pose_source="backend_corrected",
                 snapshot_fn=_snap,
                 step_timeout_s=0.35,
+                control_receipt_timeout_s=0.3,
             )
             report = runner.run(max_steps=1)
             self.assertEqual(report["steps"][0]["execution"]["status"], "timeout")

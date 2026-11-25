@@ -56,21 +56,32 @@ def _parse_stamp_ns(row: dict[str, Any]) -> int | None:
 
 
 def _resolve_rgb_entry_path(raw_path: str, index_dir: Path) -> str | None:
+    index_root = index_dir.resolve()
     candidate = Path(raw_path)
-    if candidate.is_absolute():
-        if candidate.is_file():
-            return str(candidate)
-        archived = index_dir / candidate.name
-        if archived.is_file():
-            return str(archived.resolve())
+
+    def _within_root_file(path: Path) -> str | None:
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        if resolved.is_relative_to(index_root) and resolved.is_file():
+            return str(resolved)
         return None
-    direct = index_dir / candidate
-    if direct.is_file():
-        return str(direct.resolve())
-    by_name = index_dir / candidate.name
-    if by_name.is_file():
-        return str(by_name.resolve())
-    return str(raw_path)
+
+    if candidate.is_absolute():
+        direct = _within_root_file(candidate)
+        if direct is not None:
+            return direct
+        if candidate.name:
+            return _within_root_file(index_dir / candidate.name)
+        return None
+
+    direct = _within_root_file(index_dir / candidate)
+    if direct is not None:
+        return direct
+    if candidate.name:
+        return _within_root_file(index_dir / candidate.name)
+    return None
 
 
 def load_rgb_index_report(jsonl_path: str | Path) -> RgbIndexReport:

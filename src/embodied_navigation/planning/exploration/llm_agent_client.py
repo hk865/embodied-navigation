@@ -39,6 +39,7 @@ _OPENCODE_GO_PRESET = {
     "api_key_env": "OPENCODE_API_KEY",
     "supports_vision": True,
     "opencode_auth_provider": "opencode",
+    "opencode_auth_providers": ("opencode-go", "opencode"),
     "requires_session_header": True,
 }
 
@@ -48,6 +49,7 @@ _OPENCODE_ZEN_PRESET = {
     "api_key_env": "OPENCODE_API_KEY",
     "supports_vision": True,
     "opencode_auth_provider": "opencode",
+    "opencode_auth_providers": ("opencode",),
     "requires_session_header": True,
 }
 
@@ -72,8 +74,67 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
-def _read_key_file(path: Path) -> str | None:
-    """Read an API token from a single-line or KEY=VALUE local file silently."""
+_SENSITIVE_KEY_SUBSTRINGS = (
+    "key",
+    "token",
+    "secret",
+    "auth",
+    "password",
+    "bearer",
+    "cookie",
+    "credential",
+)
+
+MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _redact_sensitive(obj: Any) -> Any:
+    """Recursively redact credential-like fields inside nested dicts and lists."""
+    if isinstance(obj, dict):
+        redacted: dict[Any, Any] = {}
+        for k, v in obj.items():
+            key_lower = str(k).lower()
+            if any(sub in key_lower for sub in _SENSITIVE_KEY_SUBSTRINGS):
+                redacted[k] = "[REDACTED]"
+            else:
+                redacted[k] = _redact_sensitive(v)
+        return redacted
+    if isinstance(obj, (list, tuple)):
+        return [_redact_sensitive(item) for item in obj]
+    return obj
+
+
+def _redact_url(url: str) -> str:
+    """Strip userinfo, query parameters, and fragments, keeping scheme://host[:port]/path."""
+    parsed = urllib.parse.urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    host_port = parsed.netloc.rsplit("@", 1)[-1]
+    return urllib.parse.urlunparse((parsed.scheme, host_port, parsed.path, "", "", ""))
+
+
+def _strip_matching_quotes(value: str) -> str:
+    cleaned = value.strip()
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ('"', "'"):
+        return cleaned[1:-1]
+    return cleaned
+
+
+def _parse_kv_line(line: str) -> tuple[str, str] | None:
+    candidate = line
+    if candidate.startswith("export") and len(candidate) > 6 and candidate[6].isspace():
+        candidate = candidate[6:].lstrip()
+    if "=" not in candidate:
+        return None
+    key, raw_val = candidate.split("=", 1)
+    key = key.strip()
+    if not key or not key.isidentifier():
+        return None
+    return key, _strip_matching_quotes(raw_val)
+
+
+def _read_key_file(path: Path, env_name: str | None = None) -> str | None:
+    """Read an API token from a KEY=VALUE or single-line raw token file."""
     try:
         raw_lines = [
             line.strip()
@@ -84,10 +145,25 @@ def _read_key_file(path: Path) -> str | None:
         return None
     if not raw_lines:
         return None
-    token = raw_lines[0]
-    if "=" in token and not token.startswith("sk-"):
-        token = token.split("=", 1)[1].strip().strip('"').strip("'")
-    return token or None
+
+    if env_name:
+        has_kv = False
+        for line in raw_lines:
+            parsed = _parse_kv_line(line)
+            if parsed is None:
+                continue
+            has_kv = True
+            key, val = parsed
+            if key == env_name:
+                return val or None
+        if has_kv:
+            return None
+        return _strip_matching_quotes(raw_lines[0]) or None
+
+    parsed = _parse_kv_line(raw_lines[0])
+    if parsed is not None:
+        return parsed[1] or None
+    return _strip_matching_quotes(raw_lines[0]) or None
 
 
 def _read_opencode_auth_key(provider_name: str) -> str | None:
@@ -115,9 +191,17 @@ def _resolve_preset_api_key(preset: dict[str, Any]) -> str | None:
             return env_val.strip()
         file_env = os.environ.get(f"{env_name}_FILE")
         if file_env and file_env.strip():
-            token = _read_key_file(Path(file_env).expanduser())
+            token = _read_key_file(Path(file_env).expanduser(), env_name=env_name)
             if token:
                 return token
+    auth_providers = preset.get("opencode_auth_providers")
+    if isinstance(auth_providers, (list, tuple)) and auth_providers:
+        for auth_provider in auth_providers:
+            if isinstance(auth_provider, str) and auth_provider:
+                token = _read_opencode_auth_key(auth_provider)
+                if token:
+                    return token
+        return None
     auth_provider = preset.get("opencode_auth_provider")
     if isinstance(auth_provider, str) and auth_provider:
         return _read_opencode_auth_key(auth_provider)
@@ -158,7 +242,7 @@ class LlmClientConfig:
     temperature: float = 0.1
     supports_vision: bool | None = None
     stream: bool = True
-    extra_body: dict[str, Any] | None = None
+    extra_body: dict[str, Any] | None = field(default=None, repr=False)
     session_id: str | None = None
     user_agent: str = "embodied-navigation-agent/1.0"
 
@@ -172,6 +256,7 @@ class LlmClientConfig:
         if not model:
             raise ValueError("model must be non-empty")
 
+        preset_base_url = str(preset.get("base_url") or "").strip().rstrip("/")
         raw_url = preset["base_url"] if self.base_url is None else str(self.base_url)
         base_url = raw_url.strip().rstrip("/")
         if not base_url:
@@ -179,6 +264,12 @@ class LlmClientConfig:
         parsed_url = urllib.parse.urlparse(base_url)
         if parsed_url.scheme not in ("http", "https") or not parsed_url.netloc:
             raise ValueError("base_url must be a valid http or https URL")
+
+        host_overridden = False
+        if self.base_url is not None and preset_base_url:
+            preset_parsed = urllib.parse.urlparse(preset_base_url)
+            if parsed_url.netloc.lower() != preset_parsed.netloc.lower():
+                host_overridden = True
 
         timeout_s = _finite_float(self.timeout_s, "timeout_s")
         if timeout_s <= 0.0:
@@ -195,9 +286,17 @@ class LlmClientConfig:
 
         api_key = self.api_key
         if api_key is None:
-            api_key = _resolve_preset_api_key(preset)
+            if not host_overridden:
+                api_key = _resolve_preset_api_key(preset)
         elif not isinstance(api_key, str):
             raise ValueError("api_key must be a string or None")
+
+        if (
+            api_key
+            and parsed_url.scheme == "http"
+            and (parsed_url.hostname or "").lower() not in ("localhost", "127.0.0.1", "::1")
+        ):
+            raise ValueError("refusing to send api_key over insecure http to non-localhost host")
 
         supports_vision = (
             bool(preset["supports_vision"])
@@ -236,7 +335,7 @@ class LlmClientConfig:
         safe = {
             "provider": self.provider,
             "model": self.model,
-            "base_url": self.base_url,
+            "base_url": _redact_url(self.base_url or ""),
             "timeout_s": self.timeout_s,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
@@ -245,9 +344,7 @@ class LlmClientConfig:
             "has_api_key": bool(self.api_key),
         }
         if self.extra_body is not None:
-            safe["extra_body"] = {
-                k: v for k, v in self.extra_body.items() if "key" not in str(k).lower()
-            }
+            safe["extra_body"] = _redact_sensitive(self.extra_body)
         return safe
 
 
@@ -525,21 +622,69 @@ def _compact_candidates(candidates: Iterable[dict[str, Any]] | None) -> list[dic
     return compact
 
 
-def _encode_image_part(image_path: str | Path) -> dict[str, Any] | None:
-    path = Path(image_path)
+def _detect_image_mime(raw: bytes) -> str | None:
+    """Detect image MIME type strictly from magic bytes."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def validate_image_path(
+    image_path: str | Path,
+    *,
+    allowed_roots: Iterable[str | Path] | None = None,
+    max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
+) -> tuple[Path | None, str | None]:
+    """Validate image existence, root containment, byte budget, and magic header."""
     try:
-        raw = path.read_bytes()
+        resolved = Path(image_path).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None, "missing_or_unreadable"
+    if not resolved.is_file():
+        return None, "not_a_file"
+    if allowed_roots is not None:
+        roots = [Path(r).resolve() for r in allowed_roots]
+        if not any(resolved.is_relative_to(root) for root in roots):
+            return None, "outside_allowed_roots"
+    try:
+        size = resolved.stat().st_size
+    except OSError:
+        return None, "missing_or_unreadable"
+    if size <= 0 or size > max_bytes:
+        return None, "invalid_file_size"
+    try:
+        raw = resolved.read_bytes()
+    except OSError:
+        return None, "missing_or_unreadable"
+    if not raw or len(raw) > max_bytes:
+        return None, "invalid_file_size"
+    if _detect_image_mime(raw) is None:
+        return None, "invalid_image_header"
+    return resolved, None
+
+
+def _encode_image_part(
+    image_path: str | Path,
+    *,
+    allowed_roots: Iterable[str | Path] | None = None,
+    max_bytes: int = MAX_IMAGE_UPLOAD_BYTES,
+) -> dict[str, Any] | None:
+    resolved, err = validate_image_path(
+        image_path, allowed_roots=allowed_roots, max_bytes=max_bytes
+    )
+    if resolved is None or err is not None:
+        return None
+    try:
+        raw = resolved.read_bytes()
     except OSError:
         return None
-    if not raw:
+    mime = _detect_image_mime(raw)
+    if mime is None:
         return None
-    suffix = path.suffix.lower()
-    if suffix in (".jpg", ".jpeg"):
-        mime = "image/jpeg"
-    elif suffix == ".webp":
-        mime = "image/webp"
-    else:
-        mime = "image/png"
     encoded = base64.b64encode(raw).decode("ascii")
     return {
         "type": "image_url",
@@ -550,6 +695,75 @@ def _encode_image_part(image_path: str | Path) -> dict[str, Any] | None:
     }
 
 
+def _compact_memory_l0(raw_l0: dict[str, Any]) -> dict[str, Any]:
+    raw_rev = raw_l0.get("map_revision", raw_l0.get("rev", 0))
+    if isinstance(raw_rev, bool) or not isinstance(raw_rev, (int, float)):
+        rev = 0
+    else:
+        rev = int(raw_rev) if math.isfinite(float(raw_rev)) else 0
+
+    floors: list[dict[str, Any]] = []
+    raw_floors = raw_l0.get("floors")
+    if isinstance(raw_floors, (list, tuple)):
+        for fl in raw_floors[:4]:
+            if not isinstance(fl, dict):
+                continue
+            entry: dict[str, Any] = {}
+            fid = fl.get("id", fl.get("floor_id"))
+            if isinstance(fid, str) and fid.strip():
+                entry["id"] = fid.strip()[:32]
+            z_val = _safe_optional_float(fl.get("z", fl.get("z_mean_m")))
+            if z_val is not None:
+                entry["z"] = round(z_val, 2)
+            r_cnt = fl.get("rooms")
+            if isinstance(r_cnt, int) and not isinstance(r_cnt, bool):
+                entry["rooms"] = r_cnt
+            floors.append(entry)
+
+    rooms: list[dict[str, Any]] = []
+    raw_rooms = raw_l0.get("rooms")
+    if isinstance(raw_rooms, (list, tuple)):
+        for rm in raw_rooms[:8]:
+            if not isinstance(rm, dict):
+                continue
+            entry = {}
+            rid = rm.get("id", rm.get("room_id"))
+            if isinstance(rid, str) and rid.strip():
+                entry["id"] = rid.strip()[:32]
+            fid = rm.get("f", rm.get("floor_id"))
+            if isinstance(fid, str) and fid.strip():
+                entry["f"] = fid.strip()[:24]
+            xy = _round_seq(rm.get("c", rm.get("centroid_xyz")), 1)
+            if xy is not None:
+                entry["c"] = xy[:2]
+            obj_cnt = rm.get("o", rm.get("object_count"))
+            if isinstance(obj_cnt, int) and not isinstance(obj_cnt, bool):
+                entry["o"] = obj_cnt
+            alias = rm.get("a", rm.get("alias"))
+            if isinstance(alias, str) and alias.strip():
+                entry["a"] = alias.strip()[:32]
+            rooms.append(entry)
+
+    compact: dict[str, Any] = {"rev": rev, "floors": floors, "rooms": rooms}
+    fail_cnt = raw_l0.get("fail_cnt")
+    if isinstance(fail_cnt, int) and not isinstance(fail_cnt, bool):
+        compact["fail_cnt"] = fail_cnt
+
+    def _encoded_size(obj: dict[str, Any]) -> int:
+        return len(json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8"))
+
+    while _encoded_size(compact) > 1024:
+        if compact["rooms"]:
+            compact["rooms"].pop()
+        elif compact["floors"]:
+            compact["floors"].pop()
+        elif "fail_cnt" in compact:
+            compact.pop("fail_cnt", None)
+        else:
+            break
+    return compact
+
+
 def build_visual_first_messages(
     observation_summary: dict[str, Any] | None,
     candidates: Iterable[dict[str, Any]] | None,
@@ -558,6 +772,7 @@ def build_visual_first_messages(
     rgb_path: str | Path | None = None,
     local_map_path: str | Path | None = None,
     supports_vision: bool = True,
+    allowed_image_roots: Iterable[str | Path] | None = None,
 ) -> list[dict[str, Any]]:
     """Build an ultra-compact OpenAI-compatible sentinel prompt with optional dual images."""
     obs = observation_summary if isinstance(observation_summary, dict) else {}
@@ -600,12 +815,14 @@ def build_visual_first_messages(
     image_labels: list[str] = []
     if supports_vision:
         if rgb_path is not None:
-            rgb_part = _encode_image_part(rgb_path)
+            rgb_part = _encode_image_part(rgb_path, allowed_roots=allowed_image_roots)
             if rgb_part is not None:
                 image_parts.append(rgb_part)
                 image_labels.append("front_rgb")
         if local_map_path is not None:
-            map_part = _encode_image_part(local_map_path)
+            map_part = _encode_image_part(
+                local_map_path, allowed_roots=allowed_image_roots
+            )
             if map_part is not None:
                 image_parts.append(map_part)
                 image_labels.append("local_topdown_candidates")
@@ -617,6 +834,10 @@ def build_visual_first_messages(
         "candidates": _compact_candidates(candidates),
         "slam_health": slam_compact,
     }
+    if isinstance(obs.get("memory_l0"), dict):
+        payload["memory_l0"] = _compact_memory_l0(obs["memory_l0"])
+    if obs.get("all_candidates_blacklisted") is True:
+        payload["all_candidates_blacklisted"] = True
     if image_labels:
         payload["images"] = image_labels
     user_text = json.dumps(payload, separators=(",", ":"), allow_nan=False)
@@ -844,8 +1065,65 @@ class _RequestCancelledError(RuntimeError):
 class FastSentinelClient:
     """OpenAI-compatible HTTP client for low-latency embodied sentinel decisions."""
 
-    def __init__(self, config: LlmClientConfig) -> None:
+    def __init__(
+        self,
+        config: LlmClientConfig,
+        *,
+        allowed_image_roots: Iterable[str | Path] | None = None,
+    ) -> None:
         self.config = config
+        self.allowed_image_roots = (
+            tuple(Path(root) for root in allowed_image_roots)
+            if allowed_image_roots is not None
+            else None
+        )
+        self.last_request_modalities: dict[str, Any] = {
+            "images": [],
+            "has_memory_l0": False,
+            "l0_rev": None,
+        }
+
+    def _record_modalities_from_messages(self, messages: list[dict[str, Any]]) -> None:
+        images: list[str] = []
+        has_memory_l0 = False
+        l0_rev: int | None = None
+        if messages and isinstance(messages[-1], dict):
+            content = messages[-1].get("content")
+            text_part = ""
+            image_count = 0
+            if isinstance(content, str):
+                text_part = content
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type")
+                    if btype == "text" and not text_part:
+                        text_part = str(block.get("text", ""))
+                    elif btype == "image_url":
+                        image_count += 1
+            if text_part:
+                try:
+                    parsed = json.loads(text_part)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    raw_imgs = parsed.get("images")
+                    if isinstance(raw_imgs, list):
+                        images = [str(item) for item in raw_imgs if isinstance(item, str)]
+                    l0 = parsed.get("memory_l0")
+                    if isinstance(l0, dict):
+                        has_memory_l0 = True
+                        raw_rev = l0.get("rev")
+                        if isinstance(raw_rev, int) and not isinstance(raw_rev, bool):
+                            l0_rev = raw_rev
+            if not images and image_count > 0:
+                images = [f"image_{i}" for i in range(image_count)]
+        self.last_request_modalities = {
+            "images": images,
+            "has_memory_l0": has_memory_l0,
+            "l0_rev": l0_rev,
+        }
 
     def build_request_body(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Build the OpenAI-compatible /chat/completions JSON request payload."""
@@ -986,6 +1264,7 @@ class FastSentinelClient:
         cancel_token: _RequestCancelToken | None = None,
     ) -> SentinelVerdict:
         """Send pre-built messages to /chat/completions; fails open to CONT on error."""
+        self._record_modalities_from_messages(messages)
         body = json.dumps(
             self.build_request_body(messages), allow_nan=False
         ).encode("utf-8")
@@ -1125,6 +1404,7 @@ class FastSentinelClient:
             rgb_path=rgb_path,
             local_map_path=local_map_path,
             supports_vision=bool(self.config.supports_vision),
+            allowed_image_roots=self.allowed_image_roots,
         )
         return self.evaluate_messages(
             messages,
@@ -1379,13 +1659,18 @@ class AsyncDecisionRunner:
         """Return latency percentiles and call/timeout/drop counters."""
         with self._lock:
             sorted_lat = sorted(self._latencies_ms)
-            return {
+            result: dict[str, Any] = {
                 "calls": self._calls,
                 "timeouts": self._timeouts,
                 "dropped_stale": self._dropped_stale,
                 "p50_ms": _percentile(sorted_lat, 0.50),
                 "p95_ms": _percentile(sorted_lat, 0.95),
             }
+            if isinstance(self._evaluator, FastSentinelClient):
+                result["last_request_modalities"] = dict(
+                    self._evaluator.last_request_modalities
+                )
+            return result
 
     @property
     def calls(self) -> int:
