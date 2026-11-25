@@ -74,23 +74,21 @@ flowchart TB
 
 ## 4. 修复后实测验证结果（严格区分实机物理闭环与离线公平基准）
 
-### 4.1 实时 Isaac Sim + V4 BA 物理闭环（两轮独立实盘验证）
+### 4.1 实时 Isaac Sim + V4 BA 物理闭环（主力双模型同台实机验收）
 
-1. **实盘 A · 视觉哨兵闭环与安全停车锁死验证**：
-   - 产物：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-streaming-task/static_task_qwen_verified_20261125T105150Z/`
-   - 配置：`qwen3.8-flash` 主干 + `glm-5.3-flash` 并行哨兵 + V4 在线 BA `--backend-pose`
-   - 实证结果：
-     - 哨兵真实收到在线图像与拓扑摘要（`last_request_modalities: {"has_memory_l0": true, "images": ["front_rgb"], "l0_rev": 0}`，`10` 次调用 `0` 超时，`p50 = 3.76 s`）；
-     - Step 1 目标 `red double door` 经独立 LiDAR 射线测距入库（`producer="vlm_lidar_grounded"`, `range_source="height_chart_lidar_raycast"`, `[8.33, -1.86]`）；
-     - Step 2 哨兵基于实时前视画面主动下发 `STOP`（`seq=3, action_epoch=1`），主循环立即锁死（`terminal_status="sentinel_stop_locked"`），同步收到 `stop_accepted` 回执后干净退出（`CAPTURE_EXIT=0`）。
+两轮实机测试均采用最新提交（独立 LiDAR `height_chart_*.npz` 射线测距 STOP 门 + 冻结目标 `red double door` + `qwen3.8-flash` 并行视觉哨兵 + `stop_verified & stop_confirmed` 双确认退出）：
 
-2. **实盘 B · 独立 LiDAR 测距 STOP 端到端成功验收**：
-   - 产物：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-static-streaming-task/static_task_qwen_lidar_stop_20261125T105416Z/`
-   - 配置：`qwen3.8-flash` 主干 + V4 在线 BA `--backend-pose`（`stop_radius_m = 1.5`）
-   - 实证结果：
-     - 机器人从 `[0.01, 0.01, 0.01]` 实走 **`7.22 m`** 抵近至 `[7.22, -0.12, 0.02]`（修复前仅走到 `3.74 m` 即靠 VLM 自猜 `1.28 m` 早停）；
-     - Step 4 前视 `rgb.png` 近距离正对红色双开门及推杆，通过独立 LiDAR 测距校验（`distance_m = 1.178 m <= 1.5 m`, `range_source = "height_chart_lidar_raycast"`, `evidence_frame = "map"`, `evidence_stamp_s = 6.975`, `same_floor = True`）；
-     - **4 步 / `87.22 s` 达成 `verified_stop_success`**，`0` 失败、`0` fallback，退出清理同步取得 `stop_accepted`（`seq=4`），`CAPTURE_EXIT=0`。
+| 实机组合（均开启 V4 在线 BA `--backend-pose`） | 主干配置 | 哨兵配置 | 结果 | 步数 / 总时长 | 实走里程 | LiDAR 验收距 | 哨兵调用 / 误停 | 停车回执 / 仿真退出 |
+| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **组合 1 · `qwen3.8-flash` 全视觉闭环** | `qwen3.8-flash`（原生视觉、`enable_thinking=False`、`30 s / 380 tok`） | `qwen3.8-flash`（`front_rgb + memory_l0`） | **`verified_stop_success`** | `4 步 / 165.96 s`（含 1 步上游 `SSLEOFError` 安全 `noop` 恢复） | `7.54 m` | **`1.044 m`**（历史 LiDAR 锚点） | `20 次 / 0 误停`（`p50=5.63 s`） | `stop_accepted (seq=3)` / `exit 0` |
+| **组合 2 · `deepseek-v4.1-flash` 原生视觉 High 思考闭环** | `deepseek-v4.1-flash`（原生视觉、`reasoning_effort=high`、`90 s / 2048 tok`） | `qwen3.8-flash`（`front_rgb + memory_l0`） | **`verified_stop_success`** | **`3 步 / 98.22 s`**（`0` 失败、`0` 回退） | `7.40 m` | **`1.088 m`**（Step 2 LiDAR 锚点，正对双开门推杆） | `9 次 / 0 误停`（`p50=5.82 s`） | `stop_accepted (seq=3)` / `exit 0` |
+
+- **产物路径**：
+  - 组合 1：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-two-model-live-eval/combo1_qwen38_flash_20261125T113357Z/`
+  - 组合 2：`$PROJECT_DATA_ROOT/embodied-navigation/runs/20261125-two-model-live-eval/combo2_deepseek41_native_vision_20261125T114729Z/`
+- **实机对比亮点**：
+  - 实测证实 OpenCode Go 的 `deepseek-v4.1-flash` **原生支持视觉输入**（`supports_vision=True`），在 `high` 思考模式下第 1 步即精准识别 `-11°` 处红色双开门并自主执行 `maneuver` 对准航向，第 2 步直达 `M1`，第 3 步正对双开门中心与黑色推杆以 `1.088 m` 完成 LiDAR 校验与 `stop_accepted` 停机；
+  - 将哨兵模型由早期测试的 `glm-5.3-flash` 切换为 `qwen3.8-flash` 并加上 `active_seq` 绑定与刹车安全期抑制后，两轮共 **`29` 次实时视觉哨兵调用 `0` 误停**。
 
 ### 4.2 修复版 30 题公平离线评测（独立私有真值 + 门户路径 + 单变量消融）
 
