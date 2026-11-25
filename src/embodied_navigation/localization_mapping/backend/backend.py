@@ -653,6 +653,7 @@ class SlamBackend:
                 last_loop_age_s = age if np.isfinite(age) else None
         stats.update(
             {
+                "mode": "prior_localization" if self.prior is not None else "mapping",
                 "travel_m": travel_m,
                 "travel_since_last_loop_m": travel_since_last_loop_m,
                 "last_loop_age_s": last_loop_age_s,

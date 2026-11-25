@@ -57,19 +57,40 @@ from pathlib import Path
 # Mirror the simulator gate: refuse a ground-truth frame before the file is written.
 from embodied_navigation.common.runtime_io import atomic_write_json
 from embodied_navigation.common.state_contract import FORBIDDEN_POSE_SOURCES
-from embodied_navigation.simulation.dynanav.native_waypoints import PROTOCOL_VERSION
+from embodied_navigation.planning.exploration.waypoint_mailbox import (
+    ACTION_COMPLETION_EVENTS,
+    ACTION_FAILURE_STATUS,
+    DEFAULT_MAILBOX_NAME,
+    EXIT_ACTION_FAILED,
+    EXIT_ACTION_TIMEOUT,
+    EXIT_OK,
+    EXIT_USAGE,
+    GLOBAL_ACTION_STATUS,
+    PROTOCOL_VERSION,
+    ReceiptCursor,
+    action_exit_code,
+    build_request,
+    latest_sim_frame,
+    mailbox_for,
+    next_sequence,
+    read_json,
+    read_observation,
+    run_id_for,
+    state_path_for,
+    submit,
+    summarize_observation,
+    tail_receipts,
+    timeout_result,
+    wait_for_action,
+    write_heartbeat,
+    _action_result,
+    _match_action_result,
+    _receipt_run_matches,
+    _same_sequence,
+)
 
-DEFAULT_MAILBOX_NAME = "interactive"
 OCCUPIED = 1
 FREE = 0
-
-# Exit codes of the waiting CLI paths (--wait and scan). The timeout code is
-# deliberately distinct from a failure so an upper layer can retry a pending
-# action once, but can never re-send an action the tracker already rejected.
-EXIT_OK = 0
-EXIT_ACTION_FAILED = 1
-EXIT_ACTION_TIMEOUT = 2
-EXIT_USAGE = 3
 
 # A /clock sample older than this wall age is not the current source clock: the
 # snapshot must not pretend a now it does not have. 0.25 s matches the map
@@ -77,415 +98,11 @@ EXIT_USAGE = 3
 MAP_CLOCK_MAX_WALL_AGE_S = 0.25
 
 EXIT_CODE_HELP = """exit codes:
-  0  action completed (yaw_complete, maneuver_complete, waypoint_reached)
+  0  action completed (yaw_complete, maneuver_complete, waypoint_reached, cancel/stop_accepted)
   1  action rejected/cancelled/dropped/expired/held, or the run latched a terminal
   2  no closing receipt within the timeout (still pending; do not re-send blindly)
   3  request refused locally (invalid argument, missing mailbox, unavailable ROS)
 """
-
-# Recipient events that close one action successfully; each names the action seq.
-ACTION_COMPLETION_EVENTS = ("yaw_complete", "maneuver_complete", "waypoint_reached")
-# Receipt events that close one action unsuccessfully, keyed to their status.
-# The tracker writes request_rejected for a refused request, action_cancelled
-# for a local action it aborts, waypoint_dropped/waypoint_expired for follower
-# failures and action_expired for a local action whose TTL elapsed.
-ACTION_FAILURE_STATUS = {
-    "yaw_failed": "failed",
-    "request_rejected": "rejected",
-    "maneuver_rejected": "rejected",
-    "waypoint_rejected": "rejected",
-    "yaw_rejected": "rejected",
-    "waypoint_dropped": "dropped",
-    "waypoint_failed": "failed",
-    "waypoint_expired": "expired",
-    "action_expired": "expired",
-    "action_cancelled": "cancelled",
-}
-# Receipts that concern the whole run rather than one sequence number: the
-# tracker writes "terminal" (latched failure, no seq) and "hold" (blocked tick,
-# no seq).
-GLOBAL_ACTION_STATUS = {"terminal": "terminal", "hold": "held"}
-
-
-def mailbox_for(run_dir, mailbox=None):
-    """Resolve the mailbox directory for one run."""
-    return Path(mailbox) if mailbox else Path(run_dir) / DEFAULT_MAILBOX_NAME
-
-
-def read_json(path, default=None):
-    """Read a JSON file, returning default when it does not exist or is invalid."""
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return default
-
-
-def run_id_for(mailbox):
-    """Run id used by the simulator for this mailbox (the run directory name)."""
-    return Path(mailbox).parent.name
-
-
-def state_path_for(mailbox):
-    """Operator-owned sequence state, kept inside the mailbox for auditability."""
-    return Path(mailbox) / "operator-state.json"
-
-
-def next_sequence(mailbox):
-    """Return the next strictly increasing request sequence number."""
-    state = read_json(state_path_for(mailbox), {}) or {}
-    last = state.get("last_sequence")
-    if isinstance(last, bool) or not isinstance(last, int) or last < 0:
-        last = 0
-    return last + 1
-
-
-def _number(value, name):
-    """Return value as a finite float or raise."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as error:
-        raise ValueError(name + " must be a finite number") from error
-    if not math.isfinite(number):
-        raise ValueError(name + " must be a finite number")
-    return number
-
-
-def build_request(
-    *,
-    seq,
-    action,
-    goal=None,
-    ttl_s=30.0,
-    pose_source,
-    run_id,
-    created_wall_s,
-    extra=None,
-):
-    """Build one request payload, validating it before it reaches the mailbox."""
-    if action not in ("goto", "waypoint", "cancel", "stop", "yaw", "maneuver"):
-        raise ValueError("unsupported action")
-    if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
-        raise ValueError("seq must be a positive integer")
-    if not math.isfinite(ttl_s) or not 1.0 <= ttl_s <= 120.0:
-        raise ValueError("ttl_s must be within [1, 120] s")
-    payload = {
-        "version": PROTOCOL_VERSION,
-        "seq": seq,
-        "action": action,
-        "created_wall_s": float(created_wall_s),
-        "ttl_s": float(ttl_s),
-        "run_id": run_id,
-    }
-    extra = {} if extra is None else dict(extra)
-    if action in ("goto", "waypoint", "yaw", "maneuver"):
-        if pose_source in FORBIDDEN_POSE_SOURCES:
-            raise ValueError(
-                "a ground-truth waypoint frame is forbidden; the simulator rejects it too"
-            )
-    if action == "yaw":
-        from embodied_navigation.navigation.yaw_action import yaw_request_parameters
-        payload.update(yaw_request_parameters(extra))
-        payload["pose_source"] = pose_source
-        payload["map_frame_note"] = "live estimator map frame; operator-selected"
-        return payload
-    if action == "maneuver":
-        forward = _number(extra.get("body_forward_mps", 0.0), "body_forward_mps")
-        lateral = _number(extra.get("body_lateral_mps", 0.0), "body_lateral_mps")
-        yaw_rate = _number(extra.get("yaw_rate_rps", 0.0), "yaw_rate_rps")
-        duration = _number(extra.get("duration_s"), "duration_s")
-        if abs(forward) > 1.0:
-            raise ValueError("body_forward_mps must not exceed the 1.0 m/s ceiling")
-        if abs(lateral) > 0.05:
-            raise ValueError("body_lateral_mps must be within +/-0.05 m/s")
-        if abs(yaw_rate) > 0.15:
-            raise ValueError("yaw_rate_rps must be within +/-0.15 rad/s")
-        if not 0.1 <= duration <= 2.0:
-            raise ValueError("duration_s must be within [0.1, 2.0] s")
-        payload["body_forward_mps"] = forward
-        payload["body_lateral_mps"] = lateral
-        payload["yaw_rate_rps"] = yaw_rate
-        payload["duration_s"] = duration
-        payload["pose_source"] = pose_source
-        payload["map_frame_note"] = "body frame of the live estimator pose"
-        return payload
-    if action in ("goto", "waypoint"):
-        if goal is None or len(goal) != 3:
-            raise ValueError("goal must be an XYZ triple")
-        xyz = [float(value) for value in goal]
-        if not all(math.isfinite(value) for value in xyz):
-            raise ValueError("goal must be three finite numbers")
-        reverse = extra.get("reverse", False)
-        if type(reverse) is not bool:
-            raise ValueError("reverse must be boolean")
-        if reverse:
-            payload["reverse"] = True
-        payload["goal_xyz_m"] = xyz
-        payload["pose_source"] = pose_source
-        payload["map_frame_note"] = "live estimator map frame; operator-selected"
-    return payload
-
-
-def submit(
-    mailbox, *, action, goal=None, ttl_s=30.0, pose_source=None, run_id=None, extra=None
-):
-    """Publish one request and advance the operator sequence state."""
-    mailbox = Path(mailbox)
-    if not mailbox.is_dir():
-        raise FileNotFoundError(f"mailbox does not exist: {mailbox}")
-    seq = next_sequence(mailbox)
-    payload = build_request(
-        seq=seq,
-        action=action,
-        goal=goal,
-        ttl_s=ttl_s,
-        pose_source=pose_source,
-        run_id=run_id if run_id is not None else run_id_for(mailbox),
-        created_wall_s=time.perf_counter(),
-        extra=extra,
-    )
-    atomic_write_json(mailbox / "request.json", payload)
-    atomic_write_json(
-        state_path_for(mailbox),
-        {
-            "last_sequence": seq,
-            "last_action": action,
-            "submitted_wall_s": payload["created_wall_s"],
-        },
-    )
-    return payload
-
-
-def write_heartbeat(mailbox, *, run_id=None):
-    """Refresh the operator liveness file the simulator enforces."""
-    mailbox = Path(mailbox)
-    payload = {
-        "wall_s": time.perf_counter(),
-        "run_id": run_id if run_id is not None else run_id_for(mailbox),
-        "client": "dsh-explore-waypoint-client",
-    }
-    atomic_write_json(mailbox / "heartbeat.json", payload)
-    return payload
-
-
-def latest_sim_frame(run_dir):
-    """Describe the newest low-rate camera still written by the simulation."""
-    directory = Path(run_dir) / "interactive_frames"
-    try:
-        images = sorted(directory.glob("rgb_*.png"))
-    except OSError:
-        return None
-    if not images:
-        return None
-    index = directory / "index.jsonl"
-    return {
-        "latest": str(images[-1]),
-        "count": len(images),
-        "index": str(index) if index.exists() else None,
-        "source": "rgb frame rendered by this simulation",
-        "pose_included": False,
-    }
-
-
-def _receipt_run_matches(receipt, run_id):
-    """Whether a receipt belongs to this run; an unknown run id is accepted."""
-    declared = receipt.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        # No trustworthy run id to compare against (mailbox outside a run dir).
-        return True
-    if declared is None:
-        return True
-    return isinstance(declared, str) and declared == run_id
-
-
-def _same_sequence(receipt, seq):
-    """Whether a receipt names exactly this action's sequence number."""
-    value = receipt.get("seq")
-    return isinstance(value, int) and not isinstance(value, bool) and value == seq
-
-
-def _action_result(receipt, status, seq, *, success, run_id):
-    """Return one structured action result: the receipt fields plus the verdict."""
-    result = dict(receipt)
-    declared_run = receipt.get("run_id")
-    result["run_id"] = (
-        declared_run if isinstance(declared_run, str) and declared_run else run_id
-    )
-    result["seq"] = seq
-    result["status"] = status
-    result["success"] = bool(success)
-    result["reason"] = receipt.get("reason")
-    return result
-
-
-def _match_action_result(receipts, seq, run_id):
-    """Return this sequence's verdict from one receipt tail, or None.
-
-    A receipt is this action's result only when it names this run and this
-    sequence number, so a receipt from another run or for an older/foreign seq
-    is never mistaken for it. A terminal receipt is global (the tracker writes
-    it without a seq) and always ends the wait. A hold carries no seq either, so
-    it only blocks this action once the action was accepted and the hold is
-    newer than that acceptance: a startup hold written before the request was
-    consumed must not fail a request that is still being accepted.
-    """
-    last_seq_index = -1
-    for index, receipt in enumerate(receipts):
-        if _receipt_run_matches(receipt, run_id) and _same_sequence(receipt, seq):
-            last_seq_index = index
-    for index, receipt in enumerate(receipts):
-        if not _receipt_run_matches(receipt, run_id):
-            continue
-        event = receipt.get("event")
-        if not isinstance(event, str) or not event:
-            continue
-        if event == "terminal":
-            return _action_result(
-                receipt, GLOBAL_ACTION_STATUS["terminal"], seq, success=False, run_id=run_id
-            )
-        if _same_sequence(receipt, seq):
-            if event in ACTION_COMPLETION_EVENTS:
-                return _action_result(
-                    receipt, "completed", seq, success=True, run_id=run_id
-                )
-            status = ACTION_FAILURE_STATUS.get(event)
-            if status is None and event.endswith("_rejected"):
-                status = "rejected"
-            if status is not None:
-                return _action_result(receipt, status, seq, success=False, run_id=run_id)
-            continue
-        if event == "hold" and last_seq_index >= 0 and index > last_seq_index:
-            return _action_result(
-                receipt, GLOBAL_ACTION_STATUS["hold"], seq, success=False, run_id=run_id
-            )
-    return None
-
-
-def timeout_result(seq, timeout_s, run_id):
-    """Return the structured result of a wait that expired without a receipt."""
-    return {
-        "event": "timeout",
-        "status": "timeout",
-        "success": False,
-        "reason": "timeout",
-        "seq": seq,
-        "run_id": run_id,
-        "timeout_s": timeout_s,
-    }
-
-
-def wait_for_action(mailbox, seq, timeout_s, poll_s=0.05):
-    """Wait for the structured result of one local action.
-
-    Returns immediately, before the timeout, when this seq is rejected or
-    cancelled (request_rejected, maneuver_rejected, waypoint_failed, waypoint_dropped,
-    waypoint_expired, action_expired, action_cancelled) or when the run latches
-    a global terminal receipt. The result carries the receipt's own fields plus
-    status (completed/rejected/failed/cancelled/dropped/expired/held/terminal/timeout),
-    success, reason, seq and run_id, so a rejected or cancelled action can never
-    be reported as still running.
-
-    Receipts from another run or for a different sequence number are ignored,
-    and a missing or corrupt receipts.jsonl simply means "no receipt yet" and
-    never raises. An expired wait returns status timeout (not a failure), which
-    the CLI maps to exit code 2 instead of 1.
-    """
-    if timeout_s <= 0:
-        raise ValueError("timeout_s must be positive")
-    if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
-        raise ValueError("seq must be a positive integer")
-    run_id = run_id_for(mailbox)
-    deadline = time.perf_counter() + timeout_s
-    while True:
-        result = _match_action_result(tail_receipts(mailbox, 40), seq, run_id)
-        if result is not None:
-            return result
-        if time.perf_counter() >= deadline:
-            return timeout_result(seq, timeout_s, run_id)
-        time.sleep(poll_s)
-
-
-def action_exit_code(result):
-    """Map one wait_for_action result to the documented CLI exit code."""
-    if result.get("success"):
-        return EXIT_OK
-    if result.get("status") == "timeout":
-        return EXIT_ACTION_TIMEOUT
-    return EXIT_ACTION_FAILED
-
-
-def read_observation(mailbox):
-    """Return the latest observation bundle or None."""
-    return read_json(Path(mailbox) / "observation.json")
-
-
-def tail_receipts(mailbox, count=8):
-    """Return the last count receipts as parsed objects; corruption is skipped."""
-    path = Path(mailbox) / "receipts.jsonl"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-    result = []
-    for line in lines[-count:]:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        # A receipt is a JSON object. A truncated or foreign writer can leave a
-        # bare scalar or list, which must never break the wait or the observe
-        # output, so only objects are treated as receipts.
-        if isinstance(parsed, dict):
-            result.append(parsed)
-    return result
-
-
-def summarize_observation(observation):
-    """Return a compact operator-facing summary of one observation bundle."""
-    if not observation:
-        return {"available": False}
-    pose = observation.get("pose", {})
-    waypoints = observation.get("waypoints", {})
-    speed = observation.get("speed", {})
-    link = observation.get("link", {})
-    return {
-        "available": True,
-        "run_id": observation.get("run_id"),
-        "sim_s": observation.get("sim_s"),
-        "pose": {
-            "source": pose.get("source"),
-            "frame": pose.get("map_frame"),
-            "position_xyz_m": pose.get("position_xyz_m"),
-            "yaw_rad": pose.get("yaw_rad"),
-            "sim_age_s": pose.get("sim_age_s"),
-            "wall_age_s": pose.get("wall_age_s"),
-            "fresh": pose.get("fresh"),
-        },
-        "measured_speed_mps": speed.get("pose_window_mps")
-        if speed.get("pose_window_mps") is not None
-        else speed.get("reported_twist_mps"),
-        "command_ceiling_mps": speed.get("command_ceiling_mps"),
-        "waypoints": {
-            "active_seq": waypoints.get("active_seq"),
-            "active_goal_xyz_m": waypoints.get("active_goal_xyz_m"),
-            "queued": waypoints.get("queued"),
-            "phase": waypoints.get("phase"),
-            "distance_to_goal_m": waypoints.get("distance_to_goal_m"),
-            "z_error_m": waypoints.get("z_error_m"),
-            "completed_goals": waypoints.get("completed_goals"),
-            "failed_goals": waypoints.get("failed_goals"),
-            "last_failure": waypoints.get("last_failure"),
-            "last_result": waypoints.get("last_result"),
-            "terminal_reason": waypoints.get("terminal_reason"),
-        },
-        "last_command": observation.get("command", {}).get("last_request"),
-        "link": link,
-        "coverage": observation.get("coverage"),
-        "map": observation.get("map", {}).get("provider"),
-        "native_guards": observation.get("guards", {}).get("native"),
-    }
 
 
 class OccupancyGrid:
@@ -642,6 +259,17 @@ def _wait_for_submitted(args, payload):
     return action_exit_code(result)
 
 
+def _with_preempt_and_epoch(args, extra, *, allow_preempt=True):
+    """Attach optional preempt and action_epoch CLI fields to request extra."""
+    merged = dict(extra)
+    if allow_preempt and getattr(args, "preempt", False):
+        merged["preempt"] = True
+    epoch = getattr(args, "action_epoch", None)
+    if epoch is not None:
+        merged["action_epoch"] = epoch
+    return merged
+
+
 def _cmd_goto(args):
     """Submit one waypoint for the local follower."""
     mailbox = mailbox_for(args.run_dir, args.mailbox)
@@ -649,7 +277,9 @@ def _cmd_goto(args):
         mailbox,
         action="goto",
         goal=[args.x, args.y, args.z],
-        extra={"reverse": getattr(args, "reverse", False)},
+        extra=_with_preempt_and_epoch(
+            args, {"reverse": getattr(args, "reverse", False)}
+        ),
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
@@ -663,9 +293,15 @@ def _cmd_simple(action):
 
     def handler(args):
         mailbox = mailbox_for(args.run_dir, args.mailbox)
-        payload = submit(mailbox, action=action, run_id=args.run_id)
+        extra = _with_preempt_and_epoch(args, {}, allow_preempt=False)
+        payload = submit(
+            mailbox,
+            action=action,
+            run_id=args.run_id,
+            extra=extra or None,
+        )
         print(json.dumps(payload, sort_keys=True))
-        return 0
+        return _wait_for_submitted(args, payload)
 
     return handler
 
@@ -686,15 +322,18 @@ def _cmd_observe(args):
 def _cmd_yaw(args):
     """Submit an independent relative turn or absolute measured-map heading."""
     mailbox = mailbox_for(args.run_dir, args.mailbox)
+    base_extra = (
+        {"delta_yaw_rad": math.radians(args.delta_deg)}
+        if args.delta_deg is not None
+        else {"target_yaw_rad": math.radians(args.target_deg), "frame_id": args.frame_id}
+    )
     payload = submit(
         mailbox,
         action="yaw",
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
-        extra=({"delta_yaw_rad": math.radians(args.delta_deg)}
-               if args.delta_deg is not None else
-               {"target_yaw_rad": math.radians(args.target_deg), "frame_id": args.frame_id}),
+        extra=_with_preempt_and_epoch(args, base_extra),
     )
     print(json.dumps(payload, sort_keys=True))
     return _wait_for_submitted(args, payload)
@@ -709,12 +348,15 @@ def _cmd_maneuver(args):
         ttl_s=args.ttl,
         pose_source=args.pose_source,
         run_id=args.run_id,
-        extra={
-            "body_forward_mps": args.forward,
-            "body_lateral_mps": args.lateral,
-            "yaw_rate_rps": args.yaw_rate,
-            "duration_s": args.duration,
-        },
+        extra=_with_preempt_and_epoch(
+            args,
+            {
+                "body_forward_mps": args.forward,
+                "body_lateral_mps": args.lateral,
+                "yaw_rate_rps": args.yaw_rate,
+                "duration_s": args.duration,
+            },
+        ),
     )
     print(json.dumps(payload, sort_keys=True))
     return _wait_for_submitted(args, payload)
@@ -2172,6 +1814,8 @@ def build_parser():
     goto.add_argument("--reverse", action="store_true", help="native_route only: follow the segment backwards while facing away from its bearing")
     goto.add_argument("--ttl", type=float, default=30.0)
     goto.add_argument("--pose-source", default="lio_estimate")
+    goto.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    goto.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(goto)
     goto.set_defaults(handler=_cmd_goto)
 
@@ -2184,6 +1828,8 @@ def build_parser():
     yaw.add_argument("--frame-id", help="Required map frame for --target-deg")
     yaw.add_argument("--ttl", type=float, default=30.0)
     yaw.add_argument("--pose-source", default="lio_estimate")
+    yaw.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    yaw.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(yaw)
     yaw.set_defaults(handler=_cmd_yaw)
 
@@ -2196,6 +1842,8 @@ def build_parser():
     maneuver.add_argument("--duration", type=float, required=True)
     maneuver.add_argument("--ttl", type=float, default=15.0)
     maneuver.add_argument("--pose-source", default="lio_estimate")
+    maneuver.add_argument("--preempt", action="store_true", help="preempt active/queued actions immediately")
+    maneuver.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
     _add_wait_options(maneuver)
     maneuver.set_defaults(handler=_cmd_maneuver)
 
@@ -2214,6 +1862,8 @@ def build_parser():
         simple = subparsers.add_parser(
             action, help=action + " the current waypoints", parents=[common]
         )
+        simple.add_argument("--action-epoch", type=int, default=None, help="monotonic action epoch gate")
+        _add_wait_options(simple)
         simple.set_defaults(handler=_cmd_simple(action))
 
     observe = subparsers.add_parser(

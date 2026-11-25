@@ -19,6 +19,7 @@ from embodied_navigation.common.runtime_telemetry import RuntimeTelemetry
 from embodied_navigation.common.time import float32_time_half_ulp
 from embodied_navigation.navigation.robogauge.route_tracker import RouteTracker
 from embodied_navigation.navigation.yaw_action import (
+    LOCAL_ACTION_BOUNDS,
     resolve_yaw_target,
     yaw_action_step,
     yaw_config,
@@ -99,12 +100,19 @@ class NativeWaypointTracker:
         self._events = []
         self._last_result = None
         self._action = None
+        self._action_epoch = 0
+        self._inbox_dir = self.mailbox / "waypoint-inbox"
+        self._inbox_seqs = set()
         self._yaw_window = None
         self._yaw_query_id = 0
         self._last_pose_evidence = {}
         self._yaw_config = dict(experiment.get("yaw_action") or yaw_config(experiment))
         self._yaw_config.update(max_sim_age_s=self.parameters["max_sim_age_s"],
                                 max_wall_age_s=self.parameters["max_wall_age_s"])
+        yaw_rate_ceiling = float(self._yaw_config.get("yaw_rate_rps", LOCAL_ACTION_BOUNDS["yaw_rate_rps"]))
+        self.parameters["command_bounds"]["yaw_rate_rps"] = yaw_rate_ceiling
+        self.parameters["command_bounds"]["route_yaw_rate_rps"] = LOCAL_ACTION_BOUNDS["yaw_rate_rps"]
+        self.parameters["command_bounds"]["maneuver_yaw_rate_rps"] = LOCAL_ACTION_BOUNDS["yaw_rate_rps"]
 
     @property
     def phase(self):
@@ -141,6 +149,8 @@ class NativeWaypointTracker:
         self._last_consumed = None
         self._command = [0., 0., 0.]
         self._yaw_window = None
+        if self._action is not None:
+            self._action.pop("_control_state", None)
 
     def _receipt(self, event, **fields):
         row = dict(protocol_version=PROTOCOL_VERSION, run_id=self.run_id, event=event, **fields)
@@ -179,8 +189,42 @@ class NativeWaypointTracker:
         self.invalidate_measurement()
         return self._finish("terminal", reason, evidence)
 
+    def _drain_inbox(self, now_wall=None):
+        """Consume ordered per-sequence inbox entries before falling back to request.json."""
+        if not self._inbox_dir.is_dir():
+            return
+        try:
+            entries = [
+                entry for entry in self._inbox_dir.iterdir()
+                if entry.is_file() and entry.suffix == ".json"
+            ]
+        except OSError:
+            return
+        entries.sort(key=lambda p: (0, int(p.stem)) if p.stem.isdigit() else (1, p.name))
+        for entry in entries:
+            try:
+                raw = entry.read_bytes()
+            except OSError:
+                continue
+            try:
+                entry.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                payload = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                self._receipt("request_rejected", reason="invalid_json")
+                continue
+            if isinstance(payload, dict) and type(payload.get("seq")) is int:
+                self._inbox_seqs.add(payload["seq"])
+                if len(self._inbox_seqs) > 2048:
+                    cutoff = self._last_seq - 1024
+                    self._inbox_seqs = {s for s in self._inbox_seqs if s > cutoff}
+            self._handle_request(payload, now_wall)
+
     def poll_request(self, now_wall=None):
-        """Consume each file revision once; sequence numbers never replay."""
+        """Consume ordered inbox entries and legacy request.json revisions once."""
+        self._drain_inbox(now_wall)
         try:
             raw = self.request_path.read_bytes()
         except FileNotFoundError:
@@ -192,6 +236,12 @@ class NativeWaypointTracker:
             payload = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             self._receipt("request_rejected", reason="invalid_json")
+            return
+        if (
+            isinstance(payload, dict)
+            and type(payload.get("seq")) is int
+            and payload["seq"] in self._inbox_seqs
+        ):
             return
         self._handle_request(payload, now_wall)
 
@@ -214,14 +264,35 @@ class NativeWaypointTracker:
                 raise ValueError("unsupported_action")
             if payload.get("pose_source", self.pose_source) != self.pose_source:
                 raise ValueError("pose_source_mismatch")
+            preempt = payload.get("preempt", False)
+            if type(preempt) is not bool:
+                raise ValueError("preempt_must_be_boolean")
+            if preempt and action in ("cancel", "stop"):
+                raise ValueError("preempt_not_supported_for_" + action)
+            raw_epoch = payload.get("action_epoch")
+            action_epoch = None
+            if raw_epoch is not None:
+                if type(raw_epoch) is not int or raw_epoch < 0:
+                    raise ValueError("invalid_action_epoch")
+                action_epoch = raw_epoch
+                if action_epoch < self._action_epoch:
+                    raise ValueError("stale_action_epoch")
+                if preempt and self._action_epoch > 0 and action_epoch <= self._action_epoch:
+                    raise ValueError("stale_action_epoch")
+            elif self._action_epoch > 0 and action != "stop":
+                raise ValueError("stale_action_epoch")
+
             if action in ("stop", "cancel"):
-                self._close_yaw("action_cancelled", reason="operator_" + action)
-                self._pending.clear()
-                self.tracker = self.active_waypoint = None
-                self.invalidate_measurement()
+                if action_epoch is not None and action_epoch > self._action_epoch:
+                    self._action_epoch = action_epoch
+                self._cancel_all(
+                    reason="operator_" + action,
+                    cancelled_by_seq=seq,
+                    run_continues=(action != "stop"),
+                )
                 if action == "stop":
                     self._terminal_reason = "interactive_stop"
-                self._receipt(action + "_accepted", seq=seq)
+                self._receipt(action + "_accepted", seq=seq, action_epoch=self._action_epoch)
                 return
             if action == "maneuver":
                 forward = _number(payload.get("body_forward_mps", 0.0), "body_forward_mps")
@@ -230,11 +301,11 @@ class NativeWaypointTracker:
                 duration = _number(payload.get("duration_s"), "duration_s")
                 if abs(forward) > self.speed:
                     raise ValueError("invalid_body_forward_mps")
-                if abs(lateral) > 0.05:
+                if abs(lateral) > LOCAL_ACTION_BOUNDS["lateral_mps"]:
                     raise ValueError("invalid_body_lateral_mps")
-                if abs(yaw_rate) > 0.15:
+                if abs(yaw_rate) > LOCAL_ACTION_BOUNDS["yaw_rate_rps"]:
                     raise ValueError("invalid_yaw_rate_rps")
-                if not 0.1 <= duration <= 2.0:
+                if not 0.1 <= duration <= LOCAL_ACTION_BOUNDS["maneuver_max_duration_s"]:
                     raise ValueError("invalid_duration_s")
                 created = _number(payload.get("created_wall_s"), "created_wall_s")
                 ttl = _number(payload.get("ttl_s", 30.), "ttl_s")
@@ -245,30 +316,30 @@ class NativeWaypointTracker:
                         raise ValueError("request_from_future")
                     if now_wall - created > ttl:
                         raise ValueError("request_expired")
-                self._close_yaw("action_cancelled", reason="superseded_by_maneuver")
-                if self.tracker is not None:
-                    self._events.extend(self.tracker.events)
-                    self._receipt("waypoint_dropped", **self.active_waypoint,
-                                  reason="operator_maneuver")
-                while self._pending:
-                    self._receipt("waypoint_dropped", **self._pending.popleft(),
-                                  reason="operator_maneuver")
-                self.tracker = self.active_waypoint = None
-                self.invalidate_measurement()
+                item_epoch = self._advance_epoch(action_epoch)
+                if preempt:
+                    self._preempt_active(preempted_by_seq=seq, action_name="maneuver")
+                else:
+                    self._supersede_active(action_name="maneuver")
                 command = [float(forward), float(lateral), float(yaw_rate)]
                 self._action = dict(
                     kind="maneuver", seq=seq, command=command, duration_s=float(duration),
                     start_sim_s=None, start_position_xyz_m=None, expires_wall_s=created + ttl,
+                    action_epoch=item_epoch,
                 )
                 self._receipt(
                     "maneuver_accepted", seq=seq, action="maneuver",
                     body_forward_mps=command[0], body_lateral_mps=command[1],
                     yaw_rate_rps=command[2], duration_s=float(duration),
                     ttl_s=ttl, pose_source=self.pose_source,
+                    action_epoch=item_epoch,
                 )
                 return
             if action == "yaw":
-                parameters = yaw_request_parameters(payload)
+                parameters = yaw_request_parameters(
+                    payload,
+                    max_yaw_rate_rps=self.parameters["command_bounds"]["yaw_rate_rps"],
+                )
                 created = _number(payload.get("created_wall_s"), "created_wall_s")
                 ttl = _number(payload.get("ttl_s", 30.), "ttl_s")
                 if not 1. <= ttl <= 120.:
@@ -278,22 +349,18 @@ class NativeWaypointTracker:
                         raise ValueError("request_from_future")
                     if now_wall - created > ttl:
                         raise ValueError("request_expired")
-                self._close_yaw("action_cancelled", reason="superseded_by_yaw")
-                if self.tracker is not None:
-                    self._events.extend(self.tracker.events)
-                    self._receipt("waypoint_dropped", **self.active_waypoint,
-                                  reason="operator_yaw")
-                while self._pending:
-                    self._receipt("waypoint_dropped", **self._pending.popleft(),
-                                  reason="operator_yaw")
-                self.tracker = self.active_waypoint = None
-                self.invalidate_measurement()
+                item_epoch = self._advance_epoch(action_epoch)
+                if preempt:
+                    self._preempt_active(preempted_by_seq=seq, action_name="yaw")
+                else:
+                    self._supersede_active(action_name="yaw")
                 self._yaw_query_id += 1
                 self._action = dict(kind="yaw", seq=seq, parameters=parameters,
                                     target_yaw_rad=None, expires_wall_s=created + ttl,
-                                    query_id=self._yaw_query_id)
+                                    query_id=self._yaw_query_id, action_epoch=item_epoch)
                 self._receipt("yaw_accepted", seq=seq, action="yaw", parameters=parameters,
-                              completion=self._yaw_config, ttl_s=ttl, pose_source=self.pose_source)
+                              completion=self._yaw_config, ttl_s=ttl, pose_source=self.pose_source,
+                              action_epoch=item_epoch)
                 return
             values = payload.get("goal_xyz_m")
             if not isinstance(values, (list, tuple)) or len(values) != 3:
@@ -304,7 +371,10 @@ class NativeWaypointTracker:
                 raise ValueError("reverse_must_be_boolean")
             if reverse and self.controller_name != "native_route":
                 raise ValueError("reverse_requires_native_route")
-            candidate = dict(seq=seq, goal_xyz_m=goal)
+            item_epoch = self._advance_epoch(action_epoch)
+            if preempt:
+                self._preempt_active(preempted_by_seq=seq, action_name=action)
+            candidate = dict(seq=seq, goal_xyz_m=goal, action_epoch=item_epoch)
             if reverse:
                 candidate["reverse"] = True
             self._pending.append(candidate)
@@ -312,11 +382,111 @@ class NativeWaypointTracker:
         except (ValueError, TypeError) as error:
             self._receipt("request_rejected", seq=seq if type(seq) is int else None, reason=str(error))
 
+    def _advance_epoch(self, action_epoch):
+        if action_epoch is not None and action_epoch > self._action_epoch:
+            self._action_epoch = action_epoch
+        return self._action_epoch if action_epoch is None else action_epoch
+
+    def _cancel_all(self, *, reason, cancelled_by_seq, run_continues):
+        """Emit action_cancelled receipts for active and every queued item."""
+        self._close_yaw(
+            "action_cancelled",
+            reason=reason,
+            cancelled_by_seq=cancelled_by_seq,
+            cancelled_by_epoch=self._action_epoch,
+        )
+        if self.active_waypoint is not None:
+            if self.tracker is not None:
+                self._events.extend(self.tracker.events)
+            self._receipt(
+                "action_cancelled",
+                **self.active_waypoint,
+                action="goto",
+                reason=reason,
+                cancelled_by_seq=cancelled_by_seq,
+                cancelled_by_epoch=self._action_epoch,
+                command=[0., 0., 0.],
+                run_continues=run_continues,
+            )
+        while self._pending:
+            self._receipt(
+                "action_cancelled",
+                **self._pending.popleft(),
+                action="goto",
+                reason=reason,
+                cancelled_by_seq=cancelled_by_seq,
+                cancelled_by_epoch=self._action_epoch,
+                command=[0., 0., 0.],
+                run_continues=run_continues,
+            )
+        self.tracker = self.active_waypoint = None
+        self.invalidate_measurement()
+
+    def _supersede_active(self, *, action_name):
+        """Close active yaw/maneuver and drop queued waypoints for non-preempt local actions."""
+        self._close_yaw("action_cancelled", reason="superseded_by_" + action_name)
+        if self.tracker is not None:
+            self._events.extend(self.tracker.events)
+            self._receipt("waypoint_dropped", **self.active_waypoint,
+                          reason="operator_" + action_name)
+        while self._pending:
+            self._receipt("waypoint_dropped", **self._pending.popleft(),
+                          reason="operator_" + action_name)
+        self.tracker = self.active_waypoint = None
+        self.invalidate_measurement()
+
+    def _preempt_active(self, *, preempted_by_seq, action_name):
+        """Atomically emit action_preempted for active/queued work and clear state."""
+        reason = "preempted_by_" + action_name
+        if self._action is not None:
+            self._close_yaw(
+                "action_preempted",
+                reason=reason,
+                preempted_by_seq=preempted_by_seq,
+                action_epoch=self._action_epoch,
+                preempted_by_epoch=self._action_epoch,
+                preempted_action_epoch=self._action.get("action_epoch"),
+            )
+        if self.active_waypoint is not None:
+            if self.tracker is not None:
+                self._events.extend(self.tracker.events)
+            item_fields = dict(self.active_waypoint)
+            item_epoch = item_fields.pop("action_epoch", None)
+            self._receipt(
+                "action_preempted",
+                **item_fields,
+                action="goto",
+                reason=reason,
+                preempted_by_seq=preempted_by_seq,
+                action_epoch=self._action_epoch,
+                preempted_by_epoch=self._action_epoch,
+                preempted_action_epoch=item_epoch,
+                command=[0., 0., 0.],
+                run_continues=True,
+            )
+        while self._pending:
+            item_fields = dict(self._pending.popleft())
+            item_epoch = item_fields.pop("action_epoch", None)
+            self._receipt(
+                "action_preempted",
+                **item_fields,
+                action="goto",
+                reason=reason,
+                preempted_by_seq=preempted_by_seq,
+                action_epoch=self._action_epoch,
+                preempted_by_epoch=self._action_epoch,
+                preempted_action_epoch=item_epoch,
+                command=[0., 0., 0.],
+                run_continues=True,
+            )
+        self.tracker = self.active_waypoint = None
+        self.invalidate_measurement()
+
     def _create_tracker(self, candidate, position, evidence):
         """Construct the original follower; planned adapters override this hook."""
         return RouteTracker([candidate["goal_xyz_m"]], position[:2].tolist(), reverse=candidate.get("reverse", False), **self._route_kwargs)
 
-    def _close_yaw(self, event, *, reason=None, evidence=None, completion=None):
+    def _close_yaw(self, event, *, reason=None, evidence=None, completion=None, **extra_fields):
         """Close the active local action (yaw or direct maneuver), leaving the sensing session alive."""
         action = self._action
         if action is None:
@@ -338,10 +508,12 @@ class NativeWaypointTracker:
                 frame_id=evidence.get("frame_id"), child_frame_id=evidence.get("child_frame_id"),
                 pose_source=self.pose_source, odom_stamp_s=evidence.get("odom_stamp_s"),
                 position_xyz_m=evidence.get("aligned_position_xyz_m"),
+                action_epoch=action.get("action_epoch", self._action_epoch),
                 command=[0., 0., 0.], run_continues=True,
             )
             if reason is not None:
                 fields["reason"] = reason
+            fields.update(extra_fields)
             self._receipt(close_event, **fields)
             self._action = None
             self.invalidate_measurement()
@@ -356,11 +528,13 @@ class NativeWaypointTracker:
                       frame_id=evidence.get("frame_id"), child_frame_id=evidence.get("child_frame_id"),
                       pose_source=self.pose_source, odom_stamp_s=evidence.get("odom_stamp_s"),
                       position_xyz_m=evidence.get("aligned_position_xyz_m"),
+                      action_epoch=action.get("action_epoch", self._action_epoch),
                       command=[0., 0., 0.], run_continues=True)
         if reason is not None:
             fields["reason"] = reason
         if action.get("space") is not None:
             fields["rotation_space"] = action["space"]
+        fields.update(extra_fields)
         self._receipt(event, **fields)
         if event == "yaw_failed":
             while self._pending:
@@ -442,6 +616,7 @@ class NativeWaypointTracker:
             return self._finish("idle", "yaw_failed", evidence)
         if space["status"] != "clear":
             self._yaw_window = None
+            action.pop("_control_state", None)
             return self._finish("hold", space.get("reason", "rotation_space_pending"), evidence)
         command, self._yaw_window, completion = yaw_action_step(
             action, self._yaw_config, context, self._yaw_window, yaw=yaw,
@@ -467,6 +642,13 @@ class NativeWaypointTracker:
             yaw_rad=evidence.get("aligned_yaw_rad"), fresh=status in ("tracking", "idle"),
             sim_age_s=evidence.get("sim_age_s"), wall_age_s=evidence.get("wall_age_s"),
             alignment="identity_in_live_estimator_map_frame")
+        active_action_epoch = (
+            self._action.get("action_epoch")
+            if self._action is not None
+            else self.active_waypoint.get("action_epoch")
+            if self.active_waypoint is not None
+            else None
+        )
         observation = dict(result, protocol_version=PROTOCOL_VERSION, run_id=self.run_id,
             written_wall_s=evidence.get("now_wall_s"), sim_s=evidence.get("current_sim_s"),
             source_ns=pose["stamp_ns"], pose=pose, active_waypoint=self.active_waypoint,
@@ -477,16 +659,21 @@ class NativeWaypointTracker:
                 active_goal_xyz_m=self.active_waypoint["goal_xyz_m"] if self.active_waypoint else None,
                 queued=len(self._pending), phase=self.phase, completed_goals=self.stage,
                 failed_goals=self._failed, last_failure=self._last_waypoint_failure,
-                failure=self.failure, terminal_reason=self.terminal_reason, last_result=self._last_result))
+                failure=self.failure, terminal_reason=self.terminal_reason, last_result=self._last_result,
+                current_epoch=self._action_epoch,
+                active_action_epoch=active_action_epoch,
+                action_epoch=active_action_epoch if active_action_epoch is not None else self._action_epoch))
         if self._action is not None:
             if self._action["kind"] == "yaw":
                 observation["yaw_action"] = dict(seq=self._action["seq"],
                     target_yaw_rad=self._action["target_yaw_rad"], parameters=self._action["parameters"],
-                    expires_wall_s=self._action["expires_wall_s"], completion=self._yaw_config)
+                    expires_wall_s=self._action["expires_wall_s"], completion=self._yaw_config,
+                    action_epoch=self._action.get("action_epoch"))
             else:
                 observation["maneuver_action"] = dict(seq=self._action["seq"],
                     command=list(self._action["command"]), duration_s=self._action["duration_s"],
-                    start_sim_s=self._action["start_sim_s"], expires_wall_s=self._action["expires_wall_s"])
+                    start_sim_s=self._action["start_sim_s"], expires_wall_s=self._action["expires_wall_s"],
+                    action_epoch=self._action.get("action_epoch"))
         observation["command"] = dict(last_request=self._command[:], bounds=self.parameters["command_bounds"], source=self.controller_name)
         current = evidence.get("aligned_position_xyz_m")
         observation["waypoints"]["distance_to_goal_m"] = (
@@ -584,7 +771,8 @@ class NativeWaypointTracker:
                 self._last_consumed = stamp
                 return result
             context = dict(sim=sim, stamp=stamp, raw_age=age, wall_age=wall_age,
-                distinct=distinct, imu_yaw_rate=omega, imu_source_stamp_s=imu_source_stamp_s,
+                distinct=distinct, imu_yaw_rate=omega, measured_yaw_rate_rps=omega,
+                imu_source_stamp_s=imu_source_stamp_s,
                 imu_arrival_wall_s=imu_arrival_wall_s, imu_frame=imu_frame, imu_valid=imu_valid)
             # Evaluate the inherited 50 Hz dwell on fresh duplicates too. Its
             # distinct-source and gyro-span checks still prevent false completion.

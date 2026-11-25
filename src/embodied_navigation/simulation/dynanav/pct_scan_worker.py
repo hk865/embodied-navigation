@@ -11,12 +11,14 @@ from collections import OrderedDict, deque
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import inspect
 import json
 import math
 import os
 from pathlib import Path
 import signal
 import subprocess
+import threading
 import time
 import uuid
 
@@ -354,6 +356,87 @@ class OwnedScan:
             self.log.close()
 
 
+class PctPlanCoordinator:
+    """Single-worker latest-wins PCT planning coordinator with active cancellation."""
+
+    def __init__(self, plan_fn, *, max_workers: int = 1, retry_interval_s: float = 1.0):
+        self._plan_fn = plan_fn
+        self._accepts_cancel = "cancel_event" in inspect.signature(plan_fn).parameters
+        self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._retry_interval_s = float(retry_interval_s)
+        self.active_seq = None
+        self.active_future = None
+        self.active_cancel = None
+        self.pending_job = None
+        self.last_attempt = 0.0
+
+    def on_request_changed(self, new_seq) -> None:
+        """Abort obsolete active work and drop superseded pending goals."""
+        if self.active_cancel is not None and self.active_seq != new_seq:
+            self.active_cancel.set()
+        if self.active_future is not None and self.active_seq != new_seq:
+            self.active_future.cancel()
+        if self.pending_job is not None and self.pending_job[0] != new_seq:
+            self.pending_job = None
+        self.last_attempt = 0.0
+
+    def _launch(self, seq, args, kwargs, now: float) -> None:
+        cancel_event = threading.Event()
+        self.active_seq = seq
+        self.active_cancel = cancel_event
+        self.last_attempt = now
+        self.pending_job = None
+        call_kwargs = dict(kwargs)
+        if self._accepts_cancel:
+            call_kwargs["cancel_event"] = cancel_event
+        self.active_future = self._pool.submit(self._plan_fn, *args, **call_kwargs)
+
+    def submit(self, seq: int, *args, now_mono: float | None = None, **kwargs) -> bool:
+        """Submit planning for seq, or overwrite latest pending goal while active aborts."""
+        now = time.monotonic() if now_mono is None else float(now_mono)
+        if self.active_future is not None:
+            if not self.active_future.done():
+                if self.active_seq != seq and self.active_cancel is not None:
+                    self.active_cancel.set()
+                self.pending_job = (seq, args, kwargs)
+                return False
+            return False
+        if self.last_attempt > 0.0 and (now - self.last_attempt) <= self._retry_interval_s:
+            return False
+        self._launch(seq, args, kwargs, now)
+        return True
+
+    def poll(self, current_seq, *, now_mono: float | None = None):
+        """Return finished future only if it belongs to current_seq and was not cancelled."""
+        if self.active_future is None or not self.active_future.done():
+            return None
+        fut = self.active_future
+        job_seq = self.active_seq
+        was_cancelled = bool(self.active_cancel is not None and self.active_cancel.is_set())
+        self.active_future = None
+        self.active_seq = None
+        self.active_cancel = None
+
+        pending = self.pending_job
+        self.pending_job = None
+        if pending is not None and pending[0] == current_seq:
+            now = time.monotonic() if now_mono is None else float(now_mono)
+            self._launch(pending[0], pending[1], pending[2], now)
+            return None
+
+        if current_seq is None or job_seq != current_seq or was_cancelled:
+            return None
+        return fut
+
+    def shutdown(self, wait: bool = True) -> None:
+        if self.active_cancel is not None:
+            self.active_cancel.set()
+        if self.active_future is not None:
+            self.active_future.cancel()
+        self.pending_job = None
+        self._pool.shutdown(wait=wait, cancel_futures=True)
+
+
 def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     import rclpy
     from rclpy.node import Node
@@ -437,12 +520,17 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         raw_vio_msgs=OrderedDict(),
     )
 
-    def plan_snapshot(points, track, start, goal, source, recent_points=None):
+    def plan_snapshot(points, track, start, goal, source, recent_points=None, *, cancel_event=None):
+        if cancel_event is not None and cancel_event.is_set():
+            return dict(status='cancelled', points_xyz_m=[], reason='cancelled', provenance={})
         planner = MeasuredPctPlanner(points, trajectory_body_xyz=track,
             body_support_offset_m=args.body_support_offset, start_blind_radius_m=args.pct_start_blind_radius, native_binary=args.pct_binary,
             max_grid_cells=parameters['pct_max_grid_cells'],
             generation=run_id, source_metadata=source)
-        result = planner.plan(start, goal)
+        plan_kwargs = {'cancel_event': cancel_event} if 'cancel_event' in inspect.signature(planner.plan).parameters else {}
+        result = planner.plan(start, goal, **plan_kwargs)
+        if cancel_event is not None and cancel_event.is_set():
+            return dict(status='cancelled', points_xyz_m=[], reason='cancelled', provenance=result.get('provenance', {}))
         if (not result['found'] and result.get('reason') == 'start_support_unobserved'
                 and recent_points is not None and len(recent_points) > 0 and len(recent_points) < len(points)):
             local_source = dict(source, local_recovery_window_s=local_recovery_window_s,
@@ -451,14 +539,17 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
                 body_support_offset_m=args.body_support_offset, start_blind_radius_m=args.pct_start_blind_radius,
                 native_binary=args.pct_binary, max_grid_cells=parameters['pct_max_grid_cells'],
                 generation=run_id, source_metadata=local_source)
-            local_result = local_planner.plan(start, goal)
+            local_kwargs = {'cancel_event': cancel_event} if 'cancel_event' in inspect.signature(local_planner.plan).parameters else {}
+            local_result = local_planner.plan(start, goal, **local_kwargs)
+            if cancel_event is not None and cancel_event.is_set():
+                return dict(status='cancelled', points_xyz_m=[], reason='cancelled', provenance=local_result.get('provenance', {}))
             if local_result['found']:
                 result = local_result
         return dict(status=('ready' if result['found'] else
                     'pending' if result.get('reason') == 'no_measured_support' else 'failed'),
                     points_xyz_m=result['body_path_xyz'], reason=result.get('reason'),
                     provenance=result['provenance'])
-    pool = ThreadPoolExecutor(max_workers=1)
+    plan_coordinator = PctPlanCoordinator(plan_snapshot, max_workers=1, retry_interval_s=1.0)
     snapshot_pool = ThreadPoolExecutor(max_workers=1)
     state = dict(request=None, child=None, revision=0, vio=None, pair=None, reference_stamp=None,
                  route_sent=False, future=None, snapshot_future=None, route=None, last_attempt=0.0,
@@ -873,6 +964,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
         if request != state['request']:
             if state['child']:
                 state['child'].close()
+            plan_coordinator.on_request_changed(request['seq'] if request is not None else None)
             state.update(request=request, child=None, revision=0, reference_stamp=None,
                          route_sent=False, future=None, route=None, last_attempt=0.0, handoff=None,
                          last_snapshot=0.0, terminal_failed=False,
@@ -884,6 +976,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             if request is not None:
                 output('pending', 'waiting_for_current_measured_map')
         if request is None or state['terminal_failed']:
+            plan_coordinator.poll(None)
             return
         vio, paired = state['vio'], state['pair']
         if vio is None or paired is None:
@@ -892,39 +985,44 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
             output('failed', 'post_vio_frame_mismatch')
             return
         if request.get('action') == 'yaw':
+            plan_coordinator.poll(None)
             poll_yaw()
             return
         if state['route'] is None:
-            future = state['future']
-            if future is None and time.monotonic() - state['last_attempt'] > 1.0:
-                position = vio.pose.pose.position
-                state['last_attempt'] = time.monotonic()
-                if not measured_voxels:
-                    return
-                recent_points = (
-                    select_recent_voxels(
-                        measured_voxels, measured_stamps,
-                        latest_stamp_ns=source_interval[1],
-                        window_s=local_recovery_window_s,
+            done_future = plan_coordinator.poll(request['seq'])
+            if done_future is None and measured_voxels:
+                if plan_coordinator.active_future is None or plan_coordinator.active_seq != request['seq']:
+                    position = vio.pose.pose.position
+                    recent_points = (
+                        select_recent_voxels(
+                            measured_voxels, measured_stamps,
+                            latest_stamp_ns=source_interval[1],
+                            window_s=local_recovery_window_s,
+                        )
+                        if local_recovery_window_s > 0 else None
                     )
-                    if local_recovery_window_s > 0 else None
-                )
-                state['future'] = pool.submit(plan_snapshot, np.asarray(list(measured_voxels.values())),
-                    np.asarray(trajectory), [position.x, position.y, position.z], request['goal_xyz_m'],
-                    dict(cloud_topic=cloud_topic, lio_pose_topic=lio_topic, navigation_topic=vio_topic,
-                         map_frame=map_frames[0], child_frame=map_frames[1],
-                         source_interval_ns=list(source_interval), cloud_voxel_m=.08,
-                         local_map_window_s=local_map_window_s, local_map_radius_m=local_map_radius_m,
-                         transform=('backend_rigid_correction' if is_backend_pose else 'none_already_world'),
-                         pairing='exact_integer_nanoseconds',
-                         support_offset_kind='configured_mount_assumption_not_measured_floor'),
-                    recent_points)
-            elif future is not None and future.done():
-                state['future'] = None
+                    plan_coordinator.submit(
+                        request['seq'],
+                        np.asarray(list(measured_voxels.values())),
+                        np.asarray(trajectory),
+                        [position.x, position.y, position.z],
+                        request['goal_xyz_m'],
+                        dict(cloud_topic=cloud_topic, lio_pose_topic=lio_topic, navigation_topic=vio_topic,
+                             map_frame=map_frames[0], child_frame=map_frames[1],
+                             source_interval_ns=list(source_interval), cloud_voxel_m=.08,
+                             local_map_window_s=local_map_window_s, local_map_radius_m=local_map_radius_m,
+                             transform=('backend_rigid_correction' if is_backend_pose else 'none_already_world'),
+                             pairing='exact_integer_nanoseconds',
+                             support_offset_kind='configured_mount_assumption_not_measured_floor'),
+                        recent_points,
+                    )
+            elif done_future is not None:
                 try:
-                    result = future.result()
+                    result = done_future.result()
                 except Exception as error:
                     output('failed', 'pct_error:' + str(error))
+                    return
+                if result.get('status') == 'cancelled':
                     return
                 if result.get('status') != 'ready':
                     output(result.get('status', 'pending'), result.get('reason', 'pct_pending'))
@@ -1009,7 +1107,7 @@ def run(args, *, pct_max_grid_cells=DEFAULT_MAX_GRID_CELLS):
     finally:
         if state['child']:
             state['child'].close()
-        pool.shutdown(wait=True, cancel_futures=True)
+        plan_coordinator.shutdown(wait=True)
         snapshot_pool.shutdown(wait=True, cancel_futures=True)
         node.destroy_node()
         rclpy.shutdown()
