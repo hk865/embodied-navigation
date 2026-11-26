@@ -282,6 +282,59 @@ class DepthOccupancyGrid:
                     grid[c_mid] = 0
             grid[self._to_cell(float(xw), float(yw))] = 1
 
+    def estimate_clearance_profile(
+        self,
+        pose_xyz_mem: Sequence[float],
+        *,
+        num_sectors: int = 16,
+        max_range_m: float = 4.5,
+    ) -> tuple[float, np.ndarray]:
+        """Ray-cast 360-degree obstacle clearance on the floor occupancy grid.
+
+        Returns ``(passage_clearance_m, sector_clearances)`` where ``passage_clearance_m``
+        measures minimum opposite-ray half-width across wall-bounded pairs so standing near
+        one wall inside an open room is not misclassified as a doorway bottleneck.
+        """
+        n_sec = max(8, int(num_sectors))
+        if n_sec % 2 != 0:
+            n_sec += 1
+        max_r = max(1.0, float(max_range_m))
+        rx, ry, rz = float(pose_xyz_mem[0]), float(pose_xyz_mem[1]), float(pose_xyz_mem[2])
+        grid = self._grid_for(rz)
+        sectors = np.full(n_sec, max_r, dtype=np.float64)
+        if not grid:
+            return round(max_r * 0.5, 3), sectors
+
+        step = max(0.05, self.resolution_m * 0.5)
+        n_steps = max(1, int(math.ceil(max_r / step)))
+        for k in range(n_sec):
+            ang = (2.0 * math.pi * k) / float(n_sec)
+            ca, sa = math.cos(ang), math.sin(ang)
+            hit_d = max_r
+            for s in range(1, n_steps + 1):
+                r = s * step
+                if r < 0.12:
+                    continue
+                cell = self._to_cell(rx + r * ca, ry + r * sa)
+                if grid.get(cell) == 1:
+                    hit_d = r
+                    break
+            sectors[k] = hit_d
+
+        half = n_sec // 2
+        bounded_half_widths: list[float] = []
+        for k in range(half):
+            d1 = float(sectors[k])
+            d2 = float(sectors[k + half])
+            if d1 < (max_r - 0.15) and d2 < (max_r - 0.15):
+                bounded_half_widths.append(0.5 * (d1 + d2))
+
+        if bounded_half_widths:
+            clearance = min(bounded_half_widths)
+        else:
+            clearance = float(np.percentile(sectors, 25))
+        return round(max(0.20, min(max_r, float(clearance))), 3), sectors
+
     def extract_frontiers(
         self,
         robot_xyz_mem: Sequence[float],
@@ -533,12 +586,40 @@ class DepthOccupancyGrid:
             and len(z["center_xyz"]) >= 3
             and abs(float(z["center_xyz"][2]) - rz) <= 1.5
         ]
-        for z in same_floor_zones[:12]:
+        zone_pos_map: dict[str, tuple[float, float]] = {}
+        for z in same_floor_zones[:14]:
             cxyz = z.get("center_xyz")
-            zid = z.get("zone_id")
+            zid = str(z.get("zone_id") or z.get("region_id") or "")
             if not zid:
                 continue
-            ztype = str(z.get("zone_type") or "open")[:14]
+            zone_pos_map[zid] = (float(cxyz[0]), float(cxyz[1]))
+        # Draw inter-region topological connections (doorway / open_passage / stair)
+        drawn_edges: set[tuple[str, str]] = set()
+        for z in same_floor_zones[:14]:
+            zid = str(z.get("zone_id") or z.get("region_id") or "")
+            if zid not in zone_pos_map:
+                continue
+            p1 = zone_pos_map[zid]
+            for conn in z.get("connected_regions") or ():
+                if not isinstance(conn, dict):
+                    continue
+                to_id = str(conn.get("to") or "")
+                if to_id not in zone_pos_map:
+                    continue
+                ek = (min(zid, to_id), max(zid, to_id))
+                if ek in drawn_edges:
+                    continue
+                drawn_edges.add(ek)
+                p2 = zone_pos_map[to_id]
+                via = str(conn.get("via") or "")
+                ls = "--" if via == "open_passage" else "-"
+                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], c="#60a5fa", lw=1.1, ls=ls, alpha=0.6, zorder=4)
+        for z in same_floor_zones[:14]:
+            cxyz = z.get("center_xyz")
+            zid = z.get("zone_id") or z.get("region_id")
+            if not zid:
+                continue
+            ztype = str(z.get("primary_label") or z.get("zone_type") or "open")[:14]
             status_tag = "*" if z.get("status") == "inspected_closeup" else "~"
             ax.text(
                 float(cxyz[0]),
@@ -548,7 +629,7 @@ class DepthOccupancyGrid:
                 fontsize=6.8,
                 ha="center",
                 va="center",
-                bbox={"facecolor": "#0f172a", "alpha": 0.55, "pad": 1.2, "edgecolor": "#334155"},
+                bbox={"facecolor": "#0f172a", "alpha": 0.62, "pad": 1.2, "edgecolor": "#334155"},
                 zorder=5,
             )
 

@@ -35,11 +35,20 @@ from embodied_navigation.agent_runtime import (
 from embodied_navigation.common.geometry import wrap_angle
 from embodied_navigation.common.runtime_io import atomic_write_json
 from embodied_navigation.localization_mapping.semantic_mapping import (
+    ROOM_PROTOTYPE_PROMPTS,
+    GlobalRegionMemory,
     HierarchicalMemoryStore,
     KeyframeSceneGraph,
+    RegionArchiveEntry,
+    TextureKeyframeSelector,
+    extract_rgbd_surface_voxels,
 )
 from embodied_navigation.localization_mapping.semantic_mapping.hierarchical_memory import (
     _label_strict_match,
+)
+from embodied_navigation.planning.exploration.llm_agent_client import (
+    LlmClientConfig,
+    _encode_image_part,
 )
 from embodied_navigation.perception.vision_tools import (
     GroundedDetection,
@@ -99,9 +108,13 @@ AGENT_RUNTIME_SYSTEM_PROMPT = (
     "Attached images when present:\n"
     "- Front RGB (when local vision segmentation is active, colored masks/boxes + metric "
     "distances like '[V1] bed 1.1m (0.89)' are overlaid directly on the image).\n"
-    "- Global 2.5D Floorplan (when moved between zones or requested via query_world): shows "
-    "explored floor free/occupied geometry, robot trail, Zone IDs (Z1*:ZoneType), remembered "
-    "landmarks, M* memory targets, and F* unexplored frontiers.\n\n"
+    "- Global 2.5D Floorplan (when moved between regions or requested via query_world): shows "
+    "explored floor free/occupied geometry, robot trail, geometric+semantic Region IDs "
+    "(R1*:living_room, R2~:kitchen, R3*:hallway) with doorway/passage links, remembered "
+    "landmarks, M* memory targets, and F* unexplored frontiers.\n"
+    "- Global Region Memory: structured index of explored regions with primary_label, "
+    "detailed_description, connected_regions, and Set-Cover minimal texture_keyframe_ids "
+    "(inspect any region visually via get_evidence(region_id='R1')).\n\n"
     "## [COGNITIVE & TOOL DISCIPLINE]\n"
     "1. Explore systematically via navigate_to(target_id='F*') toward unexplored doorways and "
     "glimpsed zones (avoid repeatedly revisiting zones marked 'inspected_closeup').\n"
@@ -133,8 +146,97 @@ class MotionFrameIndex:
     promoted_kf_id: str | None = None
 
 
+def _build_vlm_region_summarizer(
+    base_cfg: LlmClientConfig,
+    output_root: Path,
+    *,
+    summary_model: str = "qwen3.8-flash",
+) -> Callable[[RegionArchiveEntry, Sequence[str]], tuple[str | None, str | None] | None] | None:
+    """Create a fast non-thinking background VLM region summarizer for event-driven archive updates."""
+    if not base_cfg.provider or base_cfg.provider == "mock":
+        return None
+    fast_cfg = LlmClientConfig(
+        provider=base_cfg.provider,
+        base_url=base_cfg.base_url,
+        model=summary_model if base_cfg.provider == "opencode" else base_cfg.model,
+        api_key=base_cfg.api_key,
+        timeout_s=22.0,
+        max_tokens=220,
+        temperature=0.1,
+        supports_vision=True,
+        stream=False,
+        extra_body={"enable_thinking": False} if "qwen" in summary_model.lower() else None,
+    )
+    if not fast_cfg.api_key:
+        return None
+    client = OpenCodeToolChatClient(fast_cfg)
+    root_resolved = output_root.resolve()
+
+    def _summarize(
+        region: RegionArchiveEntry, rgb_paths: Sequence[str]
+    ) -> tuple[str | None, str | None] | None:
+        import json as _json
+
+        parts: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": (
+                    "Summarize this indoor room/region from its minimal Set-Cover keyframes.\n"
+                    f"Region ID: {region.region_id} | Floor: {region.floor_id} | "
+                    f"Initial label: {region.primary_label} | Clearance: {region.clearance_m:.2f}m\n"
+                    f"Detected objects: {list(region.objects[:8])}\n"
+                    f"Connected regions: {[c['to'] + '(' + c['to_label'] + ') via ' + c['via'] for c in region.connected_regions[:5]]}\n"
+                    "Return ONLY strict JSON: "
+                    '{"primary_label": "living_room|bedroom|kitchen|dining_room|bathroom|office|hallway|stairwell|lobby|closet|laundry", '
+                    '"detailed_description": "2 concise factual sentences describing layout, key furniture/landmarks, visual style, and visible doorways/exits."}'
+                ),
+            }
+        ]
+        attached = 0
+        for rp in rgb_paths[:3]:
+            try:
+                resolved = Path(rp).resolve()
+                resolved.relative_to(root_resolved)
+            except (OSError, ValueError):
+                continue
+            if not resolved.is_file():
+                continue
+            parts.append(_encode_image_part(resolved, max_edge=384, detail="low"))
+            attached += 1
+        if attached == 0:
+            return None
+        turn = client.complete_turn(
+            [
+                {
+                    "role": "system",
+                    "content": "You are a concise spatial-memory indexer. Output ONLY valid JSON.",
+                },
+                {"role": "user", "content": parts},
+            ],
+            tools=(),
+        )
+        if turn.fallback or not turn.content.strip():
+            return None
+        txt = turn.content.strip()
+        start = txt.find("{")
+        end = txt.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            parsed = _json.loads(txt[start : end + 1])
+        except ValueError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        lbl = str(parsed.get("primary_label") or "").strip() or None
+        desc = str(parsed.get("detailed_description") or "").strip() or None
+        return (lbl, desc) if (lbl or desc) else None
+
+    return _summarize
+
+
 class HabitatWorldDaemon:
-    """Self-updating Habitat perception, occupancy, keyframe, Zone, and 3D object store."""
+    """Self-updating Habitat perception, occupancy, surface-visibility keyframes, and global region archive."""
 
     def __init__(
         self,
@@ -147,6 +249,10 @@ class HabitatWorldDaemon:
         vision_score_threshold: float = 0.25,
         vision_fuse_threshold: float = 0.35,
         vision_max_prompts: int = 5,
+        region_summarizer_fn: Callable[
+            [RegionArchiveEntry, Sequence[str]], tuple[str | None, str | None] | None
+        ]
+        | None = None,
     ) -> None:
         self.sim = sim
         self.output_dir = Path(output_dir)
@@ -170,11 +276,15 @@ class HabitatWorldDaemon:
         self.vision_score_threshold = float(vision_score_threshold)
         self.vision_fuse_threshold = float(vision_fuse_threshold)
         self.vision_max_prompts = max(1, int(vision_max_prompts))
+        self.region_summarizer_fn = region_summarizer_fn
 
         self.memory = HierarchicalMemoryStore(
             KeyframeSceneGraph(), default_stop_radius_m=self.stop_radius_m
         )
         self.occ_grid = DepthOccupancyGrid()
+        self.texture_selector = TextureKeyframeSelector()
+        self.region_memory = GlobalRegionMemory(self.memory, self.texture_selector)
+        self._init_room_prototypes()
         self.motion_index: list[MotionFrameIndex] = []
 
         self.current_kf_id: str | None = None
@@ -197,9 +307,21 @@ class HabitatWorldDaemon:
         self.total_vision_fused = 0
         self.total_deferred_hits = 0
         self.total_refutations = 0
+        self.total_vlm_region_summaries = 0
         self._file_seq = 0
         self._vis_seq = 0
         self._map_seq = 0
+
+    def _init_room_prototypes(self) -> None:
+        if self.vision_client is None or not self.vision_has_embed:
+            return
+        protos: dict[str, tuple[float, ...]] = {}
+        for rtype, prompt in ROOM_PROTOTYPE_PROMPTS.items():
+            vec = self.vision_client.embed_text(prompt)
+            if vec is not None:
+                protos[rtype] = vec
+        if protos:
+            self.region_memory.set_prototype_embeddings(protos)
 
     def is_within_observed_map(
         self, goal_mem: Sequence[float], *, max_margin_m: float = 1.2
@@ -222,6 +344,9 @@ class HabitatWorldDaemon:
             self.memory = HierarchicalMemoryStore(
                 KeyframeSceneGraph(), default_stop_radius_m=self.stop_radius_m
             )
+            self.texture_selector = TextureKeyframeSelector()
+            self.region_memory = GlobalRegionMemory(self.memory, self.texture_selector)
+            self._init_room_prototypes()
             self._last_kf_xyz = None
         if not keep_occupancy:
             self.occ_grid = DepthOccupancyGrid()
@@ -231,6 +356,7 @@ class HabitatWorldDaemon:
         self.current_raw_rgb_path = None
         self.current_vis_rgb_path = None
         self.current_floorplan_path = None
+        self.current_zone_id = None
         self.current_detections = []
         self.latest_disambiguated_ok = False
         self.latest_disambiguated_kf = None
@@ -290,6 +416,20 @@ class HabitatWorldDaemon:
                 self.total_vision_fused += 1
         return fused
 
+    def _refresh_recent_keyframe_clearances(self, max_recent: int = 8) -> None:
+        """Re-estimate 360-deg occupancy clearance for recent keyframes as walls are revealed."""
+        kf_ids = list(self.memory.graph.keyframe_poses.keys())[-max(1, int(max_recent)) :]
+        for kid in kf_ids:
+            pose = self.memory.graph.keyframe_poses.get(kid)
+            if pose is None:
+                continue
+            p_xyz = [float(pose[0, 3]), float(pose[1, 3]), float(pose[2, 3])]
+            clr_m, sec_clr = self.occ_grid.estimate_clearance_profile(
+                p_xyz, num_sectors=16, max_range_m=4.5
+            )
+            self.memory.graph.keyframe_clearances[kid] = clr_m
+            self.memory.graph.keyframe_sector_clearances[kid] = sec_clr
+
     def ingest_sensor_frame(
         self,
         *,
@@ -297,7 +437,7 @@ class HabitatWorldDaemon:
         run_baseline_vision: bool = False,
         active_target: str = "",
     ) -> dict[str, Any]:
-        """Synchronize occupancy, Zone coverage, dual-trigger keyframes, and baseline vision."""
+        """Synchronize occupancy, surface-visibility keyframes, real clearance topology, and region summaries."""
         from PIL import Image
 
         robot_mem, yaw_rad, _ = self.agent_pose()
@@ -310,23 +450,26 @@ class HabitatWorldDaemon:
         med_depth = self._median_valid_depth(depth)
         seq = self.memory.allocate_step_seq()
         prev_zone = self.current_zone_id
-        zone_id = self.memory.record_zone_observation(
+        fallback_zone_id = self.memory.record_zone_observation(
             robot_mem, median_depth_m=med_depth, step_seq=seq
         )
-        self.current_zone_id = zone_id
 
-        # Check dual-trigger keyframe promotion:
-        # 1) Geometric/coverage trigger (>= 1.2m or >= 45 deg since last KF)
-        # 2) Semantic close-up evidence trigger (surface <= 1.6m & >= 0.75m moved)
-        if self._last_kf_xyz is None:
-            promote = True
-        else:
-            kf_dist = float(np.linalg.norm(pos_arr - self._last_kf_xyz))
-            kf_yaw = abs(float(wrap_angle(yaw_rad - self._last_kf_yaw)))
-            geom_trigger = (kf_dist >= 1.2) or (kf_yaw >= math.radians(45.0))
-            closeup_trigger = (med_depth <= 1.6) and (kf_dist >= 0.75)
-            promote = bool(force_keyframe or geom_trigger or closeup_trigger)
+        # Surface-visibility texture coverage admission (replaces naive fixed-distance/angle triggers)
+        T_world_body = _pose_matrix_zup(robot_mem, yaw_rad)
+        vox_q = extract_rgbd_surface_voxels(
+            depth,
+            T_world_body,
+            voxel_m=self.texture_selector.voxel_m,
+            hfov_deg=90.0,
+            camera_height_m=self.occ_grid.camera_height_m,
+            stride=8,
+        )
+        tex_dec = self.texture_selector.evaluate_voxels(vox_q, force=False)
+        promote = bool(force_keyframe or tex_dec.admit_texture)
 
+        clr_m, sec_clr = self.occ_grid.estimate_clearance_profile(
+            robot_mem, num_sectors=16, max_range_m=4.5
+        )
         promoted_kf_id: str | None = None
         if promote or (run_baseline_vision and self.current_kf_id is None):
             self._file_seq += 1
@@ -335,13 +478,20 @@ class HabitatWorldDaemon:
             Image.fromarray(rgb).save(raw_path)
             self.memory.graph.add_keyframe(
                 kf_id,
-                _pose_matrix_zup(robot_mem, yaw_rad),
-                clearance_m=0.8,
+                T_world_body,
+                clearance_m=clr_m,
                 rgb_path=str(raw_path),
+                sector_clearances=sec_clr,
             )
-            if len(self.memory.graph.keyframe_poses) >= 3:
-                self.memory.graph.segment_floors()
-                self.memory.graph.partition_rooms()
+            self.region_memory.record_keyframe_depth(kf_id, med_depth)
+            # Admit to minimal texture keyframe candidate pool whenever surface visibility gained
+            if tex_dec.admit_texture or (not self.texture_selector.records and len(vox_q) >= 8):
+                self.texture_selector.commit_candidate(
+                    kf_id,
+                    vox_q,
+                    pose_xyz=robot_mem,
+                    region_hint=prev_zone or "",
+                )
             if self.vision_client is not None and self.vision_has_embed:
                 emb = self.vision_client.embed_image(rgb)
                 if emb is not None:
@@ -352,7 +502,11 @@ class HabitatWorldDaemon:
             self._last_kf_yaw = float(yaw_rad)
             promoted_kf_id = kf_id
 
-        # Record lightweight motion index when traversing between keyframes
+        # Refresh occupancy clearances of recent keyframes so newly mapped walls expose doorways cleanly
+        if promoted_kf_id is not None or run_baseline_vision:
+            self._refresh_recent_keyframe_clearances(max_recent=8)
+
+        # Record lightweight motion index for frames between texture keyframes
         motion_dist = (
             float("inf")
             if self._last_motion_xyz is None
@@ -370,7 +524,7 @@ class HabitatWorldDaemon:
                     xyz_mem=(round(robot_mem[0], 3), round(robot_mem[1], 3), round(robot_mem[2], 3)),
                     yaw_rad=round(yaw_rad, 3),
                     median_depth_m=round(med_depth, 2),
-                    zone_id=zone_id,
+                    zone_id=self.current_zone_id or fallback_zone_id,
                     promoted_kf_id=promoted_kf_id,
                 )
             )
@@ -417,12 +571,29 @@ class HabitatWorldDaemon:
             self.current_detections = grounded_vdets
             self.current_vis_rgb_path = vis_path
 
+        # Sync geometric+semantic region archive, delayed Set-Cover pruning, and event-driven VLM summaries
+        frontiers = self.occ_grid.extract_frontiers(robot_mem, max_candidates=6)
+        reg_sync = self.region_memory.sync_from_scene_graph(
+            robot_mem,
+            active_frontiers=frontiers,
+            summarizer_fn=(self.region_summarizer_fn if run_baseline_vision else None),
+        )
+        self.total_vlm_region_summaries += len(reg_sync.get("summarized_regions") or ())
+        active_rid = reg_sync.get("current_region_id") or fallback_zone_id
+        self.current_zone_id = active_rid
+        cur_reg = self.region_memory.regions.get(str(active_rid))
+        cur_reg_label = cur_reg.primary_label if cur_reg is not None else "open_area"
+
         return {
             "seq": seq,
             "robot_mem": [round(v, 3) for v in robot_mem],
             "yaw_deg": round(math.degrees(yaw_rad), 1),
-            "zone_id": zone_id,
-            "zone_changed": (prev_zone != zone_id),
+            "zone_id": active_rid,
+            "region_label": cur_reg_label,
+            "zone_changed": bool(reg_sync.get("region_changed") or (prev_zone != active_rid)),
+            "clearance_m": clr_m,
+            "texture_admitted": tex_dec.admit_texture,
+            "texture_reason": tex_dec.reason,
             "keyframe_id": self.current_kf_id,
             "promoted_keyframe": promoted_kf_id,
         }
@@ -459,7 +630,11 @@ class HabitatWorldDaemon:
             return None
         self._map_seq += 1
         cands = self.current_candidates(target_label)
-        zones = self.memory.zone_coverage_summary(robot_mem)
+        zones = (
+            self.region_memory.region_summaries(robot_mem)
+            if self.region_memory.regions
+            else self.memory.zone_coverage_summary(robot_mem)
+        )
         objs = self.memory.l2_submap_entities(include_stale=False)["objects"]
         out_path = self.occ_grid.render_global_floorplan(
             self.frames_dir / f"floorplan_{self._map_seq:04d}.png",
@@ -606,22 +781,20 @@ class HabitatWorldDaemon:
         return hits, hit_rgbs
 
     def milestone_summary(self, active_target: str) -> str:
-        """Build a compact world-memory milestone for lazy context compaction."""
-        robot_mem, _, _ = self.agent_pose()
-        zones = self.memory.zone_coverage_summary(robot_mem)
-        zone_lines = [
-            f"{z['zone_id']}({z['zone_type']},{z['status']}): objs={z['objects'][:5]}"
-            for z in zones[:8]
-        ]
+        """Build a compact global semantic-region milestone for lazy context compaction."""
+        region_digest = self.region_memory.format_global_digest(max_regions=10)
         cands = self.current_candidates(active_target)
         refuted = [
             f"{oid}:was={meta.refuted_labels}"
             for oid, meta in self.memory._object_meta.items()
             if meta.epistemic_status == "refuted"
         ]
+        tex_m = self.texture_selector.diagnostic_metrics()
         return (
-            f"Active goal: {active_target or 'unspecified'} | map_rev={self.memory.map_revision}\n"
-            f"Zones: {'; '.join(zone_lines) if zone_lines else 'none'}\n"
+            f"Active goal: {active_target or 'unspecified'} | map_rev={self.memory.map_revision} | "
+            f"texture_kfs={tex_m['retained_texture_keyframes']}/{tex_m['total_candidates_admitted']} "
+            f"({tex_m['global_textured_voxels']} voxels)\n"
+            f"Global Region Memory:\n{region_digest}\n"
             f"Current candidates: {[c.get('id') for c in cands]}\n"
             f"Refuted objects: {refuted[:8]}"
         )
@@ -730,12 +903,15 @@ def build_agent_tools(
             **exec_info,
             "robot_xyz": ing["robot_mem"],
             "yaw_deg": ing["yaw_deg"],
-            "zone_id": ing["zone_id"],
+            "region_id": ing["zone_id"],
+            "region_label": ing.get("region_label", "open_area"),
             "keyframe_id": ing["keyframe_id"],
             "map_revision": daemon.memory.map_revision,
             "candidates": new_cands,
             "detections": [g.to_prompt_dict() for g in daemon.current_detections[:8]],
         }
+        if ing.get("zone_changed"):
+            payload["global_regions_digest"] = daemon.region_memory.format_global_digest()
         if zero_step:
             payload["already_at_goal"] = True
             payload["hint"] = (
@@ -917,7 +1093,9 @@ def build_agent_tools(
                 "top_objects": safe_objs,
                 "top_keyframes": safe_kfs,
                 "deferred_vision_hits": def_hits,
-                "zone_coverage": c2f["zone_coverage"],
+                "matched_regions": daemon.region_memory.search_regions(q, top_k=4),
+                "global_regions": daemon.region_memory.region_summaries(robot_mem),
+                "zone_coverage": daemon.region_memory.region_summaries(robot_mem) or c2f["zone_coverage"],
                 "candidates": daemon.current_candidates(target_label),
             },
             images=tuple(imgs),
@@ -925,6 +1103,43 @@ def build_agent_tools(
 
     def _handle_get_evidence(call: ToolCall) -> ToolResult:
         kf_id = str(call.arguments.get("keyframe_id", "")).strip()
+        reg_id = str(call.arguments.get("region_id", "")).strip()
+        if reg_id and not kf_id:
+            reg = daemon.region_memory.regions.get(reg_id)
+            if reg is None:
+                return ToolResult(
+                    call_id=call.call_id,
+                    name=call.name,
+                    payload={
+                        "error": "unknown_region_id",
+                        "region_id": reg_id,
+                        "available_regions": list(daemon.region_memory.regions.keys()),
+                    },
+                    is_error=True,
+                )
+            imgs: list[ImageAttachment] = []
+            attached_kfs: list[str] = []
+            for kid in reg.texture_keyframe_ids[:3]:
+                rp_k = daemon.memory.graph.keyframe_rgb_paths.get(kid)
+                if not rp_k:
+                    continue
+                try:
+                    resolved_k = Path(rp_k).resolve()
+                    resolved_k.relative_to(out_root)
+                except (OSError, ValueError):
+                    continue
+                if resolved_k.is_file():
+                    imgs.append(ImageAttachment(resolved_k, f"{reg.region_id}({reg.primary_label}) texture KF {kid}"))
+                    attached_kfs.append(kid)
+            return ToolResult(
+                call_id=call.call_id,
+                name=call.name,
+                payload={
+                    **reg.to_dict(),
+                    "attached_texture_keyframe_ids": attached_kfs,
+                },
+                images=tuple(imgs),
+            )
         rp = daemon.memory.graph.keyframe_rgb_paths.get(kf_id)
         if not rp:
             return ToolResult(
@@ -1144,11 +1359,16 @@ def build_agent_tools(
         (
             ToolSpec(
                 name="get_evidence",
-                description="Attach a raw historical L3 keyframe RGB by keyframe_id for direct visual review.",
+                description=(
+                    "Attach raw historical L3 keyframe RGB(s) by keyframe_id OR by region_id "
+                    "(returns that region's Set-Cover minimal texture keyframes + detailed summary)."
+                ),
                 parameters={
                     "type": "object",
-                    "properties": {"keyframe_id": {"type": "string"}},
-                    "required": ["keyframe_id"],
+                    "properties": {
+                        "keyframe_id": {"type": "string"},
+                        "region_id": {"type": "string", "description": "Region ID like 'R1' to inspect its texture keyframes."},
+                    },
                 },
             ),
             _handle_get_evidence,
@@ -1335,6 +1555,7 @@ class HabitatAgentRunner:
         vision_fuse_threshold: float = 0.35,
         max_context_tokens: int = 200_000,
         soft_compaction_tokens: int = 155_000,
+        enable_vlm_region_summary: bool = True,
         gpu_device_id: int = 0,
         seed: int = 42,
     ) -> None:
@@ -1352,6 +1573,7 @@ class HabitatAgentRunner:
         self.vision_fuse_threshold = float(vision_fuse_threshold)
         self.max_context_tokens = int(max_context_tokens)
         self.soft_compaction_tokens = int(soft_compaction_tokens)
+        self.enable_vlm_region_summary = bool(enable_vlm_region_summary)
         self.gpu_device_id = int(gpu_device_id)
         self.seed = int(seed)
 
@@ -1481,6 +1703,11 @@ class HabitatAgentRunner:
             st0.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
             sim.agents[0].set_state(st0)
 
+            reg_summarizer = (
+                _build_vlm_region_summarizer(self.chat_client.config, self.output_dir)
+                if self.enable_vlm_region_summary
+                else None
+            )
             daemon = HabitatWorldDaemon(
                 sim=sim,
                 output_dir=self.output_dir,
@@ -1489,6 +1716,7 @@ class HabitatAgentRunner:
                 vision_enhance_overlay=self.vision_enhance_overlay,
                 vision_score_threshold=self.vision_score_threshold,
                 vision_fuse_threshold=self.vision_fuse_threshold,
+                region_summarizer_fn=reg_summarizer,
             )
 
             shared_context: PrefixStableContextManager | None = None
@@ -1608,6 +1836,13 @@ class HabitatAgentRunner:
                 daemon.memory.record_zone_observation(
                     robot_mem, zone_type=zone_type, summary=note
                 )
+                if daemon.region_memory.current_region_id:
+                    daemon.region_memory.annotate_region(
+                        daemon.region_memory.current_region_id,
+                        primary_label=zone_type,
+                        detailed_description=note,
+                        source="agent_annotated",
+                    )
 
             tools = build_agent_tools(
                 daemon=daemon,
@@ -1706,12 +1941,13 @@ class HabitatAgentRunner:
                     "target_category": subtask.target_category,
                     "robot_xyz": ing0["robot_mem"],
                     "yaw_deg": ing0["yaw_deg"],
-                    "zone_id": ing0["zone_id"],
+                    "region_id": ing0["zone_id"],
+                    "region_label": ing0.get("region_label", "open_area"),
                     "keyframe_id": ing0["keyframe_id"],
                     "map_revision": daemon.memory.map_revision,
                     "candidates": cands0,
                     "detections": [g.to_prompt_dict() for g in daemon.current_detections[:8]],
-                    "zone_coverage": daemon.memory.zone_coverage_summary(ing0["robot_mem"]),
+                    "global_region_memory": daemon.region_memory.region_summaries(ing0["robot_mem"]),
                 }
 
                 # Create persistent PrefixStableContextManager on first valid subtask (or reset)
@@ -1754,13 +1990,22 @@ class HabitatAgentRunner:
                     on_attempt_cb=_on_stop_attempt,
                 )
 
+                def _tail_status_hook(_t_idx: int) -> str:
+                    rid = daemon.region_memory.current_region_id or daemon.current_zone_id or "R?"
+                    reg_obj = daemon.region_memory.regions.get(str(rid))
+                    rlbl = reg_obj.primary_label if reg_obj is not None else "open_area"
+                    tex_m = daemon.texture_selector.diagnostic_metrics()
+                    return (
+                        f"[map_rev={daemon.memory.map_revision} | region={rid}({rlbl}) | "
+                        f"regions={len(daemon.region_memory.regions)} | "
+                        f"tex_kfs={tex_m['retained_texture_keyframes']}/{tex_m['total_candidates_admitted']} | "
+                        f"atomic={active_state['primitives_used']}/{active_state['max_prim_budget']}]"
+                    )
+
                 runtime = EmbodiedAgentRuntime(
                     chat_client=self.chat_client,
                     context=shared_context,
-                    before_turn_hook=lambda t_idx: (
-                        f"[map_rev={daemon.memory.map_revision} | zone={daemon.current_zone_id} | "
-                        f"atomic={active_state['primitives_used']}/{active_state['max_prim_budget']}]"
-                    ),
+                    before_turn_hook=_tail_status_hook,
                     before_finish_hook=verifier,
                     world_milestone_fn=daemon.milestone_summary,
                     budget_exhausted_fn=lambda: int(active_state["primitives_used"]) >= int(active_state["max_prim_budget"]),
@@ -1876,6 +2121,12 @@ class HabitatAgentRunner:
                 "total_primitives": sum(int(r.get("primitives_used", 0)) for r in valid_reports),
                 "motion_index_frames": len(daemon.motion_index),
                 "keyframes_total": len(daemon.memory.graph.keyframe_poses),
+                "scene_graph_rooms": len(daemon.memory.graph.rooms),
+                "scene_graph_doorways": len(daemon.memory.graph.doorways),
+                "scene_graph_stairs": len(daemon.memory.graph.stairs),
+                "texture_keyframe_metrics": daemon.texture_selector.diagnostic_metrics(),
+                "vlm_region_summaries": daemon.total_vlm_region_summaries,
+                "global_regions": daemon.region_memory.region_summaries(),
                 "wall_s": round(time.perf_counter() - t_ep, 2),
                 "private_gt_counts": {k: len(v) for k, v in private_gt.items()},
                 "subtasks": subtask_reports,

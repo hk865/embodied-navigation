@@ -47,7 +47,7 @@ def resolve_agent_thinking(
             )
         return (
             {"thinking": {"type": "enabled"}},
-            max(120.0, float(base_timeout_s)),
+            max(180.0, float(base_timeout_s)),
             max(16384, int(base_max_tokens)),
         )
     if "qwen" in m:

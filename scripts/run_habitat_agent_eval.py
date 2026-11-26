@@ -50,6 +50,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-vision-overlay", action="store_true", default=False)
     parser.add_argument("--vision-score-threshold", type=float, default=0.25)
     parser.add_argument("--vision-fuse-threshold", type=float, default=0.35)
+    parser.add_argument("--no-vlm-region-summary", action="store_true", default=False)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args(argv)
 
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         vision_fuse_threshold=float(args.vision_fuse_threshold),
         max_context_tokens=int(args.max_context_tokens),
         soft_compaction_tokens=int(args.soft_compaction_tokens),
+        enable_vlm_region_summary=not bool(args.no_vlm_region_summary),
         seed=args.seed,
     )
     subtasks = [

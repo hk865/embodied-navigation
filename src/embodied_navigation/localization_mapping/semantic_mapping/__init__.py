@@ -29,6 +29,11 @@ from .hierarchical_memory import (
     StopVerificationResult,
     ZoneCoverageMeta,
 )
+from .region_memory import (
+    ROOM_PROTOTYPE_PROMPTS,
+    GlobalRegionMemory,
+    RegionArchiveEntry,
+)
 from .scene_graph import (
     DoorwayEdge,
     FloorNode,
@@ -38,15 +43,25 @@ from .scene_graph import (
     StairEdge,
 )
 from .scheduler import SemanticScheduler
+from .texture_keyframe_selector import (
+    SetCoverPruneResult,
+    TextureAdmissionResult,
+    TextureKeyframeRecord,
+    TextureKeyframeSelector,
+    extract_pointcloud_surface_voxels,
+    extract_rgbd_surface_voxels,
+)
 
 __all__ = [
     "DYNAMIC",
     "MEMORY_SCHEMA",
+    "ROOM_PROTOTYPE_PROMPTS",
     "STATIC",
     "UNKNOWN",
     "AttemptRecord",
     "DoorwayEdge",
     "FloorNode",
+    "GlobalRegionMemory",
     "HierarchicalMemoryStore",
     "KeyframeRichMeta",
     "KeyframeSceneGraph",
@@ -55,16 +70,23 @@ __all__ = [
     "ObjectNode",
     "Observation",
     "PointMask",
+    "RegionArchiveEntry",
     "RgbIndexReport",
     "RoomNode",
     "SemanticScheduler",
+    "SetCoverPruneResult",
     "StairEdge",
     "StopVerificationResult",
+    "TextureAdmissionResult",
+    "TextureKeyframeRecord",
+    "TextureKeyframeSelector",
     "ZoneCoverageMeta",
     "build_scene_graph_from_map_dir",
     "build_scene_graph_from_map_store",
     "estimate_keyframe_clearance_m",
     "estimate_keyframe_clearance_profile",
+    "extract_pointcloud_surface_voxels",
+    "extract_rgbd_surface_voxels",
     "load_rgb_index",
     "load_rgb_index_report",
     "read_snapshot",
