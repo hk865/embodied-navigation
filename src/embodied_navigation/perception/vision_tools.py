@@ -306,6 +306,73 @@ def ground_mask_with_depth(
     }
 
 
+def _box_iou(a: Sequence[float], b: Sequence[float]) -> float:
+    ix0 = max(float(a[0]), float(b[0]))
+    iy0 = max(float(a[1]), float(b[1]))
+    ix1 = min(float(a[2]), float(b[2]))
+    iy1 = min(float(a[3]), float(b[3]))
+    iw = max(0.0, ix1 - ix0)
+    ih = max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0.0:
+        return 0.0
+    area_a = max(0.0, float(a[2]) - float(a[0])) * max(0.0, float(a[3]) - float(a[1]))
+    area_b = max(0.0, float(b[2]) - float(b[0])) * max(0.0, float(b[3]) - float(b[1]))
+    union = area_a + area_b - inter
+    return float(inter / union) if union > 1e-9 else 0.0
+
+
+def _detection_iou(a: VisionDetection, b: VisionDetection) -> float:
+    if (
+        a.mask is not None
+        and b.mask is not None
+        and a.mask.shape == b.mask.shape
+    ):
+        inter = int(np.sum(a.mask & b.mask))
+        if inter == 0:
+            return 0.0
+        union = int(np.sum(a.mask | b.mask))
+        return float(inter / union) if union > 0 else 0.0
+    return _box_iou(a.box_xyxy, b.box_xyxy)
+
+
+def suppress_overlapping_detections(
+    detections: Sequence[VisionDetection],
+    *,
+    same_label_iou: float = 0.50,
+    cross_label_iou: float = 0.65,
+    cross_label_tie_ratio: float = 0.85,
+) -> list[VisionDetection]:
+    """Suppress duplicate same-label and weaker cross-label detections on the same object.
+
+    Open-vocabulary segmenters queried per prompt (e.g. SAM 3) often score the same
+    physical furniture strongly as its true class (``couch=0.85``) and weakly as a
+    neighboring class (``chair=0.38``). Suppressing weaker overlapping cross-label
+    masks prevents false-positive 3D memory pollution.
+    """
+    ordered = sorted(detections, key=lambda d: -float(d.score))
+    kept: list[VisionDetection] = []
+    for cand in ordered:
+        c_lbl = cand.label.strip().lower()
+        suppressed = False
+        for prev in kept:
+            iou = _detection_iou(cand, prev)
+            p_lbl = prev.label.strip().lower()
+            if c_lbl == p_lbl and iou >= float(same_label_iou):
+                suppressed = True
+                break
+            if (
+                c_lbl != p_lbl
+                and iou >= float(cross_label_iou)
+                and float(cand.score) < float(prev.score) * float(cross_label_tie_ratio)
+            ):
+                suppressed = True
+                break
+        if not suppressed:
+            kept.append(cand)
+    return kept
+
+
 def ground_detections_with_depth(
     detections: Sequence[VisionDetection],
     depth_m: np.ndarray,
@@ -315,10 +382,12 @@ def ground_detections_with_depth(
     min_range_m: float = 0.25,
     max_range_m: float = 10.0,
     min_valid_pixels: int = 16,
+    apply_nms: bool = True,
 ) -> list[GroundedDetection]:
     """Ground a sequence of 2D vision detections into metric 3D ``GroundedDetection`` items."""
+    dets_use = suppress_overlapping_detections(detections) if apply_nms else list(detections)
     out: list[GroundedDetection] = []
-    for det in detections:
+    for det in dets_use:
         g = ground_mask_with_depth(
             det.mask,
             depth_m,

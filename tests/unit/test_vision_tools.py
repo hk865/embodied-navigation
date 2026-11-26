@@ -28,6 +28,7 @@ from embodied_navigation.perception.vision_tools import (
     ground_detections_with_depth,
     ground_mask_with_depth,
     render_visual_enhancement_overlay,
+    suppress_overlapping_detections,
 )
 from embodied_navigation.planning.exploration.habitat_memory_runner import (
     HabitatMemoryRunner,
@@ -80,6 +81,22 @@ class TestMaskCodecAndPrompts(unittest.TestCase):
             max_prompts=4,
         )
         self.assertEqual(prompts, ["bed", "chair", "table", "couch"])
+
+    def test_cross_label_nms_suppresses_weaker_overlapping_class(self) -> None:
+        m_couch = np.zeros((64, 64), dtype=bool)
+        m_couch[10:50, 10:50] = True
+        m_chair_dup = np.zeros((64, 64), dtype=bool)
+        m_chair_dup[12:48, 12:48] = True  # IoU ~ 0.81 with couch
+        m_table_sep = np.zeros((64, 64), dtype=bool)
+        m_table_sep[45:60, 48:62] = True  # separate object
+
+        dets = [
+            VisionDetection("chair", 0.38, (12, 12, 48, 48), mask=m_chair_dup, backend="sam3"),
+            VisionDetection("couch", 0.85, (10, 10, 50, 50), mask=m_couch, backend="sam3"),
+            VisionDetection("table", 0.72, (48, 45, 62, 60), mask=m_table_sep, backend="sam3"),
+        ]
+        kept = suppress_overlapping_detections(dets)
+        self.assertEqual([d.label for d in kept], ["couch", "table"])
 
 
 class TestMaskDepthGroundingAndOverlay(unittest.TestCase):

@@ -11,6 +11,7 @@ from embodied_navigation.perception.vision_tools import (
     ground_detections_with_depth,
     ground_mask_with_depth,
     render_visual_enhancement_overlay,
+    suppress_overlapping_detections,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "ground_detections_with_depth",
     "ground_mask_with_depth",
     "render_visual_enhancement_overlay",
+    "suppress_overlapping_detections",
 ]

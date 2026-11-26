@@ -1547,11 +1547,22 @@ class HabitatMemoryRunner:
                                     if r_pt:
                                         oracle_reached = True
                                         break
-                            last_feedback = (
-                                f"goto {[round(v, 2) for v in goal_mem]} -> "
-                                f"{exec_info['status']} (+{exec_info['traveled_m']}m, "
-                                f"atomic_steps={primitives_used}/{max_prim_budget})."
-                            )
+                            if (
+                                exec_info.get("status") == "completed"
+                                and int(exec_info.get("primitives", 0)) == 0
+                                and float(exec_info.get("traveled_m", 0.0)) < 0.05
+                            ):
+                                last_feedback = (
+                                    f"Already at goal {[round(v, 2) for v in goal_mem]} (0 steps needed). "
+                                    "Do NOT repeat the same goto_candidate; if target is visible within stop_radius call stop_claim, "
+                                    "otherwise scan or explore a different frontier F*."
+                                )
+                            else:
+                                last_feedback = (
+                                    f"goto {[round(v, 2) for v in goal_mem]} -> "
+                                    f"{exec_info['status']} (+{exec_info['traveled_m']}m, "
+                                    f"atomic_steps={primitives_used}/{max_prim_budget})."
+                                )
                     elif decision.action in ("scan", "maneuver"):
                         # Turn 60 deg (4 x 15 deg) or short forward step using real primitives
                         rem_prims = max(0, max_prim_budget - primitives_used)
