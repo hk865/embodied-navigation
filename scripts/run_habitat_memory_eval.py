@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import sys
 
+from embodied_navigation.perception.vision_tools import VisionToolClient
 from embodied_navigation.planning.exploration.habitat_memory_runner import (
     HabitatMemoryRunner,
     HabitatSubtaskSpec,
@@ -66,6 +67,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Also reset the 2D depth occupancy grid between subtasks (default keeps occupancy constant for pure L0-L3 memory ablation).",
     )
+    parser.add_argument(
+        "--vision-endpoint",
+        default="",
+        help="Optional local vision tool HTTP endpoint (e.g. http://127.0.0.1:8114) for SAM 3 / YOLOE + SigLIP.",
+    )
+    parser.add_argument(
+        "--no-vision-overlay",
+        action="store_true",
+        default=False,
+        help="Disable drawing semi-transparent segmentation/distance overlays on the VLM front RGB.",
+    )
+    parser.add_argument(
+        "--vision-score-threshold",
+        type=float,
+        default=0.25,
+        help="Minimum vision detection score for overlay/prompt reporting.",
+    )
+    parser.add_argument(
+        "--vision-fuse-threshold",
+        type=float,
+        default=0.35,
+        help="Minimum vision detection score required to fuse into 3D HierarchicalMemoryStore.",
+    )
+    parser.add_argument(
+        "--vision-max-prompts",
+        type=int,
+        default=6,
+        help="Maximum open-vocabulary prompts per step (target is always first).",
+    )
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args(argv)
 
@@ -91,6 +121,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     out_dir = Path(args.output_dir)
     planner = OpenCodeTaskPlanner(cfg, allowed_image_roots=[out_dir])
+    vision_client = (
+        VisionToolClient(args.vision_endpoint, timeout_s=10.0)
+        if str(args.vision_endpoint or "").strip()
+        else None
+    )
     runner = HabitatMemoryRunner(
         scene_dataset_config=args.scene_dataset,
         scene_id=args.scene_id,
@@ -99,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
         stop_radius_m=args.stop_radius_m,
         memory_carryover=not args.no_memory_carryover,
         reset_occupancy_per_subtask=bool(args.reset_occupancy_per_subtask),
+        vision_client=vision_client,
+        vision_enhance_overlay=not bool(args.no_vision_overlay),
+        vision_score_threshold=float(args.vision_score_threshold),
+        vision_fuse_threshold=float(args.vision_fuse_threshold),
+        vision_max_prompts=int(args.vision_max_prompts),
         seed=args.seed,
     )
     subtasks = [

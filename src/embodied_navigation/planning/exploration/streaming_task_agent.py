@@ -68,7 +68,9 @@ _TASK_PLANNER_SYSTEM_PROMPT = (
     "You are an autonomous quadruped navigation agent operating in a static indoor "
     "multi-floor building using real SLAM poses, front RGB, annotated 2D maps, and "
     "versioned hierarchical spatial memory. Never invent coordinates outside sensors/memory.\n"
-    "Images attached (when present): image 1 = front RGB camera; image 2 = annotated "
+    "Images attached (when present): image 1 = front RGB camera (may carry color-coded "
+    "local vision-tool masks/boxes like '[V1] bed 1.4m (0.88)' grounded by real depth); "
+    "image 2 = annotated "
     "2D occupancy map with robot footprint, turning circle (green=safe to scan, red=tight), "
     "and numbered frontier/waypoint candidates (F1..F*, M1..M*, W1..W*). Additional images "
     "(if any) are Top-K L3 historical keyframe RGBs recalled for selective visual disambiguation.\n"
@@ -430,6 +432,7 @@ class OpenCodeTaskPlanner:
         estimated_travel_m: float = 0.0,
         last_feedback: str = "",
         tool_recall_result: dict[str, Any] | None = None,
+        vision_detections: Sequence[dict[str, Any]] = (),
         rgb_path: str | Path | None = None,
         local_map_path: str | Path | None = None,
         extra_rgb_paths: Sequence[str | Path] = (),
@@ -467,6 +470,8 @@ class OpenCodeTaskPlanner:
             "candidates": compact_cands,
         }
         tool_block: dict[str, Any] = {"last_action_receipt": last_feedback}
+        if vision_detections:
+            tool_block["vision_tool_detections"] = list(vision_detections)[:10]
         if tool_recall_result is not None:
             tool_block["memory_tool_recall"] = tool_recall_result
         elif memory_l1 or (memory_l2 and (memory_l2.get("objects") or memory_l2.get("failures"))):
@@ -618,6 +623,7 @@ class OpenCodeTaskPlanner:
         estimated_travel_m: float = 0.0,
         last_feedback: str = "",
         tool_recall_result: dict[str, Any] | None = None,
+        vision_detections: Sequence[dict[str, Any]] = (),
         rgb_path: str | Path | None = None,
         local_map_path: str | Path | None = None,
         extra_rgb_paths: Sequence[str | Path] = (),
@@ -640,6 +646,7 @@ class OpenCodeTaskPlanner:
             estimated_travel_m=estimated_travel_m,
             last_feedback=last_feedback,
             tool_recall_result=tool_recall_result,
+            vision_detections=vision_detections,
             rgb_path=rgb_path,
             local_map_path=local_map_path,
             extra_rgb_paths=extra_rgb_paths,

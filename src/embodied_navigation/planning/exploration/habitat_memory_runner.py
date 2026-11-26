@@ -30,6 +30,13 @@ from embodied_navigation.localization_mapping.semantic_mapping import (
 from embodied_navigation.localization_mapping.semantic_mapping.hierarchical_memory import (
     _label_strict_match,
 )
+from embodied_navigation.perception.vision_tools import (
+    GroundedDetection,
+    VisionToolClient,
+    build_vision_prompts,
+    ground_detections_with_depth,
+    render_visual_enhancement_overlay,
+)
 from embodied_navigation.planning.exploration.streaming_task_agent import (
     OpenCodeTaskPlanner,
     TaskDecision,
@@ -698,6 +705,12 @@ class HabitatMemoryRunner:
         stop_radius_m: float = 1.8,
         memory_carryover: bool = True,
         reset_occupancy_per_subtask: bool = False,
+        vision_client: VisionToolClient | None = None,
+        vision_enhance_overlay: bool = True,
+        vision_score_threshold: float = 0.25,
+        vision_fuse_threshold: float = 0.35,
+        vision_max_prompts: int = 6,
+        vision_deferred_l3: bool = True,
         gpu_device_id: int = 0,
         seed: int = 42,
     ) -> None:
@@ -709,6 +722,12 @@ class HabitatMemoryRunner:
         self.stop_radius_m = float(stop_radius_m)
         self.memory_carryover = bool(memory_carryover)
         self.reset_occupancy_per_subtask = bool(reset_occupancy_per_subtask)
+        self.vision_client = vision_client
+        self.vision_enhance_overlay = bool(vision_enhance_overlay)
+        self.vision_score_threshold = float(vision_score_threshold)
+        self.vision_fuse_threshold = float(vision_fuse_threshold)
+        self.vision_max_prompts = max(1, int(vision_max_prompts))
+        self.vision_deferred_l3 = bool(vision_deferred_l3)
         self.gpu_device_id = int(gpu_device_id)
         self.seed = int(seed)
 
@@ -901,6 +920,60 @@ class HabitatMemoryRunner:
                 reached = True
         return best_euc, best_geo, reached, best_gt
 
+    def _deferred_vision_scan_keyframes(
+        self,
+        query: str,
+        top_keyframes: Sequence[dict[str, Any]],
+        *,
+        has_seg: bool,
+        max_kfs: int = 2,
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Run free local vision-tool segmentation on Top-K historical L3 keyframes."""
+        if self.vision_client is None or not has_seg or not self.vision_deferred_l3:
+            return [], []
+        out_root = self.output_dir.resolve()
+        hits: list[dict[str, Any]] = []
+        hit_rgbs: list[str] = []
+        scanned = 0
+        for kf in top_keyframes:
+            if scanned >= max(1, int(max_kfs)):
+                break
+            rp = kf.get("rgb_path")
+            if not isinstance(rp, str) or not rp:
+                continue
+            try:
+                resolved = Path(rp).resolve()
+                resolved.relative_to(out_root)
+            except (OSError, ValueError):
+                continue
+            if not resolved.is_file():
+                continue
+            scanned += 1
+            dets = self.vision_client.segment_text(
+                resolved,
+                [query],
+                score_threshold=self.vision_fuse_threshold,
+                max_detections=3,
+                include_masks=False,
+                include_crop_embeddings=False,
+            )
+            if not dets:
+                continue
+            best = max(dets, key=lambda d: float(d.score))
+            hits.append(
+                {
+                    "keyframe_id": str(kf.get("keyframe_id", "")),
+                    "pose_xyz": kf.get("pose_xyz"),
+                    "label": best.label,
+                    "score": round(float(best.score), 2),
+                    "box_px": [int(round(v)) for v in best.box_xyxy],
+                    "backend": best.backend,
+                }
+            )
+            if str(resolved) not in hit_rgbs:
+                hit_rgbs.append(str(resolved))
+        return hits, hit_rgbs
+
     def run_sequential_episode(
         self,
         subtasks: Sequence[HabitatSubtaskSpec],
@@ -913,6 +986,16 @@ class HabitatMemoryRunner:
         import quaternion
 
         t_ep = time.perf_counter()
+        vision_health: dict[str, Any] = {"ok": False, "backend": "none", "embed_model": ""}
+        if self.vision_client is not None:
+            vision_health = self.vision_client.health()
+        vision_ok = bool(vision_health.get("ok"))
+        vision_has_seg = vision_ok and str(vision_health.get("backend", "none")) != "none"
+        vision_has_embed = vision_ok and bool(str(vision_health.get("embed_model", "")).strip())
+        total_vision_dets = 0
+        total_vision_fused = 0
+        total_deferred_hits = 0
+
         sim = self._create_sim()
         try:
             target_cats = sorted({st.target_category.strip().lower() for st in subtasks})
@@ -1048,14 +1131,27 @@ class HabitatMemoryRunner:
                 ):
                     _, _, init_sub_hab = self._agent_pose_mem(sim)
                     init_sub_mem = list(hab_to_mem(init_sub_hab))
+                    q_emb_init = (
+                        self.vision_client.embed_text(f"a photo of a {subtask.target_category}")
+                        if (self.vision_client is not None and vision_has_embed)
+                        else None
+                    )
                     c2f_init = memory.coarse_to_fine_search(
                         subtask.target_category,
                         robot_xyz=init_sub_mem,
+                        query_embedding=q_emb_init,
                         top_k_objects=4,
                         top_k_keyframes=3,
                         max_l3_images=2,
                     )
-                    if c2f_init["top_objects"] or c2f_init["top_keyframes"]:
+                    def_hits_init, def_rgbs_init = self._deferred_vision_scan_keyframes(
+                        subtask.target_category,
+                        c2f_init["top_keyframes"],
+                        has_seg=vision_has_seg,
+                        max_kfs=2,
+                    )
+                    total_deferred_hits += len(def_hits_init)
+                    if c2f_init["top_objects"] or c2f_init["top_keyframes"] or def_hits_init:
                         # Strip host filesystem paths before passing recalled memory to the planner
                         safe_top_objs = [
                             {k: v for k, v in o.items() if k != "rgb_path"}
@@ -1081,8 +1177,13 @@ class HabitatMemoryRunner:
                                 for kf in c2f_init["top_keyframes"][:3]
                             ],
                         }
-                        if c2f_init["needs_l3_verification"] and c2f_init["l3_verify_rgb_paths"]:
-                            extra_l3_rgb = list(c2f_init["l3_verify_rgb_paths"][:2])
+                        if def_hits_init:
+                            pending_recall["deferred_vision_hits"] = def_hits_init
+                        merged_l3 = list(
+                            dict.fromkeys([*def_rgbs_init, *c2f_init["l3_verify_rgb_paths"]])
+                        )
+                        if (c2f_init["needs_l3_verification"] or def_rgbs_init) and merged_l3:
+                            extra_l3_rgb = merged_l3[:2]
                             l3_selective_triggers += 1
                         else:
                             l3_bypassed += 1
@@ -1105,6 +1206,78 @@ class HabitatMemoryRunner:
 
                     rgb_path = sub_dir / f"step_{step:02d}_rgb.png"
                     Image.fromarray(rgb).save(rgb_path)
+
+                    # Register current keyframe with raw RGB archive (never polluted by visual overlays)
+                    kf_seq = memory.allocate_step_seq()
+                    kf_id = f"hab_s{sub_idx}_step_{kf_seq:04d}"
+                    memory.graph.add_keyframe(
+                        kf_id,
+                        _pose_matrix_zup(robot_mem, yaw_rad),
+                        clearance_m=0.8,
+                        rgb_path=str(rgb_path),
+                    )
+                    if len(memory.graph.keyframe_poses) >= 3:
+                        memory.graph.segment_floors()
+                        memory.graph.partition_rooms()
+
+                    # Optional Layer-2 local vision foundation model tools (SAM 3 / YOLOE + SigLIP)
+                    grounded_vdets: list[GroundedDetection] = []
+                    vision_fused_step = 0
+                    planner_rgb_path: Path = rgb_path
+                    if self.vision_client is not None:
+                        if vision_has_seg:
+                            v_prompts = build_vision_prompts(
+                                subtask.target_category,
+                                max_prompts=self.vision_max_prompts,
+                            )
+                            raw_vdets = self.vision_client.segment_text(
+                                rgb,
+                                v_prompts,
+                                score_threshold=self.vision_score_threshold,
+                                max_detections=10,
+                                include_masks=True,
+                                include_crop_embeddings=vision_has_embed,
+                            )
+                            grounded_vdets = ground_detections_with_depth(raw_vdets, depth)
+                            total_vision_dets += len(grounded_vdets)
+                            for gd in grounded_vdets:
+                                # Only fuse true pixel-mask backprojections into verified 3D memory;
+                                # box-only fallbacks remain VLM prompt hints only.
+                                if (
+                                    gd.range_source == "vision_mask_depth_backproj"
+                                    and gd.score >= self.vision_fuse_threshold
+                                    and gd.valid_pixels >= 30
+                                    and gd.surface_distance_m <= 8.0
+                                ):
+                                    memory.add_or_fuse_object(
+                                        label=gd.label,
+                                        keyframe_id=kf_id,
+                                        local_xyz=list(gd.local_xyz),
+                                        local_extent_xyz=gd.extent_xyz_m,
+                                        confidence=gd.score,
+                                        producer=f"{gd.backend}_depth_grounded",
+                                        range_source=gd.range_source,
+                                        evidence_frame="habitat_world",
+                                        evidence_stamp_s=float(kf_seq),
+                                        embedding=gd.embedding,
+                                    )
+                                    vision_fused_step += 1
+                                    total_vision_fused += 1
+                            if self.vision_enhance_overlay and grounded_vdets:
+                                planner_rgb_path = render_visual_enhancement_overlay(
+                                    rgb,
+                                    grounded_vdets,
+                                    sub_dir / f"step_{step:02d}_rgb_vis.png",
+                                    target_label=subtask.target_category,
+                                )
+                        if vision_has_embed:
+                            kf_emb = self.vision_client.embed_image(rgb)
+                            if kf_emb is not None:
+                                memory.annotate_keyframe(
+                                    kf_id,
+                                    embedding=kf_emb,
+                                    wall_s=float(kf_seq),
+                                )
 
                     f_cands = occ_grid.extract_frontiers(robot_mem, max_candidates=6)
                     m_cands = memory.memory_goal_candidates(
@@ -1141,7 +1314,8 @@ class HabitatMemoryRunner:
                         estimated_travel_m=traveled_m,
                         last_feedback=last_feedback,
                         tool_recall_result=pending_recall,
-                        rgb_path=rgb_path,
+                        vision_detections=[g.to_prompt_dict() for g in grounded_vdets],
+                        rgb_path=planner_rgb_path,
                         local_map_path=map_path,
                         extra_rgb_paths=extra_l3_rgb,
                     )
@@ -1150,28 +1324,17 @@ class HabitatMemoryRunner:
                     if decision.fallback:
                         fallbacks += 1
 
-                    # Record rich keyframe annotations + depth-grounded 3D fused landmarks
-                    kf_seq = memory.allocate_step_seq()
-                    kf_id = f"hab_s{sub_idx}_step_{kf_seq:04d}"
-                    memory.graph.add_keyframe(
-                        kf_id,
-                        _pose_matrix_zup(robot_mem, yaw_rad),
-                        clearance_m=0.8,
-                        rgb_path=str(rgb_path),
-                    )
+                    # Merge VLM rich keyframe annotations + depth-grounded landmarks onto kf_id
                     if decision.room_type or decision.scene_description or decision.visible_surfaces:
                         memory.annotate_keyframe(
                             kf_id,
                             room_type=decision.room_type,
                             scene_description=decision.scene_description,
-                            surfaces=decision.visible_surfaces,
+                            surfaces=(decision.visible_surfaces if decision.visible_surfaces else None),
                             wall_s=float(kf_seq),
                         )
-                    if len(memory.graph.keyframe_poses) >= 3:
-                        memory.graph.segment_floors()
-                        memory.graph.partition_rooms()
 
-                    grounded_count = 0
+                    grounded_count = vision_fused_step
                     for item in decision.observed_objects:
                         b_deg = float(item.get("bearing_deg", 0.0))
                         patch_res = measure_depth_bearing_patch(depth, b_deg)
@@ -1211,15 +1374,31 @@ class HabitatMemoryRunner:
                         memory_recalls += 1
                         q = decision.query or subtask.target_category
                         q_l1 = memory.l1_submap_summaries(query=q, near_xyz=robot_mem, top_k=3)
+                        q_emb = (
+                            self.vision_client.embed_text(f"a photo of a {q}")
+                            if (self.vision_client is not None and vision_has_embed)
+                            else None
+                        )
                         c2f = memory.coarse_to_fine_search(
                             q,
                             robot_xyz=robot_mem,
+                            query_embedding=q_emb,
                             top_k_objects=4,
                             top_k_keyframes=3,
                             max_l3_images=2,
                         )
-                        if c2f["needs_l3_verification"] and c2f["l3_verify_rgb_paths"]:
-                            extra_l3_rgb = list(c2f["l3_verify_rgb_paths"][:2])
+                        def_hits_q, def_rgbs_q = self._deferred_vision_scan_keyframes(
+                            q,
+                            c2f["top_keyframes"],
+                            has_seg=vision_has_seg,
+                            max_kfs=2,
+                        )
+                        total_deferred_hits += len(def_hits_q)
+                        merged_l3_q = list(
+                            dict.fromkeys([*def_rgbs_q, *c2f["l3_verify_rgb_paths"]])
+                        )
+                        if (c2f["needs_l3_verification"] or def_rgbs_q) and merged_l3_q:
+                            extra_l3_rgb = merged_l3_q[:2]
                             l3_selective_triggers += 1
                         else:
                             l3_bypassed += 1
@@ -1248,15 +1427,19 @@ class HabitatMemoryRunner:
                                 for kf in c2f["top_keyframes"][:3]
                             ],
                         }
+                        if def_hits_q:
+                            pending_recall["deferred_vision_hits"] = def_hits_q
                         exec_info = {
                             "status": "memory_queried",
                             "l2_hits": len(c2f["top_objects"]),
                             "kf_hits": len(c2f["top_keyframes"]),
+                            "deferred_vision_hits": len(def_hits_q),
                             "needs_l3_verification": c2f["needs_l3_verification"],
                         }
                         last_feedback = (
                             f"query_memory('{q}') -> {len(c2f['top_objects'])} 3D objs, "
-                            f"{len(c2f['top_keyframes'])} keyframes "
+                            f"{len(c2f['top_keyframes'])} keyframes, "
+                            f"{len(def_hits_q)} deferred_vision_hits "
                             f"(L3_attached={len(extra_l3_rgb)})."
                         )
                     elif decision.action == "stop_claim":
@@ -1466,6 +1649,16 @@ class HabitatMemoryRunner:
                 "retrieval_protocol": "scene_q_rich_index_coarse_to_fine_selective_l3",
                 "memory_carryover": (False if independent_subtasks else self.memory_carryover),
                 "occupancy_carryover": (False if independent_subtasks else not self.reset_occupancy_per_subtask),
+                "vision_tools": {
+                    "enabled": bool(self.vision_client is not None and vision_ok),
+                    "backend": str(vision_health.get("backend", "none")),
+                    "embed_model": str(vision_health.get("embed_model", "")),
+                    "enhance_overlay": self.vision_enhance_overlay,
+                    "deferred_l3": self.vision_deferred_l3,
+                    "total_detections": total_vision_dets,
+                    "total_fused": total_vision_fused,
+                    "total_deferred_hits": total_deferred_hits,
+                },
                 "planner_config": self.planner.config.to_safe_dict(),
                 "subtasks_count": len(subtask_reports),
                 "valid_subtasks_count": len(valid_reports),

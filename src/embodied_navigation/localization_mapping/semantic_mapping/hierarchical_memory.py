@@ -538,21 +538,32 @@ class HierarchicalMemoryStore:
         *,
         room_type: str = "",
         scene_description: str = "",
-        surfaces: Sequence[str] = (),
+        surfaces: Sequence[str] | None = None,
         embedding: Sequence[float] | None = None,
         wall_s: float | None = None,
     ) -> KeyframeRichMeta:
-        """Attach rich scene/surface descriptions and visual embedding to a keyframe."""
+        """Attach or update rich scene/surface descriptions and visual embedding on a keyframe.
+
+        Passing ``surfaces=None`` preserves existing surfaces; passing an explicit
+        sequence replaces them so callers can correct stale surface lists.
+        """
         kf_id = str(keyframe_id).strip()
-        clean_surfaces = tuple(
-            dict.fromkeys(str(s).strip() for s in surfaces if str(s).strip())
-        )
+        prev = self._keyframe_meta.get(kf_id)
+        new_room = str(room_type or "").strip()[:80]
+        new_desc = str(scene_description or "").strip()[:280]
+        if surfaces is None:
+            resolved_surfaces = prev.surfaces if prev else ()
+        else:
+            resolved_surfaces = tuple(
+                dict.fromkeys(str(s).strip() for s in surfaces if str(s).strip())
+            )[:10]
+        new_emb = _normalize_embedding(embedding)
         meta = KeyframeRichMeta(
             keyframe_id=kf_id,
-            room_type=str(room_type or "").strip()[:80],
-            scene_description=str(scene_description or "").strip()[:280],
-            surfaces=clean_surfaces[:10],
-            embedding=_normalize_embedding(embedding),
+            room_type=(new_room or (prev.room_type if prev else "")),
+            scene_description=(new_desc or (prev.scene_description if prev else "")),
+            surfaces=resolved_surfaces,
+            embedding=(new_emb if new_emb is not None else (prev.embedding if prev else None)),
             map_revision=self.map_revision,
             observed_wall_s=(time.time() if wall_s is None else float(wall_s)),
         )
