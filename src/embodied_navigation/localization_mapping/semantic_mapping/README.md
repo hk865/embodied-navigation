@@ -2,7 +2,7 @@
 
 本包是纯 CPU 的语义地图与场景图实现：包含两层互补能力——(1) `core.py` 持有静态/动态/未知点层、对象 ID 与可查询对象表；(2) `scene_graph.py` + `backend_adapter.py` 提供以 SLAM 关键帧位姿为锚点的层次化 3D 场景图（楼层、楼梯、房间、门洞、对象），支持回环位姿重投影、显式双图原子同步、流式 `MapStore` 构图与只读查询。本包**不含** ROS、模拟器、检测器、网络或模型加载依赖，导入即用、无副作用。
 
-盘点日期 2026-11-23（分支 `feat/semantic-keyframe-graph`）。
+盘点日期 2026-11-26（分支 `feat/static-memory-streaming`，HEAD `4f81110`）。
 
 ## 模块定位与架构层级
 
@@ -43,7 +43,7 @@ src/embodied_navigation/localization_mapping/semantic_mapping/
 | [__init__.py](__init__.py) | 唯一门面：重导出 `LayeredMap`、`Observation`、`PointMask`、`KeyframeSceneGraph`、`RgbIndexReport`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` 等。 | `from embodied_navigation.localization_mapping.semantic_mapping import KeyframeSceneGraph, ...` |
 | [core.py](core.py) | 点层与对象表：两个 frozen dataclass 与 `LayeredMap`；提供 `validate_rigid_pose` 校验有限刚体 SE(3) 矩阵。 | `Observation`、`PointMask`、`LayeredMap`、`read_snapshot`、`validate_rigid_pose` |
 | [scene_graph.py](scene_graph.py) | 关键帧锚定 3D 场景图：按连续轨迹分段与局部纵坡 `\|dz/ds\|` 聚类楼层并做 Z 平移不变峰抑制（跨 epoch/时间断层不连楼梯）；用 `cKDTree` + 轨迹邻接/跨轨迹自由空间守卫与扇区视线检查分割房间；按瓶颈局部接触与轨迹穿越顺序建门洞（持久化 `bottleneck_anchor_ids`）；支持引用完整性校验、空间距离过滤查询与幂等/拓扑自愈重投影。 | `KeyframeSceneGraph`、`FloorNode`、`StairEdge`、`RoomNode`、`DoorwayEdge`、`ObjectNode` |
-| [hierarchical_memory.py](hierarchical_memory.py) | 四层子地图检索与治理：`L0` 全局拓扑（<2 KB）→ `L1` 房间摘要检索 → `L2` 物体与失败黑名单（带 `map_revision` 与 `stale` 门控）→ `L3` 按需关键帧 RGB；提供 `Attempt & Failure Ledger` 候选过滤与前置 `verify_stop_claim` 几何校验。 | `HierarchicalMemoryStore`、`AttemptRecord`、`StopVerificationResult` |
+| [hierarchical_memory.py](hierarchical_memory.py) | 四层子地图检索、认知账本与 Zone 覆盖度（2,470 行）：`L0` 全局拓扑 → `L1` 房间/Zone 摘要（默认 `zone_radius_m=3.2` 球距聚类，`close_views >= 2` 标为 `inspected_closeup`，否则 `glimpsed`）→ `L2` 物体与失败黑名单（`map_revision`、`stale`、`epistemic_status=tentative\|confirmed\|refuted`、默认 `fusion_radius_m=0.75` 内抑制 `refuted_labels` 同位置重建、认知改标将 `producer` 改为 `agent_relabeled`）→ `L3` 按需关键帧 RGB；提供 `Attempt & Failure Ledger` 候选过滤与 `verify_stop_claim` 几何/生产者门控（具体拦截范围由调用方传入 `excluded_producers`）。 | `HierarchicalMemoryStore`、`ZoneCoverageMeta`、`AttemptRecord`、`StopVerificationResult`、`update_object_belief`、`record_zone_observation`、`zone_coverage_summary` |
 | [object_mesh_memory.py](object_mesh_memory.py) | 纯 LiDAR Surface Nets 物体级 3D 网格与关键帧锚定空间记忆基线（L4 纯几何下界对照）。 | `build_object_mesh_memory` |
 | [backend_adapter.py](backend_adapter.py) | 后端桥接：逐扇区净空估计（无有效点云返回 `None` 未知）；`load_rgb_index_report` 容错解析；`build_scene_graph_from_map_dir` 调用 `MapStore.iter_keyframes_from_dir` 逐帧流式构图；`sync_backend_loop_update` 显式双图原子同步。 | `estimate_keyframe_clearance_m`、`estimate_keyframe_clearance_profile`、`load_rgb_index_report`、`load_rgb_index`、`build_scene_graph_from_map_dir`、`build_scene_graph_from_map_store`、`sync_backend_loop_update` |
 | [query.py](query.py) | 只读、确定性快照过滤：`select`/`context_text`（schema `observed_scene_map_query/v1`）。 | `select`、`context_text` |

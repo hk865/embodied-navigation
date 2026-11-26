@@ -1,8 +1,8 @@
 # Embodied Navigation · 具身导航
 
-> 盘点日期：2026-11-21 · 集成基线 `main` `2144e5f`（已推送 `origin/main`） · 当前开发推进分支 `exp/startup-walk-imu-bias` `9e3408d`（本地领先 `origin/exp/startup-walk-imu-bias` 6 个提交） · 活体文档
+> 盘点日期：2026-11-26 · 集成基线 `main` `2144e5f`（已推送 `origin/main`） · 当前检出分支 `feat/static-memory-streaming` `4f81110`（本地实现中，未推送；另含推进分支 `exp/startup-walk-imu-bias`） · 活体文档
 
-Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行，上层挂载 Agent 感知与控制介入层。
+Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统（唯一工程主线）：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行；在其之上新增纯 CPU 开放词表视觉工具、层次化语义记忆与独立 `agent_runtime/` 运行时（目前仅在 **Habitat-Sim HM3D 闭环评测支线**跑通单场景 4 子任务 / 25 轮冒烟验证，尚未形成多房可控对比，DynaNav D 路径主线仍走 `explore_waypoint_client.py` / mailbox）。
 
 ## 0. 新接手者 3 分钟导读
 
@@ -11,40 +11,54 @@ Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统：仿真传感�
 3. **验**（仓库根，CPU 离线，约 30 s；完整入口见 §4.5）：
 
    ```bash
-   PYTHONPATH=src python3 -B -m unittest discover -s tests/unit        # 679 条 OK、0 跳过
-   PYTHONPATH=src python3 -B -m unittest discover -s tests/regression  # 60 条 OK（本机 3 条按环境 skip）
+   PYTHONPATH=src python3 -B -m unittest discover -s tests/unit        # 当前工作树 934 条 OK、0 跳过
+   PYTHONPATH=src python3 -B -m unittest discover -s tests/regression  # 60 条（57 通过、3 按环境跳过、0 失败）
    ```
 
 4. **接手切入点**：下一阶段主线是 **Phase 4 SLAM 后端优化**（见 [ROADMAP](docs/plan/ROADMAP.md) 与 [TASKS](docs/plan/TASKS.md)）：先做离线关键帧抽取缓存 + 三层轨迹评测器，再做三项后端修复（重力 Roll/Pitch 强先验、原地/近邻过密回环抑制、Agent 停驻期 ZUPT）。两份评测数据集入口在 `$PROJECT_DATA_ROOT/embodied-navigation/runs/20261121-noisy-imu-rgb-twofloor-explore/`。
 
 ## 1. 项目定位与端到端架构
 
-项目唯一主线是 **D 路径：Isaac Sim / DynaNav**。Gazebo 旧主线（A 路径，`start.py` / `launch/` / `control/` / 私有 Fast DDS）已在干净底座中整块退役删除，仅保全于历史分支；动态行人支线已移出到参考分支 `ref/dynanav-dynamic-pedestrian`。
+项目唯一工程主线是 **D 路径：Isaac Sim / DynaNav**。Gazebo 旧主线（A 路径，`start.py` / `launch/` / `control/` / 私有 Fast DDS）已在干净底座中整块退役删除，仅保全于历史分支；动态行人支线已移出到参考分支 `ref/dynanav-dynamic-pedestrian`。在此基础上，`feat/static-memory-streaming` 新增了**纯 CPU 开放词表视觉与层次认知记忆底座**，并拆出与宿主解耦的 **Layer 7 `agent_runtime/`**（当前接通 Habitat-Sim HM3D 闭环认知评测支线，D 路径实机/仿真待后续接入）。
 
 ```mermaid
-flowchart LR
-  SIM["仿真层<br/>Isaac Sim / DynaNav<br/>RTX RGB-D · RTX LiDAR · IMU"] --> CAP["感知与通信<br/>capture / 200 Hz 真值去畸变<br/>消息适配与健康门"]
-  CAP --> FRONT["定位前端<br/>FAST-LIVO2 post-VIO<br/>或 --truth-pose 真值位姿"]
-  FRONT --> BE["SLAM 后端<br/>关键帧 · 回环 · 位姿图 · 地图存取"]
-  FRONT --> SEM["语义建图 / operator_map"]
-  BE --> PCT["PCT 全局规划<br/>实测分层支撑 A*"]
-  SEM --> AGENT["Agent 介入层<br/>语义查询 · 航点候选 · 交互客户端"]
-  AGENT --> PCT
-  PCT --> SCAN["原生 SCAN 局部规划<br/>3D voxel 占用 + B 样条"]
-  BE --> SCAN
-  SCAN --> CTRL["控制跟踪<br/>RouteTracker · yaw_action<br/>PctScanWaypointTracker"]
-  CTRL --> EXEC["机器人执行<br/>Go2 关节 + RoboGauge MoE-CTS"]
-  EXEC --> SIM
+flowchart TB
+  subgraph HOST_D["工程主线 D 路径: Isaac Sim / DynaNav"]
+    SIM_D["simulation/dynanav · RTX RGB-D / LiDAR / IMU"] --> LIVO["third_party/fast_livo2 · FAST-LIVO2 post-VIO"]
+    LIVO --> BE["localization_mapping/backend · 关键帧 / 回环 / 位姿图 / 重定位"]
+    BE --> PCT_SCAN["planning/pct + SCAN · 全局 + 局部 + RouteTracker"]
+    PCT_SCAN --> GO2["robot/unitree/robogauge · MoE-CTS + visualization"]
+    OP["Agent / 操作员介入 · explore_waypoint_client + mailbox"] --> PCT_SCAN
+  end
+
+  subgraph CORE_MEM["跨宿主共享纯 CPU 感知与空间记忆底座"]
+    VTOOL["perception/vision_tools.py · 客户端 / 反投影 / NMS / candidate_scores"] -. "HTTP (SAM 3 / GDINO + SigLIP)" .-> VSRV["vision_tool_server.py · 独立 GPU FastAPI"]
+    SMEM["semantic_mapping/ · SceneGraph + HierarchicalMemoryStore · L0-L3 + Zone + refuted"]
+  end
+
+  subgraph AGENT_RT["Layer 7: 独立多轮 Agent 运行时 (feat/static-memory-streaming)"]
+    RT["agent_runtime/ · EmbodiedAgentRuntime · 200K PrefixStableContext · Hooks"]
+  end
+
+  subgraph HOST_HAB["Habitat-Sim HM3D 闭环认知评测支线 (快速验证用)"]
+    HAB["planning/exploration/habitat_agent_adapter.py · HabitatWorldDaemon + Tools + StopVerifier"]
+  end
+
+  RT <--> |"ToolCall / AfterToolHook / BeforeFinishHook"| HAB
+  HAB --> VTOOL
+  HAB --> SMEM
+  VTOOL --> SMEM
+  BE -. "离线构建 / 显式同步" .-> SMEM
 ```
 
 一条命令内的数据流：
 
-1. **仿真层**在 Isaac Sim 中渲染 RTX RGB-D、RTX LiDAR 与 IMU；`--truth-pose` 时额外提供仿真真值位姿与 200 Hz 真值去畸变点云。
-2. **感知与通信层**完成传感器消息适配、时间同步、去畸变配对与健康门；`common/` 提供几何、运行时 IO、进程日志与遥测基础设施。
-3. **定位建图层**默认用 FAST-LIVO2 前端产出 post-VIO 位姿与实测点云，后端做关键帧、回环、位姿图与地图存取；语义建图与 `operator_map` 生成可查询的分层语义地图。
-4. **规划层**用实测分层支撑做 PCT 全局路线，原生 SCAN 在 3D voxel 占用上生成 B 样条局部轨迹；规划输出不含直线兜底。
-5. **控制跟踪层**把全局路线/局部曲线跟踪为身体速度命令：平台无关的 `navigation/` 提供 `RouteTracker` 与 `yaw_action`，仿真侧的 `PctScanWaypointTracker` + `ContinuousScanFollower`（在 `simulation/dynanav/pct_scan_waypoints.py`）负责连续 SCAN 曲线的采样跟随；**机器人执行层**由 RoboGauge MoE-CTS 策略把命令变成 Go2 关节目标。
-6. **Agent 介入层**通过 `scripts/explore_waypoint_client.py` 与 `.agents/skills/dynanav-explore/` 下发稀疏航点、查询状态、读取回执；它不写速度命令、不读仿真真值。
+1. **仿真层（D 主线）**在 Isaac Sim 中渲染 RTX RGB-D、RTX LiDAR 与 IMU；`--truth-pose` 时额外提供仿真真值位姿与 200 Hz 真值去畸变点云；`visualization/` 提供 Spring-Arm 防穿墙相机与 RViz2 录制。
+2. **感知与通信层**：`perception/depth.py` 与 `pose_velocity.py` 处理深度包与源时间速度；新增的 `perception/vision_tools.py` 通过 HTTP 对接独立的 `vision_tool_server.py`（SAM 3 / GroundingDINO + SigLIP），在纯 CPU 侧完成掩膜深度反投影、跨类 NMS 与多标签对比 `candidate_scores` / `abstain` 判定；`common/` 提供几何、运行时 IO、进程日志与遥测基础设施。
+3. **定位建图层**：默认用 FAST-LIVO2 前端产出 post-VIO 位姿与实测点云，`localization_mapping/backend/` 做关键帧、回环、位姿图与地图存取；`localization_mapping/semantic_mapping/` 提供点层、关键帧锚定 3D 场景图与 `HierarchicalMemoryStore`（L0–L3 子地图、Zone 覆盖度、`tentative | confirmed | refuted` 认知状态与 `agent_relabeled` 防伪造隔离）。注意：在线 SLAM 后端尚未自动调用 `sync_backend_loop_update` 联动场景图。
+4. **规划层**：D 路径用实测分层支撑做 PCT 全局路线、原生 SCAN 做 B 样条局部轨迹；`planning/exploration/` 同时承载 DynaNav 只读航点候选/mailbox 协调与 Habitat 闭环认知评测适配（`habitat_memory_runner.py`、`habitat_agent_adapter.py`）。
+5. **控制跟踪与机器人执行层**：`navigation/` 的 `RouteTracker` 与 `yaw_action` 把路线转为身体速度命令；`robot/unitree/robogauge/` 由 MoE-CTS TorchScript 策略转为 Go2 关节目标。
+6. **Agent 介入层（Layer 7）**：D 路径实机/仿真仍通过 `scripts/explore_waypoint_client.py` + `.agents/skills/dynanav-explore/` 经文件 mailbox 交互；而新的 `agent_runtime/`（`EmbodiedAgentRuntime` + `PrefixStableContextManager` 200K 上下文 + `Hooks` + `OpenCodeToolChatClient`）已作为独立运行时在 Habitat 闭环评测中通过 `scripts/run_habitat_agent_eval.py` 接入。
 
 ## 2. 顶层目录与职责总览
 
@@ -86,14 +100,15 @@ Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本
 | --- | --- | --- | --- |
 | 包索引 | `embodied_navigation` | 七层包结构与端到端数据流 | [README](src/embodied_navigation/README.md) |
 | 基础设施 | `common/` | 几何、运行时 IO、进程日志、遥测、状态契约 | [README](src/embodied_navigation/common/README.md) |
-| 感知 | `perception/` | 深度包与位姿/速度契约适配 | [README](src/embodied_navigation/perception/README.md) |
+| 感知 | `perception/` | 深度包、源时间速度与纯 CPU 视觉工具客户端（对接可选 GPU 分割/SigLIP 服务） | [README](src/embodied_navigation/perception/README.md) |
 | 定位建图 | `localization_mapping/` | 前端接入、后端 SLAM、语义建图 | [README](src/embodied_navigation/localization_mapping/README.md) |
 | 定位建图 | `localization_mapping/backend/` | 关键帧、回环、位姿图、地图存取、严格配置加载 | [README](src/embodied_navigation/localization_mapping/backend/README.md) |
-| 定位建图 | `localization_mapping/semantic_mapping/` | 语义点层、关键帧锚定 3D 场景图（`KeyframeSceneGraph`）、后端适配器与调度（离线 CLI `scripts/build_semantic_scene_graph.py`；在线回环需显式调用 `sync_backend_loop_update`，暂未自动接在线 `backend.py`） | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
-| 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与来源 | [README](src/embodied_navigation/planning/README.md) |
+| 定位建图 | `localization_mapping/semantic_mapping/` | 语义点层、`KeyframeSceneGraph`、`HierarchicalMemoryStore`（L0–L3 子地图、Zone 覆盖度与认知 `refuted` 账本） | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
+| 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与探索适配 | [README](src/embodied_navigation/planning/README.md) |
 | 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
-| 规划 | `planning/exploration/` | 航点候选、路线信息、Habitat 适配与世界守护 | [README](src/embodied_navigation/planning/exploration/README.md) |
-| Agent 运行时 | `agent_runtime/` | 通用多轮 Tool-Calling 运行时、Prefix-Stable 200K 上下文、压缩与 Hooks | [README](src/embodied_navigation/agent_runtime/README.md) |
+| 规划 | `planning/exploration/` | DynaNav 航点候选/mailbox/哨兵，以及 LLM 客户端与 Habitat 闭环认知评测适配 | [README](src/embodied_navigation/planning/exploration/README.md) |
+| Agent 运行时 | `agent_runtime/` | 通用多轮 Tool-Calling 运行时、Prefix-Stable 200K 上下文、惰性压缩与生命周期 Hooks（当前接入 Habitat 评测，D 路径待接） | [README](src/embodied_navigation/agent_runtime/README.md) |
+| 可视化 | `visualization/` | RViz2 多机位防穿墙 Spring-Arm 相机运动学与录制编排 | [README](src/embodied_navigation/visualization/README.md) |
 | 控制跟踪 | `navigation/` | `RouteTracker` 路线跟踪与 `yaw_action` 转向动作（平台无关纯策略，不依赖 ROS/Isaac） | [README](src/embodied_navigation/navigation/README.md) |
 | 控制跟踪 | `navigation/robogauge/` | RoboGauge 路线跟踪接口 | [README](src/embodied_navigation/navigation/robogauge/README.md) |
 | 机器人执行 | `robot/` | Go2 观测、关节契约、策略执行 | [README](src/embodied_navigation/robot/README.md) |
@@ -150,10 +165,10 @@ python3 scripts/explore_waypoint_client.py stop --run-dir <RUN>
 # 语法编译检查
 PYTHONPATH=src python3 -B -m compileall -q src scripts
 
-# 单元测试：当前工作树 679 条全绿（0 失败 0 跳过；集成基线 main 为 650 条）
+# 单元测试：当前工作树 feat/static-memory-streaming 共 934 条全绿（0 失败 0 跳过）
 PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
 
-# 回归测试：当前基线 60 条全绿 0 失败（本机 3 条按环境 skip）
+# 回归测试：共 60 条（57 通过、3 按环境跳过、0 失败）
 PYTHONPATH=src python3 -B -m unittest discover -s tests/regression
 
 # 原生源码 pin 校验与 PCT CPU 编译冒烟（不联网、不加载模型）
@@ -178,12 +193,13 @@ python3 docker/build_native.py --execute
 | [AGENTS.md](AGENTS.md) | 硬规则、测试与分支验收、数据卷规则、README 维护要求 |
 | [docs/README.md](docs/README.md) | 文档分类索引（权威说明 / 计划 / 实验历史 / 审查 / 验证 / 依赖） |
 
-### 5.2 分支管理（摘要，2026-11-21）
+### 5.2 分支管理（摘要，2026-11-26 核对）
 
 | 分支 | HEAD / 远端同步 | 用途 |
 | --- | --- | --- |
 | `main` / `origin/main` | `2144e5f`（一致） | 集成、发布与独立验收入口；已含 `fix/livo-yaw-and-imu-patch`（`5049ec7`，merge `9b6dc85`）、ADR-0001/0002（`9816a2b`）与 RViz 实时点云配置/录制 CLI（`ca754ab`、`2144e5f`） |
-| **`exp/startup-walk-imu-bias`**（当前开发分支） | `9e3408d`（领先 origin 6） | 起步预热稳态门 + 物理级带噪 IMU、RViz RGB8 彩色重建图层、局部滑窗建图与 `--backend-pose` 订阅、PCT 净空 0.95 m、不依赖 PCT/SCAN 的直通脱困 `maneuver`、ADR-0003/0004；共 12 个提交（基线 `main`） |
+| **`feat/static-memory-streaming`**（当前本地开发分支） | `4f81110`（未推送） | 离线/Habitat 闭环探索与认知记忆主试验支线：本地视觉工具服务（SAM 3 / GDINO + SigLIP）、`HierarchicalMemoryStore` 认知账本与 Zone 覆盖度、独立 `agent_runtime/` 200K 多轮运行时 |
+| **`exp/startup-walk-imu-bias`**（D 路径推进分支） | `9e3408d`（领先 origin 6） | 起步预热稳态门 + 物理级带噪 IMU、RViz RGB8 彩色重建图层、局部滑窗建图与 `--backend-pose` 订阅、PCT 净空 0.95 m、不依赖 PCT/SCAN 的直通脱困 `maneuver`、ADR-0003/0004；共 12 个提交（基线 `main`） |
 | `refactor/00-plan-docs` … `refactor/06-clean-base` | 已验收栈 | 分包重构历史；`06-clean-base`（`f061a7e`）是干净底座，Phase 1/2 成果所在 |
 | `exp/slam-measured-submaps` / `exp/slam-surface-gate` / `exp/slam-visual-retrieval` | `5b300b0` / `958ec01` / `16883d1`（与远端一致） | Phase 4 三条后端对照分支（Codex 审计后，待同输入、同时间轴评测）；均基于 `9816a2b` 切出 |
 | `exp/pct-scan-stairs-truth` | `bb2eef2`（已并入 `refactor/06-clean-base` 历史） | 真值闭环复现入口（Phase 2） |

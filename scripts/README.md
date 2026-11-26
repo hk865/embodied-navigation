@@ -1,6 +1,6 @@
 # scripts（DynaNav 入口脚本与离线工具）
 
-盘点日期 2026-11-20。本目录是 D 路径（DynaNav / Isaac Sim）的薄 CLI 入口与离线工具集：解析参数、编排进程、调用 `src/` 里的包；业务逻辑一律在 `src/`，脚本互相之间不 `import`，也不是 Python 包或 `pyproject.toml` 的 console script。
+盘点日期 2026-11-26。本目录是 D 路径（DynaNav / Isaac Sim）的薄 CLI 入口、视觉工具服务启动器与离线/Habitat 评测工具集：解析参数、编排进程、调用 `src/` 里的包；业务逻辑一律在 `src/`，脚本互相之间不 `import`，也不是 Python 包或 `pyproject.toml` 的 console script。
 
 ## 模块定位与架构层级
 
@@ -15,7 +15,9 @@
 ```text
 scripts/
 ├── README.md                                 # 本文件
-├── build_dynanav_fast_livo2.py               # 107 行，暂存并编译带构建期补丁的 FAST-LIVO2（含可选核心 CTest）
+├── build_dynanav_fast_livo2.py               # 116 行，暂存并编译带构建期补丁的 FAST-LIVO2（含可选核心 CTest）
+├── build_object_mesh_memory.py               # 47 行，纯 LiDAR Surface Nets 物体网格记忆构建 CLI
+├── build_semantic_scene_graph.py             # 55 行，从 MapStore 流式构建关键帧 3D 场景图与紧凑摘要
 ├── configure_data.py                         # 51 行，检查/创建 assets、models、runs 三个数据卷软链
 ├── dynanav_exploration.py                    # 61 行，探索工具统一入口（sop/collect/view/review/roi/candidates）
 ├── dynanav_exploration/
@@ -23,20 +25,27 @@ scripts/
 │   ├── review_generation.py                  # 375 行，只读同代覆盖审计与多视角渲染
 │   └── review_roi.py                         # 44 行，显式 XY ROI 的 YZ/斜视检查
 ├── dynanav_observer_transport.py             # 60 行，observer UDP 接收配置选择（纯函数）
-├── explore_waypoint_client.py                # 2302 行，算子侧交互航点/观察/占用图客户端
-├── prepare_dynanav_waypoint_candidates.py    # 59 行，PCT 路线候选建议（只读、不下发动作）
+├── eval_slam_backend.py                      # 224 行，SLAM 后端关键帧轨迹与消融评估 CLI
+├── eval_static_task_suite.py                 # 238 行，静态语义记忆与导航任务套件评测
+├── explore_waypoint_client.py                # 1,964 行，算子侧交互航点/观察/占用图客户端
+├── prepare_dynanav_waypoint_candidates.py    # 61 行，PCT 路线候选建议（只读、不下发动作）
 ├── query_scene_map.py                        # 76 行，查询已落盘地图快照的 CLI
 ├── reconstruct_dynanav_slam_map.py           # 602 行，用记录 LIO 位姿离线重建观测点层
+├── record_dynanav_rviz.py                    # 142 行，RViz2 防穿墙 Spring-Arm 多机位录制 CLI
 ├── render_dynanav_operator_grid.py           # 145 行，把导出的 operator grid NPZ 渲染成 PNG
 ├── run_dynanav_experiment.py                 # 7 行，experiment.main 的薄入口
 ├── run_dynanav_lio.sh                        # 684 行，隔离的 LIO/LIVO observer 启动器
-├── run_dynanav_native_exploration.sh         # 305 行，D 路径唯一主入口（PCT+SCAN 探索）
+├── run_dynanav_native_exploration.sh         # 396 行，D 路径唯一主入口（PCT+SCAN 探索）
 ├── run_dynanav_pct_scan.py                   # 10 行，pct_scan_worker.main 的薄入口（ROS system python）
+├── run_habitat_agent_eval.py                 # 138 行，独立 agent_runtime 200K 多轮 Habitat HM3D 评测 CLI
+├── run_habitat_memory_eval.py                # 190 行，无状态单轮 Habitat HM3D 评测 CLI（对照组）
+├── run_static_streaming_task.py              # 184 行，流式静态探索任务 CLI
+├── run_vision_tool_service.py                # 54 行，本地 GPU 视觉工具服务启动器（SAM 3 / GDINO / YOLOE + SigLIP）
 ├── run_with_bounded_log.py                   # 27 行，带冻结日志预算的子进程包装器
 └── summarize_dynanav_experiment.py           # 414 行，汇总 run 目录收据与 journal
 ```
 
-18 个 git 跟踪文件（14 个 Python 脚本、2 个 shell、2 个 README），14 个 Python 合计 4233 行、2 个 shell 合计 989 行（`wc -l`，2026-11-20）。
+28 个 git 跟踪文件（24 个 Python 脚本、2 个 shell、2 个 README），仅本批次新增 `run_habitat_agent_eval.py`（138 行）与 `run_vision_tool_service.py`（54 行）等保持在 300 行内；历史及既有脚本中仍有多份超限文件（如 `explore_waypoint_client.py` 1,964 行、`reconstruct_dynanav_slam_map.py` 602 行、`summarize_dynanav_experiment.py` 414 行）待后续拆薄。
 
 ## 逐文件职责
 

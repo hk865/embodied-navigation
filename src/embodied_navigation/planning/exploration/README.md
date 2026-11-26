@@ -1,8 +1,8 @@
-# planning/exploration（Agent 只读候选准备）
+# planning/exploration（探索候选、多轮通信契约与 Habitat 闭环认知评测）
 
-> 盘点日期：2026-11-20 · 分支 `refactor/06-clean-base` · HEAD `5b880b2`
+> 盘点日期：2026-11-26 · 分支 `feat/static-memory-streaming` · HEAD `4f81110`
 
-本目录给 Agent/操作者准备**只读**的探索候选：用当前 run 的实测端点地图、实测轨迹与传感器标定，对显式候选路线计算“建模的潜在新观测体积”并排序；它不提交航点、不安装缓存路线、也不做 goto 准入。
+本目录承载两类职责：(1) 为 D 路径（DynaNav / Isaac Sim）提供只读探索候选与离线/哨兵邮箱协同；(2) 提供开放词表具身 LLM 客户端与 Habitat-Sim HM3D 闭环认知评测适配器（`habitat_agent_adapter.py` 将世界自更新守护 `HabitatWorldDaemon`、工具包与终止门接入独立的 `agent_runtime/`）。注意：`agent_runtime/` 仍暂时从本目录 `llm_agent_client.py` 复用 `LlmClientConfig` 与 `_encode_image_part`，这是已知待收口的依赖债。
 
 ## 模块定位与架构层级
 
@@ -20,12 +20,22 @@
 
 ```text
 src/embodied_navigation/planning/exploration/
-├── README.md            # 本文件
-├── __init__.py          # 1 行包 docstring（无重导出）
-├── os1_calibration.json # OS1 32 线传感器标定快照
-├── route_information.py # 实测端点快照、弧长采样与建模可见性打分
-└── waypoint_candidates.py # 候选准备入口（读 run mailbox → 规划 → 打分 → JSON）
+├── README.md                 # 本文件
+├── __init__.py               # 1 行包 docstring（无重导出）
+├── os1_calibration.json      # OS1 32 线传感器标定快照
+├── route_information.py      # 246 行：DynaNav 实测端点快照、弧长采样与建模可见性打分
+├── waypoint_candidates.py    # 256 行：DynaNav 只读探索候选准备入口（读 run mailbox → 规划 → 打分 → JSON）
+├── waypoint_mailbox.py       # 583 行：文件 mailbox 协议读写与心跳/序号管理
+├── sentinel_coordinator.py   # 371 行：哨兵异步安全门协调
+├── visual_map_overlay.py     # 546 行：操作员占用图与语义叠加渲染
+├── llm_agent_client.py       # 1,713 行：LLM/VLM HTTP 配置与图像编码基元（LlmClientConfig 等）
+├── streaming_task_agent.py   # 1,977 行：早期流式单轮决策 Agent（保留作兼容与离线任务套件）
+├── static_task_suite.py      # 1,537 行：静态离线导航与场景图问答基准套件
+├── habitat_memory_runner.py  # 1,838 行：无状态单轮 Habitat 评测基线 + DepthOccupancyGrid（含 render_global_floorplan 2.5D 平面图）
+└── habitat_agent_adapter.py  # 1,887 行：HabitatWorldDaemon（自更新感知/Zone/双触发 KF）+ 通用工具集 + ObjectNav/Report FinishVerifier + HabitatAgentRunner
 ```
+
+13 个跟踪文件（11 个 `.py` + 1 个 `.json` + 本 README）；逐文件说明优先覆盖下方核心只读候选链，多轮 Habitat 运行时细节见 [`agent_runtime/README.md`](../../agent_runtime/README.md) 与 `scripts/run_habitat_agent_eval.py`。
 
 ## 逐文件职责
 
