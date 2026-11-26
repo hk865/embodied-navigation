@@ -201,8 +201,10 @@ def _build_vlm_region_summarizer(
                 continue
             if not resolved.is_file():
                 continue
-            parts.append(_encode_image_part(resolved, max_edge=384, detail="low"))
-            attached += 1
+            part = _encode_image_part(resolved, allowed_roots=[root_resolved])
+            if part is not None:
+                parts.append(part)
+                attached += 1
         if attached == 0:
             return None
         turn = client.complete_turn(
