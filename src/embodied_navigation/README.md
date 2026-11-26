@@ -16,6 +16,7 @@
 
 ```text
 src/embodied_navigation/
+├── agent_runtime/             # Agent 运行时：Prefix-Stable 200K 上下文、流式 Tool-Calling、Hooks 与压缩
 ├── common/                    # 横切基础设施：几何/时间、有界写盘、子进程日志、状态契约
 │   └── time/
 ├── localization_mapping/      # 定位建图：FAST-LIVO2 接入、点云 SLAM 后端、语义点层
@@ -63,6 +64,7 @@ src/embodied_navigation/
 | 感知 | `perception/` | 3 / 142 | 库：`perception.depth.depth_cloud_packet`、`perception.pose_velocity.update_pose_velocity` | [perception/README.md](perception/README.md) |
 | 定位建图 | `localization_mapping/` | 14 / 2,211 | `python -m embodied_navigation.localization_mapping.backend.node --spool … --namespace … --odometry-topic …` | [localization_mapping/README.md](localization_mapping/README.md) |
 | 规划 | `planning/` | 7 / 1,086 | `scripts/run_dynanav_pct_scan.py` → `simulation/dynanav/pct_scan_worker.py` | [planning/README.md](planning/README.md) |
+| Agent 运行时 | `agent_runtime/` | 6 / ~650 | `EmbodiedAgentRuntime`、`PrefixStableContextManager`、`OpenCodeToolChatClient` | [agent_runtime/README.md](agent_runtime/README.md) |
 | 导航跟踪 | `navigation/` | 4 / 682 | `navigation.robogauge.route_tracker.RouteTracker`、`navigation.yaw_action` | [navigation/README.md](navigation/README.md) |
 | 机器人执行 | `robot/` | 8 / 490 | `robot.unitree.robogauge.runtime`（TorchScript 策略） | [robot/README.md](robot/README.md) |
 

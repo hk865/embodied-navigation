@@ -330,8 +330,50 @@ class KeyframeRichMeta:
 
 
 @dataclass
+class ZoneCoverageMeta:
+    """Semantic functional zone and positive/negative visual coverage metadata."""
+
+    zone_id: str
+    floor_id: str | None = None
+    zone_type: str = "unknown"
+    summary: str = ""
+    center_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    radius_m: float = 3.2
+    close_views: int = 0
+    far_views: int = 0
+    last_visited_seq: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "zone_id": self.zone_id,
+            "floor_id": self.floor_id,
+            "zone_type": self.zone_type,
+            "summary": self.summary,
+            "center_xyz": [round(float(v), 3) for v in self.center_xyz],
+            "radius_m": round(float(self.radius_m), 2),
+            "close_views": int(self.close_views),
+            "far_views": int(self.far_views),
+            "last_visited_seq": int(self.last_visited_seq),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ZoneCoverageMeta:
+        return cls(
+            zone_id=str(data["zone_id"]),
+            floor_id=data.get("floor_id"),
+            zone_type=str(data.get("zone_type", "unknown")).strip() or "unknown",
+            summary=str(data.get("summary", "")).strip(),
+            center_xyz=_finite_xyz(data.get("center_xyz", (0.0, 0.0, 0.0)), "center_xyz"),
+            radius_m=float(data.get("radius_m", 3.2)),
+            close_views=max(0, int(data.get("close_views", 0))),
+            far_views=max(0, int(data.get("far_views", 0))),
+            last_visited_seq=max(0, int(data.get("last_visited_seq", 0))),
+        )
+
+
+@dataclass
 class ObjectEvidenceMeta:
-    """Revision, freshness, and rich indexing metadata attached to a KeyframeSceneGraph object."""
+    """Revision, freshness, epistemic status, and rich indexing metadata for an object."""
 
     object_id: str
     map_revision: int = 0
@@ -353,6 +395,10 @@ class ObjectEvidenceMeta:
     last_verified_label: str = ""
     last_verified_world_xyz: tuple[float, float, float] | None = None
     keyframe_local_obs: dict[str, tuple[float, float, float]] = field(default_factory=dict)
+    epistemic_status: str = "tentative"
+    refuted_labels: tuple[str, ...] = ()
+    label_scores: dict[str, float] = field(default_factory=dict)
+    note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -388,6 +434,16 @@ class ObjectEvidenceMeta:
             out["keyframe_local_obs"] = {
                 kid: [round(v, 4) for v in xyz] for kid, xyz in self.keyframe_local_obs.items()
             }
+        if self.epistemic_status != "tentative":
+            out["epistemic_status"] = self.epistemic_status
+        if self.refuted_labels:
+            out["refuted_labels"] = list(self.refuted_labels)
+        if self.label_scores:
+            out["label_scores"] = {
+                str(k): round(float(v), 3) for k, v in self.label_scores.items()
+            }
+        if self.note:
+            out["note"] = self.note
         return out
 
     @classmethod
@@ -413,6 +469,21 @@ class ObjectEvidenceMeta:
         stamp_raw = data.get("evidence_stamp_s")
         raw_attrs = data.get("attributes") or ()
         attrs = tuple(str(a).strip() for a in raw_attrs if str(a).strip())
+        raw_refuted = data.get("refuted_labels") or ()
+        refuted = tuple(str(r).strip() for r in raw_refuted if str(r).strip())
+        raw_lscores = data.get("label_scores") or {}
+        lscores: dict[str, float] = {}
+        if isinstance(raw_lscores, dict):
+            for k, v in raw_lscores.items():
+                try:
+                    fv = float(v)
+                    if math.isfinite(fv):
+                        lscores[str(k)] = fv
+                except (TypeError, ValueError):
+                    continue
+        ep_status = str(data.get("epistemic_status", "tentative")).strip() or "tentative"
+        if ep_status not in ("tentative", "confirmed", "refuted"):
+            ep_status = "tentative"
         return cls(
             object_id=str(data["object_id"]),
             map_revision=int(data.get("map_revision", 0)),
@@ -434,6 +505,10 @@ class ObjectEvidenceMeta:
             last_verified_label=str(data.get("last_verified_label", "")).strip(),
             last_verified_world_xyz=last_ver_xyz,
             keyframe_local_obs=kf_obs,
+            epistemic_status=ep_status,
+            refuted_labels=refuted,
+            label_scores=lscores,
+            note=str(data.get("note", "")).strip(),
         )
 
 
@@ -497,6 +572,7 @@ class HierarchicalMemoryStore:
         self._attempts: list[AttemptRecord] = []
         self._object_meta: dict[str, ObjectEvidenceMeta] = {}
         self._keyframe_meta: dict[str, KeyframeRichMeta] = {}
+        self._zone_meta: dict[str, ZoneCoverageMeta] = {}
         self._room_visits: dict[str, int] = {}
         self._repeat_failure_attempts = 0
         self._premature_stop_rejects = 0
@@ -504,6 +580,7 @@ class HierarchicalMemoryStore:
         self._next_step_seq = 1
         self._next_object_seq = 1
         self._next_attempt_seq = 1
+        self._next_zone_seq = 1
 
         for obj_id, obj in self.graph.objects.items():
             self._object_meta[obj_id] = ObjectEvidenceMeta(
@@ -671,6 +748,8 @@ class HierarchicalMemoryStore:
             meta = self._object_meta.get(existing.object_id)
             if meta is not None and meta.stale:
                 continue
+            if self._is_object_refuted_for_query(existing, meta, label):
+                continue
             if _label_match_score(label, existing.label) < 50.0:
                 continue
             ex_xyz = np.asarray(existing.world_center_xyz, dtype=np.float64)
@@ -682,6 +761,22 @@ class HierarchicalMemoryStore:
                 best_match = existing
 
         if best_match is None:
+            # Suppress re-creating an object with a label that was already explicitly
+            # refuted at the same physical location (even if later confirmed under another label).
+            for existing in self.graph.objects.values():
+                meta_ex = self._object_meta.get(existing.object_id)
+                if meta_ex is None or not meta_ex.refuted_labels:
+                    continue
+                ex_xyz = np.asarray(existing.world_center_xyz, dtype=np.float64)
+                if abs(float(ex_xyz[2]) - float(world_new[2])) > min(0.8, self.same_floor_dz_m):
+                    continue
+                d_xy = math.hypot(float(ex_xyz[0] - world_new[0]), float(ex_xyz[1] - world_new[1]))
+                if d_xy <= float(fusion_radius_m) and any(
+                    _label_strict_match(label, rl) or _label_strict_match(rl, label)
+                    for rl in meta_ex.refuted_labels
+                ):
+                    return existing, True
+
             oid = object_id or f"obj_{self.allocate_object_seq():04d}"
             node = self.add_object(
                 object_id=oid,
@@ -831,6 +926,223 @@ class HierarchicalMemoryStore:
             else:
                 meta.embedding = new_emb
         return best_match, True
+
+    @staticmethod
+    def _is_object_refuted_for_query(
+        obj: ObjectNode,
+        meta: ObjectEvidenceMeta | None,
+        query_label: str | None = None,
+    ) -> bool:
+        """True iff ``obj`` was refuted for ``query_label`` (or permanently stale)."""
+        if meta is None:
+            return False
+        q = str(query_label or "").strip()
+        if q and meta.refuted_labels:
+            for rl in meta.refuted_labels:
+                if _label_strict_match(q, rl) or _label_strict_match(rl, q):
+                    return True
+        if meta.epistemic_status != "refuted":
+            return False
+        if meta.stale:
+            return True
+        if not q:
+            return True
+        # Relabeled refuted object only matches queries specifically targeting its new label
+        return not _label_strict_match(q, obj.label)
+
+    def update_object_belief(
+        self,
+        object_id: str,
+        *,
+        status: str,
+        new_label: str | None = None,
+        label_scores: dict[str, float] | None = None,
+        note: str = "",
+        wall_s: float | None = None,
+    ) -> dict[str, Any]:
+        """Update an object's epistemic lifecycle (``tentative | confirmed | refuted``)."""
+        norm_status = str(status or "").strip().lower()
+        if norm_status not in ("tentative", "confirmed", "refuted"):
+            raise ValueError(f"invalid epistemic status: {status!r}")
+        oid = str(object_id or "").strip()
+        obj = self.graph.objects.get(oid)
+        if obj is None:
+            raise ValueError(f"unknown object_id: {oid!r}")
+        meta = self._object_meta.get(oid)
+        if meta is None:
+            meta = ObjectEvidenceMeta(
+                object_id=oid,
+                map_revision=self.map_revision,
+                producer=obj.producer,
+                recorded_world_xyz=tuple(float(v) for v in obj.world_center_xyz),
+                last_observed_keyframe_id=obj.anchor_keyframe_id,
+            )
+            self._object_meta[oid] = meta
+
+        prev_label = obj.label
+        clean_new = str(new_label or "").strip()
+        if label_scores:
+            meta.label_scores = {
+                str(k).strip().lower(): round(float(v), 3)
+                for k, v in label_scores.items()
+                if str(k).strip() and math.isfinite(float(v))
+            }
+        if note:
+            meta.note = str(note).strip()[:200]
+
+        if norm_status == "refuted":
+            meta.epistemic_status = "refuted"
+            meta.refuted_labels = tuple(
+                dict.fromkeys([*meta.refuted_labels, prev_label])
+            )
+            if clean_new:
+                obj.label = clean_new
+                meta.producer = "agent_relabeled"
+                obj.producer = "agent_relabeled"
+            else:
+                meta.stale = True
+                meta.stale_reason = "agent_refuted"
+        elif norm_status == "confirmed":
+            meta.epistemic_status = "confirmed"
+            meta.stale = False
+            meta.stale_reason = ""
+            if clean_new:
+                obj.label = clean_new
+                meta.refuted_labels = tuple(
+                    rl
+                    for rl in meta.refuted_labels
+                    if not (_label_strict_match(clean_new, rl) or _label_strict_match(rl, clean_new))
+                )
+                if not _label_strict_match(clean_new, meta.last_verified_label or prev_label):
+                    # Relabeling via cognitive belief must NOT impersonate detector confirmation
+                    meta.producer = "agent_relabeled"
+                    obj.producer = "agent_relabeled"
+        else:
+            meta.epistemic_status = "tentative"
+            if clean_new:
+                obj.label = clean_new
+                if not _label_strict_match(clean_new, meta.last_verified_label or prev_label):
+                    meta.producer = "agent_relabeled"
+                    obj.producer = "agent_relabeled"
+
+        meta.observed_wall_s = time.time() if wall_s is None else float(wall_s)
+        self.map_revision += 1
+        meta.map_revision = self.map_revision
+        return {
+            "object_id": oid,
+            "previous_label": prev_label,
+            "label": obj.label,
+            "epistemic_status": meta.epistemic_status,
+            "refuted_labels": list(meta.refuted_labels),
+            "stale": meta.stale,
+            "map_revision": self.map_revision,
+        }
+
+    def record_zone_observation(
+        self,
+        robot_xyz: Sequence[float],
+        *,
+        median_depth_m: float | None = None,
+        zone_type: str = "",
+        summary: str = "",
+        step_seq: int = 0,
+        zone_radius_m: float = 3.2,
+    ) -> str:
+        """Associate robot pose with a stable functional Zone and track close vs far coverage."""
+        pos = _finite_xyz(robot_xyz, "robot_xyz")
+        floor_id = self._floor_for_robot(pos)
+        best_zone: ZoneCoverageMeta | None = None
+        best_d = float("inf")
+        for z in self._zone_meta.values():
+            if abs(float(z.center_xyz[2]) - float(pos[2])) > self.same_floor_dz_m:
+                continue
+            d_xy = math.hypot(pos[0] - z.center_xyz[0], pos[1] - z.center_xyz[1])
+            if d_xy <= float(zone_radius_m) and d_xy < best_d:
+                best_d = d_xy
+                best_zone = z
+
+        clean_type = str(zone_type or "").strip()[:64]
+        clean_sum = str(summary or "").strip()[:180]
+        is_close = (
+            median_depth_m is not None
+            and math.isfinite(float(median_depth_m))
+            and float(median_depth_m) <= 2.2
+        )
+        if best_zone is None:
+            zid = f"Z{self._next_zone_seq}"
+            self._next_zone_seq += 1
+            best_zone = ZoneCoverageMeta(
+                zone_id=zid,
+                floor_id=floor_id,
+                zone_type=(clean_type or "unknown"),
+                summary=clean_sum,
+                center_xyz=(round(pos[0], 3), round(pos[1], 3), round(pos[2], 3)),
+                radius_m=float(zone_radius_m),
+                close_views=(1 if is_close else 0),
+                far_views=(0 if is_close else 1),
+                last_visited_seq=max(0, int(step_seq)),
+            )
+            self._zone_meta[zid] = best_zone
+            return zid
+
+        n_tot = max(1, best_zone.close_views + best_zone.far_views)
+        w = 1.0 / float(n_tot + 1)
+        cx = best_zone.center_xyz[0] * (1.0 - w) + pos[0] * w
+        cy = best_zone.center_xyz[1] * (1.0 - w) + pos[1] * w
+        cz = best_zone.center_xyz[2] * (1.0 - w) + pos[2] * w
+        best_zone.center_xyz = (round(cx, 3), round(cy, 3), round(cz, 3))
+        if floor_id is not None and best_zone.floor_id is None:
+            best_zone.floor_id = floor_id
+        if clean_type and clean_type.lower() != "unknown":
+            best_zone.zone_type = clean_type
+        if clean_sum:
+            best_zone.summary = clean_sum
+        if is_close:
+            best_zone.close_views += 1
+        else:
+            best_zone.far_views += 1
+        best_zone.last_visited_seq = max(best_zone.last_visited_seq, int(step_seq))
+        return best_zone.zone_id
+
+    def zone_coverage_summary(
+        self, robot_xyz: Sequence[float] | None = None
+    ) -> list[dict[str, Any]]:
+        """Summarize semantic functional zones and negative/close-up view coverage."""
+        ref_xyz = None if robot_xyz is None else _finite_xyz(robot_xyz, "robot_xyz")
+        rows: list[dict[str, Any]] = []
+        for z in self._zone_meta.values():
+            objs_here: list[str] = []
+            for obj in self.graph.objects.values():
+                meta = self._object_meta.get(obj.object_id)
+                if meta is not None and meta.stale:
+                    continue
+                if abs(float(obj.world_center_xyz[2]) - float(z.center_xyz[2])) > self.same_floor_dz_m:
+                    continue
+                if math.hypot(
+                    float(obj.world_center_xyz[0]) - z.center_xyz[0],
+                    float(obj.world_center_xyz[1]) - z.center_xyz[1],
+                ) <= float(z.radius_m) + 0.5:
+                    objs_here.append(obj.label)
+            cov_status = "inspected_closeup" if z.close_views >= 2 else "glimpsed"
+            entry: dict[str, Any] = {
+                "zone_id": z.zone_id,
+                "floor_id": z.floor_id,
+                "zone_type": z.zone_type,
+                "status": cov_status,
+                "close_views": z.close_views,
+                "far_views": z.far_views,
+                "center_xyz": [round(v, 2) for v in z.center_xyz],
+                "objects": sorted(dict.fromkeys(objs_here))[:8],
+            }
+            if z.summary:
+                entry["summary"] = z.summary
+            if ref_xyz is not None:
+                entry["distance_m"] = round(
+                    float(np.linalg.norm(np.asarray(z.center_xyz) - np.asarray(ref_xyz))), 2
+                )
+            rows.append(entry)
+        rows.sort(key=lambda r: float(r.get("distance_m", 0.0)))
+        return rows
 
     def mark_object_stale(self, object_id: str, reason: str = "reobserved_absent") -> None:
         meta = self._object_meta.get(object_id)
@@ -1205,6 +1517,8 @@ class HierarchicalMemoryStore:
             is_stale = bool(meta.stale) if meta is not None else False
             if is_stale and not include_stale:
                 continue
+            if label is not None and not include_stale and self._is_object_refuted_for_query(obj, meta, label):
+                continue
             match_score = 1.0
             if label is not None:
                 desc_score = 0.0
@@ -1375,6 +1689,8 @@ class HierarchicalMemoryStore:
             meta = self._object_meta.get(obj.object_id)
             is_stale = bool(meta.stale) if meta is not None else False
             if is_stale and not include_stale:
+                continue
+            if not include_stale and self._is_object_refuted_for_query(obj, meta, q_str):
                 continue
 
             lbl_score = _label_match_score(q_str, obj.label) if q_str else 1.0
@@ -1621,6 +1937,7 @@ class HierarchicalMemoryStore:
             "confidence_margin": round(margin, 3),
             "needs_l3_verification": bool(needs_l3),
             "l3_verify_rgb_paths": l3_paths,
+            "zone_coverage": self.zone_coverage_summary(robot_xyz),
         }
 
     def _support_z_for_object(self, obj: ObjectNode) -> float:
@@ -1829,10 +2146,15 @@ class HierarchicalMemoryStore:
             if target_object_id is not None:
                 obj = self.graph.objects.get(target_object_id)
                 if obj is not None:
-                    raw_matches.append(obj)
+                    meta = self._object_meta.get(obj.object_id)
+                    if not self._is_object_refuted_for_query(obj, meta, target_label):
+                        raw_matches.append(obj)
             elif target_label is not None:
                 for obj in self.graph.objects.values():
                     if target_room_id is not None and obj.room_id != target_room_id:
+                        continue
+                    meta = self._object_meta.get(obj.object_id)
+                    if self._is_object_refuted_for_query(obj, meta, target_label):
                         continue
                     if _label_strict_match(target_label, obj.label, allowed_aliases):
                         raw_matches.append(obj)
@@ -2071,7 +2393,7 @@ class HierarchicalMemoryStore:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out_dict = {
             "schema": MEMORY_SCHEMA,
             "map_id": self.map_id,
             "map_revision": self.map_revision,
@@ -2090,8 +2412,14 @@ class HierarchicalMemoryStore:
                 "next_step_seq": self._next_step_seq,
                 "next_object_seq": self._next_object_seq,
                 "next_attempt_seq": self._next_attempt_seq,
+                "next_zone_seq": self._next_zone_seq,
             },
         }
+        if self._zone_meta:
+            out_dict["zone_meta"] = {
+                zid: zmeta.to_dict() for zid, zmeta in self._zone_meta.items()
+            }
+        return out_dict
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HierarchicalMemoryStore:
@@ -2115,6 +2443,10 @@ class HierarchicalMemoryStore:
             str(k): KeyframeRichMeta.from_dict(v)
             for k, v in data.get("keyframe_meta", {}).items()
         }
+        store._zone_meta = {
+            str(k): ZoneCoverageMeta.from_dict(v)
+            for k, v in data.get("zone_meta", {}).items()
+        }
         store._room_visits = {
             str(k): int(v) for k, v in data.get("room_visits", {}).items()
         }
@@ -2125,6 +2457,7 @@ class HierarchicalMemoryStore:
         store._next_step_seq = int(counters.get("next_step_seq", len(graph.keyframe_poses) + 1))
         store._next_object_seq = int(counters.get("next_object_seq", len(graph.objects) + 1))
         store._next_attempt_seq = int(counters.get("next_attempt_seq", len(store._attempts) + 1))
+        store._next_zone_seq = int(counters.get("next_zone_seq", len(store._zone_meta) + 1))
         return store
 
     def save(self, path: str | Path) -> Path:

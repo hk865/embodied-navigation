@@ -27,6 +27,7 @@ from .hierarchical_memory import (
     KeyframeRichMeta,
     ObjectEvidenceMeta,
     StopVerificationResult,
+    ZoneCoverageMeta,
 )
 from .scene_graph import (
     DoorwayEdge,
@@ -59,6 +60,7 @@ __all__ = [
     "SemanticScheduler",
     "StairEdge",
     "StopVerificationResult",
+    "ZoneCoverageMeta",
     "build_scene_graph_from_map_dir",
     "build_scene_graph_from_map_store",
     "estimate_keyframe_clearance_m",

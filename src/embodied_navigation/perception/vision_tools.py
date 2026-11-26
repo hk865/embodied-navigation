@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import http.client
 import io
 import json
@@ -82,10 +82,12 @@ class GroundedDetection:
     backend: str = "vision_tool"
     mask: np.ndarray | None = None
     embedding: tuple[float, ...] | None = None
+    candidate_scores: dict[str, float] = field(default_factory=dict)
+    abstain: bool = False
 
     def to_prompt_dict(self) -> dict[str, Any]:
         """Compact metric summary safe for injecting into VLM ``[TOOL_RESULTS]``."""
-        return {
+        out: dict[str, Any] = {
             "id": self.det_id,
             "label": self.label,
             "score": round(float(self.score), 2),
@@ -96,6 +98,13 @@ class GroundedDetection:
             "range_source": self.range_source,
             "backend": self.backend,
         }
+        if len(self.candidate_scores) > 1:
+            out["candidate_scores"] = {
+                k: round(float(v), 3) for k, v in self.candidate_scores.items()
+            }
+        if self.abstain:
+            out["abstain"] = True
+        return out
 
 
 def encode_mask_b64(mask: np.ndarray) -> dict[str, Any]:
@@ -373,6 +382,47 @@ def suppress_overlapping_detections(
     return kept
 
 
+def cluster_multilabel_detections(
+    detections: Sequence[VisionDetection],
+    *,
+    mask_iou_threshold: float = 0.65,
+    abstain_threshold: float = 0.25,
+) -> list[tuple[VisionDetection, dict[str, float], bool]]:
+    """Cluster overlapping prompts onto physical object regions with per-label scores.
+
+    Preserves multi-hypothesis evidence (e.g. ``{"desk": 0.82, "table": 0.65}``) for
+    contrastive disambiguation and flags ``abstain=True`` when the highest-scoring
+    prompt falls below ``abstain_threshold``.
+    """
+    ordered = sorted(detections, key=lambda d: -float(d.score))
+    clusters: list[tuple[VisionDetection, dict[str, float]]] = []
+    for cand in ordered:
+        c_lbl = " ".join(cand.label.strip().lower().split())
+        if not c_lbl:
+            continue
+        sc = float(cand.score)
+        matched_cluster: tuple[VisionDetection, dict[str, float]] | None = None
+        for rep, scores_map in clusters:
+            if _detection_iou(cand, rep) >= float(mask_iou_threshold):
+                matched_cluster = (rep, scores_map)
+                break
+        if matched_cluster is None:
+            clusters.append((cand, {c_lbl: round(sc, 3)}))
+        else:
+            _, scores_map = matched_cluster
+            prev_sc = scores_map.get(c_lbl)
+            if prev_sc is None or sc > prev_sc:
+                scores_map[c_lbl] = round(sc, 3)
+
+    out: list[tuple[VisionDetection, dict[str, float], bool]] = []
+    thr = float(abstain_threshold)
+    for rep, scores_map in clusters:
+        sorted_scores = dict(sorted(scores_map.items(), key=lambda kv: -kv[1]))
+        abstain = float(rep.score) < thr
+        out.append((rep, sorted_scores, abstain))
+    return out
+
+
 def ground_detections_with_depth(
     detections: Sequence[VisionDetection],
     depth_m: np.ndarray,
@@ -383,11 +433,25 @@ def ground_detections_with_depth(
     max_range_m: float = 10.0,
     min_valid_pixels: int = 16,
     apply_nms: bool = True,
+    multilabel_cluster: bool = False,
+    abstain_threshold: float = 0.25,
 ) -> list[GroundedDetection]:
     """Ground a sequence of 2D vision detections into metric 3D ``GroundedDetection`` items."""
-    dets_use = suppress_overlapping_detections(detections) if apply_nms else list(detections)
+    if multilabel_cluster:
+        clustered = cluster_multilabel_detections(
+            detections, abstain_threshold=abstain_threshold
+        )
+    else:
+        dets_use = (
+            suppress_overlapping_detections(detections) if apply_nms else list(detections)
+        )
+        clustered = [
+            (d, {d.label.strip().lower(): round(float(d.score), 3)}, False)
+            for d in dets_use
+        ]
+
     out: list[GroundedDetection] = []
-    for det in dets_use:
+    for det, cand_scores, abstain in clustered:
         g = ground_mask_with_depth(
             det.mask,
             depth_m,
@@ -416,6 +480,8 @@ def ground_detections_with_depth(
                 backend=det.backend,
                 mask=det.mask,
                 embedding=det.embedding,
+                candidate_scores=cand_scores,
+                abstain=abstain,
             )
         )
     return out

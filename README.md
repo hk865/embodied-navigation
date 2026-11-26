@@ -92,7 +92,8 @@ Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本
 | 定位建图 | `localization_mapping/semantic_mapping/` | 语义点层、关键帧锚定 3D 场景图（`KeyframeSceneGraph`）、后端适配器与调度（离线 CLI `scripts/build_semantic_scene_graph.py`；在线回环需显式调用 `sync_backend_loop_update`，暂未自动接在线 `backend.py`） | [README](src/embodied_navigation/localization_mapping/semantic_mapping/README.md) |
 | 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与来源 | [README](src/embodied_navigation/planning/README.md) |
 | 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
-| 规划 | `planning/exploration/` | 航点候选、路线信息与 OS1 标定 | [README](src/embodied_navigation/planning/exploration/README.md) |
+| 规划 | `planning/exploration/` | 航点候选、路线信息、Habitat 适配与世界守护 | [README](src/embodied_navigation/planning/exploration/README.md) |
+| Agent 运行时 | `agent_runtime/` | 通用多轮 Tool-Calling 运行时、Prefix-Stable 200K 上下文、压缩与 Hooks | [README](src/embodied_navigation/agent_runtime/README.md) |
 | 控制跟踪 | `navigation/` | `RouteTracker` 路线跟踪与 `yaw_action` 转向动作（平台无关纯策略，不依赖 ROS/Isaac） | [README](src/embodied_navigation/navigation/README.md) |
 | 控制跟踪 | `navigation/robogauge/` | RoboGauge 路线跟踪接口 | [README](src/embodied_navigation/navigation/robogauge/README.md) |
 | 机器人执行 | `robot/` | Go2 观测、关节契约、策略执行 | [README](src/embodied_navigation/robot/README.md) |
