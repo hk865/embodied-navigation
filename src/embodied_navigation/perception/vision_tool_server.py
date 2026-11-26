@@ -388,17 +388,27 @@ class ClipEmbedder:
 def create_vision_app(
     *,
     seg_backend: Any = None,
-    embedder: ClipEmbedder | None = None,
+    embedder: Any = None,
     device: str = "cuda",
 ) -> Any:
     """Create a FastAPI application with strict Pydantic validation and serialized GPU lock."""
-    from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr
+    from typing import Union
+
+    from fastapi import Body, FastAPI, HTTPException
+    from pydantic import (
+        BaseModel,
+        Field,
+        StrictBool,
+        StrictFloat,
+        StrictInt,
+        StrictStr,
+        ValidationError,
+    )
 
     class SegmentTextRequest(BaseModel):
         image_b64: StrictStr = Field(min_length=1, max_length=_MAX_IMAGE_B64_CHARS)
         prompts: list[StrictStr] = Field(min_length=1, max_length=16)
-        score_threshold: StrictFloat | StrictInt = Field(default=0.25, ge=0.0, le=1.0)
+        score_threshold: Union[StrictFloat, StrictInt] = Field(default=0.25, ge=0.0, le=1.0)
         max_detections: StrictInt = Field(default=12, ge=1, le=32)
         include_masks: StrictBool = True
         include_crop_embeddings: StrictBool = False
@@ -408,6 +418,24 @@ def create_vision_app(
 
     class EmbedTextRequest(BaseModel):
         text: StrictStr = Field(min_length=1, max_length=512)
+
+    # Resolve local type annotations cleanly under ``from __future__ import annotations``
+    ns = {
+        "StrictStr": StrictStr,
+        "StrictFloat": StrictFloat,
+        "StrictInt": StrictInt,
+        "StrictBool": StrictBool,
+        "Union": Union,
+    }
+    SegmentTextRequest.model_rebuild(_types_namespace=ns)
+    EmbedImageRequest.model_rebuild(_types_namespace=ns)
+    EmbedTextRequest.model_rebuild(_types_namespace=ns)
+
+    def _validate(model_cls: type[BaseModel], payload: Any) -> Any:
+        try:
+            return model_cls.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from None
 
     lock = threading.Lock()
     app = FastAPI(title="Embodied Navigation Vision Tool Service")
@@ -422,9 +450,10 @@ def create_vision_app(
         }
 
     @app.post("/segment_text")
-    def segment_text(req: SegmentTextRequest) -> dict[str, Any]:
+    def segment_text(payload: Any = Body(...)) -> dict[str, Any]:
         if seg_backend is None:
             raise HTTPException(status_code=503, detail="segmentation_backend_disabled")
+        req = _validate(SegmentTextRequest, payload)
         prompts = list(dict.fromkeys(p.strip().lower() for p in req.prompts if p.strip()))
         if not prompts:
             raise HTTPException(status_code=400, detail="empty_prompts")
@@ -453,9 +482,10 @@ def create_vision_app(
         }
 
     @app.post("/embed_image")
-    def embed_image(req: EmbedImageRequest) -> dict[str, Any]:
+    def embed_image(payload: Any = Body(...)) -> dict[str, Any]:
         if embedder is None:
             raise HTTPException(status_code=503, detail="embedder_disabled")
+        req = _validate(EmbedImageRequest, payload)
         with lock:
             try:
                 img = _decode_image_b64(req.image_b64)
@@ -465,9 +495,10 @@ def create_vision_app(
         return {"embed_model": embedder.model_name, "embedding": emb}
 
     @app.post("/embed_text")
-    def embed_text(req: EmbedTextRequest) -> dict[str, Any]:
+    def embed_text(payload: Any = Body(...)) -> dict[str, Any]:
         if embedder is None:
             raise HTTPException(status_code=503, detail="embedder_disabled")
+        req = _validate(EmbedTextRequest, payload)
         clean = req.text.strip()
         if not clean:
             raise HTTPException(status_code=400, detail="empty_text")
