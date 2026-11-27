@@ -50,6 +50,13 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "api_key_env": "DEEPSEEK_API_KEY",
         "supports_vision": False,
     },
+    "deepseek_official": {
+        "base_url": "https://api.deepseek.com/v1",
+        "default_model": "deepseek-flash",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "opencode_auth_provider": "deepseek",
+        "supports_vision": True,
+    },
     "qwen3.8-flash": dict(_QWEN_PRESET),
     "qwen": dict(_QWEN_PRESET),
     "opencode": dict(_OPENCODE_GO_PRESET),

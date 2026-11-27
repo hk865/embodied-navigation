@@ -1,6 +1,6 @@
 # scripts（DynaNav 入口脚本与离线工具）
 
-盘点日期 2026-11-26。本目录是 D 路径（DynaNav / Isaac Sim）的薄 CLI 入口、视觉工具服务启动器与离线/Habitat 评测工具集：解析参数、编排进程、调用 `src/` 里的包；业务逻辑一律在 `src/`，脚本互相之间不 `import`，也不是 Python 包或 `pyproject.toml` 的 console script。
+盘点日期 2026-11-27。本目录是 D 路径（DynaNav / Isaac Sim）的薄 CLI 入口、视觉工具服务启动器与离线/Habitat 评测工具集：解析参数、编排进程、调用 `src/` 里的包；业务逻辑一律在 `src/`，脚本互相之间不 `import`，也不是 Python 包或 `pyproject.toml` 的 console script。
 
 ## 模块定位与架构层级
 
@@ -37,7 +37,7 @@ scripts/
 ├── run_dynanav_lio.sh                        # 684 行，隔离的 LIO/LIVO observer 启动器
 ├── run_dynanav_native_exploration.sh         # 396 行，D 路径唯一主入口（PCT+SCAN 探索）
 ├── run_dynanav_pct_scan.py                   # 10 行，pct_scan_worker.main 的薄入口（ROS system python）
-├── run_habitat_agent_eval.py                 # 143 行，顶层 agent/ 200K 多轮 Habitat HM3D 评测 CLI（纯 500 原子步预算）
+├── run_habitat_agent_eval.py                 # 241 行，顶层 agent/ 多轮 Habitat HM3D 评测 CLI（默认 500 原子步预算可改写、主备降级链与 concurrent_independent 共享场景并发）
 ├── run_habitat_memory_eval.py                # 190 行，无状态单轮 Habitat HM3D 评测 CLI（对照组）
 ├── run_static_streaming_task.py              # 184 行，流式静态探索任务 CLI
 ├── run_vision_tool_service.py                # 54 行，本地 GPU 视觉工具服务启动器（SAM 3 / GDINO / YOLOE + SigLIP）
@@ -45,7 +45,7 @@ scripts/
 └── summarize_dynanav_experiment.py           # 414 行，汇总 run 目录收据与 journal
 ```
 
-28 个 git 跟踪文件（24 个 Python 脚本、2 个 shell、2 个 README），仅本批次新增 `run_habitat_agent_eval.py`（138 行）与 `run_vision_tool_service.py`（54 行）等保持在 300 行内；历史及既有脚本中仍有多份超限文件（如 `explore_waypoint_client.py` 1,964 行、`reconstruct_dynanav_slam_map.py` 602 行、`summarize_dynanav_experiment.py` 414 行）待后续拆薄。
+28 个 git 跟踪文件（24 个 Python 脚本、2 个 shell、2 个 README），本批次新增的 `run_habitat_agent_eval.py`（241 行）与 `run_vision_tool_service.py`（54 行）等均保持在 300 行内；历史及既有脚本中仍有多份超限文件（如 `explore_waypoint_client.py` 1,964 行、`reconstruct_dynanav_slam_map.py` 602 行、`summarize_dynanav_experiment.py` 414 行）待后续拆薄。
 
 ## 逐文件职责
 

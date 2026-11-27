@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import time
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
@@ -118,6 +118,12 @@ class HabitatAgentRunner:
         return habitat_sim.Simulator(habitat_sim.Configuration(sim_cfg, [agent_cfg]))
 
     @staticmethod
+    def _on_sim(sim_obj: Any, fn: Callable[[Any], Any]) -> Any:
+        if hasattr(sim_obj, "run_atomic"):
+            return sim_obj.run_atomic(fn)
+        return fn(sim_obj)
+
+    @staticmethod
     def _geodesic_dist(sim: Any, start_hab: Sequence[float], end_hab: Sequence[float]) -> float:
         import habitat_sim
 
@@ -135,30 +141,35 @@ class HabitatAgentRunner:
         gt_list: Sequence[HabitatObjectGT],
         stop_radius_m: float,
     ) -> tuple[float, float, bool, HabitatObjectGT | None]:
-        best_euc = float("inf")
-        best_geo = float("inf")
-        best_gt: HabitatObjectGT | None = None
-        reached = False
-        r_mem = np.asarray(hab_to_mem(robot_hab), dtype=np.float64)
-        for gt in gt_list:
-            if gt.surface_points_mem:
-                surf_arr = np.asarray(gt.surface_points_mem, dtype=np.float64)
-                d_euc = float(np.min(np.linalg.norm(surf_arr - r_mem[None, :], axis=1)))
-            else:
-                d_euc = float(np.linalg.norm(r_mem - np.asarray(gt.center_mem, dtype=np.float64)))
-            obj_best_geo = float("inf")
-            for vp in gt.viewpoints_hab:
-                d_geo = self._geodesic_dist(sim, robot_hab, vp)
-                if d_geo < obj_best_geo:
-                    obj_best_geo = d_geo
-            if obj_best_geo < best_geo:
-                best_geo = obj_best_geo
-                best_gt = gt
-            if d_euc < best_euc:
-                best_euc = d_euc
-            if is_geodesic_target_reached(obj_best_geo, d_euc, stop_radius_m):
-                reached = True
-        return best_euc, best_geo, reached, best_gt
+        def _eval(raw_sim: Any) -> tuple[float, float, bool, HabitatObjectGT | None]:
+            best_euc = float("inf")
+            best_geo = float("inf")
+            best_gt: HabitatObjectGT | None = None
+            reached = False
+            r_mem = np.asarray(hab_to_mem(robot_hab), dtype=np.float64)
+            for gt in gt_list:
+                if gt.surface_points_mem:
+                    surf_arr = np.asarray(gt.surface_points_mem, dtype=np.float64)
+                    d_euc = float(np.min(np.linalg.norm(surf_arr - r_mem[None, :], axis=1)))
+                else:
+                    d_euc = float(
+                        np.linalg.norm(r_mem - np.asarray(gt.center_mem, dtype=np.float64))
+                    )
+                obj_best_geo = float("inf")
+                for vp in gt.viewpoints_hab:
+                    d_geo = self._geodesic_dist(raw_sim, robot_hab, vp)
+                    if d_geo < obj_best_geo:
+                        obj_best_geo = d_geo
+                if obj_best_geo < best_geo:
+                    best_geo = obj_best_geo
+                    best_gt = gt
+                if d_euc < best_euc:
+                    best_euc = d_euc
+                if is_geodesic_target_reached(obj_best_geo, d_euc, stop_radius_m):
+                    reached = True
+            return best_euc, best_geo, reached, best_gt
+
+        return self._on_sim(sim, _eval)
 
     def run_sequential_episode(
         self,
@@ -166,45 +177,78 @@ class HabitatAgentRunner:
         *,
         start_hab: Sequence[float] | None = None,
         independent_subtasks: bool = False,
+        shared_scene_host: Any = None,
+        session_id: str | None = None,
+        eval_mode_label: str | None = None,
     ) -> dict[str, Any]:
         import habitat_sim
         import quaternion
 
         t_ep = time.perf_counter()
-        sim = self._create_sim()
-        cot_log_path = self.output_dir / "agent_cot_traces.jsonl"
-        cot_log_path.write_text("", encoding="utf-8")
+        owns_sim = shared_scene_host is None
+        sid = str(session_id or f"sess_{self.seed}_{int(time.time() * 1000) % 100000}").strip()
+        fb_switches_start = int(getattr(self.chat_client, "fallback_switches", 0))
+        fb_served_start = int(getattr(self.chat_client, "fallback_served_turns", 0))
+        if owns_sim:
+            sim: Any = self._create_sim()
+        else:
+            sim = shared_scene_host.create_session(sid)
 
         try:
+            cot_log_path = self.output_dir / "agent_cot_traces.jsonl"
+            cot_log_path.write_text("", encoding="utf-8")
+
+            rng_seq = [0]
+
+            def _seed_pathfinder(raw_sim: Any, tag_offset: int) -> None:
+                seq_val = rng_seq[0]
+                rng_seq[0] += 1
+                raw_sim.pathfinder.seed((self.seed * 1009 + tag_offset * 97 + seq_val) & 0x7FFFFFFF)
+
             target_cats = sorted({st.target_category.strip().lower() for st in subtasks})
             max_stop_r = max((float(st.stop_radius_m) for st in subtasks), default=self.stop_radius_m)
-            private_gt = build_private_hm3d_gt(
-                sim,
-                target_categories=target_cats,
-                num_samples=260,
-                seed=self.seed,
-                max_view_dist_m=max_stop_r,
-            )
-
-            sim.pathfinder.seed(self.seed + 7)
-            if start_hab is not None:
-                init_pt = np.asarray(start_hab, dtype=np.float32)
+            if not owns_sim and bool(getattr(shared_scene_host, "gt_precomputed", False)):
+                private_gt = shared_scene_host.private_gt
             else:
-                avail_cats = [c for c in target_cats if private_gt.get(c)]
-                init_pt = np.asarray(sim.pathfinder.get_random_navigable_point(), dtype=np.float32)
-                for _ in range(40):
-                    cand_pt = np.asarray(sim.pathfinder.get_random_navigable_point(), dtype=np.float32)
-                    if all(
-                        math.isfinite(self._eval_gt_proximity(sim, cand_pt, private_gt.get(c, []), max_stop_r)[1])
-                        for c in avail_cats
-                    ):
-                        init_pt = cand_pt
-                        break
+                private_gt = self._on_sim(
+                    sim,
+                    lambda raw_sim: build_private_hm3d_gt(
+                        raw_sim,
+                        target_categories=target_cats,
+                        num_samples=260,
+                        seed=self.seed,
+                        max_view_dist_m=max_stop_r,
+                    ),
+                )
 
-            st0 = sim.agents[0].get_state()
-            st0.position = init_pt
-            st0.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-            sim.agents[0].set_state(st0)
+            def _sample_init_pose(raw_sim: Any) -> np.ndarray:
+                _seed_pathfinder(raw_sim, 1)
+                if start_hab is not None:
+                    pt = np.asarray(start_hab, dtype=np.float32)
+                else:
+                    avail_cats = [c for c in target_cats if private_gt.get(c)]
+                    pt = np.asarray(raw_sim.pathfinder.get_random_navigable_point(), dtype=np.float32)
+                    for _ in range(40):
+                        cand_pt = np.asarray(
+                            raw_sim.pathfinder.get_random_navigable_point(), dtype=np.float32
+                        )
+                        if all(
+                            math.isfinite(
+                                self._eval_gt_proximity(
+                                    raw_sim, cand_pt, private_gt.get(c, []), max_stop_r
+                                )[1]
+                            )
+                            for c in avail_cats
+                        ):
+                            pt = cand_pt
+                            break
+                st0 = raw_sim.agents[0].get_state()
+                st0.position = pt
+                st0.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+                raw_sim.agents[0].set_state(st0)
+                return pt
+
+            init_pt = self._on_sim(sim, _sample_init_pose)
 
             reg_summarizer = (
                 _build_vlm_region_summarizer(self.chat_client.config, self.output_dir)
@@ -241,45 +285,77 @@ class HabitatAgentRunner:
 
             def _step_goal(goal_mem: Sequence[float]) -> dict[str, Any]:
                 goal_hab = np.asarray(mem_to_hab(goal_mem), dtype=np.float32)
-                snapped = np.asarray(sim.pathfinder.snap_point(goal_hab), dtype=np.float32)
-                if not np.all(np.isfinite(snapped)) or not sim.pathfinder.is_navigable(snapped):
+
+                def _snap(raw_sim: Any) -> np.ndarray | None:
+                    sn = np.asarray(raw_sim.pathfinder.snap_point(goal_hab), dtype=np.float32)
+                    if not np.all(np.isfinite(sn)) or not raw_sim.pathfinder.is_navigable(sn):
+                        return None
+                    return sn
+
+                snapped = self._on_sim(sim, _snap)
+                if snapped is None:
                     return {"status": "blocked", "reason": "unreachable_goal", "traveled_m": 0.0, "primitives": 0}
-                _, _, start_h = daemon.agent_pose()
                 rem_prims = max(0, int(active_state["max_prim_budget"]) - int(active_state["primitives_used"]))
                 max_prims = min(24, rem_prims)
                 if max_prims <= 0:
                     return {"status": "failed", "reason": "primitive_budget_exhausted", "traveled_m": 0.0, "primitives": 0}
-                follower = habitat_sim.GreedyGeodesicFollower(sim.pathfinder, sim.agents[0], goal_radius=0.45)
+
                 traveled = 0.0
-                prev_h = start_h
                 taken = 0
                 arrived = False
                 ferr: str | None = None
-                for idx in range(max_prims):
-                    try:
-                        act = follower.next_action_along(snapped)
-                    except habitat_sim.errors.GreedyFollowerError:
-                        ferr = "follower_blocked"
-                        break
-                    if act is None or act == "stop":
-                        arrived = True
-                        break
-                    sim.step(act)
-                    taken += 1
-                    active_state["primitives_used"] += 1
-                    _, _, cur_h = daemon.agent_pose()
-                    traveled += float(np.linalg.norm(cur_h - prev_h))
-                    prev_h = cur_h
-                    if not active_state["oracle_reached"]:
-                        _, _, r_pt, _ = self._eval_gt_proximity(
-                            sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
-                        )
-                        if r_pt:
-                            active_state["oracle_reached"] = True
-                    if idx % 4 == 3:
-                        daemon.ingest_sensor_frame(force_keyframe=False)
+                follower_box: list[Any] = [None]
+                try:
+                    while taken < max_prims and not arrived and ferr is None:
+                        chunk = min(4, max_prims - taken)
+                        prog = {"taken": 0, "traveled": 0.0, "arrived": False, "err": None, "reached": False}
 
-                active_state["traveled_m"] += traveled
+                        def _run_chunk(raw_sim: Any, n_steps: int = chunk, p: dict[str, Any] = prog) -> None:
+                            if follower_box[0] is None:
+                                follower_box[0] = habitat_sim.GreedyGeodesicFollower(
+                                    raw_sim.pathfinder, raw_sim.agents[0], goal_radius=0.45
+                                )
+                            fol = follower_box[0]
+                            prev_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                            for _ in range(n_steps):
+                                try:
+                                    act = fol.next_action_along(snapped)
+                                except habitat_sim.errors.GreedyFollowerError:
+                                    p["err"] = "follower_blocked"
+                                    break
+                                if act is None or act == "stop":
+                                    p["arrived"] = True
+                                    break
+                                raw_sim.step(act)
+                                p["taken"] += 1
+                                cur_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                                p["traveled"] += float(np.linalg.norm(cur_h - prev_h))
+                                prev_h = cur_h
+                                if not active_state["oracle_reached"] and not p["reached"]:
+                                    _, _, r_pt, _ = self._eval_gt_proximity(
+                                        raw_sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
+                                    )
+                                    if r_pt:
+                                        p["reached"] = True
+
+                        try:
+                            self._on_sim(sim, _run_chunk)
+                        finally:
+                            ct = int(prog["taken"])
+                            cv = float(prog["traveled"])
+                            taken += ct
+                            active_state["primitives_used"] += ct
+                            traveled += cv
+                            active_state["traveled_m"] += cv
+                            if prog["reached"]:
+                                active_state["oracle_reached"] = True
+                        arrived = bool(prog["arrived"])
+                        ferr = prog["err"]
+                        if ct >= 4 and not arrived and ferr is None:
+                            daemon.ingest_sensor_frame(force_keyframe=False)
+                finally:
+                    follower_box[0] = None
+
                 end_mem, _, _ = daemon.agent_pose()
                 straight_rem = math.hypot(
                     float(goal_mem[0]) - float(end_mem[0]),
@@ -309,26 +385,43 @@ class HabitatAgentRunner:
                 rem = max(0, int(active_state["max_prim_budget"]) - int(active_state["primitives_used"]))
                 n_run = min(max(1, int(count)), rem)
                 traveled = 0.0
-                _, _, prev_h = daemon.agent_pose()
-                for idx in range(n_run):
-                    sim.step(act_name)
-                    active_state["primitives_used"] += 1
-                    _, _, cur_h = daemon.agent_pose()
-                    traveled += float(np.linalg.norm(cur_h - prev_h))
-                    prev_h = cur_h
-                    if not active_state["oracle_reached"]:
-                        _, _, r_pt, _ = self._eval_gt_proximity(
-                            sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
-                        )
-                        if r_pt:
+                done = 0
+                while done < n_run:
+                    chunk = min(3, n_run - done)
+                    prog = {"taken": 0, "traveled": 0.0, "reached": False}
+
+                    def _run_p(raw_sim: Any, n_steps: int = chunk, p: dict[str, Any] = prog) -> None:
+                        prev_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                        for _ in range(n_steps):
+                            raw_sim.step(act_name)
+                            p["taken"] += 1
+                            cur_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                            p["traveled"] += float(np.linalg.norm(cur_h - prev_h))
+                            prev_h = cur_h
+                            if not active_state["oracle_reached"] and not p["reached"]:
+                                _, _, r_pt, _ = self._eval_gt_proximity(
+                                    raw_sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
+                                )
+                                if r_pt:
+                                    p["reached"] = True
+
+                    try:
+                        self._on_sim(sim, _run_p)
+                    finally:
+                        ct = int(prog["taken"])
+                        cv = float(prog["traveled"])
+                        done += ct
+                        active_state["primitives_used"] += ct
+                        traveled += cv
+                        active_state["traveled_m"] += cv
+                        if prog["reached"]:
                             active_state["oracle_reached"] = True
-                    if idx % 3 == 2:
+                    if ct >= 3:
                         daemon.ingest_sensor_frame(force_keyframe=False)
-                active_state["traveled_m"] += traveled
                 return {
                     "status": "completed",
                     "action": act_name,
-                    "primitives": n_run,
+                    "primitives": done,
                     "traveled_m": round(traveled, 3),
                     "atomic_steps_used": active_state["primitives_used"],
                     "atomic_steps_budget": active_state["max_prim_budget"],
@@ -352,42 +445,45 @@ class HabitatAgentRunner:
                 ay = float(anchor_xy[1]) if (anchor_xy and len(anchor_xy) >= 2) else float(start_mem[1])
                 cur_y = float(start_h[1])
 
-                # Local NavMesh landing discovery around observed staircase (zero semantic/GT access)
-                best_landing: np.ndarray | None = None
-                best_score = float("inf")
-                for radius_m in (4.5, 7.5, 11.0):
-                    for _ in range(180):
-                        cand = np.asarray(
-                            sim.pathfinder.get_random_navigable_point(), dtype=np.float32
-                        )
-                        if not np.all(np.isfinite(cand)):
-                            continue
-                        dy = float(cand[1]) - cur_y
-                        if direction == "down" and not (-4.5 <= dy <= -1.2):
-                            continue
-                        if direction == "up" and not (1.2 <= dy <= 4.5):
-                            continue
-                        c_mem = hab_to_mem(cand)
-                        hdist = math.hypot(float(c_mem[0]) - ax, float(c_mem[1]) - ay)
-                        if hdist > radius_m:
-                            continue
-                        sp = habitat_sim.ShortestPath()
-                        sp.requested_start = start_h
-                        sp.requested_end = cand
-                        if not sim.pathfinder.find_path(sp) or not math.isfinite(
-                            float(sp.geodesic_distance)
-                        ):
-                            continue
-                        geo = float(sp.geodesic_distance)
-                        if geo > 20.0:
-                            continue
-                        sc_val = geo + 0.35 * hdist
-                        if sc_val < best_score:
-                            best_score = sc_val
-                            best_landing = cand
-                    if best_landing is not None:
-                        break
+                def _find_landing(raw_sim: Any) -> np.ndarray | None:
+                    _seed_pathfinder(raw_sim, 2)
+                    best_pt: np.ndarray | None = None
+                    best_sc = float("inf")
+                    for radius_m in (4.5, 7.5, 11.0):
+                        for _ in range(180):
+                            cand = np.asarray(
+                                raw_sim.pathfinder.get_random_navigable_point(), dtype=np.float32
+                            )
+                            if not np.all(np.isfinite(cand)):
+                                continue
+                            dy = float(cand[1]) - cur_y
+                            if direction == "down" and not (-4.5 <= dy <= -1.2):
+                                continue
+                            if direction == "up" and not (1.2 <= dy <= 4.5):
+                                continue
+                            c_mem = hab_to_mem(cand)
+                            hdist = math.hypot(float(c_mem[0]) - ax, float(c_mem[1]) - ay)
+                            if hdist > radius_m:
+                                continue
+                            sp = habitat_sim.ShortestPath()
+                            sp.requested_start = start_h
+                            sp.requested_end = cand
+                            if not raw_sim.pathfinder.find_path(sp) or not math.isfinite(
+                                float(sp.geodesic_distance)
+                            ):
+                                continue
+                            geo = float(sp.geodesic_distance)
+                            if geo > 20.0:
+                                continue
+                            sc_val = geo + 0.35 * hdist
+                            if sc_val < best_sc:
+                                best_sc = sc_val
+                                best_pt = cand
+                        if best_pt is not None:
+                            break
+                    return best_pt
 
+                best_landing = self._on_sim(sim, _find_landing)
                 if best_landing is None:
                     return {
                         "status": "blocked",
@@ -400,39 +496,64 @@ class HabitatAgentRunner:
                     }
 
                 max_prims = min(48, rem_prims)
-                follower = habitat_sim.GreedyGeodesicFollower(
-                    sim.pathfinder, sim.agents[0], goal_radius=0.50
-                )
                 traveled = 0.0
-                prev_h = start_h
                 taken = 0
                 arrived = False
                 ferr: str | None = None
-                for idx in range(max_prims):
-                    try:
-                        act = follower.next_action_along(best_landing)
-                    except habitat_sim.errors.GreedyFollowerError:
-                        ferr = "follower_blocked"
-                        break
-                    if act is None or act == "stop":
-                        arrived = True
-                        break
-                    sim.step(act)
-                    taken += 1
-                    active_state["primitives_used"] += 1
-                    _, _, cur_h = daemon.agent_pose()
-                    traveled += float(np.linalg.norm(cur_h - prev_h))
-                    prev_h = cur_h
-                    if not active_state["oracle_reached"]:
-                        _, _, r_pt, _ = self._eval_gt_proximity(
-                            sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
-                        )
-                        if r_pt:
-                            active_state["oracle_reached"] = True
-                    if idx % 4 == 3:
-                        daemon.ingest_sensor_frame(force_keyframe=False)
+                stair_follower_box: list[Any] = [None]
+                try:
+                    while taken < max_prims and not arrived and ferr is None:
+                        chunk = min(4, max_prims - taken)
+                        prog = {"taken": 0, "traveled": 0.0, "arrived": False, "err": None, "reached": False}
 
-                active_state["traveled_m"] += traveled
+                        def _run_stair_chunk(
+                            raw_sim: Any, n_steps: int = chunk, p: dict[str, Any] = prog
+                        ) -> None:
+                            if stair_follower_box[0] is None:
+                                stair_follower_box[0] = habitat_sim.GreedyGeodesicFollower(
+                                    raw_sim.pathfinder, raw_sim.agents[0], goal_radius=0.50
+                                )
+                            fol = stair_follower_box[0]
+                            prev_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                            for _ in range(n_steps):
+                                try:
+                                    act = fol.next_action_along(best_landing)
+                                except habitat_sim.errors.GreedyFollowerError:
+                                    p["err"] = "follower_blocked"
+                                    break
+                                if act is None or act == "stop":
+                                    p["arrived"] = True
+                                    break
+                                raw_sim.step(act)
+                                p["taken"] += 1
+                                cur_h = np.asarray(raw_sim.agents[0].get_state().position, dtype=np.float64)
+                                p["traveled"] += float(np.linalg.norm(cur_h - prev_h))
+                                prev_h = cur_h
+                                if not active_state["oracle_reached"] and not p["reached"]:
+                                    _, _, r_pt, _ = self._eval_gt_proximity(
+                                        raw_sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
+                                    )
+                                    if r_pt:
+                                        p["reached"] = True
+
+                        try:
+                            self._on_sim(sim, _run_stair_chunk)
+                        finally:
+                            ct = int(prog["taken"])
+                            cv = float(prog["traveled"])
+                            taken += ct
+                            active_state["primitives_used"] += ct
+                            traveled += cv
+                            active_state["traveled_m"] += cv
+                            if prog["reached"]:
+                                active_state["oracle_reached"] = True
+                        arrived = bool(prog["arrived"])
+                        ferr = prog["err"]
+                        if ct >= 4 and not arrived and ferr is None:
+                            daemon.ingest_sensor_frame(force_keyframe=False)
+                finally:
+                    stair_follower_box[0] = None
+
                 end_mem, _, _ = daemon.agent_pose()
                 dz = float(end_mem[2]) - float(start_mem[2])
                 if abs(dz) >= 1.2:
@@ -483,20 +604,29 @@ class HabitatAgentRunner:
                     shared_context = None
                     runtime = None
                     cat_gts = private_gt.get(subtask.target_category.strip().lower(), [])
-                    sub_init_pt = init_pt
-                    for _ in range(40):
-                        cand_pt = np.asarray(sim.pathfinder.get_random_navigable_point(), dtype=np.float32)
-                        if not cat_gts:
-                            sub_init_pt = cand_pt
-                            break
-                        _, dg, _, _ = self._eval_gt_proximity(sim, cand_pt, cat_gts, subtask.stop_radius_m)
-                        if math.isfinite(dg) and dg >= 1.5:
-                            sub_init_pt = cand_pt
-                            break
-                    st_r = sim.agents[0].get_state()
-                    st_r.position = sub_init_pt
-                    st_r.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
-                    sim.agents[0].set_state(st_r)
+
+                    def _respawn(raw_sim: Any) -> None:
+                        _seed_pathfinder(raw_sim, 3)
+                        sub_init_pt = init_pt
+                        for _ in range(40):
+                            cand_pt = np.asarray(
+                                raw_sim.pathfinder.get_random_navigable_point(), dtype=np.float32
+                            )
+                            if not cat_gts:
+                                sub_init_pt = cand_pt
+                                break
+                            _, dg, _, _ = self._eval_gt_proximity(
+                                raw_sim, cand_pt, cat_gts, subtask.stop_radius_m
+                            )
+                            if math.isfinite(dg) and dg >= 1.5:
+                                sub_init_pt = cand_pt
+                                break
+                        st_r = raw_sim.agents[0].get_state()
+                        st_r.position = sub_init_pt
+                        st_r.rotation = quaternion.from_rotation_vector([0.0, 0.0, 0.0])
+                        raw_sim.agents[0].set_state(st_r)
+
+                    self._on_sim(sim, _respawn)
                 elif sub_idx > 1:
                     if not self.memory_carryover:
                         daemon.reset_world(keep_memory=False, keep_occupancy=not self.reset_occupancy_per_subtask)
@@ -713,10 +843,23 @@ class HabitatAgentRunner:
             valid_reports = [r for r in subtask_reports if r.get("valid_gt", True)]
             denom = max(1, len(valid_reports))
             ctx_final = shared_context.metrics_dict() if shared_context is not None else {}
+            ctx_final["provider_fallback_switches"] = max(
+                0, int(getattr(self.chat_client, "fallback_switches", 0)) - fb_switches_start
+            )
+            ctx_final["provider_fallback_served_turns"] = max(
+                0, int(getattr(self.chat_client, "fallback_served_turns", 0)) - fb_served_start
+            )
+            resolved_eval_mode = (
+                str(eval_mode_label)
+                if eval_mode_label
+                else ("independent_cold_start" if independent_subtasks else "sequential_multi_task")
+            )
             summary = {
                 "scene_id": self.scene_id,
+                "session_id": sid,
+                "seed": self.seed,
                 "runtime": "standalone_embodied_agent_runtime_v1",
-                "eval_mode": ("independent_cold_start" if independent_subtasks else "sequential_multi_task"),
+                "eval_mode": resolved_eval_mode,
                 "memory_carryover": (False if independent_subtasks else self.memory_carryover),
                 "occupancy_carryover": (False if independent_subtasks else not self.reset_occupancy_per_subtask),
                 "vision_tools": {
@@ -730,6 +873,10 @@ class HabitatAgentRunner:
                 },
                 "runtime_metrics": ctx_final,
                 "planner_config": self.chat_client.config.to_safe_dict(),
+                "fallback_configs": [
+                    fc.to_safe_dict() for fc in getattr(self.chat_client, "fallback_configs", ())
+                ],
+                "vlm_region_summary_route_policy": "primary_route_only",
                 "subtasks_count": len(subtask_reports),
                 "valid_subtasks_count": len(valid_reports),
                 "invalid_subtasks_count": len(subtask_reports) - len(valid_reports),
@@ -761,4 +908,9 @@ class HabitatAgentRunner:
             atomic_write_json(self.output_dir / "habitat_eval_report.json", summary)
             return summary
         finally:
-            sim.close()
+            if owns_sim:
+                sim.close()
+            elif hasattr(sim, "drop"):
+                sim.drop()
+            else:
+                shared_scene_host.drop_session(sid)

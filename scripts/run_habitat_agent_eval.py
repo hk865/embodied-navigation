@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 
 from embodied_navigation.agent import (
     HabitatAgentRunner,
     OpenCodeToolChatClient,
+    build_default_deepseek_fallback,
     resolve_agent_thinking,
+    run_concurrent_scene_sessions,
 )
 from embodied_navigation.common.llm_config import LlmClientConfig
 from embodied_navigation.perception.vision_tools import VisionToolClient
@@ -31,6 +34,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--provider", default="opencode")
     parser.add_argument("--model", default="deepseek-v4.1-flash")
     parser.add_argument(
+        "--fallback-provider",
+        choices=("auto", "none", "deepseek_official"),
+        default="auto",
+        help="Failover provider on gateway timeout/5xx/429 (auto = deepseek_official for opencode+deepseek).",
+    )
+    parser.add_argument("--fallback-model", default="deepseek-flash")
+    parser.add_argument("--circuit-open-s", type=float, default=120.0)
+    parser.add_argument(
         "--thinking-mode",
         choices=("disabled", "default", "medium", "high", "enabled"),
         default="default",
@@ -46,7 +57,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-primitive-steps", type=int, default=500)
     parser.add_argument("--max-context-tokens", type=int, default=200_000)
     parser.add_argument("--soft-compaction-tokens", type=int, default=155_000)
-    parser.add_argument("--eval-mode", choices=("sequential", "independent"), default="sequential")
+    parser.add_argument(
+        "--eval-mode",
+        choices=("sequential", "independent", "concurrent_independent"),
+        default="sequential",
+    )
+    parser.add_argument("--concurrent-workers", type=int, default=3)
     parser.add_argument("--no-memory-carryover", action="store_true", default=False)
     parser.add_argument("--reset-occupancy-per-subtask", action="store_true", default=False)
     parser.add_argument("--vision-endpoint", default="")
@@ -71,34 +87,59 @@ def main(argv: list[str] | None = None) -> int:
         timeout_s=timeout_s,
         max_tokens=max_tokens,
         temperature=0.1,
-        supports_vision=True,
         stream=True,
         extra_body=extra_body,
     )
-    chat_client = OpenCodeToolChatClient(cfg)
+    fallbacks: list[LlmClientConfig] = []
+    want_ds_fb = (
+        args.fallback_provider == "deepseek_official"
+        or (
+            args.fallback_provider == "auto"
+            and args.provider in ("opencode", "opencode_go")
+            and "deepseek" in str(args.model or "").lower()
+        )
+    )
+    if want_ds_fb:
+        fb = build_default_deepseek_fallback(
+            cfg,
+            thinking_mode=args.thinking_mode,
+            model=args.fallback_model,
+            timeout_s=timeout_s,
+        )
+        if fb is not None:
+            fallbacks.append(fb)
+        elif args.fallback_provider == "deepseek_official":
+            raise SystemExit(
+                "ERROR: --fallback-provider deepseek_official requested, but no DeepSeek API key "
+                "was found in DEEPSEEK_API_KEY or opencode auth.json."
+            )
+        else:
+            print(
+                "[WARN] --fallback-provider auto could not find DeepSeek official credentials; "
+                "running primary route only.",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    chat_client = OpenCodeToolChatClient(
+        cfg,
+        fallback_configs=fallbacks,
+        circuit_open_s=float(args.circuit_open_s),
+    )
+    vision_endpoint = str(args.vision_endpoint or "").strip()
     vision_client = (
-        VisionToolClient(args.vision_endpoint, timeout_s=10.0)
-        if str(args.vision_endpoint or "").strip()
-        else None
+        VisionToolClient(vision_endpoint, timeout_s=10.0) if vision_endpoint else None
     )
+    common_runner_kwargs = {
+        "stop_radius_m": float(args.stop_radius_m),
+        "vision_enhance_overlay": not bool(args.no_vision_overlay),
+        "vision_score_threshold": float(args.vision_score_threshold),
+        "vision_fuse_threshold": float(args.vision_fuse_threshold),
+        "max_context_tokens": int(args.max_context_tokens),
+        "soft_compaction_tokens": int(args.soft_compaction_tokens),
+        "enable_vlm_region_summary": not bool(args.no_vlm_region_summary),
+    }
     out_dir = Path(args.output_dir)
-    runner = HabitatAgentRunner(
-        scene_dataset_config=args.scene_dataset,
-        scene_id=args.scene_id,
-        chat_client=chat_client,
-        output_dir=out_dir,
-        stop_radius_m=args.stop_radius_m,
-        memory_carryover=not args.no_memory_carryover,
-        reset_occupancy_per_subtask=bool(args.reset_occupancy_per_subtask),
-        vision_client=vision_client,
-        vision_enhance_overlay=not bool(args.no_vision_overlay),
-        vision_score_threshold=float(args.vision_score_threshold),
-        vision_fuse_threshold=float(args.vision_fuse_threshold),
-        max_context_tokens=int(args.max_context_tokens),
-        soft_compaction_tokens=int(args.soft_compaction_tokens),
-        enable_vlm_region_summary=not bool(args.no_vlm_region_summary),
-        seed=args.seed,
-    )
     subtasks = [
         HabitatSubtaskSpec(
             subtask_id=f"goal_{idx:02d}",
@@ -114,6 +155,63 @@ def main(argv: list[str] | None = None) -> int:
         )
         for idx, cat in enumerate(args.targets, start=1)
     ]
+
+    if args.eval_mode == "concurrent_independent":
+        session_specs = []
+        for idx, st in enumerate(subtasks, start=1):
+            slug = re.sub(r"[^A-Za-z0-9._-]+", "_", st.target_category).strip("_.-") or "target"
+            session_specs.append((f"sess_{idx:02d}_{slug}", [st], int(args.seed) + idx * 17))
+        reports = run_concurrent_scene_sessions(
+            scene_dataset_config=args.scene_dataset,
+            scene_id=args.scene_id,
+            output_root=out_dir,
+            session_specs=session_specs,
+            chat_client=chat_client,
+            vision_endpoint=vision_endpoint,
+            max_workers=int(args.concurrent_workers),
+            gt_seed=int(args.seed),
+            **common_runner_kwargs,
+        )
+        print(
+            json.dumps(
+                {
+                    "scene_id": args.scene_id,
+                    "eval_mode": "concurrent_independent",
+                    "sessions": {
+                        k: {
+                            "status": v.get("status", "ok"),
+                            "sr": v.get("sr", 0.0),
+                            "spl": v.get("spl", 0.0),
+                            "false_stops": v.get("false_stops", 0),
+                            "wall_s": v.get("wall_s", 0.0),
+                            "fallback_switches": v.get("runtime_metrics", {}).get(
+                                "provider_fallback_switches", 0
+                            ),
+                            "fallback_served_turns": v.get("runtime_metrics", {}).get(
+                                "provider_fallback_served_turns", 0
+                            ),
+                            **({"error": v["error"]} if "error" in v else {}),
+                        }
+                        for k, v in sorted(reports.items())
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    runner = HabitatAgentRunner(
+        scene_dataset_config=args.scene_dataset,
+        scene_id=args.scene_id,
+        chat_client=chat_client,
+        output_dir=out_dir,
+        memory_carryover=not args.no_memory_carryover,
+        reset_occupancy_per_subtask=bool(args.reset_occupancy_per_subtask),
+        vision_client=vision_client,
+        seed=args.seed,
+        **common_runner_kwargs,
+    )
     report = runner.run_sequential_episode(
         subtasks,
         independent_subtasks=(args.eval_mode == "independent"),

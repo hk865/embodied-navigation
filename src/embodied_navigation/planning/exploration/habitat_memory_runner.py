@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import json
 import math
 from pathlib import Path
+import threading
 import time
 from typing import Any, Sequence
 
@@ -45,6 +46,9 @@ from embodied_navigation.planning.exploration.streaming_task_agent import (
 # ---------------------------------------------------------------------------
 # Coordinate Conversion: Habitat (Y-up, -Z forward) <-> Memory (Z-up, +X fwd)
 # ---------------------------------------------------------------------------
+
+
+_MATPLOTLIB_LOCK = threading.Lock()
 
 
 def hab_to_mem(xyz_hab: Sequence[float]) -> tuple[float, float, float]:
@@ -602,6 +606,20 @@ class DepthOccupancyGrid:
         half_extent_m: float = 6.5,
     ) -> Path:
         """Render a top-down 2D annotated local map PNG for VLM spatial grounding."""
+        with _MATPLOTLIB_LOCK:
+            return self._render_local_map_unlocked(
+                out_path, robot_xyz_mem, yaw_rad, candidates, half_extent_m=half_extent_m
+            )
+
+    def _render_local_map_unlocked(
+        self,
+        out_path: str | Path,
+        robot_xyz_mem: Sequence[float],
+        yaw_rad: float,
+        candidates: Sequence[dict[str, Any]],
+        *,
+        half_extent_m: float = 6.5,
+    ) -> Path:
         import matplotlib
 
         matplotlib.use("Agg")
@@ -610,72 +628,74 @@ class DepthOccupancyGrid:
         rx, ry, rz = float(robot_xyz_mem[0]), float(robot_xyz_mem[1]), float(robot_xyz_mem[2])
         grid = self._grid_for(rz)
         fig, ax = plt.subplots(figsize=(4.2, 4.2), dpi=110)
-        ax.set_facecolor("#20242b")
+        try:
+            ax.set_facecolor("#20242b")
 
-        fx_list, fy_list, ox_list, oy_list = [], [], [], []
-        for (ix, iy), val in grid.items():
-            wx, wy = self._from_cell(ix, iy)
-            if abs(wx - rx) > half_extent_m or abs(wy - ry) > half_extent_m:
-                continue
-            if val == 0:
-                fx_list.append(wx)
-                fy_list.append(wy)
-            elif val == 1:
-                ox_list.append(wx)
-                oy_list.append(wy)
+            fx_list, fy_list, ox_list, oy_list = [], [], [], []
+            for (ix, iy), val in grid.items():
+                wx, wy = self._from_cell(ix, iy)
+                if abs(wx - rx) > half_extent_m or abs(wy - ry) > half_extent_m:
+                    continue
+                if val == 0:
+                    fx_list.append(wx)
+                    fy_list.append(wy)
+                elif val == 1:
+                    ox_list.append(wx)
+                    oy_list.append(wy)
 
-        if fx_list:
-            ax.scatter(fx_list, fy_list, s=6, c="#d7dee8", marker="s", linewidths=0)
-        if ox_list:
-            ax.scatter(ox_list, oy_list, s=8, c="#111318", marker="s", linewidths=0)
+            if fx_list:
+                ax.scatter(fx_list, fy_list, s=6, c="#d7dee8", marker="s", linewidths=0)
+            if ox_list:
+                ax.scatter(ox_list, oy_list, s=8, c="#111318", marker="s", linewidths=0)
 
-        trail = [p for p in self._visited_trail if abs(p[2] - rz) <= 1.0]
-        if len(trail) >= 2:
-            ax.plot([p[0] for p in trail], [p[1] for p in trail], c="#3b82f6", lw=1.5, alpha=0.8)
+            trail = [p for p in self._visited_trail if abs(p[2] - rz) <= 1.0]
+            if len(trail) >= 2:
+                ax.plot([p[0] for p in trail], [p[1] for p in trail], c="#3b82f6", lw=1.5, alpha=0.8)
 
-        # Robot position & heading arrow
-        ax.scatter([rx], [ry], s=60, c="#22c55e", edgecolors="white", zorder=6)
-        ax.arrow(
-            rx,
-            ry,
-            0.55 * math.cos(yaw_rad),
-            0.55 * math.sin(yaw_rad),
-            head_width=0.22,
-            head_length=0.25,
-            fc="#22c55e",
-            ec="white",
-            zorder=7,
-        )
-
-        for cand in candidates:
-            xy = cand.get("xy")
-            cid = cand.get("id")
-            if not isinstance(xy, (list, tuple)) or len(xy) < 2 or not cid:
-                continue
-            color = "#f97316" if str(cid).startswith("M") else "#eab308"
-            ax.scatter([xy[0]], [xy[1]], s=55, c=color, edgecolors="black", zorder=8)
-            ax.text(
-                float(xy[0]) + 0.14,
-                float(xy[1]) + 0.14,
-                str(cid),
-                color="white",
-                fontsize=8,
-                weight="bold",
-                bbox={"facecolor": color, "alpha": 0.85, "pad": 1.2, "edgecolor": "none"},
-                zorder=9,
+            # Robot position & heading arrow
+            ax.scatter([rx], [ry], s=60, c="#22c55e", edgecolors="white", zorder=6)
+            ax.arrow(
+                rx,
+                ry,
+                0.55 * math.cos(yaw_rad),
+                0.55 * math.sin(yaw_rad),
+                head_width=0.22,
+                head_length=0.25,
+                fc="#22c55e",
+                ec="white",
+                zorder=7,
             )
 
-        ax.set_xlim(rx - half_extent_m, rx + half_extent_m)
-        ax.set_ylim(ry - half_extent_m, ry + half_extent_m)
-        ax.set_aspect("equal")
-        ax.set_title(f"2D Depth Map (z={rz:.2f}m)", fontsize=9, color="white")
-        ax.tick_params(colors="white", labelsize=7)
-        fig.patch.set_facecolor("#15181e")
-        out = Path(out_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, bbox_inches="tight", facecolor=fig.get_facecolor())
-        plt.close(fig)
-        return out
+            for cand in candidates:
+                xy = cand.get("xy")
+                cid = cand.get("id")
+                if not isinstance(xy, (list, tuple)) or len(xy) < 2 or not cid:
+                    continue
+                color = "#f97316" if str(cid).startswith("M") else "#eab308"
+                ax.scatter([xy[0]], [xy[1]], s=55, c=color, edgecolors="black", zorder=8)
+                ax.text(
+                    float(xy[0]) + 0.14,
+                    float(xy[1]) + 0.14,
+                    str(cid),
+                    color="white",
+                    fontsize=8,
+                    weight="bold",
+                    bbox={"facecolor": color, "alpha": 0.85, "pad": 1.2, "edgecolor": "none"},
+                    zorder=9,
+                )
+
+            ax.set_xlim(rx - half_extent_m, rx + half_extent_m)
+            ax.set_ylim(ry - half_extent_m, ry + half_extent_m)
+            ax.set_aspect("equal")
+            ax.set_title(f"2D Depth Map (z={rz:.2f}m)", fontsize=9, color="white")
+            ax.tick_params(colors="white", labelsize=7)
+            fig.patch.set_facecolor("#15181e")
+            out = Path(out_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out, bbox_inches="tight", facecolor=fig.get_facecolor())
+            return out
+        finally:
+            plt.close(fig)
 
     def render_global_floorplan(
         self,
@@ -688,6 +708,26 @@ class DepthOccupancyGrid:
         objects: Sequence[dict[str, Any]] = (),
     ) -> Path:
         """Render a global 2.5D semantic floorplan covering all explored cells on the current floor."""
+        with _MATPLOTLIB_LOCK:
+            return self._render_global_floorplan_unlocked(
+                out_path,
+                robot_xyz_mem,
+                yaw_rad,
+                candidates=candidates,
+                zones=zones,
+                objects=objects,
+            )
+
+    def _render_global_floorplan_unlocked(
+        self,
+        out_path: str | Path,
+        robot_xyz_mem: Sequence[float],
+        yaw_rad: float,
+        *,
+        candidates: Sequence[dict[str, Any]] = (),
+        zones: Sequence[dict[str, Any]] = (),
+        objects: Sequence[dict[str, Any]] = (),
+    ) -> Path:
         import matplotlib
 
         matplotlib.use("Agg")
@@ -696,160 +736,162 @@ class DepthOccupancyGrid:
         rx, ry, rz = float(robot_xyz_mem[0]), float(robot_xyz_mem[1]), float(robot_xyz_mem[2])
         grid = self._grid_for(rz)
         fig, ax = plt.subplots(figsize=(5.0, 5.0), dpi=115)
-        ax.set_facecolor("#1d2128")
+        try:
+            ax.set_facecolor("#1d2128")
 
-        fx_list, fy_list, ox_list, oy_list = [], [], [], []
-        for (ix, iy), val in grid.items():
-            wx, wy = self._from_cell(ix, iy)
-            if val == 0:
-                fx_list.append(wx)
-                fy_list.append(wy)
-            elif val == 1:
-                ox_list.append(wx)
-                oy_list.append(wy)
+            fx_list, fy_list, ox_list, oy_list = [], [], [], []
+            for (ix, iy), val in grid.items():
+                wx, wy = self._from_cell(ix, iy)
+                if val == 0:
+                    fx_list.append(wx)
+                    fy_list.append(wy)
+                elif val == 1:
+                    ox_list.append(wx)
+                    oy_list.append(wy)
 
-        if fx_list:
-            ax.scatter(fx_list, fy_list, s=5, c="#dce3ec", marker="s", linewidths=0)
-        if ox_list:
-            ax.scatter(ox_list, oy_list, s=7, c="#0f1116", marker="s", linewidths=0)
+            if fx_list:
+                ax.scatter(fx_list, fy_list, s=5, c="#dce3ec", marker="s", linewidths=0)
+            if ox_list:
+                ax.scatter(ox_list, oy_list, s=7, c="#0f1116", marker="s", linewidths=0)
 
-        all_x = [*fx_list, *ox_list, rx]
-        all_y = [*fy_list, *oy_list, ry]
-        min_x, max_x = min(all_x) - 1.5, max(all_x) + 1.5
-        min_y, max_y = min(all_y) - 1.5, max(all_y) + 1.5
-        if (max_x - min_x) < 10.0:
-            mid_x = 0.5 * (min_x + max_x)
-            min_x, max_x = mid_x - 5.0, mid_x + 5.0
-        if (max_y - min_y) < 10.0:
-            mid_y = 0.5 * (min_y + max_y)
-            min_y, max_y = mid_y - 5.0, mid_y + 5.0
+            all_x = [*fx_list, *ox_list, rx]
+            all_y = [*fy_list, *oy_list, ry]
+            min_x, max_x = min(all_x) - 1.5, max(all_x) + 1.5
+            min_y, max_y = min(all_y) - 1.5, max(all_y) + 1.5
+            if (max_x - min_x) < 10.0:
+                mid_x = 0.5 * (min_x + max_x)
+                min_x, max_x = mid_x - 5.0, mid_x + 5.0
+            if (max_y - min_y) < 10.0:
+                mid_y = 0.5 * (min_y + max_y)
+                min_y, max_y = mid_y - 5.0, mid_y + 5.0
 
-        trail = [p for p in self._visited_trail if abs(p[2] - rz) <= 1.2]
-        if len(trail) >= 2:
-            ax.plot([p[0] for p in trail], [p[1] for p in trail], c="#3b82f6", lw=1.4, alpha=0.85)
+            trail = [p for p in self._visited_trail if abs(p[2] - rz) <= 1.2]
+            if len(trail) >= 2:
+                ax.plot([p[0] for p in trail], [p[1] for p in trail], c="#3b82f6", lw=1.4, alpha=0.85)
 
-        same_floor_zones = [
-            z
-            for z in zones
-            if isinstance(z.get("center_xyz"), (list, tuple))
-            and len(z["center_xyz"]) >= 3
-            and abs(float(z["center_xyz"][2]) - rz) <= 1.5
-        ]
-        zone_pos_map: dict[str, tuple[float, float]] = {}
-        for z in same_floor_zones[:14]:
-            cxyz = z.get("center_xyz")
-            zid = str(z.get("zone_id") or z.get("region_id") or "")
-            if not zid:
-                continue
-            zone_pos_map[zid] = (float(cxyz[0]), float(cxyz[1]))
-        # Draw inter-region topological connections (doorway / open_passage / stair)
-        drawn_edges: set[tuple[str, str]] = set()
-        for z in same_floor_zones[:14]:
-            zid = str(z.get("zone_id") or z.get("region_id") or "")
-            if zid not in zone_pos_map:
-                continue
-            p1 = zone_pos_map[zid]
-            for conn in z.get("connected_regions") or ():
-                if not isinstance(conn, dict):
+            same_floor_zones = [
+                z
+                for z in zones
+                if isinstance(z.get("center_xyz"), (list, tuple))
+                and len(z["center_xyz"]) >= 3
+                and abs(float(z["center_xyz"][2]) - rz) <= 1.5
+            ]
+            zone_pos_map: dict[str, tuple[float, float]] = {}
+            for z in same_floor_zones[:14]:
+                cxyz = z.get("center_xyz")
+                zid = str(z.get("zone_id") or z.get("region_id") or "")
+                if not zid:
                     continue
-                to_id = str(conn.get("to") or "")
-                if to_id not in zone_pos_map:
+                zone_pos_map[zid] = (float(cxyz[0]), float(cxyz[1]))
+            # Draw inter-region topological connections (doorway / open_passage / stair)
+            drawn_edges: set[tuple[str, str]] = set()
+            for z in same_floor_zones[:14]:
+                zid = str(z.get("zone_id") or z.get("region_id") or "")
+                if zid not in zone_pos_map:
                     continue
-                ek = (min(zid, to_id), max(zid, to_id))
-                if ek in drawn_edges:
+                p1 = zone_pos_map[zid]
+                for conn in z.get("connected_regions") or ():
+                    if not isinstance(conn, dict):
+                        continue
+                    to_id = str(conn.get("to") or "")
+                    if to_id not in zone_pos_map:
+                        continue
+                    ek = (min(zid, to_id), max(zid, to_id))
+                    if ek in drawn_edges:
+                        continue
+                    drawn_edges.add(ek)
+                    p2 = zone_pos_map[to_id]
+                    via = str(conn.get("via") or "")
+                    ls = "--" if via == "open_passage" else "-"
+                    ax.plot([p1[0], p2[0]], [p1[1], p2[1]], c="#60a5fa", lw=1.1, ls=ls, alpha=0.6, zorder=4)
+            for z in same_floor_zones[:14]:
+                cxyz = z.get("center_xyz")
+                zid = z.get("zone_id") or z.get("region_id")
+                if not zid:
                     continue
-                drawn_edges.add(ek)
-                p2 = zone_pos_map[to_id]
-                via = str(conn.get("via") or "")
-                ls = "--" if via == "open_passage" else "-"
-                ax.plot([p1[0], p2[0]], [p1[1], p2[1]], c="#60a5fa", lw=1.1, ls=ls, alpha=0.6, zorder=4)
-        for z in same_floor_zones[:14]:
-            cxyz = z.get("center_xyz")
-            zid = z.get("zone_id") or z.get("region_id")
-            if not zid:
-                continue
-            ztype = str(z.get("primary_label") or z.get("zone_type") or "open")[:14]
-            status_tag = "*" if z.get("status") == "inspected_closeup" else "~"
-            ax.text(
-                float(cxyz[0]),
-                float(cxyz[1]),
-                f"{zid}{status_tag}:{ztype}",
-                color="#93c5fd",
-                fontsize=6.8,
-                ha="center",
-                va="center",
-                bbox={"facecolor": "#0f172a", "alpha": 0.62, "pad": 1.2, "edgecolor": "#334155"},
-                zorder=5,
+                ztype = str(z.get("primary_label") or z.get("zone_type") or "open")[:14]
+                status_tag = "*" if z.get("status") == "inspected_closeup" else "~"
+                ax.text(
+                    float(cxyz[0]),
+                    float(cxyz[1]),
+                    f"{zid}{status_tag}:{ztype}",
+                    color="#93c5fd",
+                    fontsize=6.8,
+                    ha="center",
+                    va="center",
+                    bbox={"facecolor": "#0f172a", "alpha": 0.62, "pad": 1.2, "edgecolor": "#334155"},
+                    zorder=5,
+                )
+
+            for obj in objects[:16]:
+                oxyz = obj.get("world_xyz")
+                lbl = str(obj.get("label") or "").strip()
+                if not isinstance(oxyz, (list, tuple)) or len(oxyz) < 3 or not lbl:
+                    continue
+                if abs(float(oxyz[2]) - rz) > 1.5:
+                    continue
+                ax.scatter([oxyz[0]], [oxyz[1]], s=24, c="#10b981", marker="o", alpha=0.85, zorder=6)
+                ax.text(
+                    float(oxyz[0]) + 0.12,
+                    float(oxyz[1]) - 0.14,
+                    lbl[:12],
+                    color="#a7f3d0",
+                    fontsize=6.2,
+                    zorder=6,
+                )
+
+            ax.scatter([rx], [ry], s=65, c="#22c55e", edgecolors="white", zorder=7)
+            ax.arrow(
+                rx,
+                ry,
+                0.60 * math.cos(yaw_rad),
+                0.60 * math.sin(yaw_rad),
+                head_width=0.25,
+                head_length=0.28,
+                fc="#22c55e",
+                ec="white",
+                zorder=8,
             )
 
-        for obj in objects[:16]:
-            oxyz = obj.get("world_xyz")
-            lbl = str(obj.get("label") or "").strip()
-            if not isinstance(oxyz, (list, tuple)) or len(oxyz) < 3 or not lbl:
-                continue
-            if abs(float(oxyz[2]) - rz) > 1.5:
-                continue
-            ax.scatter([oxyz[0]], [oxyz[1]], s=24, c="#10b981", marker="o", alpha=0.85, zorder=6)
-            ax.text(
-                float(oxyz[0]) + 0.12,
-                float(oxyz[1]) - 0.14,
-                lbl[:12],
-                color="#a7f3d0",
-                fontsize=6.2,
-                zorder=6,
-            )
+            for cand in candidates:
+                xy = cand.get("xy")
+                cid = cand.get("id")
+                if not isinstance(xy, (list, tuple)) or len(xy) < 2 or not cid:
+                    continue
+                cid_s = str(cid)
+                if cid_s.startswith("M"):
+                    color, marker = "#f97316", "o"
+                elif cid_s.startswith("S"):
+                    color, marker = "#d946ef", "D"
+                else:
+                    color, marker = "#eab308", "o"
+                ax.scatter([xy[0]], [xy[1]], s=56, c=color, marker=marker, edgecolors="black", zorder=9)
+                ax.text(
+                    float(xy[0]) + 0.14,
+                    float(xy[1]) + 0.14,
+                    str(cid),
+                    color="white",
+                    fontsize=7.5,
+                    weight="bold",
+                    bbox={"facecolor": color, "alpha": 0.85, "pad": 1.0, "edgecolor": "none"},
+                    zorder=10,
+                )
 
-        ax.scatter([rx], [ry], s=65, c="#22c55e", edgecolors="white", zorder=7)
-        ax.arrow(
-            rx,
-            ry,
-            0.60 * math.cos(yaw_rad),
-            0.60 * math.sin(yaw_rad),
-            head_width=0.25,
-            head_length=0.28,
-            fc="#22c55e",
-            ec="white",
-            zorder=8,
-        )
-
-        for cand in candidates:
-            xy = cand.get("xy")
-            cid = cand.get("id")
-            if not isinstance(xy, (list, tuple)) or len(xy) < 2 or not cid:
-                continue
-            cid_s = str(cid)
-            if cid_s.startswith("M"):
-                color, marker = "#f97316", "o"
-            elif cid_s.startswith("S"):
-                color, marker = "#d946ef", "D"
-            else:
-                color, marker = "#eab308", "o"
-            ax.scatter([xy[0]], [xy[1]], s=56, c=color, marker=marker, edgecolors="black", zorder=9)
-            ax.text(
-                float(xy[0]) + 0.14,
-                float(xy[1]) + 0.14,
-                str(cid),
-                color="white",
-                fontsize=7.5,
-                weight="bold",
-                bbox={"facecolor": color, "alpha": 0.85, "pad": 1.0, "edgecolor": "none"},
-                zorder=10,
-            )
-
-        ax.set_xlim(min_x, max_x)
-        ax.set_ylim(min_y, max_y)
-        ax.set_aspect("equal")
-        ax.set_xlabel("X (m)", fontsize=7, color="#cbd5e1")
-        ax.set_ylabel("Y (m)", fontsize=7, color="#cbd5e1")
-        ax.set_title(f"Global 2.5D Floorplan (z={rz:.2f}m | 1 div=grid m)", fontsize=9, color="white")
-        ax.grid(color="#334155", linestyle=":", linewidth=0.5, alpha=0.45)
-        ax.tick_params(colors="white", labelsize=7)
-        fig.patch.set_facecolor("#15181e")
-        out = Path(out_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, bbox_inches="tight", facecolor=fig.get_facecolor())
-        plt.close(fig)
-        return out
+            ax.set_xlim(min_x, max_x)
+            ax.set_ylim(min_y, max_y)
+            ax.set_aspect("equal")
+            ax.set_xlabel("X (m)", fontsize=7, color="#cbd5e1")
+            ax.set_ylabel("Y (m)", fontsize=7, color="#cbd5e1")
+            ax.set_title(f"Global 2.5D Floorplan (z={rz:.2f}m | 1 div=grid m)", fontsize=9, color="white")
+            ax.grid(color="#334155", linestyle=":", linewidth=0.5, alpha=0.45)
+            ax.tick_params(colors="white", labelsize=7)
+            fig.patch.set_facecolor("#15181e")
+            out = Path(out_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out, bbox_inches="tight", facecolor=fig.get_facecolor())
+            return out
+        finally:
+            plt.close(fig)
 
 
 # ---------------------------------------------------------------------------

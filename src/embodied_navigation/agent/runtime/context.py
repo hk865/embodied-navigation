@@ -271,14 +271,28 @@ class PrefixStableContextManager:
             msgs.extend(grp)
         return self._merge_adjacent_user_messages(msgs)
 
-    def record_usage(self, usage: TurnUsage) -> None:
+    def record_usage(
+        self,
+        usage: TurnUsage,
+        *,
+        route_key: str = "",
+        images_stripped: bool = False,
+    ) -> None:
         pt = max(0, int(usage.prompt_tokens))
         ct = max(0, int(usage.completion_tokens))
         rt = max(0, int(usage.reasoning_tokens))
         cached = max(0, int(usage.cached_tokens))
+        prev_route = getattr(self, "_last_measured_route_key", "")
+        if route_key and prev_route and route_key != prev_route:
+            self.last_prompt_tokens = 0
         if pt > 0:
-            self.last_prompt_tokens = pt
-            self._last_measured_group_count = len(self._turn_groups)
+            if not images_stripped:
+                self.last_prompt_tokens = pt
+                self._last_measured_group_count = len(self._turn_groups)
+                if route_key:
+                    self._last_measured_route_key = route_key
+            else:
+                self.last_prompt_tokens = 0
             if pt > self.max_prompt_tokens_seen:
                 self.max_prompt_tokens_seen = pt
             self.total_prompt_tokens += pt

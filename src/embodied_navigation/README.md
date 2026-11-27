@@ -16,18 +16,18 @@
 
 ```mermaid
 flowchart TD
-  CLI["scripts/run_*"] --> AG["agent/ (Layer 7) · runtime + prompts + tools + adapters"]
+  CLI["scripts/run_*"] --> AG["agent/ (Layer 7) · runtime(Failover) + prompts + tools + adapters(ScenePool)"]
   CLI --> SIM["simulation/dynanav/ (Layer 1) · Isaac 采集 + PCT/SCAN worker + mailbox"]
-  AG --> EXP["planning/exploration/ · DepthOccupancyGrid + waypoint_candidates"]
+  AG --> EXP["planning/exploration/ · DepthOccupancyGrid(StairPortals) + waypoint_candidates"]
   AG --> MEM["localization_mapping/semantic_mapping/ · SceneGraph + TextureKF + RegionMemory"]
   AG --> VT["perception/vision_tools.py (Layer 2) · SAM 3 + SigLIP 客户端与反投影"]
-  VT -. "HTTP + 延迟 GPU import" .-> VSRV["perception/vision_tool_server.py"]
+  VT -. "HTTP (共享单 GPU 无状态服务)" .-> VSRV["perception/vision_tool_server.py"]
   SIM --> PER["perception/depth · pose_velocity"]
   SIM --> PCT["planning/pct · scan_handoff"]
   SIM --> NAV["navigation/RouteTracker"]
   NAV --> ROB["robot/unitree/robogauge"]
   VIZ["visualization/ · SpringArm + rviz_recorder"] --> BE["localization_mapping/backend"]
-  AG --> COM["common/ · geometry + llm_config + runtime_io"]
+  AG --> COM["common/ · geometry + llm_config(deepseek_official) + runtime_io"]
   EXP --> COM
   MEM --> COM
   VT --> COM
@@ -66,7 +66,7 @@ src/embodied_navigation/
 └── project.py                 # 22 行：仓库根/数据根发现
 ```
 
-规模（`git ls-files` 实测，2026-11-26）：**106 个 `.py` / 45,106 行**，128 个跟踪文件（含 README 与 JSON 契约）。9 个一层子包与包根合计：`agent_runtime` 6/1,235、`common` 7/796、`localization_mapping` 28/13,943、`navigation` 4/883、`perception` 5/1,509、`planning` 15/11,601、`robot` 8/490、`simulation` 27/13,366、`visualization` 4/1,260、包根 2/23。
+规模（当前工作树实测，2026-11-27）：**118 个 `.py` / 48,718 行**。9 个一层子包与包根合计：`agent` 16/5,009、`common` 8/1,226、`localization_mapping` 30/15,327、`navigation` 4/883、`perception` 5/1,509、`planning` 14/9,625、`robot` 8/490、`simulation` 27/13,366、`visualization` 4/1,260、包根 2/23。
 
 ## 端到端数据流（D 路径唯一主线）
 
@@ -76,7 +76,7 @@ src/embodied_navigation/
 4. **定位建图**：[localization_mapping](localization_mapping/README.md) 的 [backend](localization_mapping/backend/README.md) 消费 FAST-LIVO2 导出的关键帧 spool（`$RUN/observer/native_keyframes`），做 ScanContext + ICP 回环、SE(3) 位姿图、地图保存/先验地图重定位，发布 TF `map → camera_init` 与 `/dynanav/backend/corrected_odometry`；[semantic_mapping](localization_mapping/semantic_mapping/README.md) 是纯 CPU 的语义点层、关键帧场景图与 L0–L3 认知记忆。
 5. **规划**：[planning](planning/README.md) 由 `scripts/run_dynanav_pct_scan.py` → `simulation/dynanav/pct_scan_worker.py` 驱动：PCT 生成全局路线（`third_party/pct`），SCAN 做局部规划（`third_party/scan`），`planning/scan_handoff.py` 与 `planning/scan_source.py` 负责交接与点云输入。
 6. **跟踪与执行**：[navigation](navigation/README.md) 的 `robogauge/route_tracker.py` 把实测位姿变成有界体速指令，`yaw_action.py` 提供共享 yaw 动作；[robot](robot/README.md) 的 `unitree/robogauge/` 用 RoboGauge MoE-CTS TorchScript 策略把指令变成关节目标。
-7. **Agent 感知与控制介入层**：D 路径仍经 `operator_map.py`、`pct_scan_waypoints.py`、`native_waypoints.py`、`scripts/explore_waypoint_client.py` 与 `.agents/skills/dynanav-explore/` 交互；独立多轮运行时 `agent_runtime/` 已先接通 Habitat-Sim HM3D 闭环认知评测支线。
+7. **Agent 感知与控制介入层**：D 路径仍经 `operator_map.py`、`pct_scan_waypoints.py`、`native_waypoints.py`、`scripts/explore_waypoint_client.py` 与 `.agents/skills/dynanav-explore/` 交互；独立顶层多轮编排层 `agent/`（含主备降级与 `SharedHabitatSceneHost`）已接通 Habitat-Sim HM3D 闭环认知评测支线。
 8. **`--truth-pose` 旁路**：跳过 FAST-LIVO2 与后端，用 `/dynanav/truth/control_odometry`、`/dynanav/truth/imu_odometry`、`/dynanav/truth/cloud_deskewed` 驱动 PCT + SCAN。
 
 开发阶段边界见 [docs/plan/ROADMAP.md](../../docs/plan/ROADMAP.md)（[docs/architecture.md](../../docs/architecture.md) 仅作旧版历史参考）。
@@ -85,12 +85,12 @@ src/embodied_navigation/
 
 | 层 | 子包 | 规模（`.py` / 行） | 关键入口 | 模块 README |
 | --- | --- | --- | --- | --- |
-| 基础设施 | `common/` | 7 / 796 | 库：`common.geometry`、`common.runtime_io`、`common.process_log`、`common.time` | [common/README.md](common/README.md) |
+| 基础设施 | `common/` | 8 / 1,226 | 库：`common.geometry`、`common.llm_config`、`common.runtime_io`、`common.process_log`、`common.time` | [common/README.md](common/README.md) |
 | 仿真 | `simulation/` | 27 / 13,366 | `scripts/run_dynanav_experiment.py` → `simulation/dynanav/capture_go2_rgbd.py` | [simulation/README.md](simulation/README.md)、[dynanav/README.md](simulation/dynanav/README.md) |
 | 感知 | `perception/` | 5 / 1,509 | `perception.depth`、`perception.pose_velocity`、`perception.vision_tools`（纯 CPU）+ `vision_tool_server` | [perception/README.md](perception/README.md) |
-| 定位建图 | `localization_mapping/` | 28 / 13,943 | `backend.node` 与 `semantic_mapping`（`KeyframeSceneGraph`、`HierarchicalMemoryStore`） | [localization_mapping/README.md](localization_mapping/README.md) |
-| 规划 | `planning/` | 15 / 11,601 | `pct/`、`scan_*`、`exploration/`（DynaNav 候选/mailbox + LLM/Habitat 闭环评测） | [planning/README.md](planning/README.md)、[exploration/README.md](planning/exploration/README.md) |
-| 顶层 Agent 层 | `agent/` | `runtime/` + `prompts/` + `tools/` + `adapters/` | `EmbodiedAgentRuntime`、`HabitatWorldDaemon`、`HabitatAgentRunner` | [agent/README.md](agent/README.md) |
+| 定位建图 | `localization_mapping/` | 30 / 15,327 | `backend.node` 与 `semantic_mapping`（`KeyframeSceneGraph`、`HierarchicalMemoryStore`） | [localization_mapping/README.md](localization_mapping/README.md) |
+| 规划 | `planning/` | 14 / 9,625 | `pct/`、`scan_*`、`exploration/`（DynaNav 候选/mailbox + `DepthOccupancyGrid` / Habitat 记忆组件） | [planning/README.md](planning/README.md)、[exploration/README.md](planning/exploration/README.md) |
+| 顶层 Agent 层 | `agent/` | 16 / 5,009 | `EmbodiedAgentRuntime`、`OpenCodeToolChatClient`（主备降级）、`SharedHabitatSceneHost`、`HabitatAgentRunner` | [agent/README.md](agent/README.md) |
 | 导航跟踪 | `navigation/` | 4 / 883 | `navigation.robogauge.route_tracker.RouteTracker`、`navigation.yaw_action` | [navigation/README.md](navigation/README.md) |
 | 机器人执行 | `robot/` | 8 / 490 | `robot.unitree.robogauge.runtime`（TorchScript 策略） | [robot/README.md](robot/README.md) |
 | 可视化 | `visualization/` | 4 / 1,260 | `SpringArmCameraController`、`spring_arm_node`、`rviz_recorder` | [visualization/README.md](visualization/README.md) |
@@ -107,12 +107,12 @@ src/embodied_navigation/
 
 ## 验证与测试入口 / 配置注意
 
-- CPU 测试（仓库根执行，不启 ISAAC/ROS）：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit` 与 `… -s tests/regression`；当前工作树记录为 **934 条单测通过（0 失败 0 跳过）、60 条回归（57 通过、3 按环境跳过、0 失败），另在 Python 3.9 Habitat 环境跑通 29 条关联单测**。测试索引见 [tests/README.md](../../tests/README.md)。
+- CPU 测试（仓库根执行，不启 ISAAC/ROS）：`PYTHONPATH=src python3 -B -m unittest discover -s tests/unit` 与 `… -s tests/regression`；当前工作树（2026-11-27）实测为 **Python 3.12 下 948 条单测通过（0 失败 0 跳过）、60 条回归（57 通过、3 按环境跳过、0 失败），另在 Python 3.9 Habitat 环境跑通 `tests.unit.test_agent_runtime` 全部 20 条单测**。测试索引见 [tests/README.md](../../tests/README.md)。
 - 编译检查：`PYTHONPATH=src python3 -B -m compileall -q src scripts`。
-- 配置全部在仓库 [configs](../../configs/README.md)，运行时冻结进 `$RUN/configuration/`；本包不含 `src/` 下的配置文件。DynaNav 场景、资产、模型与权重在 `$PROJECT_DATA_ROOT/embodied-navigation/`，缺失时入口会显式报错而不是回退到仓库路径。
+- 运行期配置在仓库 [configs](../../configs/README.md)，启动时冻结进 `$RUN/configuration/`；`src/` 下仅保留两份内建标定/契约 JSON（`planning/exploration/os1_calibration.json`、`robot/unitree/policy/native/contract.json`）。DynaNav 场景、资产、模型与权重在 `$PROJECT_DATA_ROOT/embodied-navigation/`，缺失时入口会显式报错而不是回退到仓库路径。
 - 运行产物（日志、点云、地图、逐帧 JSON）写 `$PROJECT_DATA_ROOT/embodied-navigation/runs/<批次>/<run-id>/` 或 `experiments/<run>/`，不进仓库（`AGENTS.md` 第 6 节）。
 - 原生依赖（`third_party/fast_livo2`、`third_party/scan`、`third_party/pct` 等）的构建前置与许可边界见 [docs/dependencies/BUILD.md](../../docs/dependencies/BUILD.md)。
 
 ## 未验证边界
 
-端到端 Isaac/DynaNav 运行、真实 FAST-LIVO2 吞吐、回环正确性与实机执行都需要 Linux + Isaac/ROS 环境；本文件依据 2026-11-26 的 `git ls-files`、CPU 测试结论与 Habitat-Sim HM3D 闭环单场景校验编制，`agent_runtime/` 尚未接回 Isaac/DynaNav 主线。
+端到端 Isaac/DynaNav 运行、真实 FAST-LIVO2 吞吐、回环正确性与实机执行都需要 Linux + Isaac/ROS 环境；本文件依据 2026-11-27 当前工作树统计、CPU 全量测试与 Habitat-Sim HM3D 闭环校验编制，顶层 `agent/` 尚未接回 Isaac/DynaNav 主线。

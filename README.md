@@ -1,17 +1,17 @@
 # Embodied Navigation · 具身导航
 
-> 盘点日期：2026-11-26 · 集成基线 `main` `2144e5f`（已推送 `origin/main`） · 当前检出分支 `feat/static-memory-streaming` `4f81110`（本地实现中，未推送；另含推进分支 `exp/startup-walk-imu-bias`） · 活体文档
+> 盘点日期：2026-11-27 · 集成基线 `main` `2144e5f`（已推送 `origin/main`） · 当前检出分支 `feat/static-memory-streaming`（远端同步至 `0311bd0`，本地叠加主备熔断降级与共享场景并发改造；另含推进分支 `exp/startup-walk-imu-bias`） · 活体文档
 
-Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统（唯一工程主线）：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行；在其之上新增纯 CPU 开放词表视觉工具、层次化语义记忆与独立 `agent_runtime/` 运行时（目前仅在 **Habitat-Sim HM3D 闭环评测支线**跑通单场景 4 子任务 / 25 轮冒烟验证，尚未形成多房可控对比，DynaNav D 路径主线仍走 `explore_waypoint_client.py` / mailbox）。
+Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统（唯一工程主线）：仿真传感器 → FAST-LIVO2 定位建图 → PCT 全局 + 原生 SCAN 局部规划 → RouteTracker 跟踪 → RoboGauge MoE-CTS 关节执行；在其之上新增纯 CPU 开放词表视觉工具、层次化语义记忆与顶层 `agent/` 编排层（已完成 **Habitat-Sim HM3D** 5 栋 `hm3d/val` 开发子集 3 并发闭环验证及单场景共享宿主改造，31 栋未见全量盲测待跑；DynaNav D 路径主线仍走 `explore_waypoint_client.py` / mailbox）。
 
 ## 0. 新接手者 3 分钟导读
 
 1. **读**（按顺序）：本文件 → [开发路线图](docs/plan/ROADMAP.md)（阶段状态、**活跃分支关键提交 Log 摘要**、数据卷约定）→ [活体任务板](docs/plan/TASKS.md)（已完成 / 进行中 / 下一阶段主线）→ 架构决策记录 [ADR-0001](docs/plan/adr/0001-livo-yaw-pipeline-overlap.md) · [ADR-0002](docs/plan/adr/0002-embodied-agent-async-and-map-outlook.md) · [ADR-0003](docs/plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md) · [ADR-0004](docs/plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) → 需要的模块 `README.md`；协作与提交规则见 [AGENTS.md](AGENTS.md)。
 2. **核**：开工先跑 `git status --short --branch` 与 `git branch -avv`，核对实际分支、HEAD 与远端同步状态，不要只看旧结论。
-3. **验**（仓库根，CPU 离线，约 30 s；完整入口见 §4.5）：
+3. **验**（仓库根，CPU 离线，约 45 s；完整入口见 §4.5）：
 
    ```bash
-   PYTHONPATH=src python3 -B -m unittest discover -s tests/unit        # 当前工作树 934 条 OK、0 跳过
+   PYTHONPATH=src python3 -B -m unittest discover -s tests/unit        # 当前工作树实测 948 条 OK、0 跳过
    PYTHONPATH=src python3 -B -m unittest discover -s tests/regression  # 60 条（57 通过、3 按环境跳过、0 失败）
    ```
 
@@ -19,7 +19,7 @@ Unitree Go2 在 **Isaac Sim / DynaNav** 中的具身导航系统（唯一工程�
 
 ## 1. 项目定位与端到端架构
 
-项目唯一工程主线是 **D 路径：Isaac Sim / DynaNav**。Gazebo 旧主线（A 路径，`start.py` / `launch/` / `control/` / 私有 Fast DDS）已在干净底座中整块退役删除，仅保全于历史分支；动态行人支线已移出到参考分支 `ref/dynanav-dynamic-pedestrian`。在此基础上，`feat/static-memory-streaming` 新增了**纯 CPU 开放词表视觉与层次认知记忆底座**，并拆出与宿主解耦的 **Layer 7 `agent_runtime/`**（当前接通 Habitat-Sim HM3D 闭环认知评测支线，D 路径实机/仿真待后续接入）。
+项目唯一工程主线是 **D 路径：Isaac Sim / DynaNav**。Gazebo 旧主线（A 路径，`start.py` / `launch/` / `control/` / 私有 Fast DDS）已在干净底座中整块退役删除，仅保全于历史分支；动态行人支线已移出到参考分支 `ref/dynanav-dynamic-pedestrian`。在此基础上，`feat/static-memory-streaming` 新增了**纯 CPU 开放词表视觉与层次认知记忆底座**，并拆出与宿主解耦的 **Layer 7 `agent/`**（单向向下依赖，支持主备三态熔断降级与单场景多会话共享宿主；当前接通 Habitat-Sim HM3D 闭环认知评测支线，D 路径实机/仿真待后续接入）。
 
 ```mermaid
 flowchart TB
@@ -37,11 +37,11 @@ flowchart TB
   end
 
   subgraph AGENT_RT["Layer 7: 顶层独立 Agent 编排层 agent/ (feat/static-memory-streaming)"]
-    RT["agent/runtime · EmbodiedAgentRuntime · 200K PrefixStableContext · Hooks"]
+    RT["agent/runtime · EmbodiedAgentRuntime · 200K Context · OpenCode->DeepSeek 熔断降级"]
   end
 
-  subgraph HOST_HAB["agent/tools & agent/adapters (Habitat-Sim HM3D 闭环认知评测支线)"]
-    HAB["agent/adapters · HabitatWorldDaemon + Tools + StopVerifier + StairTraversal"]
+  subgraph HOST_HAB["agent/tools & agent/adapters (Habitat-Sim HM3D 三层解耦并发支线)"]
+    HAB["agent/adapters · SharedHabitatSceneHost(单EGL线程) + 多会话隔离记忆 + StairTraversal"]
   end
 
   RT <--> |"ToolCall / AfterToolHook / BeforeFinishHook"| HAB
@@ -107,7 +107,7 @@ Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本
 | 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与探索适配 | [README](src/embodied_navigation/planning/README.md) |
 | 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
 | 规划 | `planning/exploration/` | DynaNav 航点候选/mailbox/哨兵，以及 LLM 客户端与 Habitat 闭环认知评测适配 | [README](src/embodied_navigation/planning/exploration/README.md) |
-| 顶层 Agent 层 | `agent/` | 顶层多轮 Agent 编排层：`runtime/`（200K 上下文/Hooks/SSE）、`prompts/`、`tools/`、`adapters/`（当前接入 Habitat 评测，D 路径待接） | [README](src/embodied_navigation/agent/README.md) |
+| 顶层 Agent 层 | `agent/` | 顶层多轮 Agent 编排层：`runtime/`（200K 上下文/Hooks/主备熔断降级）、`prompts/`、`tools/`、`adapters/`（单场景多会话共享宿主，D 路径待接） | [README](src/embodied_navigation/agent/README.md) |
 | 可视化 | `visualization/` | RViz2 多机位防穿墙 Spring-Arm 相机运动学与录制编排 | [README](src/embodied_navigation/visualization/README.md) |
 | 控制跟踪 | `navigation/` | `RouteTracker` 路线跟踪与 `yaw_action` 转向动作（平台无关纯策略，不依赖 ROS/Isaac） | [README](src/embodied_navigation/navigation/README.md) |
 | 控制跟踪 | `navigation/robogauge/` | RoboGauge 路线跟踪接口 | [README](src/embodied_navigation/navigation/robogauge/README.md) |
@@ -165,7 +165,7 @@ python3 scripts/explore_waypoint_client.py stop --run-dir <RUN>
 # 语法编译检查
 PYTHONPATH=src python3 -B -m compileall -q src scripts
 
-# 单元测试：当前工作树 feat/static-memory-streaming 共 934 条全绿（0 失败 0 跳过）
+# 单元测试：当前工作树 feat/static-memory-streaming 实测 948 条全绿（0 失败 0 跳过）
 PYTHONPATH=src python3 -B -m unittest discover -s tests/unit
 
 # 回归测试：共 60 条（57 通过、3 按环境跳过、0 失败）
@@ -193,12 +193,12 @@ python3 docker/build_native.py --execute
 | [AGENTS.md](AGENTS.md) | 硬规则、测试与分支验收、数据卷规则、README 维护要求 |
 | [docs/README.md](docs/README.md) | 文档分类索引（权威说明 / 计划 / 实验历史 / 审查 / 验证 / 依赖） |
 
-### 5.2 分支管理（摘要，2026-11-26 核对）
+### 5.2 分支管理（摘要，2026-11-27 核对）
 
 | 分支 | HEAD / 远端同步 | 用途 |
 | --- | --- | --- |
 | `main` / `origin/main` | `2144e5f`（一致） | 集成、发布与独立验收入口；已含 `fix/livo-yaw-and-imu-patch`（`5049ec7`，merge `9b6dc85`）、ADR-0001/0002（`9816a2b`）与 RViz 实时点云配置/录制 CLI（`ca754ab`、`2144e5f`） |
-| **`feat/static-memory-streaming`**（当前本地开发分支） | `4f81110`（未推送） | 离线/Habitat 闭环探索与认知记忆主试验支线：本地视觉工具服务（SAM 3 / GDINO + SigLIP）、`HierarchicalMemoryStore` 认知账本与 Zone 覆盖度、独立 `agent_runtime/` 200K 多轮运行时 |
+| **`feat/static-memory-streaming`**（当前本地开发分支） | `0311bd0` 已同步远端，本地叠加新提交 | 离线/Habitat 闭环探索与认知记忆主试验支线：共享无状态视觉服务（SAM 3 / GDINO + SigLIP）、`HierarchicalMemoryStore` 认知账本、顶层 `agent/`（200K 上下文 + 主备三态熔断降级 + `SharedHabitatSceneHost` 单场景多会话并发） |
 | **`exp/startup-walk-imu-bias`**（D 路径推进分支） | `9e3408d`（领先 origin 6） | 起步预热稳态门 + 物理级带噪 IMU、RViz RGB8 彩色重建图层、局部滑窗建图与 `--backend-pose` 订阅、PCT 净空 0.95 m、不依赖 PCT/SCAN 的直通脱困 `maneuver`、ADR-0003/0004；共 12 个提交（基线 `main`） |
 | `refactor/00-plan-docs` … `refactor/06-clean-base` | 已验收栈 | 分包重构历史；`06-clean-base`（`f061a7e`）是干净底座，Phase 1/2 成果所在 |
 | `exp/slam-measured-submaps` / `exp/slam-surface-gate` / `exp/slam-visual-retrieval` | `5b300b0` / `958ec01` / `16883d1`（与远端一致） | Phase 4 三条后端对照分支（Codex 审计后，待同输入、同时间轴评测）；均基于 `9816a2b` 切出 |

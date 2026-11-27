@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.client
 import json
 import socket
+import threading
 import time
 from typing import Any, Sequence
 import urllib.parse
@@ -15,11 +16,13 @@ from embodied_navigation.agent.runtime.types import (
     ToolSpec,
     TurnUsage,
 )
-from embodied_navigation.common.llm_config import LlmClientConfig
+from embodied_navigation.common.llm_config import LlmClientConfig, PROVIDER_PRESETS
 
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _READ_CHUNK_BYTES = 16384
 _VALID_FINISH_REASONS = frozenset({"stop", "tool_calls", "length", "end_turn", "function_call"})
+_REFUSAL_FINISH_REASONS = frozenset({"content_filter", "refusal"})
+_RESERVED_PAYLOAD_KEYS = frozenset({"model", "messages", "tools", "stream"})
 
 
 def resolve_agent_thinking(
@@ -65,6 +68,144 @@ def resolve_agent_thinking(
     return (None, max(45.0, float(base_timeout_s)), max(4096, int(base_max_tokens)))
 
 
+def build_default_deepseek_fallback(
+    primary_cfg: LlmClientConfig,
+    *,
+    thinking_mode: str = "default",
+    model: str = "deepseek-flash",
+    timeout_s: float | None = None,
+    supports_vision: bool | None = None,
+) -> LlmClientConfig | None:
+    """Build a validated DSH / DeepSeek official fallback route when credentials exist.
+
+    Used to fail over seamlessly when the OpenCode Go gateway times out or returns 5xx/429
+    on ``deepseek-v4.1-flash``. Returns ``None`` if no DeepSeek API key is configured.
+    """
+    extra_body, resolved_to, max_toks = resolve_agent_thinking(
+        model,
+        thinking_mode,
+        base_timeout_s=(timeout_s if timeout_s is not None else primary_cfg.timeout_s),
+        base_max_tokens=primary_cfg.max_tokens,
+    )
+    if supports_vision is None:
+        m_low = str(model or "").strip().lower()
+        preset_vis = bool(PROVIDER_PRESETS["deepseek_official"].get("supports_vision", False))
+        resolved_vis = (
+            False
+            if any(tok in m_low for tok in ("deepseek-chat", "deepseek-reasoner"))
+            else preset_vis
+        )
+    else:
+        resolved_vis = bool(supports_vision)
+    cfg = LlmClientConfig(
+        provider="deepseek_official",
+        model=model,
+        timeout_s=resolved_to,
+        max_tokens=max_toks,
+        temperature=primary_cfg.temperature,
+        supports_vision=resolved_vis,
+        stream=primary_cfg.stream,
+        extra_body=extra_body,
+    )
+    if not cfg.api_key:
+        return None
+    return cfg
+
+
+def _is_retryable_failover_error(error_reason: str) -> bool:
+    """True for gateway timeouts, 429, any 5xx, stream truncation/corruption, and network errors."""
+    err = str(error_reason or "").lower()
+    if not err:
+        return False
+    if any(
+        non_retry in err
+        for non_retry in (
+            "http_400",
+            "http_401",
+            "http_403",
+            "http_404",
+            "http_422",
+            "content_filter",
+            "refusal",
+            "invalid_request",
+            "context_length",
+        )
+    ):
+        return False
+    # Match any HTTP 5xx status code (http_500..http_599)
+    import re
+
+    if re.search(r"http_5\d\d", err):
+        return True
+    return any(
+        tok in err
+        for tok in (
+            "timeout",
+            "request_deadline_exceeded",
+            "truncated_sse_stream",
+            "corrupted_sse_stream",
+            "sse_upstream_error",
+            "http_429",
+            "connection",
+            "remotedisconnected",
+            "brokenpipe",
+            "eof",
+            "oserror",
+            "gaierror",
+        )
+    )
+
+
+def _classify_http_error(status: int, body_bytes: bytes) -> str:
+    """Produce a bounded, sanitized error code from an HTTP >= 400 status & body."""
+    snippet = body_bytes[:400].decode("utf-8", errors="replace").lower()
+    if status == 400:
+        if any(
+            kw in snippet
+            for kw in ("context_length", "maximum context", "too long", "token limit", "max_tokens")
+        ):
+            return "http_400:context_length"
+        if any(kw in snippet for kw in ("content_filter", "policy", "safety", "refusal")):
+            return "http_400:content_filter"
+        return "http_400:invalid_request"
+    return f"http_{int(status)}"
+
+
+def _classify_sse_error(err_obj: dict[str, Any]) -> str:
+    """Classify an inline SSE ``error`` JSON object into retryable vs non-retryable codes."""
+    raw = json.dumps(err_obj, ensure_ascii=False)[:300].lower()
+    if any(kw in raw for kw in ("content_filter", "policy", "safety", "refusal")):
+        return "content_filter_refusal"
+    if any(kw in raw for kw in ("context_length", "maximum context", "too long")):
+        return "http_400:context_length"
+    if any(kw in raw for kw in ("invalid_request", "authentication", "unauthorized", "invalid_api_key")):
+        return "http_401:invalid_request"
+    return "sse_upstream_error"
+
+
+def _strip_images_for_text_only(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip ``image_url`` blocks when a fallback route declares ``supports_vision=False``."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            img_count = 0
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    img_count += 1
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    text_parts.append(part["text"])
+            if img_count > 0:
+                text_parts.append(f"[{img_count} image(s) omitted on text-only fallback route]")
+            new_m = dict(m)
+            new_m["content"] = "\n".join(text_parts)
+            out.append(new_m)
+        else:
+            out.append(m)
+    return out
+
+
 def _parse_tool_arguments(raw_args: str) -> dict[str, Any]:
     text = str(raw_args or "").strip()
     if not text:
@@ -88,6 +229,7 @@ def _extract_usage(usage_obj: Any, *, latency_ms: float) -> TurnUsage:
     oc_tokens = (usage_obj.get("opencode") or {}).get("tokens") or {}
     cached = int(
         pt_details.get("cached_tokens")
+        or usage_obj.get("prompt_cache_hit_tokens")
         or oc_tokens.get("cache_read")
         or 0
     )
@@ -120,43 +262,204 @@ def _read_chunk_with_deadline(resp: http.client.HTTPResponse, conn: Any, deadlin
     return chunk
 
 
-class OpenCodeToolChatClient:
-    """SSE streaming OpenAI-compatible client supporting native ``tools`` & reasoning traces."""
+class _SharedCircuitState:
+    """Thread-safe 3-state (closed / open / half_open) circuit breaker shared across clones."""
 
-    def __init__(self, config: LlmClientConfig) -> None:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.state: str = "closed"  # "closed" | "open" | "half_open"
+        self.cooldown_until: float = 0.0
+        self.probe_in_flight: bool = False
+
+    def acquire_primary_decision(self, now: float) -> tuple[bool, bool]:
+        """Return ``(try_primary, is_half_open_probe)`` atomically under lock."""
+        with self.lock:
+            if self.state == "closed":
+                return True, False
+            if self.state == "open":
+                if now >= self.cooldown_until:
+                    self.state = "half_open"
+                    self.probe_in_flight = True
+                    return True, True
+                return False, False
+            # state == "half_open": only one probe in flight; concurrent workers use fallback
+            if not self.probe_in_flight:
+                self.probe_in_flight = True
+                return True, True
+            return False, False
+
+    def record_primary_success(self) -> None:
+        with self.lock:
+            self.state = "closed"
+            self.cooldown_until = 0.0
+            self.probe_in_flight = False
+
+    def record_primary_failure(self, now: float, cooldown_s: float) -> None:
+        with self.lock:
+            self.probe_in_flight = False
+            if cooldown_s > 0.0:
+                self.state = "open"
+                self.cooldown_until = now + cooldown_s
+            else:
+                self.state = "closed"
+                self.cooldown_until = 0.0
+
+
+class OpenCodeToolChatClient:
+    """SSE streaming OpenAI-compatible client with native ``tools``, reasoning, and failover routing."""
+
+    def __init__(
+        self,
+        config: LlmClientConfig,
+        *,
+        fallback_configs: Sequence[LlmClientConfig] = (),
+        circuit_open_s: float = 120.0,
+        _circuit_state: _SharedCircuitState | None = None,
+    ) -> None:
         self.config = config
+        self.fallback_configs: tuple[LlmClientConfig, ...] = tuple(fallback_configs)
+        self.circuit_open_s = max(0.0, float(circuit_open_s))
+        self._circuit = _circuit_state if _circuit_state is not None else _SharedCircuitState()
+        self._switch_lock = threading.Lock()
+        self.fallback_switches: int = 0
+        self.fallback_served_turns: int = 0
+
+    def clone_for_session(self, *, session_id: str | None = None) -> OpenCodeToolChatClient:
+        """Create a per-session client sharing circuit-breaker state with isolated session IDs."""
+        import uuid
+
+        def _clone_cfg(c: LlmClientConfig, explicit_sid: str | None = None) -> LlmClientConfig:
+            needs_sid = bool(PROVIDER_PRESETS.get(c.provider, {}).get("requires_session_header"))
+            sid = explicit_sid if (explicit_sid is not None and needs_sid) else (
+                str(uuid.uuid4()) if needs_sid else None
+            )
+            return LlmClientConfig(
+                provider=c.provider,
+                model=c.model,
+                base_url=c.base_url,
+                api_key=c.api_key,
+                timeout_s=c.timeout_s,
+                max_tokens=c.max_tokens,
+                temperature=c.temperature,
+                supports_vision=c.supports_vision,
+                stream=c.stream,
+                extra_body=c.extra_body,
+                session_id=sid,
+                user_agent=c.user_agent,
+            )
+
+        return OpenCodeToolChatClient(
+            _clone_cfg(self.config, explicit_sid=session_id),
+            fallback_configs=[_clone_cfg(fb) for fb in self.fallback_configs],
+            circuit_open_s=self.circuit_open_s,
+            _circuit_state=self._circuit,
+        )
 
     def complete_turn(
         self,
         messages: list[dict[str, Any]],
         tools: Sequence[ToolSpec],
     ) -> AssistantTurn:
-        """Execute one streaming multi-turn completion and capture full usage + reasoning."""
+        """Execute one multi-turn completion with unified failover & 3-state circuit breaker."""
+        if not self.fallback_configs:
+            return self._complete_on_config(self.config, messages, tools)
+
+        t_total = time.perf_counter()
+        try_primary, is_probe = self._circuit.acquire_primary_decision(time.monotonic())
+        if try_primary:
+            attempt_order: list[tuple[bool, LlmClientConfig]] = [(True, self.config)] + [
+                (False, fb) for fb in self.fallback_configs
+            ]
+        else:
+            attempt_order = [(False, fb) for fb in self.fallback_configs]
+
+        first_primary_err = ""
+        last_turn: AssistantTurn | None = None
+        for is_primary, cfg in attempt_order:
+            turn = self._complete_on_config(cfg, messages, tools)
+            if not turn.fallback:
+                if is_primary:
+                    self._circuit.record_primary_success()
+                    return turn
+                # Served by a fallback route
+                total_ms = (time.perf_counter() - t_total) * 1000.0
+                if try_primary and first_primary_err:
+                    switched_note = f"{self.config.provider}:{self.config.model} ({first_primary_err})"
+                    with self._switch_lock:
+                        self.fallback_switches += 1
+                        self.fallback_served_turns += 1
+                else:
+                    switched_note = f"{self.config.provider}:{self.config.model} (circuit_open)"
+                    with self._switch_lock:
+                        self.fallback_served_turns += 1
+                return AssistantTurn(
+                    content=turn.content,
+                    reasoning_content=turn.reasoning_content,
+                    tool_calls=turn.tool_calls,
+                    usage=TurnUsage(
+                        prompt_tokens=turn.usage.prompt_tokens,
+                        completion_tokens=turn.usage.completion_tokens,
+                        reasoning_tokens=turn.usage.reasoning_tokens,
+                        cached_tokens=turn.usage.cached_tokens,
+                        latency_ms=total_ms,
+                    ),
+                    fallback=False,
+                    error_reason="",
+                    provider_used=cfg.provider,
+                    model_used=cfg.model or "",
+                    fallback_switched_from=switched_note,
+                )
+
+            # Route failed
+            last_turn = turn
+            retryable = _is_retryable_failover_error(turn.error_reason)
+            if is_primary:
+                first_primary_err = turn.error_reason
+                if retryable:
+                    self._circuit.record_primary_failure(time.monotonic(), self.circuit_open_s)
+                elif is_probe:
+                    # Release half-open probe lock on non-retryable client error without opening circuit
+                    self._circuit.record_primary_success()
+            if not retryable:
+                return turn
+
+        return last_turn or AssistantTurn(fallback=True, error_reason="all_routes_failed")
+
+    def _complete_on_config(
+        self,
+        cfg: LlmClientConfig,
+        messages: list[dict[str, Any]],
+        tools: Sequence[ToolSpec],
+    ) -> AssistantTurn:
+        """Execute one streaming multi-turn completion on a specific ``LlmClientConfig``."""
+        req_messages = messages if cfg.supports_vision else _strip_images_for_text_only(messages)
         payload: dict[str, Any] = {
-            "model": self.config.model,
-            "messages": messages,
+            "model": cfg.model,
+            "messages": req_messages,
             "tools": [t.to_openai_tool() for t in tools],
-            "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature,
-            "stream": self.config.stream,
+            "max_tokens": cfg.max_tokens,
+            "temperature": cfg.temperature,
+            "stream": cfg.stream,
         }
-        if self.config.stream:
+        if cfg.stream:
             payload["stream_options"] = {"include_usage": True}
-        if self.config.extra_body:
-            payload.update(self.config.extra_body)
+        if cfg.extra_body:
+            for ek, ev in cfg.extra_body.items():
+                if ek not in _RESERVED_PAYLOAD_KEYS:
+                    payload[ek] = ev
 
         body = json.dumps(payload, allow_nan=False, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream, application/json",
-            "User-Agent": self.config.user_agent,
+            "User-Agent": cfg.user_agent,
         }
-        if self.config.api_key:
-            headers["Authorization"] = f"Bearer {self.config.api_key}"
-        if self.config.session_id:
-            headers["x-opencode-session"] = self.config.session_id
+        if cfg.api_key:
+            headers["Authorization"] = f"Bearer {cfg.api_key}"
+        if cfg.session_id and PROVIDER_PRESETS.get(cfg.provider, {}).get("requires_session_header"):
+            headers["x-opencode-session"] = cfg.session_id
 
-        parsed = urllib.parse.urlparse(self.config.base_url)
+        parsed = urllib.parse.urlparse(cfg.base_url)
         req_path = f"{parsed.path.rstrip('/')}/chat/completions"
         conn_cls = (
             http.client.HTTPSConnection
@@ -164,8 +467,8 @@ class OpenCodeToolChatClient:
             else http.client.HTTPConnection
         )
         t0 = time.perf_counter()
-        deadline = time.monotonic() + self.config.timeout_s
-        conn = conn_cls(parsed.hostname, parsed.port, timeout=self.config.timeout_s)
+        deadline = time.monotonic() + cfg.timeout_s
+        conn = conn_cls(parsed.hostname, parsed.port, timeout=cfg.timeout_s)
         try:
             rem = deadline - time.monotonic()
             if rem <= 0.0:
@@ -181,10 +484,15 @@ class OpenCodeToolChatClient:
             if time.monotonic() > deadline:
                 raise TimeoutError("request_deadline_exceeded")
             if resp.status >= 400:
-                raise RuntimeError(f"http_{resp.status}")
+                err_body = b""
+                try:
+                    err_body = resp.read(1024)
+                except Exception:
+                    err_body = b""
+                raise RuntimeError(_classify_http_error(resp.status, err_body))
             ctype = (resp.getheader("Content-Type") or "").lower()
 
-            if not self.config.stream or "text/event-stream" not in ctype:
+            if not cfg.stream or "text/event-stream" not in ctype:
                 chunks: list[bytes] = []
                 total_bytes = 0
                 while True:
@@ -197,7 +505,9 @@ class OpenCodeToolChatClient:
                     chunks.append(chunk)
                 data = json.loads(b"".join(chunks).decode("utf-8", errors="replace"))
                 dt_ms = (time.perf_counter() - t0) * 1000.0
-                return self._parse_non_stream_response(data, latency_ms=dt_ms)
+                return self._parse_non_stream_response(
+                    data, latency_ms=dt_ms, provider_used=cfg.provider, model_used=cfg.model or ""
+                )
 
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
@@ -232,7 +542,7 @@ class OpenCodeToolChatClient:
                         stream_err = True
                         continue
                     if isinstance(chunk_json.get("error"), dict):
-                        raise RuntimeError("sse_upstream_error")
+                        raise RuntimeError(_classify_sse_error(chunk_json["error"]))
                     if isinstance(chunk_json.get("usage"), dict):
                         usage_obj = chunk_json["usage"]
                     choices = chunk_json.get("choices")
@@ -274,8 +584,30 @@ class OpenCodeToolChatClient:
                     break
 
             dt_ms = (time.perf_counter() - t0) * 1000.0
+            if finish_reason in _REFUSAL_FINISH_REASONS:
+                return AssistantTurn(
+                    content="",
+                    reasoning_content="",
+                    tool_calls=(),
+                    usage=_extract_usage(usage_obj, latency_ms=dt_ms),
+                    fallback=True,
+                    error_reason="content_filter_refusal",
+                    provider_used=cfg.provider,
+                    model_used=cfg.model or "",
+                )
+            if stream_err:
+                return AssistantTurn(
+                    content="",
+                    reasoning_content="",
+                    tool_calls=(),
+                    usage=_extract_usage(usage_obj, latency_ms=dt_ms),
+                    fallback=True,
+                    error_reason="corrupted_sse_stream",
+                    provider_used=cfg.provider,
+                    model_used=cfg.model or "",
+                )
             clean_termination = saw_done or (finish_reason in _VALID_FINISH_REASONS)
-            if not clean_termination or (stream_err and not tc_accum and not content_parts):
+            if not clean_termination:
                 return AssistantTurn(
                     content="",
                     reasoning_content="",
@@ -283,6 +615,8 @@ class OpenCodeToolChatClient:
                     usage=_extract_usage(usage_obj, latency_ms=dt_ms),
                     fallback=True,
                     error_reason="truncated_sse_stream",
+                    provider_used=cfg.provider,
+                    model_used=cfg.model or "",
                 )
 
             calls: list[ToolCall] = []
@@ -303,6 +637,8 @@ class OpenCodeToolChatClient:
                 reasoning_content="".join(reasoning_parts),
                 tool_calls=tuple(calls),
                 usage=_extract_usage(usage_obj, latency_ms=dt_ms),
+                provider_used=cfg.provider,
+                model_used=cfg.model or "",
             )
         except Exception as exc:
             dt_ms = (time.perf_counter() - t0) * 1000.0
@@ -318,16 +654,34 @@ class OpenCodeToolChatClient:
                 usage=TurnUsage(latency_ms=dt_ms),
                 fallback=True,
                 error_reason=f"transport_error:{type(exc).__name__}:{safe_msg[:64]}",
+                provider_used=cfg.provider,
+                model_used=cfg.model or "",
             )
         finally:
             conn.close()
 
     @staticmethod
     def _parse_non_stream_response(
-        data: dict[str, Any], *, latency_ms: float
+        data: dict[str, Any],
+        *,
+        latency_ms: float,
+        provider_used: str = "",
+        model_used: str = "",
     ) -> AssistantTurn:
         choices = data.get("choices") or []
         first = choices[0] if choices and isinstance(choices[0], dict) else {}
+        fr = str(first.get("finish_reason") or "").strip().lower() if isinstance(first, dict) else ""
+        if fr in _REFUSAL_FINISH_REASONS:
+            return AssistantTurn(
+                content="",
+                reasoning_content="",
+                tool_calls=(),
+                usage=_extract_usage(data.get("usage"), latency_ms=latency_ms),
+                fallback=True,
+                error_reason="content_filter_refusal",
+                provider_used=provider_used,
+                model_used=model_used,
+            )
         msg = first.get("message") if isinstance(first, dict) else {}
         if not isinstance(msg, dict):
             msg = {}
@@ -357,4 +711,6 @@ class OpenCodeToolChatClient:
             reasoning_content=reasoning,
             tool_calls=tuple(calls),
             usage=_extract_usage(data.get("usage"), latency_ms=latency_ms),
+            provider_used=provider_used,
+            model_used=model_used,
         )

@@ -8,8 +8,11 @@ control/navigation, robot, and simulation layers.
 
 from embodied_navigation.agent.adapters import (
     HabitatAgentRunner,
+    HabitatSessionProxy,
     HabitatWorldDaemon,
     MotionFrameIndex,
+    SharedHabitatSceneHost,
+    run_concurrent_scene_sessions,
 )
 from embodied_navigation.agent.prompts import (
     AGENT_RUNTIME_SYSTEM_PROMPT,
@@ -30,6 +33,7 @@ from embodied_navigation.agent.runtime import (
     ToolResult,
     ToolSpec,
     TurnUsage,
+    build_default_deepseek_fallback,
     default_after_tool_hook,
     resolve_agent_thinking,
 )
@@ -50,6 +54,7 @@ __all__ = [
     "EmbodiedAgentRuntime",
     "FinishCheckResult",
     "HabitatAgentRunner",
+    "HabitatSessionProxy",
     "HabitatWorldDaemon",
     "ImageAttachment",
     "MotionFrameIndex",
@@ -57,13 +62,16 @@ __all__ = [
     "OpenCodeToolChatClient",
     "PrefixStableContextManager",
     "ReportFinishVerifier",
+    "SharedHabitatSceneHost",
     "ToolCall",
     "ToolResult",
     "ToolSpec",
     "TurnUsage",
     "build_agent_tools",
+    "build_default_deepseek_fallback",
     "build_vlm_region_summarizer",
     "default_after_tool_hook",
     "format_agent_candidates",
     "resolve_agent_thinking",
+    "run_concurrent_scene_sessions",
 ]

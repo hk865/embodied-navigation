@@ -199,7 +199,12 @@ class EmbodiedAgentRuntime:
             turn: AssistantTurn = self.chat_client.complete_turn(
                 messages, self._tool_specs_list()
             )
-            self.context.record_usage(turn.usage)
+            route_key = (
+                f"{turn.provider_used}:{turn.model_used}"
+                if (turn.provider_used or turn.model_used)
+                else ""
+            )
+            self.context.record_usage(turn.usage, route_key=route_key)
 
             trace_row: dict[str, Any] = {
                 "turn": turn_idx,
@@ -216,6 +221,12 @@ class EmbodiedAgentRuntime:
                 "latency_ms": round(turn.usage.latency_ms, 1),
                 "fallback": turn.fallback,
             }
+            if turn.provider_used:
+                trace_row["provider_used"] = turn.provider_used
+            if turn.model_used:
+                trace_row["model_used"] = turn.model_used
+            if turn.fallback_switched_from:
+                trace_row["fallback_switched_from"] = turn.fallback_switched_from
             if turn.error_reason:
                 trace_row["error_reason"] = turn.error_reason
             if compaction_receipt is not None:
@@ -224,7 +235,13 @@ class EmbodiedAgentRuntime:
             if turn.fallback:
                 consecutive_transport_errors += 1
                 traces.append(trace_row)
-                if "http_400" in turn.error_reason and len(self.context._turn_groups) > 1:
+                if "content_filter" in turn.error_reason:
+                    termination_reason = turn.error_reason
+                    break
+                if (
+                    "context_length" in turn.error_reason
+                    and len(self.context._turn_groups) > 1
+                ):
                     ms_text = (
                         self.world_milestone_fn(task_label)
                         if self.world_milestone_fn is not None

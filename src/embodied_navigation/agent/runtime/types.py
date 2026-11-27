@@ -76,6 +76,9 @@ class AssistantTurn:
     usage: TurnUsage = field(default_factory=TurnUsage)
     fallback: bool = False
     error_reason: str = ""
+    provider_used: str = ""
+    model_used: str = ""
+    fallback_switched_from: str = ""
 
 
 @dataclass(frozen=True)

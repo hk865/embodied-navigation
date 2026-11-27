@@ -10,6 +10,7 @@ from embodied_navigation.agent.runtime.hooks import (
 )
 from embodied_navigation.agent.runtime.llm_transport import (
     OpenCodeToolChatClient,
+    build_default_deepseek_fallback,
     resolve_agent_thinking,
 )
 from embodied_navigation.agent.runtime.runtime import (
@@ -41,6 +42,7 @@ __all__ = [
     "ToolResult",
     "ToolSpec",
     "TurnUsage",
+    "build_default_deepseek_fallback",
     "default_after_tool_hook",
     "resolve_agent_thinking",
     "strip_host_paths_recursive",
