@@ -9,7 +9,7 @@
 - 架构层级：第 2 层「感知与通信」中的传感器适配与开放词表检测客户端子包（见仓库根 `AGENTS.md` 第 2 节）。
 - 输入：`simulation/dynanav/capture/frames.py` 与规划侧传入的深度图/标定数组；以及 `vision_tools.VisionToolClient` 传入的 RGB 图像与提示词。
 - 输出：`DepthCloudPacket`、速度向量、`GroundedDetection`（含 3D 局部坐标/包络、`range_source`、`candidate_scores` 多假设对比分布、`abstain` 低置信弃权与可选 SigLIP embedding）。
-- 上游/下游：上游是 `simulation/dynanav/`、`planning/exploration/habitat_agent_adapter.py` 与 `scripts/run_vision_tool_service.py`；`vision_tool_server.py` 将 PyTorch / FastAPI / SAM 3 / Transformers 隔离在函数内延迟导入，确保纯 CPU 单元测试不触发 GPU 依赖。
+- 上游/下游：上游是 `simulation/dynanav/`、`agent/adapters/habitat_daemon.py` 与 `scripts/run_vision_tool_service.py`；`vision_tool_server.py` 将 PyTorch / FastAPI / SAM 3 / Transformers 隔离在函数内延迟导入，确保纯 CPU 单元测试不触发 GPU 依赖。
 
 ## 当前文件夹结构
 
@@ -49,7 +49,7 @@ src/embodied_navigation/perception/
 | `simulation/dynanav/capture/frames.py` | `from embodied_navigation.perception.depth import depth_cloud_packet`；每帧 RGB-D 用 `depth_cloud_packet(zz, sensor_yaw, mount, imu_mount)` 生成点云与像素对应，自车盒注释与 `depth.py` 的过滤盒保持一致。 |
 | `simulation/dynanav/native_waypoints.py` | `from embodied_navigation.perception.pose_velocity import update_pose_velocity`；用调用方维护的位姿历史算源时间速度。 |
 | `simulation/dynanav/pct_scan_worker.py` | 同上；在 PCT/SCAN worker 里用速度历史把位置差换算成 map 系速度，写回 `state['body_pose']` 的 twist（原始 post-VIO 消息不改，它自带的零 twist 不是实测速度）。 |
-| `planning/exploration/habitat_agent_adapter.py` | 通过 `vision_tools.VisionToolClient`、`ground_detections_with_depth` 与 `cluster_multilabel_detections` 获取多假设 `candidate_scores` 与 3D 反投影坐标。 |
+| `agent/adapters/habitat_daemon.py` | 通过 `vision_tools.VisionToolClient`、`ground_detections_with_depth` 与 `cluster_multilabel_detections` 获取多假设 `candidate_scores` 与 3D 反投影坐标。 |
 | `scripts/run_vision_tool_service.py` | 启动 `vision_tool_server.run_vision_service`，按 CLI `--backend` 与 `--embed-model` 延迟加载本地 GPU 模型。 |
 | `tests/unit/` | `test_depth_packet.py`、`test_perception.py`、`test_pose_velocity_contract.py`、`test_vision_tools.py`、`test_agent_runtime.py` 直接 import 纯 CPU 函数。 |
 

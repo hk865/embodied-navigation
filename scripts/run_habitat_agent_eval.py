@@ -8,18 +8,16 @@ import json
 from pathlib import Path
 import sys
 
-from embodied_navigation.agent_runtime import (
+from embodied_navigation.agent import (
+    HabitatAgentRunner,
     OpenCodeToolChatClient,
     resolve_agent_thinking,
 )
+from embodied_navigation.common.llm_config import LlmClientConfig
 from embodied_navigation.perception.vision_tools import VisionToolClient
-from embodied_navigation.planning.exploration.habitat_agent_adapter import (
-    HabitatAgentRunner,
-)
 from embodied_navigation.planning.exploration.habitat_memory_runner import (
     HabitatSubtaskSpec,
 )
-from embodied_navigation.planning.exploration.llm_agent_client import LlmClientConfig
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

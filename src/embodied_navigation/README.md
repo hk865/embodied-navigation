@@ -2,7 +2,7 @@
 
 `src/embodied_navigation/` 是仓库全部自有导航实现的根：按「仿真 → 感知 → 定位建图 → 规划 → 导航跟踪 → 机器人执行 → Agent 运行时 → 可视化」分层组织，公共基础设施 `common/` 单列。第三方算法（FAST-LIVO2、SCAN、PCT、vikit、Livox 驱动）在 `third_party/`，本包只做接入与装配。
 
-盘点日期 2026-11-26（分支 `feat/static-memory-streaming`，HEAD `4f81110`）。
+盘点日期 2026-11-27（分支 `feat/static-memory-streaming`）。
 
 ## 模块定位与架构层级
 
@@ -12,23 +12,23 @@
 - 上游/下游：上游是 `scripts/` 的薄入口与 Isaac Sim / Habitat 宿主进程；下游依赖见下方「包内依赖方向」。
 - 边界：不内置第三方算法或 GPU 权重；`perception/vision_tool_server.py` 将 PyTorch/FastAPI 隔离在函数内延迟导入，保证包顶层 100% 纯 CPU；`import embodied_navigation` 只执行 [__init__.py](__init__.py) 的 docstring，不启动进程、不建线程、不读配置。
 
-## 包内依赖方向（含现存技术债标注）
+## 包内依赖方向（顶层 `agent/` 单向向下依赖，由 AST 单测守卫）
 
 ```mermaid
 flowchart TD
-  CLI["scripts/run_*"] --> RT["agent_runtime/ (Layer 7) · EmbodiedAgentRuntime + 200K 上下文 + Hooks"]
-  CLI --> EXP["planning/exploration/ · habitat_agent_adapter + waypoint_candidates"]
+  CLI["scripts/run_*"] --> AG["agent/ (Layer 7) · runtime + prompts + tools + adapters"]
   CLI --> SIM["simulation/dynanav/ (Layer 1) · Isaac 采集 + PCT/SCAN worker + mailbox"]
-  RT -. "现存反向 import 债: llm_agent_client (LlmClientConfig / _encode_image_part)" .-> EXP
-  EXP --> MEM["localization_mapping/semantic_mapping/ · SceneGraph + HierarchicalMemoryStore"]
-  EXP --> VT["perception/vision_tools.py (Layer 2) · 客户端 + 反投影 + candidate_scores"]
+  AG --> EXP["planning/exploration/ · DepthOccupancyGrid + waypoint_candidates"]
+  AG --> MEM["localization_mapping/semantic_mapping/ · SceneGraph + TextureKF + RegionMemory"]
+  AG --> VT["perception/vision_tools.py (Layer 2) · SAM 3 + SigLIP 客户端与反投影"]
   VT -. "HTTP + 延迟 GPU import" .-> VSRV["perception/vision_tool_server.py"]
   SIM --> PER["perception/depth · pose_velocity"]
   SIM --> PCT["planning/pct · scan_handoff"]
   SIM --> NAV["navigation/RouteTracker"]
   NAV --> ROB["robot/unitree/robogauge"]
   VIZ["visualization/ · SpringArm + rviz_recorder"] --> BE["localization_mapping/backend"]
-  RT --> COM["common/"]
+  AG --> COM["common/ · geometry + llm_config + runtime_io"]
+  EXP --> COM
   MEM --> COM
   VT --> COM
 ```
@@ -37,8 +37,12 @@ flowchart TD
 
 ```text
 src/embodied_navigation/
-├── agent_runtime/             # Agent 运行时：Prefix-Stable 200K 上下文、流式 Tool-Calling、Hooks 与压缩
-├── common/                    # 横切基础设施：几何/时间、有界写盘、子进程日志、状态契约
+├── agent/                     # 顶层 Agent 编排层：runtime（200K 上下文/Hooks/SSE）、prompts、tools、adapters
+│   ├── runtime/
+│   ├── prompts/
+│   ├── tools/
+│   └── adapters/
+├── common/                    # 横切基础设施：几何/时间、LLM 配置与安全图编码（llm_config）、有界写盘、日志
 │   └── time/
 ├── localization_mapping/      # 定位建图：FAST-LIVO2 接入、点云 SLAM 后端、语义建图与 L0-L3 记忆
 │   ├── backend/
@@ -86,7 +90,7 @@ src/embodied_navigation/
 | 感知 | `perception/` | 5 / 1,509 | `perception.depth`、`perception.pose_velocity`、`perception.vision_tools`（纯 CPU）+ `vision_tool_server` | [perception/README.md](perception/README.md) |
 | 定位建图 | `localization_mapping/` | 28 / 13,943 | `backend.node` 与 `semantic_mapping`（`KeyframeSceneGraph`、`HierarchicalMemoryStore`） | [localization_mapping/README.md](localization_mapping/README.md) |
 | 规划 | `planning/` | 15 / 11,601 | `pct/`、`scan_*`、`exploration/`（DynaNav 候选/mailbox + LLM/Habitat 闭环评测） | [planning/README.md](planning/README.md)、[exploration/README.md](planning/exploration/README.md) |
-| Agent 运行时 | `agent_runtime/` | 6 / 1,235 | `EmbodiedAgentRuntime`、`PrefixStableContextManager`、`OpenCodeToolChatClient` | [agent_runtime/README.md](agent_runtime/README.md) |
+| 顶层 Agent 层 | `agent/` | `runtime/` + `prompts/` + `tools/` + `adapters/` | `EmbodiedAgentRuntime`、`HabitatWorldDaemon`、`HabitatAgentRunner` | [agent/README.md](agent/README.md) |
 | 导航跟踪 | `navigation/` | 4 / 883 | `navigation.robogauge.route_tracker.RouteTracker`、`navigation.yaw_action` | [navigation/README.md](navigation/README.md) |
 | 机器人执行 | `robot/` | 8 / 490 | `robot.unitree.robogauge.runtime`（TorchScript 策略） | [robot/README.md](robot/README.md) |
 | 可视化 | `visualization/` | 4 / 1,260 | `SpringArmCameraController`、`spring_arm_node`、`rviz_recorder` | [visualization/README.md](visualization/README.md) |

@@ -12,13 +12,15 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from embodied_navigation.agent_runtime import (
+from embodied_navigation.agent import (
     AssistantTurn,
     EmbodiedAgentRuntime,
     FinishCheckResult,
+    HabitatWorldDaemon,
     ImageAttachment,
     OpenCodeToolChatClient,
     PrefixStableContextManager,
+    ReportFinishVerifier,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -26,6 +28,7 @@ from embodied_navigation.agent_runtime import (
     default_after_tool_hook,
     resolve_agent_thinking,
 )
+from embodied_navigation.common.llm_config import LlmClientConfig
 from embodied_navigation.localization_mapping.semantic_mapping import (
     HierarchicalMemoryStore,
     KeyframeSceneGraph,
@@ -35,14 +38,9 @@ from embodied_navigation.perception.vision_tools import (
     cluster_multilabel_detections,
     ground_detections_with_depth,
 )
-from embodied_navigation.planning.exploration.habitat_agent_adapter import (
-    HabitatWorldDaemon,
-    ReportFinishVerifier,
-)
 from embodied_navigation.planning.exploration.habitat_memory_runner import (
     DepthOccupancyGrid,
 )
-from embodied_navigation.planning.exploration.llm_agent_client import LlmClientConfig
 
 
 class TestPrefixStableContextManager(unittest.TestCase):
@@ -532,7 +530,7 @@ class TestEmbodiedAgentRuntimeLoopAndTransport(unittest.TestCase):
             srv.server_close()
 
     def test_runtime_unlimited_turns_bounded_by_atomic_budget_and_deadlock_guard(self) -> None:
-        from embodied_navigation.agent_runtime import (
+        from embodied_navigation.agent.runtime import (
             EmbodiedAgentRuntime,
             PrefixStableContextManager,
         )
@@ -630,7 +628,7 @@ class TestEmbodiedAgentRuntimeLoopAndTransport(unittest.TestCase):
             KeyframeSceneGraph,
         )
         from embodied_navigation.perception.vision_tools import GroundedDetection
-        from embodied_navigation.planning.exploration.habitat_agent_adapter import (
+        from embodied_navigation.agent.tools import (
             ObjectNavFinishVerifier,
         )
 
@@ -719,12 +717,73 @@ class TestEmbodiedAgentRuntimeLoopAndTransport(unittest.TestCase):
         self.assertTrue(chk3.allowed)
 
     def test_resolve_agent_thinking_qwen_timeout_floor_180s(self) -> None:
-        from embodied_navigation.agent_runtime import resolve_agent_thinking
+        from embodied_navigation.agent.runtime import resolve_agent_thinking
 
         _, t_dis, _ = resolve_agent_thinking("qwen3.8-flash", "disabled", base_timeout_s=90.0)
         _, t_en, _ = resolve_agent_thinking("qwen3.8-flash", "enabled", base_timeout_s=90.0)
         self.assertGreaterEqual(t_dis, 180.0)
         self.assertGreaterEqual(t_en, 180.0)
+
+    def test_agent_layer_unidirectional_dependency_guard(self) -> None:
+        """Enforce top-level agent/ boundary: lower layers never import agent/, and agent/runtime never imports planning/."""
+        import ast
+
+        pkg_root = Path(__file__).resolve().parents[2] / "src" / "embodied_navigation"
+        lower_layers = (
+            "common",
+            "perception",
+            "localization_mapping",
+            "planning",
+            "navigation",
+            "robot",
+            "simulation",
+            "visualization",
+        )
+        lower_violations: list[str] = []
+        for layer in lower_layers:
+            ldir = pkg_root / layer
+            if not ldir.is_dir():
+                continue
+            for py in sorted(ldir.rglob("*.py")):
+                tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if alias.name == "embodied_navigation.agent" or alias.name.startswith(
+                                ("embodied_navigation.agent.", "embodied_navigation.agent_runtime")
+                            ):
+                                lower_violations.append(f"{py.relative_to(pkg_root)} -> {alias.name}")
+                    elif isinstance(node, ast.ImportFrom):
+                        mod = node.module or ""
+                        if mod == "embodied_navigation.agent" or mod.startswith(
+                            ("embodied_navigation.agent.", "embodied_navigation.agent_runtime")
+                        ):
+                            lower_violations.append(f"{py.relative_to(pkg_root)} -> {mod}")
+        self.assertEqual(lower_violations, [], f"Lower layers imported agent/: {lower_violations}")
+
+        # Also enforce pure agent/runtime/ never imports planning/, perception/, or simulation/
+        rt_dir = pkg_root / "agent" / "runtime"
+        rt_violations: list[str] = []
+        forbidden_rt = (
+            "embodied_navigation.planning",
+            "embodied_navigation.perception",
+            "embodied_navigation.localization_mapping",
+            "embodied_navigation.simulation",
+            "embodied_navigation.navigation",
+            "embodied_navigation.robot",
+        )
+        for py in sorted(rt_dir.rglob("*.py")):
+            tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith(forbidden_rt):
+                            rt_violations.append(f"{py.relative_to(pkg_root)} -> {alias.name}")
+                elif isinstance(node, ast.ImportFrom):
+                    mod = node.module or ""
+                    if mod.startswith(forbidden_rt):
+                        rt_violations.append(f"{py.relative_to(pkg_root)} -> {mod}")
+        self.assertEqual(rt_violations, [], f"agent/runtime/ leaked domain imports: {rt_violations}")
 
 
 if __name__ == "__main__":

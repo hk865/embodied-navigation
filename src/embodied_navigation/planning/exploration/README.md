@@ -1,8 +1,8 @@
 # planning/exploration（探索候选、多轮通信契约与 Habitat 闭环认知评测）
 
-> 盘点日期：2026-11-26 · 分支 `feat/static-memory-streaming` · HEAD `4f81110`
+> 盘点日期：2026-11-27 · 分支 `feat/static-memory-streaming`
 
-本目录承载两类职责：(1) 为 D 路径（DynaNav / Isaac Sim）提供只读探索候选与离线/哨兵邮箱协同；(2) 提供开放词表具身 LLM 客户端与 Habitat-Sim HM3D 闭环认知评测适配器（`habitat_agent_adapter.py` 将世界自更新守护 `HabitatWorldDaemon`、工具包与终止门接入独立的 `agent_runtime/`）。注意：`agent_runtime/` 仍暂时从本目录 `llm_agent_client.py` 复用 `LlmClientConfig` 与 `_encode_image_part`，这是已知待收口的依赖债。
+本目录承载两类职责：(1) 为 D 路径（DynaNav / Isaac Sim）提供只读探索候选与离线/哨兵邮箱协同；(2) 提供底层 2.5D 栅格/楼梯门户提取（`DepthOccupancyGrid`）及历史无状态基线脚本（`habitat_memory_runner.py` / `streaming_task_agent.py`）。新的顶层多轮 Agent 运行时、工具与 Habitat 适配器已整体迁出至 [`agent/`](../../agent/README.md)，共享的 `LlmClientConfig` 已下沉至 `common/llm_config.py`，本目录不再包含顶层 Agent 编排代码。
 
 ## 模块定位与架构层级
 
@@ -28,14 +28,13 @@ src/embodied_navigation/planning/exploration/
 ├── waypoint_mailbox.py       # 583 行：文件 mailbox 协议读写与心跳/序号管理
 ├── sentinel_coordinator.py   # 371 行：哨兵异步安全门协调
 ├── visual_map_overlay.py     # 546 行：操作员占用图与语义叠加渲染
-├── llm_agent_client.py       # 1,713 行：LLM/VLM HTTP 配置与图像编码基元（LlmClientConfig 等）
-├── streaming_task_agent.py   # 1,977 行：早期流式单轮决策 Agent（保留作兼容与离线任务套件）
-├── static_task_suite.py      # 1,537 行：静态离线导航与场景图问答基准套件
-├── habitat_memory_runner.py  # 1,838 行：无状态单轮 Habitat 评测基线 + DepthOccupancyGrid（含 render_global_floorplan 2.5D 平面图）
-└── habitat_agent_adapter.py  # 1,887 行：HabitatWorldDaemon（自更新感知/Zone/双触发 KF）+ 通用工具集 + ObjectNav/Report FinishVerifier + HabitatAgentRunner
+├── llm_agent_client.py       # 旧哨兵/单轮 HTTP 客户端（LlmClientConfig 与安全图编码已统一复用 common/llm_config.py）
+├── streaming_task_agent.py   # 早期流式单轮决策 Agent（保留作兼容与离线任务套件）
+├── static_task_suite.py      # 静态离线导航与场景图问答基准套件
+└── habitat_memory_runner.py  # 无状态单轮 Habitat 评测基线 + DepthOccupancyGrid（含 2.5D 平面图与楼梯门户检测）
 ```
 
-13 个跟踪文件（11 个 `.py` + 1 个 `.json` + 本 README）；逐文件说明优先覆盖下方核心只读候选链，多轮 Habitat 运行时细节见 [`agent_runtime/README.md`](../../agent_runtime/README.md) 与 `scripts/run_habitat_agent_eval.py`。
+顶层多轮 Agent 运行时、工具与 Habitat 适配器已迁入 [`agent/`](../../agent/README.md)，CLI 入口见 `scripts/run_habitat_agent_eval.py`。
 
 ## 逐文件职责
 

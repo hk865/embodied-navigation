@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Iterable, Protocol
 
-from embodied_navigation.agent_runtime.types import (
+from embodied_navigation.agent.runtime.types import (
     FinishCheckResult,
     ToolCall,
     ToolResult,

@@ -6,14 +6,14 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from embodied_navigation.agent_runtime.types import (
+from embodied_navigation.agent.runtime.types import (
     AssistantTurn,
     ImageAttachment,
     ToolCall,
     ToolResult,
     TurnUsage,
 )
-from embodied_navigation.planning.exploration.llm_agent_client import _encode_image_part
+from embodied_navigation.common.llm_config import encode_image_part as _encode_image_part
 
 
 def _estimate_message_tokens(msg: dict[str, Any]) -> tuple[int, int]:

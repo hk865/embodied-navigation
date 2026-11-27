@@ -9,13 +9,13 @@ import time
 from typing import Any, Sequence
 import urllib.parse
 
-from embodied_navigation.agent_runtime.types import (
+from embodied_navigation.agent.runtime.types import (
     AssistantTurn,
     ToolCall,
     ToolSpec,
     TurnUsage,
 )
-from embodied_navigation.planning.exploration.llm_agent_client import LlmClientConfig
+from embodied_navigation.common.llm_config import LlmClientConfig
 
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _READ_CHUNK_BYTES = 16384

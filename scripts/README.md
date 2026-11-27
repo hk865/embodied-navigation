@@ -37,7 +37,7 @@ scripts/
 ├── run_dynanav_lio.sh                        # 684 行，隔离的 LIO/LIVO observer 启动器
 ├── run_dynanav_native_exploration.sh         # 396 行，D 路径唯一主入口（PCT+SCAN 探索）
 ├── run_dynanav_pct_scan.py                   # 10 行，pct_scan_worker.main 的薄入口（ROS system python）
-├── run_habitat_agent_eval.py                 # 138 行，独立 agent_runtime 200K 多轮 Habitat HM3D 评测 CLI
+├── run_habitat_agent_eval.py                 # 143 行，顶层 agent/ 200K 多轮 Habitat HM3D 评测 CLI（纯 500 原子步预算）
 ├── run_habitat_memory_eval.py                # 190 行，无状态单轮 Habitat HM3D 评测 CLI（对照组）
 ├── run_static_streaming_task.py              # 184 行，流式静态探索任务 CLI
 ├── run_vision_tool_service.py                # 54 行，本地 GPU 视觉工具服务启动器（SAM 3 / GDINO / YOLOE + SigLIP）

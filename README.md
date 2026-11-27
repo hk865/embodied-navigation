@@ -36,12 +36,12 @@ flowchart TB
     SMEM["semantic_mapping/ · SceneGraph + HierarchicalMemoryStore · L0-L3 + Zone + refuted"]
   end
 
-  subgraph AGENT_RT["Layer 7: 独立多轮 Agent 运行时 (feat/static-memory-streaming)"]
-    RT["agent_runtime/ · EmbodiedAgentRuntime · 200K PrefixStableContext · Hooks"]
+  subgraph AGENT_RT["Layer 7: 顶层独立 Agent 编排层 agent/ (feat/static-memory-streaming)"]
+    RT["agent/runtime · EmbodiedAgentRuntime · 200K PrefixStableContext · Hooks"]
   end
 
-  subgraph HOST_HAB["Habitat-Sim HM3D 闭环认知评测支线 (快速验证用)"]
-    HAB["planning/exploration/habitat_agent_adapter.py · HabitatWorldDaemon + Tools + StopVerifier"]
+  subgraph HOST_HAB["agent/tools & agent/adapters (Habitat-Sim HM3D 闭环认知评测支线)"]
+    HAB["agent/adapters · HabitatWorldDaemon + Tools + StopVerifier + StairTraversal"]
   end
 
   RT <--> |"ToolCall / AfterToolHook / BeforeFinishHook"| HAB
@@ -56,9 +56,9 @@ flowchart TB
 1. **仿真层（D 主线）**在 Isaac Sim 中渲染 RTX RGB-D、RTX LiDAR 与 IMU；`--truth-pose` 时额外提供仿真真值位姿与 200 Hz 真值去畸变点云；`visualization/` 提供 Spring-Arm 防穿墙相机与 RViz2 录制。
 2. **感知与通信层**：`perception/depth.py` 与 `pose_velocity.py` 处理深度包与源时间速度；新增的 `perception/vision_tools.py` 通过 HTTP 对接独立的 `vision_tool_server.py`（SAM 3 / GroundingDINO + SigLIP），在纯 CPU 侧完成掩膜深度反投影、跨类 NMS 与多标签对比 `candidate_scores` / `abstain` 判定；`common/` 提供几何、运行时 IO、进程日志与遥测基础设施。
 3. **定位建图层**：默认用 FAST-LIVO2 前端产出 post-VIO 位姿与实测点云，`localization_mapping/backend/` 做关键帧、回环、位姿图与地图存取；`localization_mapping/semantic_mapping/` 提供点层、关键帧锚定 3D 场景图与 `HierarchicalMemoryStore`（L0–L3 子地图、Zone 覆盖度、`tentative | confirmed | refuted` 认知状态与 `agent_relabeled` 防伪造隔离）。注意：在线 SLAM 后端尚未自动调用 `sync_backend_loop_update` 联动场景图。
-4. **规划层**：D 路径用实测分层支撑做 PCT 全局路线、原生 SCAN 做 B 样条局部轨迹；`planning/exploration/` 同时承载 DynaNav 只读航点候选/mailbox 协调与 Habitat 闭环认知评测适配（`habitat_memory_runner.py`、`habitat_agent_adapter.py`）。
+4. **规划层**：D 路径用实测分层支撑做 PCT 全局路线、原生 SCAN 做 B 样条局部轨迹；`planning/exploration/` 承载 DynaNav 只读航点候选/mailbox 协调与底层 `DepthOccupancyGrid`（含 2.5D 平面图与楼梯门户提取）。
 5. **控制跟踪与机器人执行层**：`navigation/` 的 `RouteTracker` 与 `yaw_action` 把路线转为身体速度命令；`robot/unitree/robogauge/` 由 MoE-CTS TorchScript 策略转为 Go2 关节目标。
-6. **Agent 介入层（Layer 7）**：D 路径实机/仿真仍通过 `scripts/explore_waypoint_client.py` + `.agents/skills/dynanav-explore/` 经文件 mailbox 交互；而新的 `agent_runtime/`（`EmbodiedAgentRuntime` + `PrefixStableContextManager` 200K 上下文 + `Hooks` + `OpenCodeToolChatClient`）已作为独立运行时在 Habitat 闭环评测中通过 `scripts/run_habitat_agent_eval.py` 接入。
+6. **顶层 Agent 层（Layer 7，`agent/`）**：D 路径实机/仿真仍通过 `scripts/explore_waypoint_client.py` + `.agents/skills/dynanav-explore/` 经文件 mailbox 交互；而新的 `agent/`（`runtime/` + `prompts/` + `tools/` + `adapters/`，单向向下调用底层各模块并由 AST 单测守卫）已通过 `scripts/run_habitat_agent_eval.py` 接入 Habitat 闭环评测。
 
 ## 2. 顶层目录与职责总览
 
@@ -107,7 +107,7 @@ Linux 检出还会有数据卷软链 `assets/`、`models/`、`runs/`，以及本
 | 规划 | `planning/` | PCT 全局、SCAN 局部、扫描交接与探索适配 | [README](src/embodied_navigation/planning/README.md) |
 | 规划 | `planning/pct/` | 实测分层支撑 tomogram 与原生 PCT A* 接入 | [README](src/embodied_navigation/planning/pct/README.md) |
 | 规划 | `planning/exploration/` | DynaNav 航点候选/mailbox/哨兵，以及 LLM 客户端与 Habitat 闭环认知评测适配 | [README](src/embodied_navigation/planning/exploration/README.md) |
-| Agent 运行时 | `agent_runtime/` | 通用多轮 Tool-Calling 运行时、Prefix-Stable 200K 上下文、惰性压缩与生命周期 Hooks（当前接入 Habitat 评测，D 路径待接） | [README](src/embodied_navigation/agent_runtime/README.md) |
+| 顶层 Agent 层 | `agent/` | 顶层多轮 Agent 编排层：`runtime/`（200K 上下文/Hooks/SSE）、`prompts/`、`tools/`、`adapters/`（当前接入 Habitat 评测，D 路径待接） | [README](src/embodied_navigation/agent/README.md) |
 | 可视化 | `visualization/` | RViz2 多机位防穿墙 Spring-Arm 相机运动学与录制编排 | [README](src/embodied_navigation/visualization/README.md) |
 | 控制跟踪 | `navigation/` | `RouteTracker` 路线跟踪与 `yaw_action` 转向动作（平台无关纯策略，不依赖 ROS/Isaac） | [README](src/embodied_navigation/navigation/README.md) |
 | 控制跟踪 | `navigation/robogauge/` | RoboGauge 路线跟踪接口 | [README](src/embodied_navigation/navigation/robogauge/README.md) |

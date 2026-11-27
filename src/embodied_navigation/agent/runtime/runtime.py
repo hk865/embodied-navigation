@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-from embodied_navigation.agent_runtime.context import PrefixStableContextManager
-from embodied_navigation.agent_runtime.hooks import (
+from embodied_navigation.agent.runtime.context import PrefixStableContextManager
+from embodied_navigation.agent.runtime.hooks import (
     AfterToolHook,
     BeforeFinishHook,
     BeforeTurnHook,
     default_after_tool_hook,
 )
-from embodied_navigation.agent_runtime.types import (
+from embodied_navigation.agent.runtime.types import (
     AssistantTurn,
     FinishCheckResult,
     ImageAttachment,
