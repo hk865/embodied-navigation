@@ -4,7 +4,12 @@
 >
 > 本文系统沉淀 2026-11-22 至 2026-11-25 关于 **VLN 领域谱系、主流 Benchmark 隐藏 Tricks、免训练 Agent 框架（SuperNav 等）四维拆解、GPT-6.2-Astra 弱点专项审计** 的全部调研结论，并将其收拢为本项目下一阶段清晰的三轴演进蓝图：**感知（动态 + 语义）+ 记忆（表达 / 场景描述 / 子地图检索 / 存储模态 / 失效治理）+ 失败驱动的控制策略**。
 >
-> 配套文档：[ROADMAP.md](../ROADMAP.md) · [BASELINES.md](../BASELINES.md) · [TASKS.md](../TASKS.md) · [2026-11 学术创新查重与论文方向总评](2026-11-novelty-audit-and-directions.md) · [Agent 教程 01/02](../../agent-tutorial/README.md)
+> 配套文档：[ROADMAP.md](../ROADMAP.md) · [BASELINES.md](../BASELINES.md) · [TASKS.md](../TASKS.md) · [2026-11 学术创新查重与论文方向总评](2026-11-novelty-audit-and-directions.md) · [3D/4D 表征、混合检索与算力策略 Trade-Off](2026-11-3d-representation-memory-reconstruction-tradeoffs.md) · [ADR-0005](../adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) · [Agent 教程 01/02](../../agent-tutorial/README.md)
+
+> [!NOTE] 2026-11-28 演进修订说明（保留本文 2026-11-25 调研原稿，最新口径以 ADR-0005 为准）
+>
+> - **语义感知工具现已部分落地**：`feat/static-memory-streaming`（`e159c8a`）已在 `perception/vision_tool_server.py` 与 `vision_tools.py` 落地无状态共享常驻 `SAM 3 + SigLIP` 服务与跨标签 NMS，下一步补 `DINO + SigLIP` 空间 Patch、360° 环视、`PixelGoal` 与动态场景高频 `YOLOE`。
+> - **记忆存储与检索选型已按 ADR-0005 修订**：本文 §3.2 早期草稿中“规则家具原型码本 + 离线 `Hunyuan3D-Omni`”已收拢为离线按需派生对照；主线正式收敛为 **① 不可变 `observation_id` 关键帧底片 + SE(3) 不变里程计过程链 + 推理先验底账；② 大平面 Mesh 压缩 + 细部点云残差与「骨架 + Mesh」物理预测地基（单材质 PBR 与全场景在线 3DGS/4DGS 不进主链）；③ 层次树检索 + 四类边时空过程图检索（底层首版精确矩阵乘，超预算再开 ANN）**，详见 [3D/4D 表征与混合检索 Trade-Off](2026-11-3d-representation-memory-reconstruction-tradeoffs.md) 与 [ADR-0005](../adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)。
 
 ---
 
