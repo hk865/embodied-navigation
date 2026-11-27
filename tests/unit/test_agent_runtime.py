@@ -531,6 +531,201 @@ class TestEmbodiedAgentRuntimeLoopAndTransport(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
+    def test_runtime_unlimited_turns_bounded_by_atomic_budget_and_deadlock_guard(self) -> None:
+        from embodied_navigation.agent_runtime import (
+            EmbodiedAgentRuntime,
+            PrefixStableContextManager,
+        )
+
+        # 1) max_turns=None must run past 25 turns and stop strictly when atomic budget hits 500
+        prims = [0]
+
+        class _StepClient:
+            def __init__(self) -> None:
+                self.n = 0
+
+            def complete_turn(self, messages: list[dict], tools: list[ToolSpec]) -> AssistantTurn:
+                self.n += 1
+                return AssistantTurn(
+                    content=f"step {self.n}",
+                    tool_calls=(ToolCall(f"c{self.n}", "navigate_to", {"target_id": "F1"}),),
+                    usage=TurnUsage(prompt_tokens=100, cached_tokens=80, completion_tokens=10),
+                )
+
+        ctx = PrefixStableContextManager(system_prompt="sys", initial_task_prompt="task")
+        rt = EmbodiedAgentRuntime(
+            chat_client=_StepClient(),
+            context=ctx,
+            budget_exhausted_fn=lambda: prims[0] >= 500,
+            motion_progress_fn=lambda: prims[0],
+        )
+
+        def _nav(call: ToolCall) -> ToolResult:
+            prims[0] += 16
+            return ToolResult(call.call_id, call.name, {"primitives": 16, "atomic_steps_used": prims[0]})
+
+        rt.register_tool(ToolSpec("navigate_to", "nav", {"type": "object", "properties": {}}), _nav)
+        res = rt.run_task(task_label="chair", initial_observation_text="init", max_turns=None)
+        self.assertFalse(res.completed)
+        self.assertEqual(res.termination_reason, "environment_budget_exhausted")
+        self.assertGreater(res.turns_used, 25)
+        self.assertGreaterEqual(prims[0], 500)
+
+        # 2) Pure zero-motion deadlock breaks after max_consecutive_zero_motion_turns
+        prims2 = [0]
+        ctx2 = PrefixStableContextManager(system_prompt="sys", initial_task_prompt="task")
+        rt2 = EmbodiedAgentRuntime(
+            chat_client=_StepClient(),
+            context=ctx2,
+            budget_exhausted_fn=lambda: prims2[0] >= 500,
+            motion_progress_fn=lambda: prims2[0],
+            max_consecutive_zero_motion_turns=5,
+        )
+        rt2.register_tool(
+            ToolSpec("navigate_to", "nav", {"type": "object", "properties": {}}),
+            lambda call: ToolResult(call.call_id, call.name, {"primitives": 0}),
+        )
+        res2 = rt2.run_task(task_label="chair", initial_observation_text="init", max_turns=None)
+        self.assertEqual(res2.termination_reason, "zero_motion_deadlock")
+        self.assertEqual(res2.turns_used, 5)
+
+    def test_depth_occupancy_grid_extracts_descending_and_ascending_stair_portals(self) -> None:
+        import math
+        import numpy as np
+        from embodied_navigation.planning.exploration.habitat_memory_runner import DepthOccupancyGrid
+
+        # Descending staircase ahead: lower image rows see surface 0.7..1.4m below robot floor
+        grid_down = DepthOccupancyGrid()
+        h, w = 64, 64
+        depth_down = np.full((h, w), 3.0, dtype=np.float32)
+        fx = (0.5 * w) / math.tan(math.radians(grid_down.hfov_deg) * 0.5)
+        for v in range(44, 62):
+            # Choose depth so z_cam = -(v - cy)*d/fx + 0.88 is around -0.8m
+            dy_pix = v - 0.5 * h
+            d_val = (0.88 + 0.8) * fx / max(1.0, dy_pix)
+            depth_down[v, 20:44] = np.clip(d_val, 1.2, 3.8)
+        grid_down.update(depth_down, [0.0, 0.0, 2.8], 0.0, stride=2)
+        portals_down = grid_down.extract_stair_portals([0.0, 0.0, 2.8], min_samples=3)
+        self.assertTrue(any(p["kind"] == "stair_down" and p["id"].startswith("S") for p in portals_down))
+
+        # Ascending staircase ahead: higher image rows have monotonically increasing depth (slope ~ 1.2)
+        grid_up = DepthOccupancyGrid()
+        depth_up = np.full((h, w), 9.0, dtype=np.float32)
+        for v in range(18, 42):
+            # Target z_cam increasing from 0.25 to 1.10 as v decreases, with d = 1.6 + 1.2 * z_cam
+            z_target = 0.25 + (41 - v) * (0.85 / 23.0)
+            d_target = 1.6 + 1.2 * z_target
+            # Solve v consistency approx by setting depth band directly
+            depth_up[v, 20:44] = d_target
+        grid_up.update(depth_up, [0.0, 0.0, 0.0], 0.0, stride=2)
+        portals_up = grid_up.extract_stair_portals([0.0, 0.0, 0.0], min_samples=3)
+        self.assertTrue(any(p["kind"] == "stair_up" and p["id"].startswith("S") for p in portals_up))
+
+    def test_objectnav_finish_verifier_rejects_nightstand_and_low_score_table(self) -> None:
+        import numpy as np
+        from embodied_navigation.localization_mapping.semantic_mapping.hierarchical_memory import (
+            HierarchicalMemoryStore,
+        )
+        from embodied_navigation.localization_mapping.semantic_mapping.scene_graph import (
+            KeyframeSceneGraph,
+        )
+        from embodied_navigation.perception.vision_tools import GroundedDetection
+        from embodied_navigation.planning.exploration.habitat_agent_adapter import (
+            ObjectNavFinishVerifier,
+        )
+
+        mem = HierarchicalMemoryStore(KeyframeSceneGraph(), default_stop_radius_m=1.8)
+        pose = np.eye(4, dtype=np.float64)
+        mem.graph.add_keyframe("kf_0001", pose)
+        mem.add_or_fuse_object(
+            label="table",
+            keyframe_id="kf_0001",
+            local_xyz=[1.0, 0.0, 0.0],
+            confidence=0.72,
+            producer="sam3",
+        )
+
+        class _FakeDaemon:
+            vision_has_seg = True
+            vision_backend = "sam3"
+            current_kf_id = "kf_0001"
+            latest_disambiguated_ok = False
+            latest_disambiguated_kf = None
+
+            def __init__(self, dets: list[GroundedDetection]) -> None:
+                self.memory = mem
+                self.current_detections = dets
+
+            def agent_pose(self) -> tuple[list[float], float, np.ndarray]:
+                return [0.0, 0.0, 0.0], 0.0, np.zeros(3)
+
+        # 1) Reject when nightstand outscores table in contrastive candidate_scores
+        det_nightstand = GroundedDetection(
+            det_id="V1",
+            label="table",
+            score=0.52,
+            box_xyxy=(10.0, 10.0, 60.0, 60.0),
+            local_xyz=(1.1, 0.0, 0.0),
+            extent_xyz_m=(0.5, 0.5, 0.6),
+            surface_distance_m=1.1,
+            planar_depth_m=1.1,
+            bearing_deg=0.0,
+            valid_pixels=400,
+            backend="sam3",
+            candidate_scores={"table": 0.52, "nightstand": 0.61},
+        )
+        ver1 = ObjectNavFinishVerifier(daemon=_FakeDaemon([det_nightstand]), target_category="table", stop_radius_m=1.8)  # type: ignore[arg-type]
+        chk1 = ver1(ToolCall("f1", "finish_task", {"result_type": "arrived", "target_label": "table"}))
+        self.assertFalse(chk1.allowed)
+        self.assertEqual(chk1.reason, "confusable_class_override")
+
+        # 2) Reject low-score 0.38 table flicker without disambiguation
+        det_low = GroundedDetection(
+            det_id="V1",
+            label="table",
+            score=0.38,
+            box_xyxy=(10.0, 10.0, 60.0, 60.0),
+            local_xyz=(1.0, 0.0, 0.0),
+            extent_xyz_m=(0.6, 0.6, 0.7),
+            surface_distance_m=1.0,
+            planar_depth_m=1.0,
+            bearing_deg=0.0,
+            valid_pixels=400,
+            backend="sam3",
+            candidate_scores={"table": 0.38},
+        )
+        ver2 = ObjectNavFinishVerifier(daemon=_FakeDaemon([det_low]), target_category="table", stop_radius_m=1.8)  # type: ignore[arg-type]
+        chk2 = ver2(ToolCall("f2", "finish_task", {"result_type": "arrived", "target_label": "table"}))
+        self.assertFalse(chk2.allowed)
+        self.assertEqual(chk2.reason, "low_confidence_target_detection")
+
+        # 3) Allow genuine high-confidence table
+        det_ok = GroundedDetection(
+            det_id="V1",
+            label="table",
+            score=0.72,
+            box_xyxy=(10.0, 10.0, 120.0, 90.0),
+            local_xyz=(1.0, 0.0, 0.0),
+            extent_xyz_m=(1.4, 0.9, 0.75),
+            surface_distance_m=1.0,
+            planar_depth_m=1.0,
+            bearing_deg=0.0,
+            valid_pixels=900,
+            backend="sam3",
+            candidate_scores={"table": 0.72, "dining table": 0.78, "nightstand": 0.12},
+        )
+        ver3 = ObjectNavFinishVerifier(daemon=_FakeDaemon([det_ok]), target_category="table", stop_radius_m=1.8)  # type: ignore[arg-type]
+        chk3 = ver3(ToolCall("f3", "finish_task", {"result_type": "arrived", "target_label": "table"}))
+        self.assertTrue(chk3.allowed)
+
+    def test_resolve_agent_thinking_qwen_timeout_floor_180s(self) -> None:
+        from embodied_navigation.agent_runtime import resolve_agent_thinking
+
+        _, t_dis, _ = resolve_agent_thinking("qwen3.8-flash", "disabled", base_timeout_s=90.0)
+        _, t_en, _ = resolve_agent_thinking("qwen3.8-flash", "enabled", base_timeout_s=90.0)
+        self.assertGreaterEqual(t_dis, 180.0)
+        self.assertGreaterEqual(t_en, 180.0)
+
 
 if __name__ == "__main__":
     unittest.main()

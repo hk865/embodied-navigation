@@ -37,9 +37,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("disabled", "default", "medium", "high", "enabled"),
         default="default",
     )
-    parser.add_argument("--timeout-s", type=float, default=90.0)
+    parser.add_argument("--timeout-s", type=float, default=180.0)
     parser.add_argument("--stop-radius-m", type=float, default=1.8)
-    parser.add_argument("--max-turns-per-subtask", type=int, default=25)
+    parser.add_argument(
+        "--max-turns-per-subtask",
+        type=int,
+        default=0,
+        help="Optional LLM turn cap per subtask (0 = unlimited, strictly governed by --max-primitive-steps 500).",
+    )
     parser.add_argument("--max-primitive-steps", type=int, default=500)
     parser.add_argument("--max-context-tokens", type=int, default=200_000)
     parser.add_argument("--soft-compaction-tokens", type=int, default=155_000)
@@ -106,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"and call finish_task(result_type='arrived', target_label='{cat}')."
             ),
             stop_radius_m=args.stop_radius_m,
-            max_steps=args.max_turns_per_subtask,
+            max_steps=(int(args.max_turns_per_subtask) if int(args.max_turns_per_subtask) > 0 else None),
             max_primitive_steps=args.max_primitive_steps,
         )
         for idx, cat in enumerate(args.targets, start=1)

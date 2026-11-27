@@ -50,6 +50,8 @@ class EmbodiedAgentRuntime:
         before_finish_hook: BeforeFinishHook | None = None,
         world_milestone_fn: Callable[[str], str] | None = None,
         budget_exhausted_fn: Callable[[], bool] | None = None,
+        motion_progress_fn: Callable[[], int] | None = None,
+        max_consecutive_zero_motion_turns: int = 12,
         finish_tool_name: str = "finish_task",
     ) -> None:
         self.chat_client = chat_client
@@ -59,6 +61,8 @@ class EmbodiedAgentRuntime:
         self.before_finish_hook = before_finish_hook
         self.world_milestone_fn = world_milestone_fn
         self.budget_exhausted_fn = budget_exhausted_fn
+        self.motion_progress_fn = motion_progress_fn
+        self.max_consecutive_zero_motion_turns = max(3, int(max_consecutive_zero_motion_turns))
         self.finish_tool_name = str(finish_tool_name)
         self._specs: dict[str, ToolSpec] = {}
         self._handlers: dict[str, ToolHandler] = {}
@@ -146,11 +150,11 @@ class EmbodiedAgentRuntime:
         task_label: str = "",
         initial_observation_text: str = "",
         initial_images: Sequence[ImageAttachment] = (),
-        max_turns: int = 25,
+        max_turns: int | None = None,
         append_transition: bool = False,
         transition_prompt: str = "",
     ) -> AgentRunResult:
-        """Run one multi-turn agent loop on the live persistent context until finished or capped."""
+        """Run one multi-turn agent loop until finished, atomic budget exhausted, or optional turn cap."""
         if append_transition:
             self.context.append_subtask_transition(
                 transition_prompt,
@@ -166,11 +170,18 @@ class EmbodiedAgentRuntime:
         tool_calls_count = 0
         consecutive_non_tool = 0
         consecutive_transport_errors = 0
+        consecutive_zero_motion = 0
+        last_motion_count = (
+            int(self.motion_progress_fn()) if self.motion_progress_fn is not None else 0
+        )
         completed = False
-        termination_reason = "max_turns_reached"
+        turn_cap = int(max_turns) if (max_turns is not None and int(max_turns) > 0) else None
+        termination_reason = "max_turns_reached" if turn_cap is not None else "environment_budget_exhausted"
         finish_meta: dict[str, Any] = {}
 
-        for turn_idx in range(1, max(1, int(max_turns)) + 1):
+        turn_idx = 0
+        while turn_cap is None or turn_idx < turn_cap:
+            turn_idx += 1
             if self.budget_exhausted_fn is not None and self.budget_exhausted_fn():
                 termination_reason = "environment_budget_exhausted"
                 break
@@ -288,6 +299,16 @@ class EmbodiedAgentRuntime:
             if self.budget_exhausted_fn is not None and self.budget_exhausted_fn():
                 termination_reason = "environment_budget_exhausted"
                 break
+            if self.motion_progress_fn is not None:
+                cur_motion = int(self.motion_progress_fn())
+                if cur_motion > last_motion_count:
+                    last_motion_count = cur_motion
+                    consecutive_zero_motion = 0
+                else:
+                    consecutive_zero_motion += 1
+                    if consecutive_zero_motion >= self.max_consecutive_zero_motion_turns:
+                        termination_reason = "zero_motion_deadlock"
+                        break
 
         return AgentRunResult(
             completed=completed,

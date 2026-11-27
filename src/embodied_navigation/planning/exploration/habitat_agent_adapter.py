@@ -111,26 +111,34 @@ AGENT_RUNTIME_SYSTEM_PROMPT = (
     "- Global 2.5D Floorplan (when moved between regions or requested via query_world): shows "
     "explored floor free/occupied geometry, robot trail, geometric+semantic Region IDs "
     "(R1*:living_room, R2~:kitchen, R3*:hallway) with doorway/passage links, remembered "
-    "landmarks, M* memory targets, and F* unexplored frontiers.\n"
+    "landmarks, M* memory targets, S* staircase portals (magenta diamonds), and F* unexplored frontiers.\n"
     "- Global Region Memory: structured index of explored regions with primary_label, "
     "detailed_description, connected_regions, and Set-Cover minimal texture_keyframe_ids "
     "(inspect any region visually via get_evidence(region_id='R1')).\n\n"
     "## [COGNITIVE & TOOL DISCIPLINE]\n"
-    "1. Explore systematically via navigate_to(target_id='F*') toward unexplored doorways and "
+    "1. Exploration budget is strictly measured in Habitat atomic physical steps (500 per subtask, "
+    "shown in the status footer); information tools (query_world, inspect_vision, get_evidence, "
+    "update_belief) cost 0 atomic steps.\n"
+    "2. Explore systematically via navigate_to(target_id='F*') toward unexplored doorways and "
     "glimpsed zones (avoid repeatedly revisiting zones marked 'inspected_closeup').\n"
-    "2. Check memory first via query_world(query=...) or M* candidates when switching tasks "
+    "3. Multi-floor traversal: if you see a staircase leading up or down in RGB or an S* stair "
+    "portal on the floorplan, and the current floor lacks the target room/object, call "
+    "navigate_to(target_id='S1') or traverse_stairs(direction='down'|'up') to move onto the "
+    "adjacent floor! Do NOT stay trapped on one floor.\n"
+    "4. Check memory first via query_world(query=...) or M* candidates when switching tasks "
     "or wondering if an area was already inspected.\n"
-    "3. Contrastive disambiguation BEFORE trusting a confusable object (e.g. table vs desk vs "
-    "nightstand vs cabinet vs stair railing): call inspect_vision(prompts=[...], mode='disambiguate') "
-    "with BOTH the target category AND plausible confusors/architectural distractors! It returns "
-    "per-object candidate score distributions and an 'abstain' flag.\n"
-    "4. Active belief revision: if you approach or inspect an M* candidate and see it is NOT the "
-    "target (e.g. clothing/bedskirt mistaken for chair, or stair rail mistaken for table), call "
-    "update_belief(object_id=..., status='refuted', new_label=..., note=...) IMMEDIATELY so it is "
-    "purged from M* candidates and never wastes future turns.\n"
-    "5. Zero-step guard: if navigate_to reports already_at_goal=true (0 steps), do NOT repeat "
-    "the same navigate_to; inspect/refute/finish_task or choose a different F*.\n"
-    "6. Always invoke registered tools to act or answer; never hallucinate coordinates."
+    "5. Contrastive disambiguation BEFORE trusting a confusable object (e.g. table vs desk vs "
+    "nightstand vs dresser vs cabinet vs stair railing): call inspect_vision(prompts=[...], "
+    "mode='disambiguate') with BOTH the target category AND plausible confusors! For 'table', "
+    "target genuine tables (dining table, coffee table, desk, kitchen/office table) — do NOT "
+    "stop at bedroom nightstands, dressers, cabinets, vanity units, or kitchen counters.\n"
+    "6. Active belief revision: if you approach or inspect an M* candidate and see it is NOT the "
+    "target (e.g. clothing/bedskirt mistaken for chair, or nightstand/stair rail mistaken for "
+    "table), call update_belief(object_id=..., status='refuted', new_label=..., note=...) "
+    "IMMEDIATELY so it is purged from M* candidates.\n"
+    "7. Zero-step guard: if navigate_to reports already_at_goal=true (0 steps), do NOT repeat "
+    "the same navigate_to; inspect/refute/finish_task or choose a different F*/S*.\n"
+    "8. Always invoke registered tools to act or answer; never hallucinate coordinates."
 )
 
 
@@ -328,17 +336,19 @@ class HabitatWorldDaemon:
     def is_within_observed_map(
         self, goal_mem: Sequence[float], *, max_margin_m: float = 1.2
     ) -> bool:
-        """True iff ``goal_mem`` lies inside or adjacent to already-observed 2D cells."""
+        """True iff ``goal_mem`` lies inside or adjacent to observed cells (including stair-linked floors)."""
         rx, ry, rz = float(goal_mem[0]), float(goal_mem[1]), float(goal_mem[2])
-        grid = self.occ_grid._grid_for(rz)
-        if not grid:
-            return False
         cell_margin = max(1, int(math.ceil(float(max_margin_m) / self.occ_grid.resolution_m)))
         gx, gy = self.occ_grid._to_cell(rx, ry)
-        for dx in range(-cell_margin, cell_margin + 1):
-            for dy in range(-cell_margin, cell_margin + 1):
-                if (gx + dx, gy + dy) in grid:
-                    return True
+        fk = self.occ_grid._floor_key(rz)
+        for dfk in (0, -1, 1, -2, 2):
+            grid = self.occ_grid._grids.get(fk + dfk)
+            if not grid:
+                continue
+            for dx in range(-cell_margin, cell_margin + 1):
+                for dy in range(-cell_margin, cell_margin + 1):
+                    if (gx + dx, gy + dy) in grid:
+                        return True
         return False
 
     def reset_world(self, *, keep_memory: bool = True, keep_occupancy: bool = True) -> None:
@@ -603,6 +613,7 @@ class HabitatWorldDaemon:
     def current_candidates(self, target_label: str) -> list[dict[str, Any]]:
         robot_mem, _, _ = self.agent_pose()
         f_cands = self.occ_grid.extract_frontiers(robot_mem, max_candidates=6)
+        s_cands = self.occ_grid.extract_stair_portals(robot_mem, max_portals=3)
         m_cands = (
             self.memory.memory_goal_candidates(
                 robot_mem,
@@ -613,7 +624,7 @@ class HabitatWorldDaemon:
             else []
         )
         allowed, _blocked = self.memory.filter_candidates(
-            [*m_cands, *f_cands], default_z=robot_mem[2]
+            [*m_cands, *s_cands, *f_cands], default_z=robot_mem[2]
         )
         return _format_agent_candidates(allowed)
 
@@ -808,6 +819,7 @@ def build_agent_tools(
     active_target_getter: Callable[[], str],
     step_goal_fn: Callable[[Sequence[float]], dict[str, Any]],
     step_primitives_fn: Callable[[str, int], dict[str, Any]],
+    step_stairs_fn: Callable[[str, Sequence[float] | None], dict[str, Any]] | None = None,
     record_zone_annotation_fn: Callable[[str, str], None] | None = None,
 ) -> list[tuple[ToolSpec, Callable[[ToolCall], ToolResult]]]:
     """Assemble generic embodied tool specs + handlers around ``HabitatWorldDaemon``."""
@@ -833,12 +845,18 @@ def build_agent_tools(
         goal_mem: list[float] | None = None
 
         cands = daemon.current_candidates(target_label)
+        selected_stair_dir: str | None = None
+        selected_stair_xy: list[float] | None = None
         if isinstance(tid, str) and tid.strip():
             for c in cands:
                 if c.get("id") == tid.strip():
                     xy = c.get("xy")
                     if isinstance(xy, (list, tuple)) and len(xy) >= 2:
                         goal_mem = [float(xy[0]), float(xy[1]), float(c.get("z", robot_mem[2]))]
+                        kind = str(c.get("kind") or "")
+                        if kind in ("stair_down", "stair_up"):
+                            selected_stair_dir = "down" if kind == "stair_down" else "up"
+                            selected_stair_xy = [float(xy[0]), float(xy[1])]
                     break
         elif isinstance(raw_xyz, (list, tuple)) and len(raw_xyz) == 3:
             try:
@@ -882,7 +900,10 @@ def build_agent_tools(
                 is_error=False,
             )
 
-        exec_info = step_goal_fn(goal_mem)
+        if selected_stair_dir is not None and step_stairs_fn is not None:
+            exec_info = step_stairs_fn(selected_stair_dir, selected_stair_xy)
+        else:
+            exec_info = step_goal_fn(goal_mem)
         daemon.memory.record_attempt(
             "goto",
             goal_mem,
@@ -977,7 +998,7 @@ def build_agent_tools(
         try:
             if steps_raw is None or isinstance(steps_raw, bool):
                 raise ValueError("missing_steps")
-            steps = max(1, min(6, int(steps_raw)))
+            steps = max(1, min(16, int(steps_raw)))
         except (TypeError, ValueError):
             return ToolResult(
                 call_id=call.call_id,
@@ -1254,6 +1275,59 @@ def build_agent_tools(
             },
         )
 
+    def _handle_traverse_stairs(call: ToolCall) -> ToolResult:
+        if step_stairs_fn is None:
+            return ToolResult(
+                call_id=call.call_id,
+                name=call.name,
+                payload={"status": "unsupported", "reason": "stair_traversal_unavailable"},
+                is_error=True,
+            )
+        target_label = active_target_getter()
+        direction = str(call.arguments.get("direction", "down")).strip().lower()
+        if direction not in ("up", "down"):
+            return ToolResult(
+                call_id=call.call_id,
+                name=call.name,
+                payload={"error": "invalid_direction", "expected": ["up", "down"]},
+                is_error=True,
+            )
+        raw_xy = call.arguments.get("xy")
+        anchor_xy: list[float] | None = None
+        if isinstance(raw_xy, (list, tuple)) and len(raw_xy) >= 2:
+            try:
+                vx, vy = float(raw_xy[0]), float(raw_xy[1])
+                if math.isfinite(vx) and math.isfinite(vy):
+                    anchor_xy = [vx, vy]
+            except (TypeError, ValueError):
+                anchor_xy = None
+        exec_info = step_stairs_fn(direction, anchor_xy)
+        ing = daemon.ingest_sensor_frame(
+            force_keyframe=True,
+            run_baseline_vision=True,
+            active_target=target_label,
+        )
+        new_cands = daemon.current_candidates(target_label)
+        payload: dict[str, Any] = {
+            **exec_info,
+            "robot_xyz": ing["robot_mem"],
+            "yaw_deg": ing["yaw_deg"],
+            "region_id": ing["zone_id"],
+            "region_label": ing.get("region_label", "open_area"),
+            "keyframe_id": ing["keyframe_id"],
+            "map_revision": daemon.memory.map_revision,
+            "candidates": new_cands,
+            "detections": [g.to_prompt_dict() for g in daemon.current_detections[:8]],
+        }
+        if ing.get("zone_changed"):
+            payload["global_regions_digest"] = daemon.region_memory.format_global_digest()
+        return ToolResult(
+            call_id=call.call_id,
+            name=call.name,
+            payload=payload,
+            images=_obs_images(include_floorplan=True, target_label=target_label),
+        )
+
     def _handle_finish_task(call: ToolCall) -> ToolResult:
         # Gated by BeforeFinishHook inside EmbodiedAgentRuntime; handler is a safety fallback.
         return ToolResult(
@@ -1267,13 +1341,16 @@ def build_agent_tools(
             ToolSpec(
                 name="navigate_to",
                 description=(
-                    "Navigate toward a frontier candidate (F1..F*), memory target (M1..M*), or "
-                    "[x,y,z] coordinate along the walkable NavMesh."
+                    "Navigate toward a frontier candidate (F1..F*), memory target (M1..M*), "
+                    "staircase portal (S1..S*), or [x,y,z] coordinate along the walkable NavMesh."
                 ),
                 parameters={
                     "type": "object",
                     "properties": {
-                        "target_id": {"type": "string", "description": "Candidate ID like 'F1' or 'M1'."},
+                        "target_id": {
+                            "type": "string",
+                            "description": "Candidate ID like 'F1', 'M1', or stair portal 'S1'.",
+                        },
                         "xyz": {
                             "type": "array",
                             "items": {"type": "number"},
@@ -1288,7 +1365,7 @@ def build_agent_tools(
         (
             ToolSpec(
                 name="scan_surroundings",
-                description="Turn in place (15..120 deg) to reveal hidden objects or doorways.",
+                description="Turn in place (15..120 deg) to reveal hidden objects, doorways, or stairs.",
                 parameters={
                     "type": "object",
                     "properties": {
@@ -1304,12 +1381,12 @@ def build_agent_tools(
         (
             ToolSpec(
                 name="maneuver",
-                description="Take 1..6 small atomic steps forward or turn to align in doorways/corners.",
+                description="Take 1..16 atomic steps forward or turn to align in doorways, corners, or staircases.",
                 parameters={
                     "type": "object",
                     "properties": {
                         "motion": {"type": "string", "enum": ["forward", "left", "right"]},
-                        "steps": {"type": "integer", "minimum": 1, "maximum": 6},
+                        "steps": {"type": "integer", "minimum": 1, "maximum": 16},
                         "reason": {"type": "string"},
                     },
                     "required": ["motion", "steps"],
@@ -1420,6 +1497,37 @@ def build_agent_tools(
             _handle_finish_task,
         ),
     ]
+    if step_stairs_fn is not None:
+        tools_list.insert(
+            1,
+            (
+                ToolSpec(
+                    name="traverse_stairs",
+                    description=(
+                        "Ascend or descend a nearby staircase to reach an adjacent floor along "
+                        "the walkable NavMesh. Call when you see stairs or want to explore another floor."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "direction": {
+                                "type": "string",
+                                "enum": ["down", "up"],
+                                "description": "Whether to go 'down' or 'up' the staircase.",
+                            },
+                            "xy": {
+                                "type": "array",
+                                "items": {"type": "number"},
+                                "description": "Optional [x, y] stair anchor near the visible stairwell.",
+                            },
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["direction"],
+                    },
+                ),
+                _handle_traverse_stairs,
+            ),
+        )
     if not (daemon.vision_has_seg and daemon.vision_backend == "sam3"):
         tools_list.append(
             (
@@ -1480,6 +1588,102 @@ class ObjectNavFinishVerifier:
 
         robot_mem, _, _ = self.daemon.agent_pose()
         kf_id = self.daemon.current_kf_id
+
+        # Confusable-class & low-score stop guard on current frame detections (prevents
+        # bedroom nightstands/dressers/consoles from slipping past a 'table' stop gate).
+        _CONFUSABLE_FOR_TARGET: dict[str, frozenset[str]] = {
+            "table": frozenset(
+                {
+                    "nightstand",
+                    "bedside table",
+                    "dresser",
+                    "chest of drawers",
+                    "cabinet",
+                    "vanity",
+                    "counter",
+                    "kitchen counter",
+                    "shelf",
+                    "bookshelf",
+                    "console",
+                    "stair railing",
+                    "railing",
+                }
+            ),
+            "chair": frozenset({"bed", "couch", "sofa", "table", "cabinet", "toilet"}),
+            "couch": frozenset({"bed", "chair", "table", "ottoman", "bench"}),
+            "bed": frozenset({"couch", "sofa", "table", "dresser"}),
+        }
+        _MIN_TARGET_SCORE: dict[str, float] = {"table": 0.45}
+
+        if self.daemon.vision_has_seg and self.daemon.current_detections:
+            conf_set = _CONFUSABLE_FOR_TARGET.get(self.target_category, frozenset())
+            min_req = _MIN_TARGET_SCORE.get(self.target_category, 0.35)
+            near_matches = [
+                g
+                for g in self.daemon.current_detections
+                if _label_strict_match(self.target_category, g.label)
+                and float(g.surface_distance_m) <= (self.stop_radius_m + 0.6)
+            ]
+            if near_matches:
+                best_det = max(near_matches, key=lambda d: float(d.score))
+                conf_winner: tuple[str, float] | None = None
+                for clbl, csc in (best_det.candidate_scores or {}).items():
+                    cl_norm = str(clbl).strip().lower()
+                    if (
+                        any(cf in cl_norm for cf in conf_set)
+                        and float(csc) >= float(best_det.score) - 0.08
+                    ):
+                        if conf_winner is None or float(csc) > conf_winner[1]:
+                            conf_winner = (cl_norm, float(csc))
+                # Also check spatially overlapping stronger confusable detection on the same frame
+                if conf_winner is None and conf_set:
+                    for other in self.daemon.current_detections:
+                        ol_norm = str(other.label).strip().lower()
+                        if not any(cf in ol_norm for cf in conf_set):
+                            continue
+                        dx = float(other.local_xyz[0]) - float(best_det.local_xyz[0])
+                        dy = float(other.local_xyz[1]) - float(best_det.local_xyz[1])
+                        if math.hypot(dx, dy) <= 0.65 and float(other.score) >= float(best_det.score) - 0.05:
+                            conf_winner = (ol_norm, float(other.score))
+                            break
+                if best_det.abstain or conf_winner is not None:
+                    cname = conf_winner[0] if conf_winner is not None else "ambiguous_confusor"
+                    res = FinishCheckResult(
+                        allowed=False,
+                        reason="confusable_class_override",
+                        metadata={
+                            "target_score": round(float(best_det.score), 3),
+                            "confusable_label": cname,
+                            "hint": (
+                                f"STOP rejected: this object looks more like '{cname}' than a genuine "
+                                f"'{self.target_category}'. Refute it with update_belief and keep searching."
+                            ),
+                        },
+                    )
+                    if self.on_attempt_cb:
+                        self.on_attempt_cb(res)
+                    return res
+                if float(best_det.score) < min_req and not (
+                    self.daemon.latest_disambiguated_ok
+                    and self.daemon.latest_disambiguated_kf == kf_id
+                ):
+                    res = FinishCheckResult(
+                        allowed=False,
+                        reason="low_confidence_target_detection",
+                        metadata={
+                            "target_score": round(float(best_det.score), 3),
+                            "min_required": min_req,
+                            "hint": (
+                                f"STOP rejected: '{self.target_category}' score={best_det.score:.2f} < {min_req:.2f}. "
+                                f"Run inspect_vision(prompts=['{self.target_category}', ...], mode='disambiguate') "
+                                f"with confusors to verify before stopping."
+                            ),
+                        },
+                    )
+                    if self.on_attempt_cb:
+                        self.on_attempt_cb(res)
+                    return res
+
         # When an exact pixel-mask backend (SAM 3) is active, require vision-mask consensus
         # on the current keyframe so ungrounded VLM guesses or stair-rail hallucinations fail.
         excluded: tuple[str, ...] = (
@@ -1833,6 +2037,126 @@ class HabitatAgentRunner:
                     "atomic_steps_budget": active_state["max_prim_budget"],
                 }
 
+            def _step_stairs(
+                direction: str, anchor_xy: Sequence[float] | None = None
+            ) -> dict[str, Any]:
+                rem_prims = max(
+                    0, int(active_state["max_prim_budget"]) - int(active_state["primitives_used"])
+                )
+                if rem_prims <= 0:
+                    return {
+                        "status": "failed",
+                        "reason": "primitive_budget_exhausted",
+                        "traveled_m": 0.0,
+                        "primitives": 0,
+                    }
+                start_mem, _, start_h = daemon.agent_pose()
+                ax = float(anchor_xy[0]) if (anchor_xy and len(anchor_xy) >= 2) else float(start_mem[0])
+                ay = float(anchor_xy[1]) if (anchor_xy and len(anchor_xy) >= 2) else float(start_mem[1])
+                cur_y = float(start_h[1])
+
+                # Local NavMesh landing discovery around observed staircase (zero semantic/GT access)
+                best_landing: np.ndarray | None = None
+                best_score = float("inf")
+                for radius_m in (4.5, 7.5, 11.0):
+                    for _ in range(180):
+                        cand = np.asarray(
+                            sim.pathfinder.get_random_navigable_point(), dtype=np.float32
+                        )
+                        if not np.all(np.isfinite(cand)):
+                            continue
+                        dy = float(cand[1]) - cur_y
+                        if direction == "down" and not (-4.5 <= dy <= -1.2):
+                            continue
+                        if direction == "up" and not (1.2 <= dy <= 4.5):
+                            continue
+                        c_mem = hab_to_mem(cand)
+                        hdist = math.hypot(float(c_mem[0]) - ax, float(c_mem[1]) - ay)
+                        if hdist > radius_m:
+                            continue
+                        sp = habitat_sim.ShortestPath()
+                        sp.requested_start = start_h
+                        sp.requested_end = cand
+                        if not sim.pathfinder.find_path(sp) or not math.isfinite(
+                            float(sp.geodesic_distance)
+                        ):
+                            continue
+                        geo = float(sp.geodesic_distance)
+                        if geo > 20.0:
+                            continue
+                        sc_val = geo + 0.35 * hdist
+                        if sc_val < best_score:
+                            best_score = sc_val
+                            best_landing = cand
+                    if best_landing is not None:
+                        break
+
+                if best_landing is None:
+                    return {
+                        "status": "blocked",
+                        "reason": "no_connected_stair_landing",
+                        "direction": direction,
+                        "traveled_m": 0.0,
+                        "primitives": 0,
+                        "atomic_steps_used": active_state["primitives_used"],
+                        "atomic_steps_budget": active_state["max_prim_budget"],
+                    }
+
+                max_prims = min(48, rem_prims)
+                follower = habitat_sim.GreedyGeodesicFollower(
+                    sim.pathfinder, sim.agents[0], goal_radius=0.50
+                )
+                traveled = 0.0
+                prev_h = start_h
+                taken = 0
+                arrived = False
+                ferr: str | None = None
+                for idx in range(max_prims):
+                    try:
+                        act = follower.next_action_along(best_landing)
+                    except habitat_sim.errors.GreedyFollowerError:
+                        ferr = "follower_blocked"
+                        break
+                    if act is None or act == "stop":
+                        arrived = True
+                        break
+                    sim.step(act)
+                    taken += 1
+                    active_state["primitives_used"] += 1
+                    _, _, cur_h = daemon.agent_pose()
+                    traveled += float(np.linalg.norm(cur_h - prev_h))
+                    prev_h = cur_h
+                    if not active_state["oracle_reached"]:
+                        _, _, r_pt, _ = self._eval_gt_proximity(
+                            sim, cur_h, active_state["gt_list"], active_state["stop_radius_m"]
+                        )
+                        if r_pt:
+                            active_state["oracle_reached"] = True
+                    if idx % 4 == 3:
+                        daemon.ingest_sensor_frame(force_keyframe=False)
+
+                active_state["traveled_m"] += traveled
+                end_mem, _, _ = daemon.agent_pose()
+                dz = float(end_mem[2]) - float(start_mem[2])
+                if abs(dz) >= 1.2:
+                    st_str, reason = "completed", "floor_changed"
+                elif abs(dz) >= 0.35 or (taken > 0 and traveled >= 0.5):
+                    st_str, reason = "completed", "partial_stair_progress"
+                elif arrived:
+                    st_str, reason = "completed", "stair_landing_reached"
+                else:
+                    st_str, reason = "blocked", (ferr or "stair_no_progress")
+                return {
+                    "status": st_str,
+                    "reason": reason,
+                    "direction": direction,
+                    "dz_m": round(dz, 3),
+                    "traveled_m": round(traveled, 3),
+                    "primitives": taken,
+                    "atomic_steps_used": active_state["primitives_used"],
+                    "atomic_steps_budget": active_state["max_prim_budget"],
+                }
+
             def _record_zone_note(zone_type: str, note: str) -> None:
                 robot_mem, _, _ = daemon.agent_pose()
                 daemon.memory.record_zone_observation(
@@ -1851,6 +2175,7 @@ class HabitatAgentRunner:
                 active_target_getter=lambda: str(active_state["target"]),
                 step_goal_fn=_step_goal,
                 step_primitives_fn=_step_prims,
+                step_stairs_fn=_step_stairs,
                 record_zone_annotation_fn=_record_zone_note,
             )
 
@@ -2011,6 +2336,8 @@ class HabitatAgentRunner:
                     before_finish_hook=verifier,
                     world_milestone_fn=daemon.milestone_summary,
                     budget_exhausted_fn=lambda: int(active_state["primitives_used"]) >= int(active_state["max_prim_budget"]),
+                    motion_progress_fn=lambda: int(active_state["primitives_used"]),
+                    max_consecutive_zero_motion_turns=12,
                 )
                 for spec, handler in tools:
                     runtime.register_tool(spec, handler)

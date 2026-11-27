@@ -54,12 +54,12 @@ def resolve_agent_thinking(
         if norm == "disabled":
             return (
                 {"enable_thinking": False},
-                max(45.0, float(base_timeout_s)),
+                max(180.0, float(base_timeout_s)),
                 max(4096, int(base_max_tokens)),
             )
         return (
             {"enable_thinking": True},
-            max(90.0, float(base_timeout_s)),
+            max(180.0, float(base_timeout_s)),
             max(16384, int(base_max_tokens)),
         )
     return (None, max(45.0, float(base_timeout_s)), max(4096, int(base_max_tokens)))

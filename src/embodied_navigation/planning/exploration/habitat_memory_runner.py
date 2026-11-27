@@ -200,9 +200,11 @@ class DepthOccupancyGrid:
         self.max_depth_m = float(max_depth_m)
         self.floor_band_m = float(floor_band_m)
         self.obstacle_max_h_m = float(obstacle_max_h_m)
-        # Per floor-bucket (rounded 1.5 m bins) cell dict: (ix, iy) -> 0 (free) or 1 (occupied)
+        # Per floor-bucket (rounded 1.8 m bins) cell dict: (ix, iy) -> 0 (free) or 1 (occupied)
         self._grids: dict[int, dict[tuple[int, int], int]] = {}
         self._visited_trail: list[tuple[float, float, float]] = []
+        # Coarse 0.5 m stair-portal evidence per floor: (floor_key, sx, sy) -> stats dict
+        self._stair_cells: dict[tuple[int, int, int], dict[str, Any]] = {}
 
     def _floor_key(self, z_mem: float) -> int:
         return int(round(float(z_mem) / 1.8))
@@ -265,13 +267,89 @@ class DepthOccupancyGrid:
         is_obs = (z_cam >= self.floor_band_m) & (z_cam <= self.obstacle_max_h_m)
         is_free = (z_cam >= -0.25) & (z_cam < self.floor_band_m)
 
+        # Pure depth-geometry stair evidence:
+        # 1) Descending stairs: surfaces strictly below current floor plane (-2.4m..-0.38m)
+        fk = self._floor_key(rz)
+        is_stair_down = (z_cam >= -2.40) & (z_cam <= -0.38) & (d >= 0.65) & (d <= 4.5)
+        if np.any(is_stair_down):
+            for xw, yw, zc in zip(wx[is_stair_down], wy[is_stair_down], z_cam[is_stair_down]):
+                sx, sy = int(math.floor(float(xw) / 0.5)), int(math.floor(float(yw) / 0.5))
+                skey = (fk, sx, sy)
+                rec = self._stair_cells.get(skey)
+                zw = rz + float(zc)
+                if rec is None:
+                    self._stair_cells[skey] = {
+                        "direction": "down",
+                        "count": 1,
+                        "sum_x": float(xw),
+                        "sum_y": float(yw),
+                        "extreme_z": zw,
+                        "floor_z": rz,
+                    }
+                else:
+                    rec["count"] += 1
+                    rec["sum_x"] += float(xw)
+                    rec["sum_y"] += float(yw)
+                    rec["extreme_z"] = min(float(rec["extreme_z"]), zw)
+
+        # 2) Ascending stairs: columns with sloped/stepped positive depth-vs-height gradient
+        is_stair_up_mask = np.zeros_like(is_obs, dtype=bool)
+        if np.any(is_obs):
+            # Group valid subsampled points by image column u to distinguish sloped stairs from vertical walls
+            cand_up = (z_cam >= 0.18) & (z_cam <= 1.35) & (d >= 0.65) & (d <= 4.5)
+            if np.any(cand_up):
+                up_idxs = np.flatnonzero(cand_up)
+                u_vals = u[up_idxs]
+                z_vals = z_cam[up_idxs]
+                d_vals = d[up_idxs]
+                for col_u in np.unique(u_vals):
+                    cm = u_vals == col_u
+                    if int(np.sum(cm)) < 4:
+                        continue
+                    cz = z_vals[cm]
+                    cd = d_vals[cm]
+                    dz_span = float(np.max(cz) - np.min(cz))
+                    if dz_span < 0.30:
+                        continue
+                    order = np.argsort(cz)
+                    cz_s = cz[order]
+                    cd_s = cd[order]
+                    dd_span = float(cd_s[-1] - cd_s[0])
+                    slope = dd_span / max(1e-3, dz_span)
+                    # Vertical walls have slope ~ 0; ascending stairs increase in depth with height
+                    if 0.45 <= slope <= 3.0 and float(np.mean(np.diff(cd_s) >= -0.05)) >= 0.7:
+                        col_global = up_idxs[cm]
+                        is_stair_up_mask[col_global] = True
+                        mid_i = col_global[len(col_global) // 2]
+                        xw_u, yw_u = float(wx[mid_i]), float(wy[mid_i])
+                        zw_u = rz + float(np.max(cz_s))
+                        sx, sy = int(math.floor(xw_u / 0.5)), int(math.floor(yw_u / 0.5))
+                        skey = (fk, sx, sy)
+                        rec = self._stair_cells.get(skey)
+                        if rec is None:
+                            self._stair_cells[skey] = {
+                                "direction": "up",
+                                "count": 1,
+                                "sum_x": xw_u,
+                                "sum_y": yw_u,
+                                "extreme_z": zw_u,
+                                "floor_z": rz,
+                            }
+                        elif rec["direction"] == "up":
+                            rec["count"] += 1
+                            rec["sum_x"] += xw_u
+                            rec["sum_y"] += yw_u
+                            rec["extreme_z"] = max(float(rec["extreme_z"]), zw_u)
+
         # Carve free space along horizontal rays up to 85% of obstacle distance
         for xw, yw in zip(wx[is_free], wy[is_free]):
             cell = self._to_cell(float(xw), float(yw))
             if grid.get(cell) != 1:
                 grid[cell] = 0
 
-        for xw, yw in zip(wx[is_obs], wy[is_obs]):
+        # Do not paint ascending stair treads as solid obstacle walls
+        eff_obs = is_obs & (~is_stair_up_mask)
+        for xw, yw in zip(wx[eff_obs], wy[eff_obs]):
             # Carve intermediate ray points as free (helps open doorways cleanly)
             dist = math.hypot(float(xw) - rx, float(yw) - ry)
             steps = max(1, int(dist / (self.resolution_m * 1.5)))
@@ -440,6 +518,77 @@ class DepthOccupancyGrid:
         out: list[dict[str, Any]] = []
         for idx, (_score, cand) in enumerate(raw_cands[: max(1, int(max_candidates))], start=1):
             cand["id"] = f"F{idx}"
+            out.append(cand)
+        return out
+
+    def extract_stair_portals(
+        self,
+        robot_xyz_mem: Sequence[float],
+        *,
+        max_portals: int = 3,
+        min_samples: int = 4,
+    ) -> list[dict[str, Any]]:
+        """Cluster depth-observed stair openings (S1..S*) on the current floor."""
+        rx, ry, rz = float(robot_xyz_mem[0]), float(robot_xyz_mem[1]), float(robot_xyz_mem[2])
+        fk = self._floor_key(rz)
+        pts: list[tuple[int, int, dict[str, Any]]] = [
+            (sx, sy, rec)
+            for (rfk, sx, sy), rec in self._stair_cells.items()
+            if rfk == fk and int(rec.get("count", 0)) >= int(min_samples)
+        ]
+        if not pts:
+            return []
+
+        # Group nearby 0.5m cells of the same direction into stair portal clusters
+        by_dir_key = {(sx, sy, str(rec["direction"])): rec for sx, sy, rec in pts}
+        unvisited = set(by_dir_key.keys())
+        clusters: list[tuple[str, list[dict[str, Any]]]] = []
+        while unvisited:
+            seed = unvisited.pop()
+            sdir = seed[2]
+            comp = [by_dir_key[seed]]
+            stack = [seed]
+            while stack:
+                cx, cy, cd = stack.pop()
+                for dx in (-2, -1, 0, 1, 2):
+                    for dy in (-2, -1, 0, 1, 2):
+                        nb = (cx + dx, cy + dy, cd)
+                        if nb in unvisited:
+                            unvisited.remove(nb)
+                            comp.append(by_dir_key[nb])
+                            stack.append(nb)
+            clusters.append((sdir, comp))
+
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for sdir, comp in clusters:
+            total_cnt = sum(int(r["count"]) for r in comp)
+            wx = sum(float(r["sum_x"]) for r in comp) / max(1, total_cnt)
+            wy = sum(float(r["sum_y"]) for r in comp) / max(1, total_cnt)
+            dist = math.hypot(wx - rx, wy - ry)
+            if dist > 12.0:
+                continue
+            target_z = (
+                min(float(r["extreme_z"]) for r in comp)
+                if sdir == "down"
+                else max(float(r["extreme_z"]) for r in comp)
+            )
+            scored.append(
+                (
+                    total_cnt - 0.5 * dist,
+                    {
+                        "kind": f"stair_{sdir}",
+                        "direction": sdir,
+                        "xy": [round(wx, 2), round(wy, 2)],
+                        "z": round(target_z, 3),
+                        "dist_m": round(dist, 2),
+                        "description": f"observed staircase leading {sdir} (depth evidence={total_cnt})",
+                    },
+                )
+            )
+        scored.sort(key=lambda item: -item[0])
+        out: list[dict[str, Any]] = []
+        for idx, (_sc, cand) in enumerate(scored[: max(1, int(max_portals))], start=1):
+            cand["id"] = f"S{idx}"
             out.append(cand)
         return out
 
@@ -668,8 +817,14 @@ class DepthOccupancyGrid:
             cid = cand.get("id")
             if not isinstance(xy, (list, tuple)) or len(xy) < 2 or not cid:
                 continue
-            color = "#f97316" if str(cid).startswith("M") else "#eab308"
-            ax.scatter([xy[0]], [xy[1]], s=52, c=color, edgecolors="black", zorder=9)
+            cid_s = str(cid)
+            if cid_s.startswith("M"):
+                color, marker = "#f97316", "o"
+            elif cid_s.startswith("S"):
+                color, marker = "#d946ef", "D"
+            else:
+                color, marker = "#eab308", "o"
+            ax.scatter([xy[0]], [xy[1]], s=56, c=color, marker=marker, edgecolors="black", zorder=9)
             ax.text(
                 float(xy[0]) + 0.14,
                 float(xy[1]) + 0.14,
@@ -909,7 +1064,7 @@ class HabitatSubtaskSpec:
     target_category: str
     instruction: str
     stop_radius_m: float = 1.8
-    max_steps: int = 25
+    max_steps: int | None = None
     max_primitive_steps: int = 500
 
 
@@ -1409,7 +1564,7 @@ class HabitatMemoryRunner:
                         else:
                             l3_bypassed += 1
 
-                for step in range(1, subtask.max_steps + 1):
+                for step in range(1, int(subtask.max_steps or 25) + 1):
                     if primitives_used >= max_prim_budget:
                         break
                     robot_mem, yaw_rad, robot_hab = self._agent_pose_mem(sim)
