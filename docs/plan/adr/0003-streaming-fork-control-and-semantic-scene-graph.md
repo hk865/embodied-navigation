@@ -1,7 +1,10 @@
 # ADR-0003: 单主干流式 Fork 异步控制与关键帧锚定语义图片图数据库
 
 - 状态：提案 / 架构演进设计（2026-11-21）
-- 关联文档：[ROADMAP.md](../ROADMAP.md)、[TASKS.md](../TASKS.md)、[ADR-0001](0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](0002-embodied-agent-async-and-map-outlook.md)
+- 关联文档：[ROADMAP.md](../ROADMAP.md)、[TASKS.md](../TASKS.md)、[ADR-0001](0001-livo-yaw-pipeline-overlap.md)、[ADR-0002](0002-embodied-agent-async-and-map-outlook.md)、[ADR-0005](0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)
+
+> [!NOTE]
+> 自 2026-11-28 起按 [ADR-0005](0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) 修订：System 1 从持续 2–3 Hz Fork 空转瘦身为**事件驱动任务仲裁器**，取消独立的几何动态危险小模型，优先直接消费主线 3（`DynamicOccupancy / LocalizationHealth`）与主线 2（`SceneDelta` 等关键帧记忆事件），仅在临近岔口或语义歧义时按需触发一次轻量 Fork；在 `feat/agent-streaming-monitor` 落地时需同步对齐 [llm_agent_client.py](../../../src/embodied_navigation/planning/exploration/llm_agent_client.py#L1193-L1200)（按已完成判决水位而非最新提交序号判旧）与 [native_waypoints.py](../../../src/embodied_navigation/simulation/dynanav/native_waypoints.py#L287-L298)（打断重规划发可恢复 `cancel` 而非终结运行的 `stop`）。
 
 ## 1. 背景与现场痛点
 

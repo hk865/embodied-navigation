@@ -1,6 +1,6 @@
 # 活体任务板（TASKS）
 
-> 盘点日期：2026-11-28 · 集成基线 `main` `2144e5f`（= `origin/main`） · 主力记忆/Agent 分支 `feat/static-memory-streaming`（`e159c8a`，948 单测 / 60 回归全绿） · D 路径 V4 闭环分支 `exp/live-v4-ba-sliding-window`（`aada1f1`） · 冻结基线与边界见 [BASELINES.md](BASELINES.md) · 阶段目标与完成判据见 [ROADMAP.md](ROADMAP.md)，最新权衡与 [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) 见 [3D/4D 表征 Trade-Off](research/2026-11-3d-representation-memory-reconstruction-tradeoffs.md)，协作规则见 [AGENTS.md](../../AGENTS.md)。
+> 盘点日期：2026-11-28 · 集成基线 `main` `2144e5f`（= `origin/main`） · 主力记忆/Agent 分支 `feat/static-memory-streaming`（文档基线 `a7fd71a` / 代码基线 `e159c8a`，948 单测 / 60 回归全绿） · D 路径 V4 闭环分支 `exp/live-v4-ba-sliding-window`（`aada1f1`） · 冻结基线与边界见 [BASELINES.md](BASELINES.md) · 阶段目标与完成判据见 [ROADMAP.md](ROADMAP.md)，最新权衡与 [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) 见 [3D/4D 表征 Trade-Off](research/2026-11-3d-representation-memory-reconstruction-tradeoffs.md)，协作规则见 [AGENTS.md](../../AGENTS.md)。
 
 ## 使用说明
 
@@ -33,6 +33,7 @@
 | 2026-11 七层冻结基线、学术创新查重、VLN 基准 Tricks 核查与三轴演进总纲 | 主控 + Codex | [BASELINES.md](BASELINES.md)、[2026-11-novelty-audit-and-directions.md](research/2026-11-novelty-audit-and-directions.md)、[2026-11-vln-perception-memory-strategy-synthesis.md](research/2026-11-vln-perception-memory-strategy-synthesis.md) | 冻结 L1–L7 内部基线与 16 GB 显存红线；完成 SuperNav/ASENA/HarnessVLN/VLN-PE/HA-VLN 2.0/MemoryAgentBench/VSI-Bench 与上游 DynaNav 85 题审计；收敛为「感知 + 记忆 + 失败驱动控制」三轴主线与两条 2 周止损探针 |
 | L7 独立 `agent/` 运行时 + 常驻视觉服务 + 三态熔断 + `SharedHabitatSceneHost` 并发 (`agent-v4`) | 主控 + Flash + Codex | `src/embodied_navigation/agent/`、`localization_mapping/semantic_mapping/`、`perception/vision_tools.py` | `feat/static-memory-streaming`（`e159c8a`，**948 单测 / 60 回归全绿**）；5 场景 HM3D Dev（16 有效子任务，1.8 m，单目 90° RGB-D，GT 位姿）跑出 `SR 81.25% (13/16)`（95% Wilson CI `57%–93%`）、`OSR 87.50% (14/16)`、Sub 2–4 `81.82% (9/11)`、KV `96.40%`、压缩 `79.54%`、`0` 超时 |
 | 3D/4D 表征与混合检索 Trade-Off、2026.1–2026.11 文献校准、`ADR-0005` 与 `gpt-6.2-astra` 深度评审 | 主控 + Codex | [2026-11-3d-representation-memory-reconstruction-tradeoffs.md](research/2026-11-3d-representation-memory-reconstruction-tradeoffs.md)、[ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)、[ROADMAP.md](ROADMAP.md) | 核实 `CGFM-Nav` (`36 ep/278` vs 全量 `360 ep/2,669`)、`SuperNav` (`120 题 1 m/0.25 m/学习执行器`)、`GOAT nav.py` 实现；定稿 4 项跨层因果契约、3 天 Mesh 证伪实验、11 分支推进清单与 Colab `1,000 CU` 封顶预算 |
+| 单目虚拟双目与 Object-Centric 光度追踪数学严审 + 3 主线/4D 8 分支分工解构 | 主控 + Codex | [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)、[ROADMAP.md](ROADMAP.md)、[TASKS.md](TASKS.md) | 放弃纯单目三角化硬算深度，拍板 `FAST-LIVO2 + 10 Hz LiDAR 静中剥动 + 30 Hz KF/IMM + 切向光度可拒绝修正`；取消独立几何动态危险模型并瘦身流式监控为事件驱动仲裁器；核实并登记 2 处现存流式抢占 Bug（`llm_agent_client.py` 判旧、`native_waypoints.py` `stop` 语义） |
 
 ## 进行中（用户审阅与实机收口）
 
@@ -41,26 +42,22 @@
 | `[~]` | 审阅并推送 Phase 4 五个本地分支与 `feat/static-memory-streaming`（`e159c8a`）等领先提交 | 用户 | 仓库 | 逐行读 diff + 确认 30 组报告/评测归档后由用户执行合并/推送 |
 | `[~]` | 审批数据盘 Tier 1（~100.4 GB）/ Tier 2（~99.5 GB）清理清单 | 用户 | `$PROJECT_DATA_ROOT/embodied-navigation/` | 用户针对具体对象确认后人工触发删除，释放空间用于下一轮完整双层探索录制 |
 
-## 待办队列（首周三项门控 → Route 1 → Route 2 & Phase 4.5 收口）
+## 待办队列（Phase 5 · 4 阶段 × 8 分支施工顺序与 Phase 4 实机收口）
 
 | 状态 | 任务 | 角色 | 对应模块 | 验收标准 |
 | --- | --- | --- | --- | --- |
-| `[ ]` | **【Week 1 Gate 1 · 分支 1 `exp/habitat-score-parity`】** 用官方 HM3D/OVON/GOAT Scorer 逐题对账重放现有运行（基于 `H`） | 主控 | `agent/adapters/`、`planning/exploration/habitat_memory_runner.py` | 输出官方 Scorer 逐题一致报告（成功位、`geodesic SPL`、原始入选/排除/崩溃/超时分母对账），双列 `1.0 m / 1.8 m` 口径并隔离历史 5 场景 Dev 与未见场景 |
-| `[ ]` | **【Week 1 Gate 2 · 分支 2 `exp/memory-causal-replay`】** 统一 `observation_id` / SE(3) 不变里程计过程链 / 推理先验与 `pose_revision` 因果回放契约，并补 Habitat 16-bit 深度 PNG（基于 `H`） | 主控 + Flash | `agent/adapters/habitat_daemon.py`、`localization_mapping/semantic_mapping/`（可提取 `feat/semantic-keyframe-graph@46e0b48` 节点定义） | 同一回放注入重复消息、迟到 `SAM 3/SigLIP` 结果与 1 次回环后输出一致且可溯源的实例历史，前缀查询零未来证据泄漏；Habitat 保留帧同步存 16-bit 压缩深度 |
-| `[ ]` | **【Week 1 Gate 3 · 分支 3 `exp/mesh-visibility-retrieval`】** 运行 3 天低成本 Mesh 遮挡重排子实验（仅测遮挡过滤，不否定 Mesh 平面压缩与骨架建模地基；基于 `2`） | 主控 + Flash | `localization_mapping/semantic_mapping/`、`agent/` | 冻结 ≥ 3 留出场景 120 个去重对，全量对比 A / B / 历史深度重投影 / C（`Surface Nets`）；达到 C 比最强便宜对照 Top-1 ≥ +5 pp、完全遮挡误留相对降 ≥ 25%、可见误杀 ≤ +2 pp、p95 ≤ 50 ms 才接入遮挡重排 |
-| `[ ]` | **【Route 1 · 分支 4–5】** 推进 `exp/habitat-memory-retention`（层次树+四类边时空过程图检索，同起点 GOAT 持久 vs 清空配对）与 `exp/goal-frontier-prior`（融入推理先验的目标条件前沿，先对照 CGFM 36 ep 再全量 360 ep） | 主控 + Codex | `agent/`、`planning/exploration/` | 严格先做失败拆解与同起点同模型配对差值；无 $\Delta\text{SR}/\Delta\text{SPL}$ 或首次可见距离改善即止损 |
-| `[ ]` | **【Colab 1,000 CU · 分支 6–7】** 阶段解锁 `30 CU` 吞吐测账 → `190 CU` train 特征/难负例库（含 `79.54%` 剪枝召回曲线）→ `210 CU` `exp/instance-reranking` → `70 CU` `exp/stop-calibration`（先从全量 `OSR-SR` 估上限）→ `240 CU` 全量官方批推理 | 主控 | 云端批处理管线 + `localization_mapping/semantic_mapping/` | 留出房屋描述/图像实例 Top-1 ≥ +5 pp 且类别不退才接回闭环；`STOP` 可挽回上限过小即不开训；严禁 3 条烧卡陷阱 |
-| `[ ]` | **【Route 2 · 分支 8–11】** 在 `exp/live-v4-ba-sliding-window` (`aada1f1`) 推进 `exp/submap-pose-revisions`（回环局部锚点因果重投影）→ `exp/dynamic-free-space`（32 线束型 + 步态消融）→ `exp/object-existence-history`（`140 CU` 可选，相对降旧址误访 ≥ 25%）→ `exp/agent-revisit-on-revision`（提取 `8aebc95` 抢占闭环） | 主控 + Codex | `localization_mapping/`、`perception/`、`agent/`、`ref/dynanav-dynamic-pedestrian` | 先交 D 路径单次回环前后同一对象因果回放（Week 1 Gate 3 配套）；静态回放零搬移误报与零误取消；出现静态定位退化即停 |
+| `[ ]` | **【阶段 1 · 分支 3 `feat/memory-hybrid-store-build`】** 统一记忆核心数据结构（`observation_id` + 16-bit 压缩深度 PNG + 里程计过程链 + 推理先验 + `pose_revision`）与 Mesh/点云混合底座，并做 2–3 天低成本 Mesh 遮挡重排验证（基于 `H`，提取 `46e0b48`） | 主控 + Flash | `localization_mapping/semantic_mapping/`、`agent/adapters/habitat_daemon.py` | 同一回放注入重复消息、迟到视觉结果与 1 次回环后输出一致可溯源实例历史，前缀零未来泄漏；Habitat 保留帧同步落盘 16-bit 压缩深度；遮挡子实验达标（Top-1 ≥ +5 pp、p95 ≤ 50 ms）才启用过滤 |
+| `[ ]` | **【阶段 1 · 分支 1 `feat/agent-habitat-benchmarks`】** 整理 360° 观测与记忆工具，优化全局/局部地图喂入，对接官方 `HM3D / OVON / GOAT` Scorer 并按需校准轻量状态/`STOP` 判别头（基于 `H` + Colab 批跑） | 主控 | `agent/`、`planning/exploration/habitat_memory_runner.py` | 输出官方 Scorer 逐题对齐报告（成功位、`geodesic SPL`、分母对账），双列 `1.0 m / 1.8 m` 与 Dev/盲测拆报；OVON/GOAT 官方分净提升 |
+| `[ ]` | **【阶段 2 · 分支 4 `feat/memory-tree-graph-retrieval`】** 落地围绕里程计 + 回环 + 推理先验的层次树与四类边时空过程图检索及回环增量修改，并用 Colab 训冻结 `SigLIP` 同屋实例重排头（基于分支 `3`） | 主控 + Codex | `localization_mapping/semantic_mapping/`、`agent/tools/` | 外观库按 `observation_id` 建库（严禁拼世界坐标）且回环零重算；GOAT 同起点「持久 vs 清空」配对 $\Delta\text{SR}/\Delta\text{SPL}$ 净增益；未见房 Top-1 ≥ +5 pp |
+| `[ ]` | **【阶段 2 · 分支 5 `exp/recon-3d-mesh-assets`】** 基于统一定型底账离线派生转连通 Mesh、`Hunyuan3D` 物体补全生成、Blender/UE5/Isaac 游戏 PBR 材质素材库与 `2DGS` 对照（基于分支 `3` / `D`，离线旁路） | 主控 + Flash | `localization_mapping/semantic_mapping/object_mesh_memory.py`、`scripts/build_object_mesh_memory.py` | 适配单卡 16 GB 离线串行复用；相对原生 USD 评估 3D IoU/Chamfer/侵入率；严守离线边界，零在线帧率拖累 |
+| `[ ]` | **【阶段 2 · 分支 2 `feat/agent-streaming-monitor`】** 实现瘦身事件驱动流式监控（取消独立动态危险模型，消费 `DynamicOccupancy / SceneDelta`，仅临近岔口或歧义按需 Fork）、修复 `llm_agent_client.py` 与 `native_waypoints.py` 2 处抢占 Bug，并新增 `dynanav_adapter.py` 接通 Isaac Sim 静态两层（基于分支 `1` + 提取 `8aebc95`） | 主控 + Codex | `agent/adapters/dynanav_adapter.py`、`planning/exploration/llm_agent_client.py`、`simulation/dynanav/native_waypoints.py` | 慢返回（推理 > 抽帧间隔）下仍能正常触发有效抢占；中途打断重规划发 `cancel`/`preempt` 后可续跑不锁死；Habitat 与 Isaac Sim 静态两层共用 L7 运行时 |
+| `[ ]` | **【阶段 3 · 分支 6 `exp/slam-dynamic-and-generalize`】** 推进多模态互补动态 SLAM：`FAST-LIVO2` 静态底座 + 10 Hz LiDAR 静中剥动（逐点时戳对齐）+ 30 Hz KF/IMM 外推 + 切向光度可拒绝修正，并完成室外坡道/其余场景泛化收尾（基于 `D` + `ref/dynanav-dynamic-pedestrian`，按需 `ffd7882`） | 主控 + Codex | `perception/`、`localization_mapping/`、`third_party/fast_livo2/` | 同一输入消融 `LiDAR+KF` vs `加切向光度`，记录横向/径向误差、动态残影、自由空间误清率与静态 2 cm 基准零退化；32 线束间空白禁清空占据；`cmd_vel` 禁当里程计 |
+| `[ ]` | **【阶段 4 · 分支 7 `feat/4d-object-seg-tracking`】** 在动态 SLAM 站稳后用 `observation_id` 串联短时 `track_id` 与长期 `instance_id`，完成 4D 物体分割、跨帧跟踪与遮挡补全，并按需延伸刚体/铰接/分段骨架（基于分支 `6 + 3` + 可选 Colab） | 主控 + Codex | `localization_mapping/semantic_mapping/`、`perception/` | 同一 `pose_revision` 下先扣静态背景位移，显式区分 `not_visible / observed_empty_at_old_pose / identity_swapped`；旧址误访相对降 ≥ 25% 且不增错删 |
+| `[ ]` | **【阶段 4 · 分支 8 `feat/4d-memory-and-embodied-loop`】** 将 4D 分割跟踪接入记忆查改与事件驱动流式监控（动态堵路/家具搬移/回环即时改记忆并撤销过期航点），在 Isaac Sim 动态多层环境跑通全闭环（汇合 `2 + 4 + 7`） | 主控 + Codex | `agent/`、`localization_mapping/`、`planning/`、`navigation/` | 动态多层真物理闭环零静态错判误取消；回环机体系相对净空与前置 `STOP` 校验通过；PCT/SCAN + MoE-CTS 安全门独立兜底 |
 | `[ ]` | 将推荐后端配置显式冻结接入 `scripts/run_dynanav_native_exploration.sh` 并完成 Isaac Sim / ROS 2 实跑验收 | 主控 | `scripts/run_dynanav_native_exploration.sh`、`backend/node.py` | 启动器显式传 `--config` 并冻结进 run 目录；核验实机回环峰值耗时下 ROS 发布时延、视觉 spool 在线入库与先验地图重载、以及 `clearance_m=0.95 m` / `maneuver` 脱困 |
 | `[ ]` | 探索后端精度向 `2–4 cm` 进阶（航向门控混合准入 + 精配准细体素/平面因子 + X-ICP 退化感知协方差 / STD-BTC） | 主控 + Codex | `localization_mapping/backend/` | 解决 D2/D3 XY 精度保护（不劣化前端 2–3 cm XY）与 D3 拱形 Z 漂移；在 `D1/D2/D3` 统一机身原点口径下较现有 30 组基线显著提升 |
 | `[ ]` | 排查并优化前端起步重力/俯仰初值收敛（消除 D3 初窗 ~0.5° 俯仰偏置贡献的 ~14 cm Z 杆臂误差） | 主控 + Codex | `third_party/fast_livo2/`、`simulation/dynanav/` | D3 前端 Init-SE3 Z RMSE 与 Umeyama Z RMSE 差距明显收窄，不引入静态起步发散 |
-| `[ ]` | 按评测结论重构动态行人支线（结合 M-detector / DUFOMap） | 主控 | 从 `ref/dynanav-dynamic-pedestrian` 提取 | 只提取明确需要的模块；主底座保持静态场景可复现；新增/修改有单测与真值对照 |
 | `[ ]` | 后端模块文档补充板载部署/线程模型说明 | DSH | `localization_mapping/backend/README.md` | 与 `node.py --config` 实际参数一致；无过期文件引用 |
-| `[ ]` | **【Phase 5 · 记忆探针 1】** 开展 2 周止损实验：地图修订 / 环境变化后的旧经验失效测试与朴素强基线对比 | 主控 + Codex | `localization_mapping/semantic_mapping/`、`planning/exploration/` | 在 `D-Indoor-2F` 固定路口、观测、地图版本与候选动作，仅替换/注入 1 条旧经验量化翻错率；正面硬刚“同楼层最新可见证据 + 按需看原图”基线，输出 8 项 Agent 诊断量初版读数 |
-| `[ ]` | **【Phase 5 · 记忆系统】** 构建「Mesh 平面压缩/骨架预测地基 + 树/图过程检索」记忆原型（对齐 `ADR-0005` 单一 `observation_id` 底账 + 过程轨迹链 + 推理先验，配屏幕指纹；`Hunyuan3D-Omni/2DGS/PBR` 仅作离线可选资产对比） | 主控 + Flash | `localization_mapping/semantic_mapping/`、`scripts/build_object_mesh_memory.py` | 适配单卡 `16 GB` 显存；在 `D-Indoor-2F` 10–20 个代表区域/物体上量化平面点云压缩比、相对原生 USD 自由空间侵入率与回环重投影开销，并确保过程与先验信息可回溯 |
-| `[ ]` | **【Phase 5 · 语义感知】** 在已落地的 `SAM 3 + SigLIP` 常驻视觉服务（`e159c8a`）之上，补全 `DINO + SigLIP` 空间 Patch 双特征、360° 环视（`separate4 / mosaic2x2`）、`PixelGoal` 选点、地图语义墙/门洞轮廓与动态高频 `YOLOE` 初筛 | 主控 + Flash | `perception/`、`planning/exploration/visual_map_overlay.py`、`scripts/explore_waypoint_client.py` | 语义轮廓与 `goto_pixel / query_pixel_3d` 不越层写 `cmd_vel`、不读仿真真值；CPU 契约单测全绿 |
-| `[ ]` | **【Phase 5 · 动态感知探针 2】** 开展 2 周上界验证：向扫描匹配器注入准确机体运动测高遮挡动态点分割上界；通过后先做 **32 线束型 + 四足步态抖动消融**，再在 RoboGauge 极端地形训练本体速度/协方差并验证交替迭代动态 SLAM | 主控 + Codex | `perception/`、`localization_mapping/`、`robot/unitree/robogauge/`、参考 `ref/dynanav-dynamic-pedestrian` | 先在 `ref/dynanav-dynamic-pedestrian` 与 `D-Dynamic-M3DGR` 核销“真本体运动上界增益”并核实 `MoE-CTS` 策略隐状态导出能力；严禁把 `cmd_vel` 当里程计、严禁 32 线束间空白清空占据；成立后再建 `exp/prop-latent-dynamic-filter` 对照无过滤 / `DUFOMap` / 2D 语义掩码 |
-| `[ ]` | **【Phase 5 · 失败驱动控制与策略】** 落地回合内 `Attempt & Failure Ledger`、前置 `STOP` 几何校验、回环机体系相对净空风险门控（方向 D）与跨回合置信域门控 Skill 进化评测 | 主控 + Codex | `planning/exploration/`、`navigation/`、`.agents/skills/` | 在冻结 PCT/SCAN/MoE-CTS 下，产出 `D-Indoor-2F` 101 次回环 5 时间戳对齐事件表与机体系相对净空变化 $Y^{(k)}$；重复踩坑率与过早/漏停失误率相对基线可量化下降 |
 | `[ ]` | 持续维护：每次改动同步根 README 与 `docs/plan/` | 全体 | `docs/` | 盘点日期更新；`git diff --check` 通过；链接可达 |
 
 ## 架构决策记录（ADR）索引
@@ -69,9 +66,9 @@
 | --- | --- | --- | --- |
 | [ADR-0001](adr/0001-livo-yaw-pipeline-overlap.md) | LIVO 独立 `yaw` 清阻塞与 ≤ 0.2 s 点云融合重叠 | 已采纳（2026-11-20） | `yaw` 修复已完成并合入 `main`；远期触发项见「远期 / 触发式」 |
 | [ADR-0002](adr/0002-embodied-agent-async-and-map-outlook.md) | 具身 Agent 异步行动、语义/动态地图与热路径演进备忘 | 提案 / 远期（2026-11-20） | 流式控制、语义图与 C++ 热路径下沉的触发条件 |
-| [ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md) | 单主干流式 Fork 异步控制与关键帧锚定语义图片图数据库 | 提案 / 架构演进（2026-11-21） | 阶段 A（Phase 4 纯几何后端）即为本文件三项后端修复的来源；语义图与流式 Fork 在其后 |
+| [ADR-0003](adr/0003-streaming-fork-control-and-semantic-scene-graph.md) | 单主干流式 Fork 异步控制与关键帧锚定语义图片图数据库 | 提案 / 2026-11-28 按 ADR-0005 瘦身 | System 1 已按 ADR-0005 瘦身为事件驱动任务仲裁器（取消独立几何动态危险模型，并发/停止两处现存 Bug 留分支 `2` 对齐） |
 | [ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) | 面向 FAST-LIVO2 的增量 Mesh / 3DGS 演进与三层 SLAM 后端评测口径 | 提案 / 评测规范（2026-11-21） | Phase 4 首项评测器与三项后端修复的唯一打分尺 |
-| [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) | 因果关键帧记忆、Mesh+骨架混合底座、树/图过程检索与 Route 1→2 规划 | 已采纳草案 / 待首周三项门控验收（2026-11-28） | 统一 `observation_id` / 过程链 / 推理先验契约；Mesh 压缩与预测地基 + 3 天遮挡实验；树/图检索与 Colab `1,000 CU` 预算 |
+| [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md) | 因果关键帧记忆、Mesh+骨架混合底座、树/图过程检索与 3 主线 + 4D 8 分支规划 | 已定稿 · 2026-11-28 修订 | 3 主线 + 4D 叠加 4 阶段 8 分支施工表、4 条跨主线契约、动态前端切向光度拍板与 Colab `1,000 CU` 预算 |
 
 ## 远期 / 触发式架构优化（关联 ADR，达触发条件时立项）
 
@@ -97,8 +94,8 @@
 | 项 | 值 |
 | --- | --- |
 | 集成基线 | `main` = `origin/main` = `2144e5f`（`fix(viz): use dynanav_lio_map as Fixed Frame in dynanav_live_pointcloud.rviz`） |
-| 活跃工作分支 | **主力记忆/Agent**：`feat/static-memory-streaming`（`e159c8a`，**948 单测 / 60 回归**）；**D 路径 V4 闭环**：`exp/live-v4-ba-sliding-window`（`aada1f1`）；**可提取能力分支**：`feat/semantic-keyframe-graph`（`46e0b48`）、`feat/agent-preemptable-active-slam`（`8aebc95`）、`perf/slam-backend-cpp-icp`（`ffd7882`）；**Phase 4 底座**：`exp/slam-backend-stabilization`（`6e1a489`）及 `exp/slam-v2-*` |
-| 测试基线 | `feat/static-memory-streaming@e159c8a`：`tests/unit` **948 条 OK、0 失败 0 跳过**；`tests/regression` **60 条 OK、0 失败**（本机 3 条按环境 skip）；`exp/live-v4-ba-sliding-window@aada1f1` 保持 `807` 单测全绿 |
+| 活跃工作分支 | **主力记忆/Agent 底座（`H`）**：`feat/static-memory-streaming`（文档基线 `a7fd71a` / 代码 `e159c8a`，**948 单测 / 60 回归**）；**D 路径 V4 闭环底座（`D`）**：`exp/live-v4-ba-sliding-window`（`aada1f1`）；**可提取能力分支**：`feat/semantic-keyframe-graph`（`46e0b48` → `3/4`）、`feat/agent-preemptable-active-slam`（`8aebc95` → `2`）、`perf/slam-backend-cpp-icp`（`ffd7882` → `6`）；**Phase 4 底座**：`exp/slam-backend-stabilization`（`6e1a489`）及 `exp/slam-v2-*` |
+| 测试基线 | `feat/static-memory-streaming`（`a7fd71a` / 代码 `e159c8a`）：`tests/unit` **948 条 OK、0 失败 0 跳过**；`tests/regression` **60 条 OK、0 失败**（本机 3 条按环境 skip）；`exp/live-v4-ba-sliding-window@aada1f1` 保持 `807` 单测全绿；`main@2144e5f` 保持 `650` 单测全绿 |
 | 默认入口 | `scripts/run_dynanav_native_exploration.sh`（默认 FAST-LIVO2 + PCT/SCAN + RoboGauge），`--truth-pose` 切真值模式；冻结基线配置见 [BASELINES.md](BASELINES.md) |
 | 数据卷与云端算力 | `$PROJECT_DATA_ROOT/embodied-navigation/`（核心冻结包 `D-Indoor-2F` / `D-Outdoor-R3LIVE` / `D-Dynamic-M3DGR`、`agent_v4` HM3D 归档）；云端增援 **Google Colab `1,000 CU`**（封顶分配见 [ADR-0005](adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)） |
 | 文档入口 | 根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md)、[BASELINES.md](BASELINES.md)、本文件、[TEST_PLANS.md](TEST_PLANS.md)、[2026-11 学术查重总评](research/2026-11-novelty-audit-and-directions.md)、[VLN 评测真相与三轴演进总纲](research/2026-11-vln-perception-memory-strategy-synthesis.md)、[3D/4D 表征与混合检索 Trade-Off](research/2026-11-3d-representation-memory-reconstruction-tradeoffs.md)、[ADR-0001–0005](adr/)、[Agent 教程](../agent-tutorial/README.md)、[SLAM 教程](../slam-tutorial/README.md) |
@@ -124,8 +121,8 @@
 新会话接手时按顺序做，避免只看旧结论：
 
 1. `git status --short --branch`、`git branch -avv`、`git log --oneline -n 6 <branch>` 核对实际分支、HEAD、远端同步与工作树；
-2. 读根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md) 的阶段状态与 [ADR-0001–0004](adr/)；
-3. 跑 `PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`（679 OK）与 `... tests/regression`（60 OK，3 skip），确认基线未被破坏；
+2. 读根 [README.md](../../README.md)、[ROADMAP.md](ROADMAP.md) 的阶段状态与 [ADR-0001–0005](adr/)；
+3. 跑 `PYTHONPATH=src python3 -B -m unittest discover -s tests/unit`（`feat/static-memory-streaming` 948 OK / `main` 650 OK）与 `... tests/regression`（60 OK，3 skip），确认基线未被破坏；
 4. 按本文件「进行中」逐项确认状态，更新勾选后再新增任务；
 5. 进入 Phase 4 后端工作时，先读 [ADR-0004](adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md) 与 [ADR-0003 第 4 节](adr/0003-streaming-fork-control-and-semantic-scene-graph.md)，再基于数据卷 `runs/20261121-noisy-imu-rgb-twofloor-explore/` 的两份包做离线缓存；
 6. 需要仿真验证时确认 Isaac / ROS 环境与数据卷挂载，再走默认入口；无环境时只做 CPU 与文档工作并在汇报中说明未验证项；

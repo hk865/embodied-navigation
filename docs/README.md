@@ -4,13 +4,13 @@
 
 ## 开发计划入口（新会话先读）
 
-- [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–5 里程碑与当前状态、11 分支推进清单、分支归属、数据卷约定。
+- [开发路线图 ROADMAP](plan/ROADMAP.md)：唯一主线（D 路径）、七层架构边界、Phase 1–5 里程碑与当前状态、3 主线 + 4D 8 分支推进清单、分支归属、数据卷约定。
 - [七层冻结基线 BASELINES](plan/BASELINES.md)：L1–L7 内部冻结基线、单卡 16 GB 与 Colab 1,000 CU 算力红线、标准化数据集与子模块边界。
 - [活体任务板 TASKS](plan/TASKS.md)：已完成 / 进行中 / 待办队列与远期触发式架构优化，每条任务带建议角色、对应模块与验收标准。
 - [活跃分支测试计划 TEST_PLANS](plan/TEST_PLANS.md)：每个活跃分支的合入验收清单、Phase 4 统一评测数据集（D1/D2/D3）与 `B0–B3` / 三条回环分支消融口径。
 - 专题调研与决策蓝图 `plan/research/`：[2026-11 学术创新查重与论文方向总评](plan/research/2026-11-novelty-audit-and-directions.md)、[VLN 评测真相与「感知 + 记忆 + 失败驱动控制」演进总纲](plan/research/2026-11-vln-perception-memory-strategy-synthesis.md)、[3D/4D 空间表征、混合记忆检索、动态视觉-LiDAR 与算力策略 Trade-Off](plan/research/2026-11-3d-representation-memory-reconstruction-tradeoffs.md)、[ADR 深度调研蓝图](plan/research/adr-0002-0003-0004-survey.md)、[四大方向入门精讲与总施工图](plan/research/four-directions-roadmap-and-blueprint.md)。
 - 模块教程：[Agent 技能/工具/视频流与记忆教程](agent-tutorial/README.md) · [SLAM 前端至 V4 后端教程](slam-tutorial/README.md)。
-- 架构决策记录 `plan/adr/`（5 篇，状态与关联分支见各文件首部）：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界，已采纳）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）、[ADR-0003](plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md)（单主干流式 Fork 异步控制、关键帧锚定语义图片图数据库与停驻期 ZUPT 约束）、[ADR-0004](plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)（面向 FAST-LIVO2 的增量 Mesh / 3DGS 演进与三层 SLAM 后端评测口径）、[ADR-0005](plan/adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)（因果关键帧与过程记忆、Mesh+骨架压缩预测底座、树/图检索及 Route 1→2 11 分支）。
+- 架构决策记录 `plan/adr/`（5 篇，状态与关联分支见各文件首部）：[ADR-0001](plan/adr/0001-livo-yaw-pipeline-overlap.md)（LIVO 独立 `yaw` 延迟决策与边界，已采纳）、[ADR-0002](plan/adr/0002-embodied-agent-async-and-map-outlook.md)（具身 Agent 异步行动、语义/动态地图与热路径演进备忘）、[ADR-0003](plan/adr/0003-streaming-fork-control-and-semantic-scene-graph.md)（单主干流式 Fork 异步控制、关键帧锚定语义图片图数据库与停驻期 ZUPT 约束；已按 ADR-0005 瘦身为事件驱动仲裁）、[ADR-0004](plan/adr/0004-incremental-mesh-3dgs-and-layered-backend-eval.md)（面向 FAST-LIVO2 的增量 Mesh / 3DGS 演进与三层 SLAM 后端评测口径）、[ADR-0005](plan/adr/0005-causal-keyframe-memory-hybrid-retrieval-and-4d-evolution.md)（因果关键帧与过程记忆、Mesh+骨架压缩预测底座、树/图检索与 3 主线 + 4D 8 分支规划）。
 - 协作、分支与提交规则以 [AGENTS.md](../AGENTS.md) 为准；项目整体入口见根 [README.md](../README.md)。
 
 `docs/plan/` 是 2026-11-20 文档重建时新增的活体计划目录（2026-11-21 起含 `plan/adr/` 架构决策记录），会随阶段推进更新；本文件其余各节是**相对稳定**的说明与历史证据索引。
@@ -63,7 +63,7 @@ docs/
 | [`README.md`](README.md) | 本文件：文档分类索引、时效分层与链接 | 当前 |
 | [`plan/ROADMAP.md`](plan/ROADMAP.md) | 唯一主线、七层边界、Phase 1–4 里程碑、分支归属、数据卷约定 | 活体 |
 | [`plan/TASKS.md`](plan/TASKS.md) | 活体任务板：已完成 / 进行中 / 待办，带角色与验收标准；Phase 4 后端评测数据集入口 | 活体 |
-| [`plan/adr/`](plan/adr/) | 架构决策记录 ADR-0001–ADR-0005（yaw 延迟边界、具身 Agent 异步与语义地图、流式 Fork + 关键帧语义图、增量 Mesh/3DGS 与三层后端评测口径、因果与过程关键帧记忆/Mesh+骨架底座/树图检索与 Route 1→2 规划） | 活体 |
+| [`plan/adr/`](plan/adr/) | 架构决策记录 ADR-0001–ADR-0005（yaw 延迟边界、具身 Agent 异步与语义地图、流式 Fork + 关键帧语义图与事件驱动瘦身、增量 Mesh/3DGS 与三层后端评测口径、因果关键帧记忆/Mesh+骨架底座/树图检索与 3 主线 + 4D 8 分支规划） | 活体 |
 | [`dynanav-pct-scan.md`](dynanav-pct-scan.md) | 默认 `NAVIGATION_BACKEND=pct_scan`：实测支撑格网、原生 PCT A*、worker 归属的 SCAN 子进程、样条跟随、planner 收据与原生限制 | 当前（英文） |
 | [`dynanav-exploration.md`](dynanav-exploration.md) | 2026-11-11 native 探索：功能分层、ROS 话题/QoS、线程与缓存、时钟规则；页首声明 `native_route` 只是历史基线，默认链已切 PCT+SCAN | 历史基线说明 |
 | [`dynanav-waypoint-utility.md`](dynanav-waypoint-utility.md) | `scripts/dynanav_exploration.py candidates` 只读建议：收益代理量定义、`--prepare-next`、冻结数据重放边界 | 当前 |
